@@ -28,8 +28,7 @@ fn count_safety_boilerplate(src: &str) -> HashMap<String, usize> {
             let key = trimmed
                 .split("SAFETY")
                 .nth(1)
-                .map(|s| s.trim_start_matches(':').trim().to_string())
-                .unwrap_or_default();
+                .map_or_default(|s| s.trim_start_matches(':').trim().to_string());
             if !key.is_empty() {
                 *counts.entry(key).or_insert(0) += 1;
             }
@@ -50,27 +49,21 @@ fn check_boilerplate(file: &str, top_dupes: &[(&str, usize)]) {
     let counts = count_safety_boilerplate(&src);
 
     let mut total: usize = 0;
-    for (text, count) in counts.iter() {
+    for (text, count) in &counts {
         total += count;
-        if *count > MAX_DUPLICATES {
-            panic!(
-                "{} SAFETY 注释有 {} 次重复 (> {}): {}",
-                file, count, MAX_DUPLICATES, text
-            );
-        }
+        assert!(
+            *count <= MAX_DUPLICATES,
+            "{file} SAFETY 注释有 {count} 次重复 (> {MAX_DUPLICATES}): {text}"
+        );
     }
-    println!(
-        "{}: SAFETY 总数 {} (max dup ≤ {} ✓)",
-        file, total, MAX_DUPLICATES
-    );
+    println!("{file}: SAFETY 总数 {total} (max dup ≤ {MAX_DUPLICATES} ✓)");
 
     // 额外检查: 给定 fixture 中的预期重复数
     for (text, expected) in top_dupes {
         let actual = counts.get(*text).copied().unwrap_or(0);
         assert_eq!(
             actual, *expected,
-            "{}: SAFETY 文本 {:?} 实际 {} 次, 期望 {} 次",
-            file, text, actual, expected
+            "{file}: SAFETY 文本 {text:?} 实际 {actual} 次, 期望 {expected} 次"
         );
     }
 }
@@ -94,9 +87,8 @@ fn test_kernel_wide_boilerplate_inventory() {
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
             return;
         }
-        let src = match fs::read_to_string(path) {
-            Ok(s) => s,
-            Err(_) => return,
+        let Ok(src) = fs::read_to_string(path) else {
+            return;
         };
         let counts = count_safety_boilerplate(&src);
         let over: Vec<_> = counts

@@ -1,11 +1,11 @@
 //! driver: 显示器驱动集成测试
 //!
 //! 验收:
-//!   - PixelFormat 字节序正确
+//!   - `PixelFormat` 字节序正确
 //!   - Color 转换 (Rgb565/Rgb888/Argb8888) 边界条件
-//!   - DisplayMode 带宽计算
+//!   - `DisplayMode` 带宽计算
 //!   - HDMI EDID 解析
-//!   - DisplayPort LinkRate/LaneCount 协商
+//!   - `DisplayPort` LinkRate/LaneCount 协商
 //!
 //! 追踪: I-22
 //! SPDX-License-Identifier: MPL-2.0
@@ -18,7 +18,7 @@
 //! - `edgine::kernel::functions::driver::display::controller::DisplayMode`
 //!   — functions 层显示控制器管理策略 (2-E 批次自 privileged 迁出, 100% safe)
 //! - `edgine::kernel::functions::driver::display::dp::{LinkRate, LaneCount}`
-//!   — functions 层 DisplayPort 协商 (100% safe, 纯算法)
+//!   — functions 层 `DisplayPort` 协商 (100% safe, 纯算法)
 //! - `edgine::kernel::functions::driver::display::hdmi::STANDARD_VIDEO_MODES`
 //!   — 标准视频模式表 (pub const, 10 个常见 DMT 模式)
 //!
@@ -45,7 +45,7 @@ fn test_color_conversion() {
     let color = Color::new(255, 255, 255);
     let rgb565 = color.to_rgb565();
     let converted = Color::from_rgb565(rgb565);
-    assert!((color.r as i32 - converted.r as i32).abs() <= 8);
+    assert!((i32::from(color.r) - i32::from(converted.r)).abs() <= 8);
 
     let color = Color::new(128, 64, 192);
     let argb = color.to_argb8888();
@@ -87,7 +87,7 @@ fn test_hdmi_modes() {
     );
 
     // 标准视频模式表: 内核 functions hdmi.rs `STANDARD_VIDEO_MODES` (pub const, 10 个模式)
-    assert!(!STANDARD_VIDEO_MODES.is_empty());
+    assert_ne!(STANDARD_VIDEO_MODES, []);
     // 覆盖常见分辨率: 640x480@60 / 800x600@60 / 1024x768@60 / 1280x720@60 / 1920x1080@60
     for (w, h, r) in [
         (640u16, 480u16, 60u8),
@@ -100,10 +100,7 @@ fn test_hdmi_modes() {
             STANDARD_VIDEO_MODES
                 .iter()
                 .any(|m| m.width == w && m.height == h && m.refresh_rate == r),
-            "标准模式表应包含 {}x{}@{}",
-            w,
-            h,
-            r
+            "标准模式表应包含 {w}x{h}@{r}"
         );
     }
 }

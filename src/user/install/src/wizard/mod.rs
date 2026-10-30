@@ -18,7 +18,7 @@ fn mount_target() -> bool {
 }
 
 fn unmount_target() {
-    fs_unmount(MOUNT_POINT);
+    let _ = fs_unmount(MOUNT_POINT);
 }
 
 fn welcome_page() {
@@ -104,6 +104,7 @@ pub fn run() {
     unmount_target();
 }
 
+#[must_use]
 pub fn needed() -> bool {
     finish::check_marker()
 }

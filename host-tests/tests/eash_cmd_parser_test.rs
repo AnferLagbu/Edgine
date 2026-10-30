@@ -2,18 +2,19 @@
 //!
 //! 验证 eash 核心逻辑的契约:
 //! 1. Cmd 解析: 单词/多参/引号/空白/换行剥离
-//! 2. 路径参数: path_arg() 处理无参数/单参数
+//! 2. 路径参数: `path_arg()` 处理无参数/单参数
 //! 3. 命令调度表: 31 个内置命令都已注册
-//! 4. 管道检测: is_pipeline() 识别 |, >, <
-//! 5. as_str(): 无效 UTF-8 降级处理
+//! 4. 管道检测: `is_pipeline()` 识别 |, >, <
+//! 5. `as_str()`: 无效 UTF-8 降级处理
 //!
 //! ## B08-20 处置 (2026-09-06): 保留 + 标注 (用户态镜像, B08-12 不覆盖)
-//! eash 是 `#![no_std]` 用户态二进制, host-test 直接引用会冲突 panic_impl/lang item;
+//! eash 是 `#![no_std]` 用户态二进制, host-test 直接引用会冲突 `panic_impl/lang` item;
 //! 且 B08-12 内核 `host-test` feature 只暴露内核 crate, 不覆盖用户态 `src/user/eash`.
 //! 按 B08-20 模式 4 处置 (调研结论): 保留镜像 + 标注"用户态源码镜像, 生产改动需同步",
 //! 不属内核平行实现 (被测对象是用户态 shell, 非内核). 已登记至 audit-fix-08 B08-20 条目.
 
 use std::ffi::CStr;
+use std::fmt::Write as _;
 
 // ─────────────── Mirror of eash::commands::Cmd ───────────────
 
@@ -93,9 +94,7 @@ impl Cmd {
         let start = self.offsets[idx];
         // I-10: 镜像修复后版本 — 旧版本 `start + len` 又被 `start..start+end` 二次加,
         // 切到 `start..start+len` 避免双重计数
-        let len = CStr::from_bytes_until_nul(&self.args[start..])
-            .map(|c| c.to_bytes().len())
-            .unwrap_or(0);
+        let len = CStr::from_bytes_until_nul(&self.args[start..]).map_or(0, |c| c.to_bytes().len());
         &self.args[start..start + len]
     }
 }
@@ -199,7 +198,7 @@ fn test_cmd_max_args_limit() {
         if i > 0 {
             s.push(' ');
         }
-        s.push_str(&format!("a{}", i));
+        let _ = write!(s, "a{i}");
     }
     let cmd = Cmd::new(s.as_bytes());
     assert_eq!(cmd.n, 32, "应截断到 32 参");
@@ -276,9 +275,9 @@ fn test_cmd_realistic_eash_commands() {
     ];
     for (input, expected_n, expected_args) in cases {
         let cmd = Cmd::new(input);
-        assert_eq!(cmd.n, *expected_n, "input: {:?}", input);
+        assert_eq!(cmd.n, *expected_n, "input: {input:?}");
         for (i, expected) in expected_args.iter().enumerate() {
-            assert_eq!(cmd.get(i), *expected, "arg {} of {:?}", i, input);
+            assert_eq!(cmd.get(i), *expected, "arg {i} of {input:?}");
         }
     }
 }
@@ -323,7 +322,7 @@ fn test_eash_command_table_completeness() {
             v
         };
         let cmd = Cmd::new(&input);
-        assert_eq!(cmd.n, 2, "命令 {:?} 解析失败", cmd_name);
+        assert_eq!(cmd.n, 2, "命令 {cmd_name:?} 解析失败");
         assert_eq!(cmd.get(0), *cmd_name, "命令名失配");
         assert_eq!(cmd.get(1), b"arg1", "命令参数失配");
     }
@@ -334,7 +333,7 @@ fn test_eash_no_std_panic_safety() {
     // eash 是 no_std, 解析函数不能依赖 std. 这里调用 1000 次, 模拟 main loop
     // 高频调用, 验证没有分配 (Vec/Box) 也没有 panic.
     for i in 0..1000 {
-        let input = format!("echo iter {}", i);
+        let input = format!("echo iter {i}");
         let cmd = Cmd::new(input.as_bytes());
         assert!(cmd.n >= 2);
     }

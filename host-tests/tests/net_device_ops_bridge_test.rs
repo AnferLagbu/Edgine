@@ -1,8 +1,8 @@
-//! 批次 Z ④: NetOps 安全桥契约测试
+//! 批次 Z ④: `NetOps` 安全桥契约测试
 //!
-//! 验证 privileged `net_device_ops` 桥 (src/kernel/privileged/net/net_device_ops.rs):
-//! 1. `register_net_device::<T>` 产出可用 `NetOps` 指针表 (Box::leak + 泛型桥)
-//! 2. extern "C" 回调正确转发到 `T: NetDeviceOps` 方法 (send/try_receive/get_mac/handle_irq)
+//! 验证 privileged `net_device_ops` 桥 (`src/kernel/privileged/net/net_device_ops.rs)`:
+//! 1. `register_net_device::<T>` 产出可用 `NetOps` 指针表 (`Box::leak` + 泛型桥)
+//! 2. extern "C" 回调正确转发到 `T: NetDeviceOps` 方法 (`send/try_receive/get_mac/handle_irq`)
 //! 3. send null/len 守卫 (审核 P2-3): 空指针/零长 → -1
 //! 4. `net_register_functions_driver` set-once 语义 (DECISION-K 注册契约槽)
 //!
@@ -32,7 +32,7 @@ impl NetDeviceOps for MockNetDevice {
         match self.rx_queue.pop() {
             Some(pkt) if pkt.len() <= buf.len() => {
                 buf[..pkt.len()].copy_from_slice(&pkt);
-                pkt.len() as i32
+                i32::try_from(pkt.len()).expect("测试值必须能无损收窄")
             }
             _ => 0,
         }

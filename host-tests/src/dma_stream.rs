@@ -183,7 +183,7 @@ mod tests {
     fn stress_random_dmas() {
         // 1000 个随机 DMA 流的创建 + 完整同步周期
         for i in 0..1000 {
-            let paddr = (i as u64) * 0x10_0000;
+            let paddr = u64::try_from(i).expect("测试值必须为非负") * 0x10_0000;
             let dir = match i % 3 {
                 0 => DmaDirection::ToDevice,
                 1 => DmaDirection::FromDevice,
@@ -222,8 +222,11 @@ mod tests {
     fn mid_size_buffer() {
         // 2 MiB 大页 (order 9)
         // SAFETY: 页对齐物理地址, 见 frame() 说明
-        let d = DmaStream::from_frame(unsafe { frame(0x200000, 9) }, DmaDirection::Bidirectional)
-            .unwrap();
+        let d = DmaStream::from_frame(
+            unsafe { frame(0x0020_0000, 9) },
+            DmaDirection::Bidirectional,
+        )
+        .unwrap();
         assert_eq!(d.size(), 2 * 1024 * 1024);
     }
 

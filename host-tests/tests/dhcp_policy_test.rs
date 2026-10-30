@@ -4,7 +4,7 @@
 //! 1. `DhcpPolicy` trait 签名稳定 (编译期)
 //! 2. `DefaultDhcpPolicy` 对 `DhcpState` 6 个变体均返回合法 `DhcpAction`
 //! 3. 决策无副作用 (相同输入产生相同输出)
-//! 4. 边界: 0 lease、u64::MAX elapsed、自定义策略注入
+//! 4. 边界: 0 `lease、u64::MAX` elapsed、自定义策略注入
 //! 5. `SmoltcpNetStack::dhcp_decide_default` 接入路径正确
 //!
 //! 注意: 本测试不依赖 `kernel_test` feature, 通过 `path` 引用 edgine
@@ -50,8 +50,7 @@ fn test_dhcp_action_variants_defined() {
     for variant in &["Continue", "Renew", "FallbackToStatic", "GiveUp"] {
         assert!(
             content.contains(variant),
-            "DhcpAction 应包含变体: {}",
-            variant
+            "DhcpAction 应包含变体: {variant}"
         );
     }
 }
@@ -73,7 +72,7 @@ fn test_dhcp_policy_decide_signature() {
         "lease_duration_ms: u64",
     ];
     for p in &required_params {
-        assert!(after.contains(p), "decide 签名应包含参数: {}", p);
+        assert!(after.contains(p), "decide 签名应包含参数: {p}");
     }
 }
 
@@ -97,8 +96,7 @@ fn test_dhcp_policy_unit_tests_present() {
     let fn_test_count = content.matches("fn test_").count();
     assert!(
         fn_test_count >= 9,
-        "应有至少 9 个单元测试, 实测: {}",
-        fn_test_count
+        "应有至少 9 个单元测试, 实测: {fn_test_count}"
     );
 }
 
@@ -123,8 +121,7 @@ fn test_dhcp_decide_integration_tests_present() {
     let test_count = content.matches("fn test_dhcp_decide").count();
     assert!(
         test_count >= 5,
-        "SmoltcpNetStack 应有至少 5 个 DHCP 策略集成测试, 实测: {}",
-        test_count
+        "SmoltcpNetStack 应有至少 5 个 DHCP 策略集成测试, 实测: {test_count}"
     );
 }
 
@@ -170,8 +167,7 @@ fn test_dhcp_internal_state_tracking_present() {
         + content.matches("fn test_dhcp_decide_at").count();
     assert!(
         w7e_tests >= 8,
-        "W7-E DHCP 内部状态追踪应有至少 8 个测试, 实测: {}",
-        w7e_tests
+        "W7-E DHCP 内部状态追踪应有至少 8 个测试, 实测: {w7e_tests}"
     );
 }
 
@@ -197,8 +193,7 @@ fn test_dhcp_decide_at_signature() {
     let param_count = header_only.matches(": u32").count() + header_only.matches(": u64").count();
     assert_eq!(
         param_count, 1,
-        "dhcp_decide_at 应仅 1 个 u64 参数 (now_ms), 实测: {} 个",
-        param_count
+        "dhcp_decide_at 应仅 1 个 u64 参数 (now_ms), 实测: {param_count} 个"
     );
 }
 
@@ -208,7 +203,7 @@ fn test_record_dhcp_retry_uses_saturating_add() {
     let content = read(IMPL_RS);
     let idx = content.find("fn record_dhcp_retry").expect("应有此函数");
     let end = content[idx..]
-        .find("}")
+        .find('}')
         .map(|e| idx + e)
         .expect("应有函数体结束");
     let body = &content[idx..end];
@@ -224,7 +219,7 @@ fn test_record_dhcp_bound_clears_retry() {
     let content = read(IMPL_RS);
     let idx = content.find("fn record_dhcp_bound").expect("应有此函数");
     let end = content[idx..]
-        .find("}")
+        .find('}')
         .map(|e| idx + e)
         .expect("应有函数体结束");
     let body = &content[idx..end];
@@ -259,8 +254,7 @@ fn test_no_unsafe_in_dhcp_policy() {
     let total_unsafe_use = unsafe_block + unsafe_fn + unsafe_impl + unsafe_trait;
     assert_eq!(
         total_unsafe_use, 0,
-        "dhcp_policy.rs 应 0 unsafe 实际使用, 实测: block={}, fn={}, impl={}, trait={}",
-        unsafe_block, unsafe_fn, unsafe_impl, unsafe_trait
+        "dhcp_policy.rs 应 0 unsafe 实际使用, 实测: block={unsafe_block}, fn={unsafe_fn}, impl={unsafe_impl}, trait={unsafe_trait}"
     );
 }
 
@@ -283,8 +277,7 @@ fn test_dhcp_action_derives_eq_copy() {
         .collect();
     assert!(
         prefix.contains("#[derive"),
-        "DhcpAction 前应有 #[derive(...)] 行, 实际: {}",
-        prefix
+        "DhcpAction 前应有 #[derive(...)] 行, 实际: {prefix}"
     );
     let derive_line = prefix
         .lines()
@@ -314,7 +307,6 @@ fn test_dhcp_policy_trait_is_dynamic_dispatchable() {
     let header = &content[idx..end];
     assert!(
         !header.contains("Sized"),
-        "DhcpPolicy 不应含 Sized 限制 (需 dyn dispatchable), 实际头: {}",
-        header
+        "DhcpPolicy 不应含 Sized 限制 (需 dyn dispatchable), 实际头: {header}"
     );
 }

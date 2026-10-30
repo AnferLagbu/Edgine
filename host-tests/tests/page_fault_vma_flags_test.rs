@@ -1,7 +1,7 @@
-//! I-27: handle_simple_fault 不再硬编码 WRITABLE+USER — 静态契约测试
+//! I-27: `handle_simple_fault` 不再硬编码 WRITABLE+USER — 静态契约测试
 //!
 //! 验证 maintenance-2026-06-11.md I-27 修复目标:
-//!   - page_fault 主路径必须先查 VMA, 用 VMA 的 flags 决定新页权限
+//!   - `page_fault` 主路径必须先查 VMA, 用 VMA 的 flags 决定新页权限
 //!   - 禁止"对任意用户缺页地址都映射成 RWX 零页"
 //!   - read-only mmap 缺页时, 新页必须只有 PRESENT|USER (无 WRITABLE)
 //!

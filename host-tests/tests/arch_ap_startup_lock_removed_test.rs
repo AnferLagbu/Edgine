@@ -40,11 +40,11 @@ fn read(rel: &str) -> String {
 fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     let start = src
         .find(begin)
-        .unwrap_or_else(|| panic!("未找到起点标记: {}", begin));
+        .unwrap_or_else(|| panic!("未找到起点标记: {begin}"));
     let rest = &src[start..];
     let end_off = rest
         .find(end)
-        .unwrap_or_else(|| panic!("未找到终点标记: {}", end));
+        .unwrap_or_else(|| panic!("未找到终点标记: {end}"));
     &rest[..end_off]
 }
 

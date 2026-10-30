@@ -1,6 +1,6 @@
-//! TD-26: access_syscall 能力制校验回归 (B06-04 / DECISION-077 方案 A)
+//! TD-26: `access_syscall` 能力制校验回归 (B06-04 / DECISION-077 方案 A)
 //!
-//! 原镜像内核 [src/kernel/functions/fs/access.rs] 的 mode→FS_CAP 映射逻辑,
+//! 原镜像内核 [src/kernel/functions/fs/access.rs] 的 `mode→FS_CAP` 映射逻辑,
 //! 现改引内核真实实现 (host-test feature 暴露), 验证:
 //!   1. `F_OK` (mode=0) 不要求任何能力
 //!   2. `R_OK`/`W_OK`/`X_OK` 正确映射到 `FS_CAP_READ/WRITE/EXECUTE`
@@ -10,14 +10,14 @@
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FS_CAP_*` 常量表与 `pwm_has_capability` mock 实现, 改引:
-//! - `privileged::sgeg::pwm_has_capability` — 内核真实能力检查 (engine::check)
+//! - `privileged::sgeg::pwm_has_capability` — 内核真实能力检查 (`engine::check`)
 //! - `functions::sgeg::capability::{FS_CAP_*, CAP_DOMAIN_FS}` — 能力位/域常量
 //! - 测试身份经 `identity::get_table().create(..)` 真实注册 (初始 FS 能力 =
 //!   `capability::VIABLE_FLOOR` = READ|EXECUTE), 能力授予以 `PwmEntry::fetch_or_caps` 完成.
 //!
 //! ## 因内核 host 不可测已移除
 //! 原镜像的 `path_exists` 存在性检查 (对应内核 `access_syscall` 内
-//! `vfs_stat_safe`) 已移除: VFS 全局状态 (VFS_MANAGER) 在 host 未初始化, 不可测.
+//! `vfs_stat_safe`) 已移除: VFS 全局状态 (`VFS_MANAGER`) 在 host 未初始化, 不可测.
 //! 原镜像 `current_pwm()` 读取进程凭证部分 (内核 `access.rs::current_pwm` 为私有
 //! 函数, 依赖 `sgeg::api::pwm_get_current()` 进程上下文) 亦不可测, 已移除.
 //! 以上两部分的回归覆盖保留在 QEMU 集成测试.
@@ -63,10 +63,10 @@ fn write_pwm() -> u64 {
     })
 }
 
-/// 镜像 [functions/fs/access.rs::access_syscall] 中 host 可测的判定片段:
-/// mode→FS_CAP 映射 + 内核 `pwm_has_capability` 能力制校验.
+/// 镜像 [`functions/fs/access.rs::access_syscall`] 中 host 可测的判定片段:
+/// `mode→FS_CAP` 映射 + 内核 `pwm_has_capability` 能力制校验.
 /// 返回 None = 通过, Some(errno) = 拒绝.
-/// (内核 access_syscall 的 current_pwm / vfs_stat_safe 依赖进程与 VFS 上下文,
+/// (内核 `access_syscall` 的 `current_pwm` / `vfs_stat_safe` 依赖进程与 VFS 上下文,
 /// host 不可测, 见文件头说明.)
 fn access_check(pwm: u64, mode: i32) -> Option<i32> {
     // 越界校验 (与内核 `0..=0o7` 一致)

@@ -1,21 +1,21 @@
 //! fs: B06-02/03/07 权限与句柄修复回归测试
 //!
 //! 验收:
-//!   - chown_syscall: UID/GID 未注册返回 EINVAL, 不再回退 root (B06-02)
-//!   - open_by_handle_at_syscall: 无 CAP_SYS_ADMIN (SYSTEM 域 0x01) 返回 EPERM (B06-03)
-//!   - poll_syscall: fd 有效性由 per-process fd 表判定, 无全局数值上限 (B06-07/B-9.5)
+//!   - `chown_syscall`: UID/GID 未注册返回 EINVAL, 不再回退 root (B06-02)
+//!   - `open_by_handle_at_syscall`: 无 `CAP_SYS_ADMIN` (SYSTEM 域 0x01) 返回 EPERM (B06-03)
+//!   - `poll_syscall`: fd 有效性由 per-process fd 表判定, 无全局数值上限 (B06-07/B-9.5)
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 原镜像三个 syscall 的纯判定逻辑已改引内核真实 API:
-//! - chown_syscall 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
-//! - open_by_handle_at_syscall 的 CAP_SYS_ADMIN 判定 → `privileged::sgeg::pwm_has_capability`
-//! - poll_syscall 的 fd 有效性判定 → `functions::fs::vfs_get_fd_handle` (per-process fd 表)
+//! - `chown_syscall` 的 UID 判定 → `identity::get_table().find_by_uid` (真实身份表)
+//! - `open_by_handle_at_syscall` 的 `CAP_SYS_ADMIN` 判定 → `privileged::sgeg::pwm_has_capability`
+//! - `poll_syscall` 的 fd 有效性判定 → `functions::fs::vfs_get_fd_handle` (per-process fd 表)
 //!
 //! ## 因内核 host 不可测已移除 (syscall 完整路径)
-//! 三个 syscall 完整函数 (chown_syscall / open_by_handle_at_syscall / poll_syscall) 依赖
-//! 进程凭证上下文 (pwm_get_current / session::get_current_pwm) 与 VFS 全局状态
-//! (vfs_chown_ext / per-process fd 表), 且 open_by_handle_at / poll 走
-//! copy_from_user / read_struct_from_user (SMAP stac/clac 指令, host 不可用),
+//! 三个 syscall 完整函数 (`chown_syscall` / `open_by_handle_at_syscall` / `poll_syscall`) 依赖
+//! 进程凭证上下文 (`pwm_get_current` / `session::get_current_pwm`) 与 VFS 全局状态
+//! (`vfs_chown_ext` / per-process fd 表), 且 `open_by_handle_at` / poll 走
+//! `copy_from_user` / `read_struct_from_user` (SMAP stac/clac 指令, host 不可用),
 //! host 上不可直接调用. 完整路径回归保留在 QEMU 集成测试.
 //!
 //! 追踪: B06-02 / B06-03 / B06-07
@@ -40,7 +40,7 @@ fn test_pwm() -> u64 {
     })
 }
 
-/// 独立测试身份, 供"授予 CAP_SYS_ADMIN"用例修改能力而不污染 `test_pwm`.
+/// 独立测试身份, 供"授予 `CAP_SYS_ADMIN"用例修改能力而不污染` `test_pwm`.
 fn admin_pwm() -> u64 {
     static PWM: OnceLock<u64> = OnceLock::new();
     *PWM.get_or_init(|| {
@@ -54,12 +54,12 @@ fn admin_pwm() -> u64 {
 // B06-02: chown_syscall UID/GID 判定 (改引内核 identity::find_by_uid)
 // ============================================================================
 
-/// 内核 [functions/fs/file_ops.rs::chown_syscall] 的 uid→pwm 判定 (B06-02 修复后):
+/// 内核 [`functions/fs/file_ops.rs::chown_syscall`] 的 uid→pwm 判定 (B06-02 修复后):
 ///
-/// 原实现 `tbl.find_by_uid(uid).map_or(0, ...)` 在 uid 未注册时回退 owner_pwm=0 (root),
+/// 原实现 `tbl.find_by_uid(uid).map_or(0, ...)` 在 uid 未注册时回退 `owner_pwm=0` (root),
 /// 存在提权漏洞; 修复后未注册 uid/gid 返回 `EINVAL` (errno=22), 不再默认 root.
 /// 本测试直接验证内核 `identity::get_table().find_by_uid` 真实行为:
-/// 返回 None = 未注册 → chown_syscall 返回 EINVAL; Some = 已注册 → 取 owner_pwm.
+/// 返回 None = 未注册 → `chown_syscall` 返回 EINVAL; Some = 已注册 → 取 `owner_pwm`.
 #[test]
 fn chown_registered_uid_returns_pwm() {
     // 已注册 uid (creator=0 身份 uid=0) 正常映射到对应 pwm, 不回退 0
@@ -86,8 +86,7 @@ fn chown_unregistered_uid_returns_einval_not_root() {
     for uid in [42u32, 43, 1000, 2000] {
         assert!(
             tbl.find_by_uid(uid).is_none(),
-            "uid {} 未注册应返回 None",
-            uid
+            "uid {uid} 未注册应返回 None"
         );
     }
 }
@@ -103,9 +102,9 @@ fn chown_max_uid_sentinel_rejected() {
 // B06-03: open_by_handle_at_syscall CAP 检查 (改引内核 pwm_has_capability)
 // ============================================================================
 
-/// 内核 [functions/fs/file_handle.rs::open_by_handle_at_syscall] 的权限检查 (B06-03):
+/// 内核 [`functions/fs/file_handle.rs::open_by_handle_at_syscall`] 的权限检查 (B06-03):
 ///
-/// 采用 SYSTEM 域 (domain=0) + CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致;
+/// 采用 SYSTEM 域 (domain=0) + `CAP_SYS_ADMIN` (0x01), 与 mount/umount2 先例一致;
 /// 无能力返回 `EPERM` (errno=1). 本测试直接验证内核
 /// `privileged::sgeg::pwm_has_capability(pwm, SYSTEM, 0x01)` 判定.
 #[test]
@@ -154,13 +153,13 @@ fn pub_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
     &src[start..start + sig.len() + end]
 }
 
-/// 内核 [functions/fs/file_ops.rs::poll_syscall] 的 fd 有效性判定 (B06-07 → B-9.5):
+/// 内核 [`functions/fs/file_ops.rs::poll_syscall`] 的 fd 有效性判定 (B06-07 → B-9.5):
 ///
-/// 原实现用硬编码 `< 256` 做上限后直接索引 32 长 fd_table, fd∈[32,255] 越界 panic;
-/// B-9.5 per-process fd 表全量下沉后, 全局数值上限 (VFS_MAX_FDS / 256) 随全局 fd 表
+/// 原实现用硬编码 `< 256` 做上限后直接索引 32 长 `fd_table`, fd∈[32,255] 越界 panic;
+/// B-9.5 per-process fd 表全量下沉后, 全局数值上限 (`VFS_MAX_FDS` / 256) 随全局 fd 表
 /// 一并退役, fd 有效性改由 `vfs_get_fd_handle(fd)` 查 per-process fd 表 →
-/// OpenFileTable 句柄映射判定: 映射存在即有效, 不存在则视为不就绪. 无任何定长数组
-/// 索引 → 无越界风险. poll_syscall 完整路径依赖 read_struct_from_user (SMAP
+/// `OpenFileTable` 句柄映射判定: 映射存在即有效, 不存在则视为不就绪. 无任何定长数组
+/// 索引 → 无越界风险. `poll_syscall` 完整路径依赖 `read_struct_from_user` (SMAP
 /// stac/clac) 与进程上下文, host 不可直接调用; 此处作静态契约扫描.
 #[test]
 fn poll_syscall_validates_fd_via_per_process_fd_table() {

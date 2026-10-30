@@ -10,14 +10,14 @@
 //!
 //! ## 测试策略
 //!
-//! host-tests 不链接 edgine 静态库, 复刻 CpuFeatures bitflag 抽象层.
+//! host-tests 不链接 edgine 静态库, 复刻 `CpuFeatures` bitflag 抽象层.
 //! 验证 SMEP/SMAP bit 位置与 CR4 bit 位置映射.
 
-/// CpuFeatures SMEP bit (1 << 30, 见 cpu/mod.rs P4.B.1).
+/// `CpuFeatures` SMEP bit (1 << 30, 见 cpu/mod.rs P4.B.1).
 /// 选择 bit 30 是因为 leaf1 ECX bit 20 已被 leaf0x80000001 EDX 等占用.
 const EXPECTED_SMEP_BIT: u128 = 1 << 30;
 
-/// CpuFeatures SMAP bit (1 << 31).
+/// `CpuFeatures` SMAP bit (1 << 31).
 const EXPECTED_SMAP_BIT: u128 = 1 << 31;
 
 /// CR4 SMEP bit = bit 20 (Intel SDM Vol 3 §4.4).
@@ -92,5 +92,5 @@ fn cr4_smep_smap_bits_dont_overlap_with_existing() {
 fn smep_smap_combined_bitfield() {
     // CR4.SMEP | CR4.SMAP = bit 20 | bit 21 = 0x300000 (3 MiB)
     let combined = EXPECTED_CR4_SMEP_BIT | EXPECTED_CR4_SMAP_BIT;
-    assert_eq!(combined, 0x00300000);
+    assert_eq!(combined, 0x0030_0000);
 }

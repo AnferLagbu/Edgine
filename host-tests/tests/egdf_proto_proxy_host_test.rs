@@ -5,15 +5,15 @@
 //! MIG-004 在 `functions/egdf` 下补齐 `proto.rs` (block/net/input 协议族) 与
 //! `user_driver.rs` (用户态驱动) 的安全代理。此前生产代码直接经
 //! `privileged::egdf::register_block_device` 等深路径调用, 绕开 functions 出口。
-//! 本文件对该层代理补运行验证, 补齐 MIG-007 后仍缺的 proto_*/user_driver 缺口。
+//! 本文件对该层代理补运行验证, 补齐 MIG-007 后仍缺的 proto_*/`user_driver` 缺口。
 //!
 //! ## 覆盖范围
 //!
-//! - proto_net: `find_net_device` 返回的 `NetDevice` 句柄 (mac/send/try_receive/
-//!   handle_irq), 经 privileged `NetOps` 桥往返到设备
-//! - proto_input: `input_read` / `input_has_data` 统一入口
-//! - proto_block: `unregister_block` 墓碑语义 (首次成功 / 重复 / 越界)
-//! - user_driver: `UserDriverError::{from_code,to_errno}` privileged 私有码 →
+//! - `proto_net`: `find_net_device` 返回的 `NetDevice` 句柄 (`mac/send/try_receive`/
+//!   `handle_irq`), 经 privileged `NetOps` 桥往返到设备
+//! - `proto_input`: `input_read` / `input_has_data` 统一入口
+//! - `proto_block`: `unregister_block` 墓碑语义 (首次成功 / 重复 / 越界)
+//! - `user_driver`: `UserDriverError::{from_code,to_errno}` privileged 私有码 →
 //!   强类型 → POSIX errno 全分支映射
 //! - 退化路径: 空注册表时 net/input 入口的安全返回
 //!
@@ -21,7 +21,7 @@
 //!
 //! `EGDF_DEVICES` 是进程内全局单例, 同一测试二进制内的 `#[test]` 默认并行执行。
 //! 故本文件所有用例统一持 `REGISTRY_LOCK` 串行执行, 并以 `clear_registry()` 开场
-//! (口径同 privileged 侧 `EGDF_TEST_LOCK` 与 [egdf_registry_io_host_test.rs])。
+//! (口径同 privileged 侧 `EGDF_TEST_LOCK` 与 [`egdf_registry_io_host_test.rs`])。
 
 use std::sync::Mutex;
 
@@ -63,7 +63,7 @@ impl NetDeviceOps for MockNet {
         match self.rx.pop() {
             Some(pkt) if pkt.len() <= buf.len() => {
                 buf[..pkt.len()].copy_from_slice(&pkt);
-                pkt.len() as i32
+                i32::try_from(pkt.len()).expect("测试值必须能无损收窄")
             }
             _ => 0,
         }
@@ -82,7 +82,7 @@ impl NetDeviceOps for MockNet {
 static INPUT_CHAR: u8 = b'Q';
 
 extern "C" fn mock_input_read(_driver_data: *mut u8) -> *const u8 {
-    &INPUT_CHAR as *const u8
+    &raw const INPUT_CHAR
 }
 
 extern "C" fn mock_input_has_data(_driver_data: *mut u8) -> bool {
@@ -101,7 +101,7 @@ static INPUT_OPS: InputOps = InputOps {
 // proto_net
 // ============================================================================
 
-/// `find_net_device` 句柄往返: MAC 读回 + send / try_receive / handle_irq。
+/// `find_net_device` 句柄往返: MAC 读回 + send / `try_receive` / `handle_irq`。
 #[test]
 fn proto_net_proxy_roundtrip() {
     let _guard = REGISTRY_LOCK.lock().expect("REGISTRY_LOCK 中毒");

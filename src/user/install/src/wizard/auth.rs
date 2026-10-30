@@ -18,7 +18,7 @@ pub fn create() -> i32 {
         let len1 = read_line(&mut pw1);
         if len1 < MIN_PASSWORD_LEN {
             print("Password too short! Minimum ");
-            print_dec(MIN_PASSWORD_LEN as i64);
+            print_dec(i64::try_from(MIN_PASSWORD_LEN).expect("密码长度下限超出 i64"));
             println(" characters required.");
             continue;
         }
@@ -34,14 +34,13 @@ pub fn create() -> i32 {
         let mut p = [0u8; 65];
         p[..len1].copy_from_slice(&pw1[..len1]);
         p[len1] = 0;
-        let r = sys::auth_create_first(&p[..len1 + 1]);
+        let r = sys::auth_create_first(&p[..=len1]);
         if r >= 0 {
             println("Root identity created successfully!");
             return 0;
-        } else {
-            print("Failed to create root identity (error: ");
-            print_dec(r as i64);
-            println("). Please try again.");
         }
+        print("Failed to create root identity (error: ");
+        print_dec(i64::from(r));
+        println("). Please try again.");
     }
 }

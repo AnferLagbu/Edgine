@@ -1,4 +1,4 @@
-//! aarch64 GICv3 初始化判据 — host 侧确定性分支测试
+//! aarch64 `GICv3` 初始化判据 — host 侧确定性分支测试
 //!
 //! 追踪: ISSUE-RT-002
 //! SPDX-License-Identifier: MPL-2.0
@@ -76,8 +76,8 @@ fn ctlr_rwp_times_out_just_past_limit() {
 
 // ── 后置条件回读自检 (逐项 + 优先级) ────────────────────────────────
 
-/// 全部满足的基准值: EnableGrp1 置位 / ARE 置位 / ChildrenAsleep 清零 /
-/// Timer PPI(30) 使能 / ICC_IGRPEN1_EL1 使能.
+/// 全部满足的基准值: `EnableGrp1` 置位 / ARE 置位 / `ChildrenAsleep` 清零 /
+/// Timer PPI(30) 使能 / `ICC_IGRPEN1_EL1` 使能.
 const GOOD_CTLR: u32 = GICD_CTLR_ENABLE_GRP1_MASK | GICD_CTLR_ARE_MASK;
 const GOOD_WAKER: u32 = 0;
 const GOOD_ISENABLER0: u32 = 1 << 30;

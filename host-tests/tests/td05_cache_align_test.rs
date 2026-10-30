@@ -18,10 +18,10 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
-/// 合并读取 init.rs 与 init/state.rs 源码 (NetState 定义所在位置).
+/// 合并读取 init.rs 与 init/state.rs 源码 (`NetState` 定义所在位置).
 fn read_net_state_sources() -> String {
     let mut src = read(INIT);
     src.push_str(&read(STATE));
@@ -80,13 +80,14 @@ fn test_no_raw_static_mut_access() {
             );
         }
         // 检查是否有直接的 FD_TYPES[ 访问
-        if trimmed.contains("FD_TYPES[") && !trimmed.contains("raw::") && !trimmed.contains("//") {
-            panic!(
-                "TD-05: L{} 仍有直接 FD_TYPES[ 访问, 应通过 raw:: 模块:\n{}",
-                idx + 1,
-                line
-            );
-        }
+        assert!(
+            !(trimmed.contains("FD_TYPES[")
+                && !trimmed.contains("raw::")
+                && !trimmed.contains("//")),
+            "TD-05: L{} 仍有直接 FD_TYPES[ 访问, 应通过 raw:: 模块:\n{}",
+            idx + 1,
+            line
+        );
     }
 }
 

@@ -1,12 +1,12 @@
-//! P3-I-18: FileSystem trait 增加 fs_sync, vfs_sync 走 trait 分发
+//! P3-I-18: `FileSystem` trait 增加 `fs_sync`, `vfs_sync` 走 trait 分发
 //!
 //! 验证:
-//! 1. FileSystem trait 增加 fs_sync 默认方法 (返回 Ok(()))
-//! 2. EGFS override fs_sync (i32 sync() 包装)
+//! 1. `FileSystem` trait 增加 `fs_sync` 默认方法 (返回 Ok(()))
+//! 2. EGFS override `fs_sync` (i32 `sync()` 包装)
 //! 3. RamFS/DevFS 不必 override (继承默认实现)
-//! 4. vfs_sync 不再是 egfs_sync_internal 直调
-//! 5. vfs_sync 遍历 VFS_MAX_MOUNTS 挂载点
-//! 6. 单元测试覆盖 fs_sync 默认实现语义
+//! 4. `vfs_sync` 不再是 `egfs_sync_internal` 直调
+//! 5. `vfs_sync` 遍历 `VFS_MAX_MOUNTS` 挂载点
+//! 6. 单元测试覆盖 `fs_sync` 默认实现语义
 
 use std::fs;
 use std::path::PathBuf;
@@ -36,8 +36,7 @@ fn trait_has_fs_sync_default() {
     // 必须有 `Ok(())` 默认实现
     let trait_block = src
         .split_once("pub trait FileSystem: Send + Sync")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     assert!(
         trait_block.contains("Ok(())"),
         "P3-I-18: fs_sync 必须默认返回 Ok(())"
@@ -50,8 +49,7 @@ fn egfs_overrides_fs_sync() {
     let src = read_src("src/kernel/functions/fs/egfs/egfs_inode.rs");
     let impl_block = src
         .rsplit_once("impl crate::functions::fs::FileSystem for EgfsData")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     assert!(
         impl_block.contains("fn fs_sync("),
         "P3-I-18: EGFS impl 必须 override fs_sync"
@@ -68,8 +66,7 @@ fn ramfs_inherits_default() {
     let src = read_src("src/kernel/functions/fs/ramfs_core/mod.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for RamFsFileSystem")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     // RamFS 不应 override fs_sync (持久化为空)
     assert!(
         !impl_block.contains("fn fs_sync("),
@@ -83,8 +80,7 @@ fn devfs_inherits_default() {
     let src = read_src("src/kernel/functions/fs/devfs.rs");
     let impl_block = src
         .rsplit_once("impl FileSystem for DevfsData")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     assert!(
         !impl_block.contains("fn fs_sync("),
         "P3-I-18: DevFS 不应 override fs_sync (无持久化)"
@@ -100,8 +96,7 @@ fn vfs_sync_uses_trait_dispatch() {
     // 找下一个 `pub extern "C" fn` 之前的范围 (4b 后已无 #[no_mangle])
     let next_fn = src[start..]
         .find("\npub extern \"C\" fn ")
-        .map(|o| start + o)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |o| start + o);
     let body = &src[start..next_fn];
     // 必须 NOT 调 egfs_sync_internal(). 排除注释行
     let code_lines: Vec<&str> = body
@@ -139,8 +134,7 @@ fn vfs_sync_continues_on_error() {
     let start = src.find(marker).expect("vfs_sync not found");
     let next_fn = src[start..]
         .find("\npub extern \"C\" fn ")
-        .map(|o| start + o)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |o| start + o);
     let body = &src[start..next_fn];
     // 单个 FS 失败不应该 return, 而应继续遍历. 检查 `last_err` 变量存在
     assert!(
@@ -157,8 +151,7 @@ fn no_naked_match_fs_type_in_vfs_sync() {
     let start = src.find(marker).expect("vfs_sync not found");
     let next_fn = src[start..]
         .find("\npub extern \"C\" fn ")
-        .map(|o| start + o)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |o| start + o);
     let body = &src[start..next_fn];
     // 验证: 没有 match FsType / match fs_type 这类写死分支
     assert!(
@@ -174,8 +167,7 @@ fn trait_object_method_signature() {
     // 简化版: 验证 trait 块里有 fs_sync + KernelResult<()> 两关键词同时出现
     let trait_block = src
         .split_once("pub trait FileSystem: Send + Sync")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     let has_full_sig = trait_block.contains("fn fs_sync(&self) -> KernelResult<()>")
         || trait_block
             .contains("fn fs_sync(&self) -> crate::functions::fs::vfs_types::KernelResult<()>");
@@ -191,13 +183,9 @@ fn egfs_sync_returns_ioerror_on_nonzero() {
     let src = read_src("src/kernel/functions/fs/egfs/egfs_inode.rs");
     let impl_block = src
         .rsplit_once("impl crate::functions::fs::FileSystem for EgfsData")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     // r == 0 → Ok(()); != 0 → Err(Io)
-    let sync_block = impl_block
-        .split_once("fn fs_sync(")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+    let sync_block = impl_block.split_once("fn fs_sync(").map_or("", |(_, b)| b);
     assert!(
         sync_block.contains("KernelError::Io") || sync_block.contains("IoError"),
         "P3-I-18: EGFS.fs_sync 非零返回必须映射为 KernelError::Io"

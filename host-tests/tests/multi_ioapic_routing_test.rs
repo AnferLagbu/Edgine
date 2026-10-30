@@ -7,30 +7,30 @@
 //! 实现已删除, 不保留镜像:
 //!
 //! - 内核权威实现为 `privileged/arch/x86_64/acpi.rs::gsi_to_ioapic(gsi)` —
-//!   **签名不同**: 无参数表入参, 直接读取**私有**全局 `static IOAPICS:
-//!   `IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]>`.
+//!   **签名不同**: 无参数表入参, 直接读取**私有**全局
+//!   `static IOAPICS: IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]>`.
 //! - 该全局仅能由 `parse_madt(multiboot2_info_ptr)` 填充 (需真实 ACPI MADT /
 //!   Multiboot2 启动数据), host 无法构造; 且 `IOAPICS` 非 pub, 无公开 setter.
-//! - 因此 GSI→(ioapic_index, local_irq) 路由决策无法在 host 上对真实内核函数
+//! - 因此 `GSI→(ioapic_index`, `local_irq`) 路由决策无法在 host 上对真实内核函数
 //!   验证, 对应测试用例全部移除.
 //!
-//! 保留: 内核 `IoApicInfo` 为 `pub struct` (pub 字段 id/base_addr/gsi_base/max_irq),
+//! 保留: 内核 `IoApicInfo` 为 `pub struct` (pub 字段 `id/base_addr/gsi_base/max_irq`),
 //! 纯数据可 host 构造, 其字段语义测试改引内核类型.
 
 use edgine::kernel::privileged::arch::x86_64::acpi::IoApicInfo;
 
-/// 双 IOAPIC 控制器场景 (多路服务器): id/base/gsi_base/max_irq 字段语义
+/// 双 IOAPIC 控制器场景 (多路服务器): `id/base/gsi_base/max_irq` 字段语义
 #[test]
 fn ioapic_info_fields_semantics() {
     let ioapic0 = IoApicInfo {
         id: 0,
-        base_addr: 0xFEC00000,
+        base_addr: 0xFEC0_0000,
         gsi_base: 0,
         max_irq: 24,
     };
     let ioapic1 = IoApicInfo {
         id: 1,
-        base_addr: 0xFEC01000,
+        base_addr: 0xFEC0_1000,
         gsi_base: 24,
         max_irq: 24,
     };
@@ -40,11 +40,11 @@ fn ioapic_info_fields_semantics() {
     assert_ne!(ioapic0.id, ioapic1.id, "不同 IOAPIC 必须有不同硬件 ID");
     // base_addr: IOAPIC MMIO 寄存器基址 (Intel 默认 0xFEC00000, 第二路 +4KB)
     assert_eq!(
-        ioapic0.base_addr, 0xFEC00000,
+        ioapic0.base_addr, 0xFEC0_0000,
         "IOAPIC 0 MMIO 基址 = 0xFEC00000"
     );
     assert_eq!(
-        ioapic1.base_addr, 0xFEC01000,
+        ioapic1.base_addr, 0xFEC0_1000,
         "IOAPIC 1 MMIO 基址 = 0xFEC01000 (偏移 4KB)"
     );
     assert_ne!(

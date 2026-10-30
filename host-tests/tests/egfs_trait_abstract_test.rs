@@ -83,11 +83,10 @@ fn test_egfs_no_cyclic_sibling_use() {
     ];
 
     for mod_name in &expected {
-        let decl = format!("pub mod {};", mod_name);
+        let decl = format!("pub mod {mod_name};");
         assert!(
             src.contains(&decl),
-            "mod.rs 必须显式声明 `{}` 模块 (I-04 要求 18 文件结构可见)",
-            decl
+            "mod.rs 必须显式声明 `{decl}` 模块 (I-04 要求 18 文件结构可见)"
         );
     }
 }

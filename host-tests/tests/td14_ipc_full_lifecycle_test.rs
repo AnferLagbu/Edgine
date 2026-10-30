@@ -30,11 +30,10 @@ fn read_functions_ipc() -> String {
 fn test_shm_subsystem_full_lifecycle() {
     let src = read_functions_ipc();
     for fn_name in &["shm_create", "shm_attach", "shm_detach", "shm_destroy"] {
-        let top_needle = format!("pub fn {}(", fn_name);
+        let top_needle = format!("pub fn {fn_name}(");
         assert!(
             src.contains(&top_needle),
-            "functions::ipc 必须有顶层 {} (TD-14 / I-54)",
-            top_needle
+            "functions::ipc 必须有顶层 {top_needle} (TD-14 / I-54)"
         );
     }
 }
@@ -43,11 +42,10 @@ fn test_shm_subsystem_full_lifecycle() {
 fn test_msgq_subsystem_full_lifecycle() {
     let src = read_functions_ipc();
     for fn_name in &["msgq_create", "msgq_send", "msgq_recv", "msgq_destroy"] {
-        let needle = format!("pub fn {}(", fn_name);
+        let needle = format!("pub fn {fn_name}(");
         assert!(
             src.contains(&needle),
-            "functions::ipc 必须有顶层 {} (TD-14 / I-54)",
-            needle
+            "functions::ipc 必须有顶层 {needle} (TD-14 / I-54)"
         );
     }
 }
@@ -56,11 +54,10 @@ fn test_msgq_subsystem_full_lifecycle() {
 fn test_sem_subsystem_full_lifecycle() {
     let src = read_functions_ipc();
     for fn_name in &["sem_create", "sem_wait", "sem_post", "sem_destroy"] {
-        let needle = format!("pub fn {}(", fn_name);
+        let needle = format!("pub fn {fn_name}(");
         assert!(
             src.contains(&needle),
-            "functions::ipc 必须有顶层 {} (TD-14 / I-54)",
-            needle
+            "functions::ipc 必须有顶层 {needle} (TD-14 / I-54)"
         );
     }
 }
@@ -97,15 +94,14 @@ fn test_ipc_error_variants_complete() {
         "InvalidArgument",
     ] {
         let defined_needles = [
-            format!("    {},\n", legacy),
-            format!("        {},\n", legacy),
-            format!("    {} ", legacy),
+            format!("    {legacy},\n"),
+            format!("        {legacy},\n"),
+            format!("    {legacy} "),
         ];
         let defined = defined_needles.iter().any(|n| src.contains(n));
         assert!(
             !defined,
-            "IpcError::{} 已被 TD-08 薄包装废弃, 改走 IpcError::Kernel(KernelError::...)",
-            legacy
+            "IpcError::{legacy} 已被 TD-08 薄包装废弃, 改走 IpcError::Kernel(KernelError::...)"
         );
     }
 }

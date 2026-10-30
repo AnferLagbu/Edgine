@@ -11,8 +11,8 @@
 //!
 //! 1. `eeprom_read` / `read_mac_address` 均为**私有** `fn` (非 pub), host-tests
 //!    无法引用;
-//! 2. 两者依赖 `E1000Io` (privileged iomem::IoMem 的 MMIO 封装), 寄存器访问
-//!    走真实 MMIO 读写, host 环境无法以 MockIoMem 注入 (MockIoMem 只是 host
+//! 2. 两者依赖 `E1000Io` (privileged `iomem::IoMem` 的 MMIO 封装), 寄存器访问
+//!    走真实 MMIO 读写, host 环境无法以 `MockIoMem` 注入 (`MockIoMem` 只是 host
 //!    侧自建的寄存器模拟, 无法挂到内核私有 MMIO 路径);
 //! 3. 真实硬件路径 (e1000-real-hw) 下 EERD 轮询含 `spin_loop` 超时 + MMIO 访问.
 //!

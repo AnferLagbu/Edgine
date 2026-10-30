@@ -41,8 +41,7 @@ fn session_rs_no_global_session_static() {
         }
         assert!(
             !line.contains("static GLOBAL_SESSION"),
-            "P2-I-30: sgeg/session.rs 仍包含 `static GLOBAL_SESSION` 全局单例 (行: {})",
-            line
+            "P2-I-30: sgeg/session.rs 仍包含 `static GLOBAL_SESSION` 全局单例 (行: {line})"
         );
     }
 }
@@ -71,8 +70,7 @@ fn session_rs_no_unsafe_cell() {
         }
         assert!(
             !line.contains("UnsafeCell"),
-            "P2-I-30: sgeg/session.rs 代码行仍引用 UnsafeCell (行: {})",
-            line
+            "P2-I-30: sgeg/session.rs 代码行仍引用 UnsafeCell (行: {line})"
         );
     }
     // unsafe impl Send/Sync for SessionManager 也不应存在
@@ -172,8 +170,7 @@ fn public_api_signatures_preserved() {
     ] {
         assert!(
             src.contains(sig),
-            "P2-I-30: 公开 API `{}` 在 sgeg/session.rs 中缺失",
-            sig
+            "P2-I-30: 公开 API `{sig}` 在 sgeg/session.rs 中缺失"
         );
     }
 }
@@ -203,8 +200,7 @@ fn no_legacy_g_session_singleton_in_other_sgeg_modules() {
         let src = read_src(rel);
         assert!(
             !src.contains("GLOBAL_SESSION"),
-            "P2-I-30: {} 仍引用已删除的 GLOBAL_SESSION",
-            rel
+            "P2-I-30: {rel} 仍引用已删除的 GLOBAL_SESSION"
         );
     }
 }

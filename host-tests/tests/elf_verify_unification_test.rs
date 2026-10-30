@@ -10,8 +10,8 @@
 //! 3. **跨架构**: x86_64 (0x3E) 与 aarch64 (0xB7) 均接受, 其它机器码拒绝.
 //!    host 构建不绑定单一架构 ⇒ `EXPECTED_E_MACHINE = None`; 裸机构建只接受本目标
 //!    架构 (S-6 防线②), 该分支由 `machine_acceptable` 纯函数在本文件中全量覆盖.
-//! 4. **错误细分**: 7 类错误 (TooSmall / BadMagic / BadClass / BadMachine /
-//!    BadPhentsize / TooManyPhdr / PhdrOutOfBounds) 行为可观测.
+//! 4. **错误细分**: 7 类错误 (`TooSmall` / `BadMagic` / `BadClass` / `BadMachine` /
+//!    `BadPhentsize` / `TooManyPhdr` / `PhdrOutOfBounds`) 行为可观测.
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `verify_elf` 算法复刻 + `VerifyError` / `VerifyResult` / `Elf64Header`
@@ -20,11 +20,11 @@
 //! **unsafe** 函数, 测试调用需 unsafe 块.
 //! - `EM_X86_64` / `EM_AARCH64` / `ET_DYN` 为内核 pub const, 直接引用.
 //! - `ELF_MAGIC` / `ELF_CLASS_64` / `MAX_PHDR_COUNT` 为内核私有常量, 测试侧保留
-//!   镜像并标注同步 (参考 lib_string_strlen_safe 的 STRLEN_MAX 做法).
+//!   镜像并标注同步 (参考 `lib_string_strlen_safe` 的 `STRLEN_MAX` 做法).
 //!
 //! ## 保留
-//! 静态契约用例 (源码文本扫描 user_proc.rs / elf/mod.rs 无重复 magic 字面量,
-//! verify 子模块声明与委托) 为 B08-20 混合型文件的 include_str 部分, 原样保留.
+//! 静态契约用例 (源码文本扫描 `user_proc.rs` / elf/mod.rs 无重复 magic 字面量,
+//! verify 子模块声明与委托) 为 B08-20 混合型文件的 `include_str` 部分, 原样保留.
 
 use edgine::kernel::privileged::proc::elf::verify::{
     EM_AARCH64, EM_X86_64, ET_DYN, EXPECTED_E_MACHINE, VerifyError, VerifyResult,
@@ -52,19 +52,20 @@ fn make_elf(machine: u16, ty: u16, phnum: u16, phoff: u64, phentsize: u16) -> Ve
     let header_size = core::mem::size_of::<Elf64Header>();
     let phdr_table_size = phnum as usize * phentsize as usize;
     let total = header_size + phdr_table_size;
-    let mut buf = vec![0u8; total];
+    let mut words = vec![0u64; total.div_ceil(8)];
 
-    // SAFETY: buf 长度已 ≥ header
-    let header = unsafe { &mut *(buf.as_mut_ptr() as *mut Elf64Header) };
+    // SAFETY: words 为 8 字节对齐, 字节容量 ≥ header
+    let header = unsafe { &mut *words.as_mut_ptr().cast::<Elf64Header>() };
     header.ident[0..4].copy_from_slice(ELF_MAGIC);
     header.ident[4] = ELF_CLASS_64;
     header.ty = ty;
     header.machine = machine;
-    header.entry = 0x400000;
+    header.entry = 0x0040_0000;
     header.phoff = phoff;
     header.phentsize = phentsize;
     header.phnum = phnum;
-    buf
+    // SAFETY: 同上, 前 total 字节已按 header/phdr 布局初始化
+    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), total).to_vec() }
 }
 
 /// 调用内核 `verify_elf` (unsafe: 传入 host 缓冲区指针 + 长度)
@@ -132,13 +133,13 @@ fn verify_x86_64_elf64_succeeds() {
         2, /* ET_EXEC */
         1,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     // SAFETY: elf 是完整 host Vec
     let v = unsafe { call_verify_elf(&elf) }.expect("x86_64 ELF64 must verify");
     assert_eq!(v.machine, EM_X86_64);
     assert!(!v.is_pie);
-    assert_eq!(v.entry, 0x400000);
+    assert_eq!(v.entry, 0x0040_0000);
     assert_eq!(v.phnum, 1);
 }
 
@@ -149,7 +150,7 @@ fn verify_aarch64_elf64_succeeds() {
         ET_DYN,
         0,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     // SAFETY: elf 是完整 host Vec
     let v = unsafe { call_verify_elf(&elf) }.expect("aarch64 ELF64 must verify");
@@ -165,7 +166,7 @@ fn verify_rejects_bad_magic() {
         2,
         0,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     elf[0] = b'X'; // 破坏 magic
     // SAFETY: elf 是完整 host Vec
@@ -182,7 +183,7 @@ fn verify_rejects_bad_class() {
         2,
         0,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     elf[4] = 1; // ELFCLASS32
     // SAFETY: elf 是完整 host Vec
@@ -195,7 +196,13 @@ fn verify_rejects_bad_class() {
 #[test]
 fn verify_rejects_bad_machine() {
     // 0x03 (i386) 不在白名单
-    let elf = make_elf(0x03, 2, 0, 64, core::mem::size_of::<Elf64Phdr>() as u16);
+    let elf = make_elf(
+        0x03,
+        2,
+        0,
+        64,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
+    );
     // SAFETY: elf 是完整 host Vec
     assert_eq!(
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
@@ -218,9 +225,9 @@ fn verify_rejects_too_many_phdr() {
     let elf = make_elf(
         EM_X86_64,
         2,
-        (MAX_PHDR_COUNT as u16) + 1,
+        u16::try_from(MAX_PHDR_COUNT).expect("测试值必须能无损收窄") + 1,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     // SAFETY: elf 是完整 host Vec
     assert_eq!(
@@ -233,19 +240,21 @@ fn verify_rejects_too_many_phdr() {
 fn verify_rejects_phdr_out_of_bounds() {
     // phoff=64, phnum=2, phentsize=56, total phdr = 112, 加上 header 64 = 176 总需求
     // 实际只给 100 字节 (header 64 + 36 phdr 字节), 不够 → OutOfBounds
-    let mut elf = vec![0u8; 100];
-    // SAFETY: 长度 ≥ header
-    let header = unsafe { &mut *(elf.as_mut_ptr() as *mut Elf64Header) };
+    let mut words = vec![0u64; 100usize.div_ceil(8)];
+    // SAFETY: words 为 8 字节对齐, 字节容量 ≥ header
+    let header = unsafe { &mut *words.as_mut_ptr().cast::<Elf64Header>() };
     header.ident[0..4].copy_from_slice(ELF_MAGIC);
     header.ident[4] = ELF_CLASS_64;
     header.ty = 2;
     header.machine = EM_X86_64;
     header.phoff = 64;
-    header.phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+    header.phentsize =
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄");
     header.phnum = 2;
-    // SAFETY: elf 是完整 host Vec
+    // SAFETY: words 前 100 字节为完整 host 缓冲
+    let elf = unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 100) };
     assert_eq!(
-        unsafe { call_verify_elf(&elf) }.unwrap_err(),
+        unsafe { call_verify_elf(elf) }.unwrap_err(),
         VerifyError::PhdrOutOfBounds
     );
 }
@@ -304,7 +313,7 @@ fn host_build_has_no_single_arch_expectation() {
         ET_DYN,
         0,
         64,
-        core::mem::size_of::<Elf64Phdr>() as u16,
+        u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     // SAFETY: elf 是完整 host Vec
     assert!(unsafe { call_verify_elf(&elf) }.is_ok());

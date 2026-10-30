@@ -1,13 +1,21 @@
 /// 字符串工具
+///
+/// `cmp` 按字典序比较两个字节串, 返回负 / 零 / 正.
+///
+/// # Panics
+///
+/// 任一入参长度超出 `i32` 时 panic —— 用户态命令行字符串远小于该上限.
+#[must_use]
 pub fn cmp(a: &[u8], b: &[u8]) -> i32 {
     let end = if a.len() < b.len() { a.len() } else { b.len() };
     for i in 0..end {
-        let d = a[i] as i32 - b[i] as i32;
+        let d = i32::from(a[i]) - i32::from(b[i]);
         if d != 0 {
             return d;
         }
     }
-    a.len() as i32 - b.len() as i32
+    i32::try_from(a.len()).expect("字符串长度超出 i32")
+        - i32::try_from(b.len()).expect("字符串长度超出 i32")
 }
 
 struct ParseBuf {
@@ -53,5 +61,5 @@ pub fn parse_args(line: &[u8]) -> (&'static [*const u8], usize) {
         parse.buf[out] = 0;
     }
     parse.ptrs[argc] = core::ptr::null();
-    (&parse.ptrs[..argc + 1], argc)
+    (&parse.ptrs[..=argc], argc)
 }

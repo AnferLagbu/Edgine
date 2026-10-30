@@ -191,7 +191,7 @@ fn blocking_and_dead_prev_deactivate_accounting() {
     );
 }
 
-/// IC2/IC4: pick_cfs_task 拣到不可调度节点必须摘除, 不得暂存放回.
+/// IC2/IC4: `pick_cfs_task` 拣到不可调度节点必须摘除, 不得暂存放回.
 #[test]
 fn pick_prunes_unschedulable_nodes() {
     let sched = read_src(SCHED);
@@ -280,7 +280,7 @@ fn queue_api_requires_accounting_credential() {
     );
 }
 
-/// 五条不变式必须有内核侧内联单测 (no_std + host 双跑, `make test-kernel-host`).
+/// 五条不变式必须有内核侧内联单测 (`no_std` + host 双跑, `make test-kernel-host`).
 #[test]
 fn cfs_invariant_unit_tests_present() {
     let cfs = read_src(CFS);

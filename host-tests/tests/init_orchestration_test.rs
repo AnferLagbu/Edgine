@@ -3,12 +3,12 @@
 //! 工程登记见 `docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-8 / P-12.
 //!
 //! 背景: `privileged/proc/sched_ops.rs` 里的 `#[unsafe(no_mangle)] pub extern "C"
-//! fn scheduler_init()` 挂着 10 项子系统 init (tick_query 注册 / cgroup / numa /
+//! fn scheduler_init()` 挂着 10 项子系统 init (`tick_query` 注册 / cgroup / numa /
 //! pm / sgeg / CET / tickless / timesync / kexec / uefi), 但全仓无任何调用者 ——
 //! 生产环境这 10 项初始化**从未执行**. 直接后果: NUMA 拓扑从未建立而
 //! `SYS_GETCPU`/`SYS_MBIND` 已接线; `tick_query` 未注册使 freg 的 `current_tick()`
-//! 恒返 0 (P-1); `sys_tickless` 未初始化即返错使 EG_TICKLESS/EG_CET/EG_TIMESYNC/
-//! EG_UEFI 四条 syscall 全线失效.
+//! 恒返 0 (P-1); `sys_tickless` 未初始化即返错使 `EG_TICKLESS/EG_CET/EG_TIMESYNC`/
+//! `EG_UEFI` 四条 syscall 全线失效.
 //!
 //! 收口后的形态 (本文件锁死):
 //!   1. `lib.rs::kernel_init` 有一段「延迟子系统编排」块, 按依赖序接线 10 项 init,
@@ -17,7 +17,7 @@
 //!      降为普通 Rust 机制函数;
 //!   3. unsafe 留在 privileged 机制侧 (`tick_query::install_builtin_tick_query`),
 //!      编排层 0 unsafe;
-//!   4. 5 个 functions 门面成为单一路径: EG_CET/EG_TICKLESS/EG_TIMESYNC/EG_UEFI
+//!   4. 5 个 functions 门面成为单一路径: `EG_CET/EG_TICKLESS/EG_TIMESYNC/EG_UEFI`
 //!      四臂已从 privileged 回退层迁入 functions dispatch, 门面 `*_syscall` 不再
 //!      是无人调用的死包裹;
 //!   5. `scripts/audit_orphaned_init.py` 已接入 `ci/audit.sh`, 且检测器本身有夹具
@@ -66,17 +66,17 @@ const FACADE_ONLY_MECHANISMS: &[&str] = &[
 ];
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 /// 剥掉整行注释, 只留实际生效的代码行.
 ///
-/// 必须剥: 本轮修复在 lib.rs / sched_ops.rs / tick_query.rs 留下大量动机注释,
+/// 必须剥: 本轮修复在 lib.rs / `sched_ops.rs` / `tick_query.rs` 留下大量动机注释,
 /// 其中逐字提到 `scheduler_init` / `start_interval` 等被断言的符号名. 不剥注释
 /// 的话, 本测试锁的就成了「注释里不许提旧事」, 而不是代码形态.
 fn code_lines(src: &str) -> Vec<String> {
     src.lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.starts_with("//") && !l.starts_with("///") && !l.starts_with("//!"))
         .filter(|l| !l.starts_with("/*") && !l.starts_with('*'))
         .map(String::from)
@@ -107,8 +107,8 @@ fn repo_root() -> PathBuf {
 
 /// 在临时目录里复刻 `<root>/scripts` + `<root>/src/kernel`, 跑审计脚本, 返回退出码.
 ///
-/// 审计脚本按自身文件位置推导 PROJECT_ROOT, 因此把脚本复制进临时 `scripts/`
-/// 就能让它在夹具目录上工作 (与 td25_comment_language_test.rs 同构).
+/// 审计脚本按自身文件位置推导 `PROJECT_ROOT`, 因此把脚本复制进临时 `scripts/`
+/// 就能让它在夹具目录上工作 (与 `td25_comment_language_test.rs` 同构).
 fn run_audit_on_fixture(files: &[(&str, &str)]) -> (i32, String) {
     let mut tmp = std::env::temp_dir();
     let uniq = format!(
@@ -116,8 +116,7 @@ fn run_audit_on_fixture(files: &[(&str, &str)]) -> (i32, String) {
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0)
+            .map_or(0, |d| d.subsec_nanos())
     );
     tmp.push(uniq);
     fs::create_dir_all(tmp.join("src/kernel")).expect("建夹具目录");
@@ -161,8 +160,8 @@ fn test_deferred_block_ordered_after_scheduler_before_timer_start() {
     // Generic Timer 一旦 start_interval, tick 路径即查 tickless 状态 ⇒ 编排必须更早.
     // 逐条校验 (而非只校首尾): 只校边界时, 把中间或首项单独移到 start_interval
     // 之后不会被发现 —— 负控制实测过这一点.
-    let lib = code_text(&read(KERNEL_LIB));
     const TIMER_START: &str = "crate::privileged::arch::aarch64::timer::start_interval(";
+    let lib = code_text(&read(KERNEL_LIB));
     for call in DEFERRED_INIT_CALLS {
         assert_before(
             &lib,
@@ -449,6 +448,11 @@ fn test_boot_path_wires_mm_ipc_strategy_proc_in_order() {
     // 4 项此前无生产调用点 (mm::init / ipc::init / ipc 策略注册 / proc::init),
     // 缺失后果各自不同: MM 策略停留 fallback、首次 pipe() 越界 panic、策略未注册
     // 降级 ENOSYS、信号与 coredump 策略从不注册.
+    const MM_INIT: &str = "crate::functions::mm::init();";
+    const IPC_INIT: &str = "crate::privileged::ipc::ipc_init();";
+    const IPC_STRATEGY: &str = "crate::functions::ipc::strategy::register_default_ipc_strategy()";
+    const PROC_INIT: &str = "crate::functions::proc::init();";
+
     let lib = code_text(&read(KERNEL_LIB));
     let gate = "#[cfg(not(any(feature = \"kernel_test\", feature = \"host-test\")))]";
     let gate_pos = lib
@@ -464,11 +468,6 @@ fn test_boot_path_wires_mm_ipc_strategy_proc_in_order() {
         "真机引导入口 kernel_init_boot 必须处于 host/kernel_test 门控之下"
     );
     let boot = &lib[boot_pos..];
-
-    const MM_INIT: &str = "crate::functions::mm::init();";
-    const IPC_INIT: &str = "crate::privileged::ipc::ipc_init();";
-    const IPC_STRATEGY: &str = "crate::functions::ipc::strategy::register_default_ipc_strategy()";
-    const PROC_INIT: &str = "crate::functions::proc::init();";
 
     assert_contains(boot, MM_INIT, "真机引导必须注册 functions MM 策略");
     assert_contains(boot, IPC_INIT, "真机引导必须初始化 IPC 机制槽位");

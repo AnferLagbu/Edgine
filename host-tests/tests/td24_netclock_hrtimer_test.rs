@@ -15,5 +15,5 @@
 //! 本地 `smoltcp_now` / `Instant` 镜像与全部决策用例已删除 (含
 //! `#![allow(dead_code)]`, F9 违规已消除).
 //! 该契约的真实覆盖由网络子系统集成测试 (host-tests net_*) 与 QEMU 集成测试承担.
-//! 待内核将 `smoltcp_now` 提炼为 pub 纯函数 (参数化 hrtimer_ns/tick_ms) 后可
+//! 待内核将 `smoltcp_now` 提炼为 pub 纯函数 (参数化 `hrtimer_ns/tick_ms`) 后可
 //! 恢复 host 侧验证 (记录待办).

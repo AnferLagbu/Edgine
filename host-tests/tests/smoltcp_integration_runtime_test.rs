@@ -1,11 +1,11 @@
-//! SmoltcpNetStack fd 生命周期追踪运行时测试
+//! `SmoltcpNetStack` fd 生命周期追踪运行时测试
 //!
 //! 验证:
-//! 1. active_fds 字段存在于 SmoltcpNetStack 结构体
-//! 2. is_active_fd 验证方法存在且正确
-//! 3. socket_create_fd 跟踪 fd 到 active_fds
-//! 4. close_fd 清理 active_fds
-//! 5. 所有 fd-based 方法 (bind_fd, listen_fd 等) 调用 is_active_fd 做前置校验
+//! 1. `active_fds` 字段存在于 `SmoltcpNetStack` 结构体
+//! 2. `is_active_fd` 验证方法存在且正确
+//! 3. `socket_create_fd` 跟踪 fd 到 `active_fds`
+//! 4. `close_fd` 清理 `active_fds`
+//! 5. 所有 fd-based 方法 (`bind_fd`, `listen_fd` 等) 调用 `is_active_fd` 做前置校验
 //! 6. 新增单元测试覆盖 fd 生命周期
 
 use std::fs;
@@ -100,7 +100,7 @@ fn test_socket_create_fd_takes_mut_self() {
         .find("fn socket_create_fd")
         .expect("应存在 socket_create_fd");
     let sig_end = src[idx..].find(')').expect("应有函数签名结束");
-    let sig = &src[idx..idx + sig_end + 1];
+    let sig = &src[idx..=(idx + sig_end)];
     assert!(
         sig.contains("&mut self"),
         "socket_create_fd 应接受 &mut self (需修改 active_fds)"
@@ -127,7 +127,7 @@ fn test_close_fd_takes_mut_self() {
     let src = read_src(SMOLTCP_IMPL_RS);
     let idx = src.find("pub fn close_fd").expect("应存在 close_fd");
     let sig_end = src[idx..].find(')').expect("应有函数签名结束");
-    let sig = &src[idx..idx + sig_end + 1];
+    let sig = &src[idx..=(idx + sig_end)];
     assert!(
         sig.contains("&mut self"),
         "close_fd 应接受 &mut self (需修改 active_fds)"
@@ -156,23 +156,21 @@ const FD_VALIDATED_METHODS: &[&str] = &[
 fn test_all_fd_based_methods_have_validation() {
     let src = read_src(SMOLTCP_IMPL_RS);
     for method in FD_VALIDATED_METHODS {
-        let sig = format!("pub fn {}(", method);
+        let sig = format!("pub fn {method}(");
         let idx = src
             .find(&sig)
-            .unwrap_or_else(|| panic!("应存在 {} 方法", method));
+            .unwrap_or_else(|| panic!("应存在 {method} 方法"));
         // 取函数体直到下一个 pub fn, 检查 is_active_fd 调用
         let rest = &src[idx..];
         let end = rest.find("\npub fn ").unwrap_or(rest.len());
         let body = &rest[..end];
         assert!(
             body.contains("self.is_active_fd(fd)"),
-            "{} 方法应调用 self.is_active_fd(fd) 做前置校验",
-            method
+            "{method} 方法应调用 self.is_active_fd(fd) 做前置校验"
         );
         assert!(
             body.contains("NetError::InvalidHandle"),
-            "{} 方法校验失败应返回 NetError::InvalidHandle",
-            method
+            "{method} 方法校验失败应返回 NetError::InvalidHandle"
         );
     }
 }
@@ -260,7 +258,6 @@ fn test_fd_lifecycle_unit_tests_present() {
     let found = fd_tests.iter().filter(|t| src.contains(*t)).count();
     assert!(
         found >= 3,
-        "smoltcp_impl.rs 应有至少 3 个 fd 生命周期单元测试, 实测: {}",
-        found
+        "smoltcp_impl.rs 应有至少 3 个 fd 生命周期单元测试, 实测: {found}"
     );
 }

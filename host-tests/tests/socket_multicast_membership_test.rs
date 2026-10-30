@@ -8,10 +8,10 @@
 //! 2. 组表容量与 `Cargo.toml` 的 smoltcp feature 一致 (容量漂移会静默丢组)
 //! 3. smoltcp `multicast` feature 已启用 (整模块受该 feature 门控, 未启用时
 //!    `join/leave_multicast_group` 根本不存在 —— D11 曾长期误判为已实装)
-//! 4. sockopt 常量为 Linux/IANA 值域 (edgine-abi 单源, 锁位在 abi_socket_constants_test)
+//! 4. sockopt 常量为 Linux/IANA 值域 (edgine-abi 单源, 锁位在 `abi_socket_constants_test`)
 //! 5. `sm_setsockopt` 已把四个组播选项路由到 `mc_membership`
 //! 6. `mc_membership` 的 iface/簿记次序铁律 (join 失败回滚 / leave 先簿记后拆)
-//! 7. `sm_close` 拆组的"先取址后 force_leave"顺序 (倒转会静默丢订阅)
+//! 7. `sm_close` 拆组的"先取址后 `force_leave"顺序` (倒转会静默丢订阅)
 //! 8. syscall 层 copy-in 容量足以承载 `struct ipv6_mreq` (20 字节)
 
 use std::fs;

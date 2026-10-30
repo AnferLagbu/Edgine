@@ -20,7 +20,7 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
 /// 合并读取 init.rs 与 init/raw.rs 源码 (slab 缓冲逻辑所在位置).
@@ -38,8 +38,7 @@ fn test_buf_access_through_raw_module() {
     for accessor in &["tcp_rx_buf", "tcp_tx_buf", "udp_rx_buf", "udp_tx_buf"] {
         assert!(
             src.contains(accessor),
-            "TD-07: raw 模块必须提供 {} accessor",
-            accessor
+            "TD-07: raw 模块必须提供 {accessor} accessor"
         );
     }
 }

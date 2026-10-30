@@ -18,14 +18,12 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
-/// 截取函数体, 范围: 从 fn 签名到下一个 #[no_mangle] fn / pub fn / 下一个大段注释
+/// 截取函数体, 范围: 从 fn 签名到下一个 #[`no_mangle`] fn / pub fn / 下一个大段注释
 fn extract_body(src: &str, sig: &str) -> String {
-    let start = src
-        .find(sig)
-        .unwrap_or_else(|| panic!("找不到签名: {}", sig));
+    let start = src.find(sig).unwrap_or_else(|| panic!("找不到签名: {sig}"));
     let after = &src[start..];
     let candidates = [
         "\n#[no_mangle]\npub fn ",
@@ -48,8 +46,7 @@ fn test_efd_close_pwake_after_drop_lock() {
     let body = extract_body(&src, "pub fn sys_eventfd_close(");
     assert!(
         body.contains("epoll_pwake"),
-        "TD-04: EFD sys_eventfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}",
-        body
+        "TD-04: EFD sys_eventfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{body}"
     );
     // drop(table) 必须在 epoll_pwake 之前
     let drop_idx = body
@@ -73,8 +70,7 @@ fn test_sfd_close_pwake_after_drop_lock() {
     let body = extract_body(&src, "pub fn sys_signalfd_close(");
     assert!(
         body.contains("epoll_pwake"),
-        "TD-04: SFD sys_signalfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{}",
-        body
+        "TD-04: SFD sys_signalfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{body}"
     );
     let drop_idx = body
         .find("drop(table);")

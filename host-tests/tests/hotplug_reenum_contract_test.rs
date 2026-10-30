@@ -48,7 +48,7 @@ impl MockBlk {
 
 impl BlockDevice for MockBlk {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
-        let idx = sector as usize;
+        let idx = usize::try_from(sector).expect("测试值必须能无损收窄");
         if idx >= self.storage.len() {
             return FwError::Io.as_i32();
         }
@@ -57,7 +57,7 @@ impl BlockDevice for MockBlk {
     }
 
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
-        let idx = sector as usize;
+        let idx = usize::try_from(sector).expect("测试值必须能无损收窄");
         if idx >= self.storage.len() {
             return FwError::Io.as_i32();
         }
@@ -81,10 +81,12 @@ fn egdf_block_tombstone_keeps_index_stable() {
 
     // 交错注册: blk0(0), char(1), blk1(2) — 中间夹一个非块设备
     let dev0: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d0 = egdf_register_block_dev("hp_blk0", None, None, dev0) as u8;
+    let d0 = u8::try_from(egdf_register_block_dev("hp_blk0", None, None, dev0))
+        .expect("测试值必须能无损收窄");
     register("hp_char", Proto::Char, core::ptr::null_mut()).expect("注册字符设备失败");
     let dev1: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d1 = egdf_register_block_dev("hp_blk1", None, None, dev1) as u8;
+    let d1 = u8::try_from(egdf_register_block_dev("hp_blk1", None, None, dev1))
+        .expect("测试值必须能无损收窄");
     assert_eq!((d0, d1), (0, 2), "块设备索引应与交错注册顺序一致");
     assert_eq!(
         egdf_blk_drives(),
@@ -132,7 +134,8 @@ fn egdf_block_tombstone_keeps_index_stable() {
 
     // 新设备追加到表尾, 不回收墓碑槽位 (索引单调递增, 保证旧句柄不指向新设备)
     let dev2: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(4)));
-    let d2 = egdf_register_block_dev("hp_blk2", None, None, dev2) as u8;
+    let d2 = u8::try_from(egdf_register_block_dev("hp_blk2", None, None, dev2))
+        .expect("测试值必须能无损收窄");
     assert_eq!(d2, 3, "新设备应追加到表尾, 不覆盖墓碑槽位");
 
     EGDF_DEVICES.lock().clear();

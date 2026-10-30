@@ -2,14 +2,14 @@
 //!
 //! H-04 (2026-09-09): 删除 `host-tests/src/buddy.rs` 平行实现 (436 行, 含 F9
 //! `#![allow(dead_code)]`), 改引内核真实 `privileged::mm::pmm` 的 buddy 机制 —
-//! 经 `MetaStore` 载体注入 `VecMetaStore` (Vec<u8> 堆后端), init_bitmap 与
+//! 经 `MetaStore` 载体注入 `VecMetaStore` (Vec<u8> 堆后端), `init_bitmap` 与
 //! 全部 buddy 算法仅一份代码, 无测试/生产分叉 (B08-12 路线 C 核心).
 //!
 //! 覆盖 (映射原 buddy.rs 单测语义到公共 API, 不测内部实现):
 //! 1. 分配/释放往返: alloc 后 free, 再 alloc 成功 (页回到池)
-//! 2. 内核保留区防护: 分配不得落入 [0, KERNEL_END) 内核保留区
+//! 2. 内核保留区防护: 分配不得落入 [0, `KERNEL_END`) 内核保留区
 //! 3. buddy 合并: order-9 块 free 后再分配同大小块成功 (验证合并正确)
-//! 4. reserve_after_kernel: init_bitmap 预留区不可被分配
+//! 4. `reserve_after_kernel`: `init_bitmap` 预留区不可被分配
 //! 5. 帧持有计数语义 (cr3 所有权, `docs/plan/cr3-lifetime-ownership.md` §3.1/§5.6):
 //!    alloc 置 1、inc/dec 配对、归零恰好一次、未归零不归还、未计数帧拒绝登记、
 //!    `should_reuse` 判据边界 (§8.1)、pfn 越界 fail-closed (MMIO 地址)
@@ -21,12 +21,12 @@ use edgine::kernel::privileged::mm::{PAGE_SIZE, PhysAddr};
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
 const MEM_SIZE: u64 = 64 * 1024 * 1024;
-/// 模拟内核镜像末尾 16MB (init_bitmap 前的内核保留区)
+/// 模拟内核镜像末尾 16MB (`init_bitmap` 前的内核保留区)
 const KERNEL_END: u64 = 16 * 1024 * 1024;
-/// order-9 块 = 512 页 = 2MB (MAX_BUDDY_ORDER = 9)
+/// order-9 块 = 512 页 = 2MB (`MAX_BUDDY_ORDER` = 9)
 const ORDER9_PAGES: usize = 1 << 9;
 
-/// 构造已注入 VecMetaStore 且完成 init + init_bitmap 的 PMM 实例
+/// 构造已注入 `VecMetaStore` 且完成 init + `init_bitmap` 的 PMM 实例
 fn setup_pmm(reserve_after_kernel: u64) -> PhysicalMemoryManager {
     let pmm = PhysicalMemoryManager::new();
     // H-04: 注入 Vec<u8> 载体 — init_bitmap 经同一份 MetaStore 接口建立三区
@@ -230,7 +230,7 @@ fn pmm_find_contig_range_scan_and_reject() {
     let pmm = setup_pmm(0);
     // 单页请求: 命中内核保留区之上的空闲页, 基址页对齐
     let base = pmm
-        .find_contig_range(PAGE_SIZE as usize)
+        .find_contig_range(usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄"))
         .expect("应存在空闲页");
     assert!(base.0 >= KERNEL_END, "不得返回内核保留区内的地址");
     assert_eq!(base.0 % PAGE_SIZE, 0, "返回基址必须页对齐");
@@ -242,12 +242,14 @@ fn pmm_find_contig_range_scan_and_reject() {
     // size==0 / 非页对齐: 契约直接拒绝
     assert!(pmm.find_contig_range(0).is_none(), "size==0 不得返回范围");
     assert!(
-        pmm.find_contig_range(PAGE_SIZE as usize + 1).is_none(),
+        pmm.find_contig_range(usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄") + 1)
+            .is_none(),
         "非页对齐 size 不得返回范围"
     );
     // 超出总空闲 (请求整个物理内存): 内核区 + 元数据区已占用, 必无解
     assert!(
-        pmm.find_contig_range(MEM_SIZE as usize).is_none(),
+        pmm.find_contig_range(usize::try_from(MEM_SIZE).expect("测试值必须能无损收窄"))
+            .is_none(),
         "请求超过总空闲内存应返回 None"
     );
 }
@@ -267,28 +269,43 @@ fn pmm_reserve_range_rejects_overlap_and_misuse() {
     // 重叠拒绝: 预留已分配页
     let a = pmm.alloc_page().expect("应可分配一页");
     assert!(
-        pmm.reserve_range(a, PAGE_SIZE as usize).is_err(),
+        pmm.reserve_range(a, usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄"))
+            .is_err(),
         "预留已分配页应被拒绝"
     );
     // 重叠拒绝: 预留内核保留区
     assert!(
-        pmm.reserve_range(PhysAddr(0), PAGE_SIZE as usize).is_err(),
+        pmm.reserve_range(
+            PhysAddr(0),
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄")
+        )
+        .is_err(),
         "预留内核保留区应被拒绝"
     );
     // 契约校验: size==0 / base 未页对齐 / size 非页对齐 / 越界
     assert!(pmm.reserve_range(base, 0).is_err(), "size==0 应被拒绝");
     assert!(
-        pmm.reserve_range(PhysAddr(base.0 + 1), PAGE_SIZE as usize)
-            .is_err(),
+        pmm.reserve_range(
+            PhysAddr(base.0 + 1),
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄")
+        )
+        .is_err(),
         "base 未页对齐应被拒绝"
     );
     assert!(
-        pmm.reserve_range(base, PAGE_SIZE as usize + 1).is_err(),
+        pmm.reserve_range(
+            base,
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄") + 1
+        )
+        .is_err(),
         "size 非页对齐应被拒绝"
     );
     assert!(
-        pmm.reserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize)
-            .is_err(),
+        pmm.reserve_range(
+            PhysAddr(MEM_SIZE),
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄")
+        )
+        .is_err(),
         "越界范围应被拒绝"
     );
     // 收尾: 释放分配页并回滚预留
@@ -317,16 +334,23 @@ fn pmm_unreserve_range_rolls_back() {
     );
     // 对从未预留的空闲范围回滚: 同样拒绝
     let free_base = pmm
-        .find_contig_range(PAGE_SIZE as usize)
+        .find_contig_range(usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄"))
         .expect("应存在空闲页");
     assert!(
-        pmm.unreserve_range(free_base, PAGE_SIZE as usize).is_err(),
+        pmm.unreserve_range(
+            free_base,
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄")
+        )
+        .is_err(),
         "对空闲页回滚应被拒绝"
     );
     // 契约校验: 越界
     assert!(
-        pmm.unreserve_range(PhysAddr(MEM_SIZE), PAGE_SIZE as usize)
-            .is_err(),
+        pmm.unreserve_range(
+            PhysAddr(MEM_SIZE),
+            usize::try_from(PAGE_SIZE).expect("测试值必须能无损收窄")
+        )
+        .is_err(),
         "越界回滚应被拒绝"
     );
 }

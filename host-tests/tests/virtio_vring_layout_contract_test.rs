@@ -5,11 +5,11 @@
 //!
 //! ## 背景
 //!
-//! QEMU virt 上 virtio-net 以 legacy 传输 (Version=1) 呈现, 设备端无 QueueNum
+//! QEMU virt 上 virtio-net 以 legacy 传输 (Version=1) 呈现, 设备端无 `QueueNum`
 //! 协商、按 realize 固定 num=1024 推算三段布局 (avail@desc+0x4000 /
-//! used@desc+0x5000 页对齐). 旧驱动按编译期 VQ_SIZE=32 布置 → 设备读到分配区外
+//! used@desc+0x5000 页对齐). 旧驱动按编译期 `VQ_SIZE=32` 布置 → 设备读到分配区外
 //! 恒 0 的 avail.idx → 永不回写 used → 首包即 TX 超时. 连带修正 modern 路径
-//! 接线 bug (QueueNum 0x038 从未写入; QueueReady 0x044 必须用规范偏移).
+//! 接线 bug (`QueueNum` 0x038 从未写入; `QueueReady` 0x044 必须用规范偏移).
 //!
 //! ## 防护两层
 //!

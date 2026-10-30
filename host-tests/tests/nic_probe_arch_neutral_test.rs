@@ -6,9 +6,9 @@
 //!
 //! 通过源码分析防止后续重构重新引入:
 //!   `#[cfg(target_arch = "x86_64")]` / `#[cfg(target_arch = "aarch64")]`
-//!   在 nic_probe_all 函数体内出现 (这会破坏"一个二进制可在双架构运行").
+//!   在 `nic_probe_all` 函数体内出现 (这会破坏"一个二进制可在双架构运行").
 //!
-//! B04-09 优化拆分 (2026-08-25): nic_probe_all 随设备探测逻辑移至
+//! B04-09 优化拆分 (2026-08-25): `nic_probe_all` 随设备探测逻辑移至
 //! `src/kernel/privileged/net/init/probe.rs`, 契约扫描路径同步更新.
 
 use std::fs;
@@ -52,9 +52,8 @@ fn test_nic_probe_all_no_arch_mutex() {
     for pat in &forbidden {
         assert!(
             !body.contains(pat),
-            "nic_probe_all 出现 {} — I-53 要求双架构二进制包含全部驱动, \
-             探测顺序应在运行时决定, 不应在编译时互斥",
-            pat
+            "nic_probe_all 出现 {pat} — I-53 要求双架构二进制包含全部驱动, \
+             探测顺序应在运行时决定, 不应在编译时互斥"
         );
     }
 
@@ -110,8 +109,7 @@ fn test_e1000_driver_no_arch_probe_mutex() {
         for pat in &forbidden {
             assert!(
                 !body.contains(pat),
-                "e1000_probe 出现 {} — I-53 探测入口必须架构无关",
-                pat
+                "e1000_probe 出现 {pat} — I-53 探测入口必须架构无关"
             );
         }
     }

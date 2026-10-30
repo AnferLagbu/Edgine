@@ -5,9 +5,9 @@
 //! - lowerdir 只读直通 (`OverlayLowerInode`, 写操作显式 `ReadOnlyFilesystem`)
 //! - 写意图 open 触发 `copy_up` (下层文件提升到 upperdir, 下层原文不动)
 //! - lower-only 文件 unlink 生成 whiteout 遮蔽下层
-//! - copy_up 后 unlink 补 whiteout 回归 (修复前会重新暴露下层同名副本)
-//! - `fs_utimensat` / `set_times` 时间戳写回 (upper 节点, 含 UTIME_OMIT 与属主判据)
-//! - `fs_utimensat` 层级路由 (lower-only 拒改 / whiteout / 不存在 → FileNotFound)
+//! - `copy_up` 后 unlink 补 whiteout 回归 (修复前会重新暴露下层同名副本)
+//! - `fs_utimensat` / `set_times` 时间戳写回 (upper 节点, 含 `UTIME_OMIT` 与属主判据)
+//! - `fs_utimensat` 层级路由 (lower-only 拒改 / whiteout / 不存在 → `FileNotFound`)
 //!
 //! ## 测试台搭建
 //! 本文件作为独立测试二进制运行, 其全局单例 (`VFS_MANAGER` / `RAMFS_DATA`
@@ -30,7 +30,7 @@ const PWM: u64 = 0;
 
 /// Linux `O_RDONLY` — 不命中写意图掩码, 只读直通下层
 const O_RDONLY: u32 = 0o0;
-/// Linux `O_WRONLY` — 命中写意图掩码, 触发 copy_up
+/// Linux `O_WRONLY` — 命中写意图掩码, 触发 `copy_up`
 const O_WRONLY: u32 = 0o1;
 
 /// 各 `#[test]` 共享全局单例 (VFS 挂载表 / overlay upper 层), 需串行化.
@@ -55,7 +55,7 @@ fn ensure_overlay_ready() {
     });
 }
 
-/// 取 lowerdir 挂载的 ramfs FileSystem (用于预置下层数据 / 校验下层残留).
+/// 取 lowerdir 挂载的 ramfs `FileSystem` (用于预置下层数据 / 校验下层残留).
 fn lower_ramfs() -> &'static dyn FileSystem {
     let (_, _, fs) = VFS_MANAGER
         .resolve_mount_fs("/lower/probe")
@@ -114,7 +114,7 @@ fn overlay_lower_readonly_passthrough() {
     );
 }
 
-/// 写意图 open 触发 copy_up: 内容提升到 upperdir, 下层原文保持不变.
+/// 写意图 open 触发 `copy_up`: 内容提升到 upperdir, 下层原文保持不变.
 #[test]
 fn overlay_write_open_triggers_copy_up() {
     let _guard = OVERLAY_TEST_LOCK.lock().unwrap();
@@ -196,7 +196,7 @@ fn overlay_lower_only_unlink_creates_whiteout() {
     );
 }
 
-/// 回归: copy_up 后 unlink 必须补 whiteout, 否则 merged 视图重新暴露下层同名副本.
+/// 回归: `copy_up` 后 unlink 必须补 whiteout, 否则 merged 视图重新暴露下层同名副本.
 ///
 /// 修复前 upper 删除后下层同名文件会再次命中, 本用例断言删除后仍不可见.
 #[test]
@@ -242,9 +242,13 @@ fn overlay_unlink_after_copy_up_masks_lower() {
 }
 
 /// 时间戳写回: `fs_utimensat` / inode `set_times` 更新 upper 节点, `fs_stat` 可观测;
-/// 含 UTIME_OMIT (`u64::MAX`) 语义与属主/特权判据 (非属主且无特权 → PermissionDenied).
+/// 含 `UTIME_OMIT` (`u64::MAX`) 语义与属主/特权判据 (非属主且无特权 → `PermissionDenied`).
 #[test]
 fn overlay_utimensat_writes_times_with_owner_check() {
+    const ATIME: u64 = 1000;
+    const MTIME: u64 = 2000;
+    const OTHER_PWM: u64 = 42;
+
     let _guard = OVERLAY_TEST_LOCK.lock().unwrap();
     ensure_overlay_ready();
 
@@ -259,8 +263,6 @@ fn overlay_utimensat_writes_times_with_owner_check() {
     inode.write(0, b"times-content", PWM).expect("写入失败");
 
     // 1. 路径级 fs_utimensat: 非 OMIT 字段更新, fs_stat 可观测
-    const ATIME: u64 = 1000;
-    const MTIME: u64 = 2000;
     overlay
         .fs_utimensat(&path, ATIME, MTIME, PWM)
         .expect("属主 utimensat 应成功");
@@ -285,7 +287,6 @@ fn overlay_utimensat_writes_times_with_owner_check() {
     assert_eq!(st.mtime, MTIME + 10, "inode 级 set_times 应写回 mtime");
 
     // 4. 属主判据: 未注册非零 pwm (特权级 0xFF, fail-closed) 改他人文件时间戳被拒
-    const OTHER_PWM: u64 = 42;
     assert_eq!(
         overlay
             .fs_utimensat(&path, ATIME + 1, MTIME + 1, OTHER_PWM)
@@ -300,7 +301,7 @@ fn overlay_utimensat_writes_times_with_owner_check() {
 }
 
 /// `fs_utimensat` 层级路由: lower-only 文件只读拒改, whiteout / 不存在路径报
-/// FileNotFound.
+/// `FileNotFound`.
 #[test]
 fn overlay_utimensat_layer_routing() {
     let _guard = OVERLAY_TEST_LOCK.lock().unwrap();

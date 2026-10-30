@@ -42,6 +42,7 @@ struct FileData {
 /// 集成测试是两个进程, 且同一仓库可能被多个会话并行运行 —— 一旦共用目录, 后续
 /// 运行的"空目录"初始假设即与实际内容冲突, 触发数据完整性假失败 (实测见
 /// `docs/plan/archive/host-tests-fsx-tmp-isolation.md`)。进程 ID 后缀保证每个进程独占目录。
+#[must_use]
 pub fn isolated_test_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("edgine-fsx-{}-{}", name, std::process::id()))
 }
@@ -96,7 +97,7 @@ impl Rng {
     }
 
     fn next_range(&mut self, max: usize) -> usize {
-        (self.next() as usize) % max
+        usize::try_from(self.next()).expect("测试值必须能无损收窄") % max
     }
 }
 
@@ -114,6 +115,7 @@ pub struct FsxFs {
 }
 
 impl FsxFs {
+    #[must_use]
     pub fn new(config: FsxConfig) -> Self {
         let rng = Rng::new(config.seed);
         Self {
@@ -127,17 +129,20 @@ impl FsxFs {
     }
 
     /// 运行 fsx 测试
+    ///
+    /// # Errors
+    ///
+    /// 测试目录创建失败时返回带错误信息的 `String`.
     pub fn run(&mut self) -> Result<Stats, String> {
         // 先清空测试目录: 上一次异常中断 (超时被杀 / 断言失败) 留下的残留文件会与
         // 本次运行的"空目录"初始假设冲突
         let _ = fs::remove_dir_all(&self.config.test_dir);
         // 创建测试目录
-        fs::create_dir_all(&self.config.test_dir)
-            .map_err(|e| format!("创建测试目录失败: {}", e))?;
+        fs::create_dir_all(&self.config.test_dir).map_err(|e| format!("创建测试目录失败: {e}"))?;
 
         if self.config.verbose {
             println!("fsx: 开始测试, 操作次数: {}", self.config.num_operations);
-            println!("fsx: 测试目录: {:?}", self.config.test_dir);
+            println!("fsx: 测试目录: {}", self.config.test_dir.display());
         }
 
         for op_num in 0..self.config.num_operations {
@@ -182,10 +187,12 @@ impl FsxFs {
 
         // 生成随机内容
         let size = self.rng.next_range(self.config.max_file_size) + 1;
-        let content: Vec<u8> = (0..size).map(|_| self.rng.next() as u8).collect();
+        let content: Vec<u8> = (0..size)
+            .map(|_| u8::try_from(self.rng.next() & 0xFF).expect("掩码后必在 u8 范围"))
+            .collect();
 
         match fs::write(&filepath, &content) {
-            Ok(_) => {
+            Ok(()) => {
                 self.files.insert(filename.clone(), FileData { content });
                 self.active_files.push(filename);
                 self.stats.creates += 1;
@@ -208,10 +215,12 @@ impl FsxFs {
 
         // 生成新的随机内容 (完全覆盖)
         let size = self.rng.next_range(self.config.max_file_size) + 1;
-        let content: Vec<u8> = (0..size).map(|_| self.rng.next() as u8).collect();
+        let content: Vec<u8> = (0..size)
+            .map(|_| u8::try_from(self.rng.next() & 0xFF).expect("掩码后必在 u8 范围"))
+            .collect();
 
         match fs::write(&filepath, &content) {
-            Ok(_) => {
+            Ok(()) => {
                 if let Some(data) = self.files.get_mut(filename) {
                     data.content = content;
                 }
@@ -276,7 +285,7 @@ impl FsxFs {
         match fs::OpenOptions::new().write(true).open(&filepath) {
             Ok(file) => {
                 match file.set_len(new_size as u64) {
-                    Ok(_) => {
+                    Ok(()) => {
                         // 更新跟踪的内容
                         if let Some(data) = self.files.get_mut(filename) {
                             data.content.resize(new_size, 0);
@@ -305,7 +314,7 @@ impl FsxFs {
         let filepath = self.config.test_dir.join(&filename);
 
         match fs::remove_file(&filepath) {
-            Ok(_) => {
+            Ok(()) => {
                 self.files.remove(&filename);
                 self.stats.deletes += 1;
             }
@@ -329,7 +338,7 @@ impl FsxFs {
         let new_path = self.config.test_dir.join(&new_filename);
 
         match fs::rename(&old_path, &new_path) {
-            Ok(_) => {
+            Ok(()) => {
                 if let Some(data) = self.files.remove(&old_filename) {
                     self.files.insert(new_filename.clone(), data);
                     self.active_files[idx] = new_filename;
@@ -370,8 +379,8 @@ mod tests {
         let mut fsx = FsxFs::new(config);
         let stats = fsx.run().unwrap();
 
-        println!("fsx basic test stats: {:?}", stats);
-        assert!(stats.errors == 0, "fsx 测试出现错误: {:?}", stats);
+        println!("fsx basic test stats: {stats:?}");
+        assert!(stats.errors == 0, "fsx 测试出现错误: {stats:?}");
     }
 
     #[test]
@@ -388,7 +397,7 @@ mod tests {
         let mut fsx = FsxFs::new(config);
         let stats = fsx.run().unwrap();
 
-        println!("fsx stress test stats: {:?}", stats);
-        assert!(stats.errors == 0, "fsx 压力测试出现错误: {:?}", stats);
+        println!("fsx stress test stats: {stats:?}");
+        assert!(stats.errors == 0, "fsx 压力测试出现错误: {stats:?}");
     }
 }

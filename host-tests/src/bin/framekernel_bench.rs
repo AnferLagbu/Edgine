@@ -15,6 +15,6 @@ use edgine_host_tests::framekernel_bench;
 fn main() -> ExitCode {
     let report = framekernel_bench::run_all();
     let json = serde_json::to_string(&report).expect("serialize");
-    println!("{}", json);
+    println!("{json}");
     ExitCode::SUCCESS
 }

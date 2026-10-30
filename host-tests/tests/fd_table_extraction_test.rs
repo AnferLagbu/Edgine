@@ -1,18 +1,18 @@
-//! FdTable 归属契约测试 (P1-I-01 → DECISION-J 反转)
+//! `FdTable` 归属契约测试 (P1-I-01 → DECISION-J 反转)
 //!
-//! 历史: P1-I-01 (2026-06-16) 将 FdTable 从 privileged/proc/process.rs 提取
+//! 历史: P1-I-01 (2026-06-16) 将 `FdTable` 从 privileged/proc/process.rs 提取
 //! 到 functions/proc/fd_table.rs。DECISION-J (2026-09-13) 按"机制持有的
-//! 数据结构归 privileged"统一判据反转迁回 — FdTable 是 Process 结构体字段
+//! 数据结构归 privileged"统一判据反转迁回 — `FdTable` 是 Process 结构体字段
 //! (privileged 进程机制状态)。
 //!
 //! 静态契约 (反转后口径):
-//! 1. FdTable 类型定义必须位于 privileged/proc/fd_table.rs
-//! 2. privileged/proc/fd_table.rs 必须 `#![deny(unsafe_code)]`
+//! 1. `FdTable` 类型定义必须位于 `privileged/proc/fd_table.rs`
+//! 2. `privileged/proc/fd_table.rs` 必须 `#![deny(unsafe_code)]`
 //! 3. functions 侧为纯 re-export 代理壳, 不重复定义
 //! 4. privileged/proc/process.rs 引 privileged 本地路径
-//! 5. 核心 API 一致: alloc_fd / get_global_fd / close_fd
+//! 5. 核心 API 一致: `alloc_fd` / `get_global_fd` / `close_fd`
 //!
-//! 主机端测试: 模拟 FdTable 行为 (从源码扫描确认, 不直接执行内核代码).
+//! 主机端测试: 模拟 `FdTable` 行为 (从源码扫描确认, 不直接执行内核代码).
 
 use std::fs;
 
@@ -90,8 +90,7 @@ fn privileged_process_re_exports_fd_table_locally() {
     let struct_count = src.matches("pub struct FdTable").count();
     assert_eq!(
         struct_count, 0,
-        "DECISION-J: privileged/proc/process.rs 不应定义 struct FdTable, 重复 {} 次",
-        struct_count
+        "DECISION-J: privileged/proc/process.rs 不应定义 struct FdTable, 重复 {struct_count} 次"
     );
 }
 

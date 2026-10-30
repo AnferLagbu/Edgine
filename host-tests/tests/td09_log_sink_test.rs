@@ -234,7 +234,7 @@ fn test_klog_line_is_emitted_atomically_across_cpus() {
 #[test]
 fn test_negative_control_log_atomicity_predicates() {
     // 回退样本一: 旧形态 (多片段广播 + 裸 cli, 无跨核锁) —— 谓词都该亮起
-    let legacy = r#"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
+    let legacy = r"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
     let saved_if = crate::arch!(interrupt_disable());
     klog_broadcast_bytes(ts);
     klog_broadcast_bytes(level.prefix());
@@ -243,7 +243,7 @@ fn test_negative_control_log_atomicity_predicates() {
     let ring = unsafe { &mut *RING.inner.get() };
     ring.push_str(msg);
 }
-"#;
+";
     let legacy = code_only(legacy);
     assert_eq!(broadcast_calls(&legacy), 3, "样本应被识别为多片段广播");
     assert!(
@@ -260,14 +260,14 @@ fn test_negative_control_log_atomicity_predicates() {
     );
 
     // 回退样本二: 加了锁但锁在写出之后 (交错窗口仍在)
-    let late_lock = r#"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
+    let late_lock = r"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
     klog_broadcast_bytes(msg);
     let _emit = LOG_EMIT_LOCK.lock();
     let ring = unsafe { &mut *RING.inner.get() };
     ring.push_str(msg);
     drop(_emit);
 }
-"#;
+";
     let late_lock = code_only(late_lock);
     assert!(
         !holds_emit_lock_before_broadcast(&late_lock),
@@ -279,12 +279,12 @@ fn test_negative_control_log_atomicity_predicates() {
     );
 
     // 回退样本三: 单次广播但仍靠裸 cli (跨核无效)
-    let bare_cli = r#"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
+    let bare_cli = r"fn klog_output_baremetal(level: LogLevel, cat: LogCategory, msg: &[u8]) {
     let saved_if = crate::arch!(interrupt_disable());
     klog_broadcast_bytes(msg);
     crate::arch!(interrupt_restore(saved_if));
 }
-"#;
+";
     let bare_cli = code_only(bare_cli);
     assert_eq!(broadcast_calls(&bare_cli), 1, "单片段不再能误判为已修复");
     assert!(

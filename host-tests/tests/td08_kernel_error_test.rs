@@ -18,7 +18,7 @@ const NET_SOCKET: &str = "../src/kernel/functions/net/socket.rs";
 const NET_UNIX: &str = "../src/kernel/functions/net/unix.rs";
 
 fn read(p: &str) -> String {
-    fs::read_to_string(p).unwrap_or_else(|e| panic!("read {}: {e}", p))
+    fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}"))
 }
 
 fn variant_count(enum_body: &str) -> usize {
@@ -96,7 +96,7 @@ fn test_unix_socket_error_has_at_most_2_variants() {
     // 提取 UnixSocketError enum 体
     let start = src.find("pub enum UnixSocketError").expect("enum 必须存在");
     let body_start = src[start..].find('{').unwrap() + start + 1;
-    let body_end = src[body_start..].find("}").unwrap() + body_start;
+    let body_end = src[body_start..].find('}').unwrap() + body_start;
     let body = &src[body_start..body_end];
     let count = variant_count(body);
     assert!(count <= 2, "UnixSocketError 字段数={count} > 2, 验收失败");
@@ -113,7 +113,7 @@ fn test_kernel_error_posix_round_trip() {
     let src = read(PRIVILEGED_ERROR);
     // 验证关键共享 errno 都已映射: 1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111
     for raw in [1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111] {
-        let needle = format!("{} => Self::", raw);
+        let needle = format!("{raw} => Self::");
         assert!(src.contains(&needle), "errno={raw} 必须在 from_i32 映射");
     }
 }
@@ -135,10 +135,9 @@ fn test_from_uds_error_covers_all_variants() {
         "NoSys",
     ] {
         assert!(
-            src.contains(&format!("fw::UdsError::{} =>", variant))
-                || src.contains(&format!("UdsError::{} =>", variant)),
-            "必须覆盖 UdsError::{}",
-            variant
+            src.contains(&format!("fw::UdsError::{variant} =>"))
+                || src.contains(&format!("UdsError::{variant} =>")),
+            "必须覆盖 UdsError::{variant}"
         );
     }
 }

@@ -13,8 +13,8 @@
 //! - `edgine::kernel::privileged::syscall::api::sys_sigaltstack` (pub fn)
 //!
 //! ## 因内核 host 不可测已移除
-//! `sys_sigaltstack` 的完整状态机 (SS_DISABLE 清 addr/size / 启用清 flags /
-//! old_ss 查询) 无法在 host 直接验证: 内核实现依赖
+//! `sys_sigaltstack` 的完整状态机 (`SS_DISABLE` 清 addr/size / 启用清 flags /
+//! `old_ss` 查询) 无法在 host 直接验证: 内核实现依赖
 //! `process_get_current_pid()` → `SCHEDULER.current()` (全局调度器每 CPU 当前 pid,
 //! host 下无法注入测试 pid 使 `process_with_mut` 命中测试进程). 对应用例
 //! (`query_only_no_change` / `set_then_query_returns_value` / `disable_clears_addr_size`
@@ -56,7 +56,6 @@ fn sigaltstack_no_current_process_returns_esrch() {
     let ret = sys_sigaltstack(0, 0);
     assert_eq!(
         ret, -3,
-        "host 无当前进程时 sys_sigaltstack 应返回 -ESRCH, 实际 = {}",
-        ret
+        "host 无当前进程时 sys_sigaltstack 应返回 -ESRCH, 实际 = {ret}"
     );
 }

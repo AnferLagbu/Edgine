@@ -1,16 +1,16 @@
 //! 防回归: 测试注册入口必须 init FS 全局单例
 //!
-//! 历史 bug (2026-06-25): test_runner_init 缺少 init_global 调用,
-//! 导致 DevFS::mount 测试 (测试 129/256) 触发
-//! "devfs::global() called before init_global()" panic, 测试卡死.
+//! 历史 bug (2026-06-25): `test_runner_init` 缺少 `init_global` 调用,
+//! 导致 `DevFS::mount` 测试 (测试 129/256) 触发
+//! "`devfs::global()` called before `init_global()`" panic, 测试卡死.
 //!
-//! 修复: test_runner_init 在 register_tests 之前调用:
-//! - crate::functions::fs::devfs::init_global()
-//! - crate::functions::fs::procfs::init_global()
+//! 修复: `test_runner_init` 在 `register_tests` 之前调用:
+//! - `crate::functions::fs::devfs::init_global()`
+//! - `crate::functions::fs::procfs::init_global()`
 //!
-//! E-04 (2026-09-06): 测试运行器双端适配 — 注册逻辑已从 test_runner_init 抽取至
-//! `register_all_tests()` (kernel_test 的 test_runner_init 与 host 入口
-//! host_test_runner_main 共用), 本文件扫描目标同步迁移至 register_all_tests.
+//! E-04 (2026-09-06): 测试运行器双端适配 — 注册逻辑已从 `test_runner_init` 抽取至
+//! `register_all_tests()` (`kernel_test` 的 `test_runner_init` 与 host 入口
+//! `host_test_runner_main` 共用), 本文件扫描目标同步迁移至 `register_all_tests`.
 //!
 //! P-71 (2026-10-26): 该 init 调用随跨层测试上移出 TCB — 扫描目标改为 glue crate
 //! 的 `kernel_tests::register_tests()` (privileged 已独立为 crate, 不可再反向依赖 functions).
@@ -22,8 +22,7 @@ use std::fs;
 const TESTS_MOD_PATH: &str = "../src/kernel/kernel_tests/mod.rs";
 
 fn read_source() -> String {
-    fs::read_to_string(TESTS_MOD_PATH)
-        .unwrap_or_else(|e| panic!("无法读取 {}: {}", TESTS_MOD_PATH, e))
+    fs::read_to_string(TESTS_MOD_PATH).unwrap_or_else(|e| panic!("无法读取 {TESTS_MOD_PATH}: {e}"))
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //!
 //! # 被锁死的六条不变式
 //!
-//! 1. **FRAME_OWNER 是 init_bitmap 的第 5 区并被位图预留**: 独立数组按 pfn 索引,
+//! 1. **`FRAME_OWNER` 是 `init_bitmap` 的第 5 区并被位图预留**: 独立数组按 pfn 索引,
 //!    每帧 16 字节 (分配点 + 最近归还点). 不复用 `buddy_meta` / `FREE_LINKS` ——
 //!    那两块的字节已被 buddy 阶数与空闲链关系占用; 未预留则所有权槽自身会被当
 //!    空闲页分配出去, 变成"元数据踩元数据".
@@ -141,7 +141,7 @@ fn count(hay: &str, needle: &str) -> usize {
 // 谓词 (可被负控制反向验证)
 // ============================================================================
 
-/// 不变式 1: init_bitmap 里 FRAME_OWNER 区完整建立 (尺寸推导 + 载体预置 + 位图预留).
+/// 不变式 1: `init_bitmap` 里 `FRAME_OWNER` 区完整建立 (尺寸推导 + 载体预置 + 位图预留).
 fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
     let need_all = [
         "total_pages*core::mem::size_of::<OwnerIndex>()",
@@ -153,7 +153,7 @@ fn has_frame_owner_region(init_bitmap_squashed: &str) -> bool {
     need_all.iter().all(|n| init_bitmap_squashed.contains(n))
 }
 
-/// 不变式 1 反面: FRAME_COUNTS 与 FRAME_OWNER 尺寸不同源 (手写常量必漂移).
+/// 不变式 1 反面: `FRAME_COUNTS` 与 `FRAME_OWNER` 尺寸不同源 (手写常量必漂移).
 fn frame_owner_size_is_derived(init_bitmap_squashed: &str) -> bool {
     init_bitmap_squashed
         .contains("owner_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE))")
@@ -177,7 +177,7 @@ fn count_alloc_attribution_sites(pmm_prod: &str) -> usize {
     count(pmm_prod, "self.note_frame_alloc(")
 }
 
-/// 不变式 2: 退役点归因必须挂在入链时刻 (defer_free), 不是只在 free_page.
+/// 不变式 2: 退役点归因必须挂在入链时刻 (`defer_free`), 不是只在 `free_page`.
 fn has_retire_attribution_at_enqueue(defer_free_body: &str) -> bool {
     defer_free_body.contains("note_frame_retired(") && defer_free_body.contains("BATCH_HEAD.store(")
 }

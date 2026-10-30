@@ -7,8 +7,8 @@
 //! - `edgine::kernel::privileged::mm::PageFlags` (bitflags, NX = 1<<63)
 //! - `edgine::kernel::privileged::mm::{Vma, VmaType}`
 //!
-//! ## 因内核 mm 层 host 不可测已移除 (handle_user_page_fault fallthrough)
-//! 原镜像的 fallthrough 决策测试 (no_vma_returns_sigsegv / guard_vma_returns_sigsegv /
+//! ## 因内核 mm 层 host 不可测已移除 (`handle_user_page_fault` fallthrough)
+//! 原镜像的 fallthrough 决策测试 (`no_vma_returns_sigsegv` / `guard_vma_returns_sigsegv` /
 //! `readonly_vma_write_triggers_cow` / `writable_vma_uses_vma_flags` / `decide_fallthrough`)
 //! 已移除: 内核 `handle_user_page_fault`/`handle_page_fault` 依赖
 //! `read_user_cr3_asm()` (链接 isr.asm 的 `USER_CR3_SAVE` 汇编符号, host 无此符号),
@@ -75,8 +75,9 @@ fn stack_region_detected() {
     // USER_STACK_DEFAULT_SIZE = 0x0080_0000 为 page_fault.rs 私有常量, 测试侧镜像.
     const USER_STACK_TOP: u64 = USER_ADDR_MAX;
     const USER_STACK_DEFAULT_SIZE: u64 = 0x0080_0000; // 与内核 page_fault.rs:67 同步
-    let inside = (USER_STACK_TOP - 4096) as usize;
-    let outside = (USER_STACK_TOP - USER_STACK_DEFAULT_SIZE - 4096) as usize;
+    let inside = usize::try_from(USER_STACK_TOP - 4096).expect("测试值必须能无损收窄");
+    let outside = usize::try_from(USER_STACK_TOP - USER_STACK_DEFAULT_SIZE - 4096)
+        .expect("测试值必须能无损收窄");
     assert!((USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(inside as u64)));
     assert!(
         !(USER_STACK_TOP - USER_STACK_DEFAULT_SIZE..USER_STACK_TOP).contains(&(outside as u64))

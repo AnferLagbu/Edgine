@@ -1,8 +1,11 @@
 #![no_std]
 #![no_main]
 
-use userlib::sys::*;
-use userlib::*;
+use userlib::sys::{
+    AF_INET, IPPROTO_TCP, InAddr, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, SockaddrIn, accept, bind,
+    close_socket, listen, proc_exit, recv, send, setsockopt, socket,
+};
+use userlib::{print, print_char, print_dec};
 
 const BUF_SIZE: usize = 2048;
 
@@ -12,7 +15,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     if let Some(loc) = info.location() {
         print(loc.file());
         print(":");
-        print_dec(loc.line() as i64);
+        print_dec(i64::from(loc.line()));
     }
     print("\n");
     proc_exit(1);
@@ -24,7 +27,7 @@ fn u16_to_be(val: u16) -> u16 {
 
 fn make_addr(port: u16) -> SockaddrIn {
     SockaddrIn {
-        sin_family: AF_INET as u16,
+        sin_family: u16::try_from(AF_INET).expect("AF_INET 超出 u16"),
         sin_port: u16_to_be(port),
         sin_addr: InAddr { s_addr: [0u8; 4] },
         sin_zero: [0u8; 8],
@@ -36,14 +39,14 @@ fn read_request(fd: i32, buf: &mut [u8]) -> Option<usize> {
     if n <= 0 {
         return None;
     }
-    Some(n as usize)
+    Some(usize::try_from(n).expect("n 已确认大于 0"))
 }
 
 fn send_response(fd: i32, data: &[u8]) {
     if data.is_empty() {
         return;
     }
-    send(fd, data.as_ptr(), data.len(), 0);
+    let _ = send(fd, data.as_ptr(), data.len(), 0);
 }
 
 fn write_header_and_body(
@@ -118,7 +121,7 @@ fn write_usize(buf: &mut [u8], pos: &mut usize, n: usize) {
         ti = 1;
     } else {
         while num > 0 {
-            tmp[ti] = b'0' + (num % 10) as u8;
+            tmp[ti] = b'0' + u8::try_from(num % 10).expect("末位十进制数字必在 u8 范围");
             num /= 10;
             ti += 1;
         }
@@ -153,26 +156,24 @@ fn extract_path(req: &[u8]) -> &[u8] {
     &req[start..end]
 }
 
+fn print_path(b: &[u8]) {
+    for &c in b {
+        if (0x20..=0x7F).contains(&c) {
+            print_char(c);
+        }
+    }
+}
+
 fn handle_client(fd: i32, resp: &mut [u8]) {
     let mut req_buf = [0u8; 1024];
-    let n = match read_request(fd, &mut req_buf) {
-        Some(n) => n,
-        None => {
-            close_socket(fd);
-            return;
-        }
+    let Some(n) = read_request(fd, &mut req_buf) else {
+        let _ = close_socket(fd);
+        return;
     };
 
     let path = extract_path(&req_buf[..n]);
     print("[httpsrv] GET ");
 
-    fn print_path(b: &[u8]) {
-        for &c in b {
-            if (0x20..=0x7F).contains(&c) {
-                print_char(c);
-            }
-        }
-    }
     print_path(path);
     print("\n");
 
@@ -225,28 +226,33 @@ fn handle_client(fd: i32, resp: &mut [u8]) {
     }
 
     send_response(fd, &resp[..pos]);
-    close_socket(fd);
+    let _ = close_socket(fd);
 }
 
+/// httpsrv 入口: 建监听 socket → 绑定 `0.0.0.0:80` → 常驻 accept 循环回 HTTP 响应.
+///
+/// # Panics
+///
+/// `SockaddrIn` 尺寸超出 `u32` 时 panic —— 该尺寸是编译期常量, 正常路径不可达.
 #[unsafe(no_mangle)]
-pub fn _start() -> ! {
+pub extern "C" fn _start() -> ! {
     print("[httpsrv] Starting HTTP server on port 80...\n");
 
     let sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if sockfd < 0 {
         print("[httpsrv] socket() failed: ");
-        print_dec(sockfd as i64);
+        print_dec(i64::from(sockfd));
         print("\n");
         proc_exit(1);
     }
 
     {
         let opt: i32 = 1;
-        setsockopt(
+        let _ = setsockopt(
             sockfd,
             SOL_SOCKET,
             SO_REUSEADDR,
-            &opt as *const i32 as *const u8,
+            (&raw const opt).cast::<u8>(),
             4,
         );
     }
@@ -254,23 +260,23 @@ pub fn _start() -> ! {
     let addr = make_addr(80);
     let bind_ret = bind(
         sockfd,
-        &addr as *const SockaddrIn as *const u8,
-        core::mem::size_of::<SockaddrIn>() as u32,
+        (&raw const addr).cast::<u8>(),
+        u32::try_from(core::mem::size_of::<SockaddrIn>()).expect("结构体尺寸超出 u32"),
     );
     if bind_ret < 0 {
         print("[httpsrv] bind() failed: ");
-        print_dec(bind_ret as i64);
+        print_dec(i64::from(bind_ret));
         print("\n");
-        close_socket(sockfd);
+        let _ = close_socket(sockfd);
         proc_exit(1);
     }
 
     let listen_ret = listen(sockfd, 5);
     if listen_ret < 0 {
         print("[httpsrv] listen() failed: ");
-        print_dec(listen_ret as i64);
+        print_dec(i64::from(listen_ret));
         print("\n");
-        close_socket(sockfd);
+        let _ = close_socket(sockfd);
         proc_exit(1);
     }
 
@@ -282,7 +288,7 @@ pub fn _start() -> ! {
         let client_fd = accept(sockfd, core::ptr::null_mut(), core::ptr::null_mut());
         if client_fd < 0 {
             print("[httpsrv] accept() failed: ");
-            print_dec(client_fd as i64);
+            print_dec(i64::from(client_fd));
             print("\n");
             continue;
         }

@@ -1,13 +1,13 @@
 //! WASI preview1 集成测试
 //!
 //! 验证 WASI 基础设施的正确性:
-//! - WasiFdTable 行为 (分配/关闭/重编号/溢出)
-//! - WasiContext 参数/环境变量
+//! - `WasiFdTable` 行为 (分配/关闭/重编号/溢出)
+//! - `WasiContext` 参数/环境变量
 //! - WASI 权限/文件类型/filestat 结构
 //! - WASI errno 值与 POSIX 对齐
 //!
 //! ## B08-20 迁移 (2026-09-06)
-//! WasiFdTable 行为与 WasiContext 已改引内核 `functions::wasm::wasi::fd_table` /
+//! `WasiFdTable` 行为与 `WasiContext` 已改引内核 `functions::wasm::wasi::fd_table` /
 //! `functions::wasm::wasi::WasiContext` 真实实现, 删除本地 Vec<Option<u32>> 平行实现.
 //! WASI ABI 常量 (rights 位 / filestat / iovec 布局) 为 preview1 外部规范,
 //! 非内核平行实现, 保留本地标注 (内核无对应导出结构).
@@ -111,7 +111,7 @@ fn test_wasi_rights() {
     let file_rights = RIGHT_FD_READ | RIGHT_FD_WRITE;
     assert!(file_rights & RIGHT_FD_READ != 0);
     assert!(file_rights & RIGHT_FD_WRITE != 0);
-    assert!((file_rights & RIGHT_PATH_OPEN) == 0);
+    assert_eq!((file_rights & RIGHT_PATH_OPEN), 0);
 }
 
 // ============================================================================

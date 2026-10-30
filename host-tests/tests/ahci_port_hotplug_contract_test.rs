@@ -2,7 +2,7 @@
 //!
 //! ## 背景
 //!
-//! SATA 端口插拔不产生 PCIe 热插拔事件, 故新增 functions 侧 `ahci_port_poll`
+//! SATA 端口插拔不产生 `PCIe` 热插拔事件, 故新增 functions 侧 `ahci_port_poll`
 //! 辅助轮询 (读 `PxSSTS` 检测链路变化) 并经 `register_aux_poll` 接入 privileged
 //! softirq, 复用统一热插拔分发语义 (`BusType::Sata` 事件)。本文件补齐该新链路
 //! 的可在主机端验证的部分。

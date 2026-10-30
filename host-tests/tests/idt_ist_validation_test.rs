@@ -87,11 +87,9 @@ fn test_idt_ist_to_tss_ist_mapping() {
     for (idt_ist, tss_idx) in mappings {
         // N → N-1
         assert_eq!(
-            idt_ist as usize - 1,
+            usize::try_from(idt_ist).expect("测试值必须为非负") - 1,
             tss_idx,
-            "IDT IST={} should map to TSS ist[{}]",
-            idt_ist,
-            tss_idx
+            "IDT IST={idt_ist} should map to TSS ist[{tss_idx}]"
         );
     }
 }

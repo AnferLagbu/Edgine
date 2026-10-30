@@ -1,19 +1,19 @@
-//! B2.1: Vma.file_pwm 桥接模型测试
+//! B2.1: `Vma.file_pwm` 桥接模型测试
 //!
-//! 验证 file_pwm 从 mmap_syscall 入口到 Vma 存储的语义正确性.
+//! 验证 `file_pwm` 从 `mmap_syscall` 入口到 Vma 存储的语义正确性.
 //! 不链接 edgine (host-tests 是 mock 层), 通过复刻 Vma 数据结构
 //! 验证模型语义与 edgine Vma 一致.
 //!
 //! ## 与 edgine Vma 的一致性
-//! - 字段: start/end/flags/offset/inode_id/shared/file_pwm
-//! - file_backed: file_pwm 参数, 匿名: file_pwm = 0
-//! - insert_vma: 合并判断含 file_pwm (不同 pwm 不合并)
+//! - 字段: `start/end/flags/offset/inode_id/shared/file_pwm`
+//! - `file_backed`: `file_pwm` 参数, 匿名: `file_pwm` = 0
+//! - `insert_vma`: 合并判断含 `file_pwm` (不同 pwm 不合并)
 //!
 //! ## 与单元测试的分工
 //! - host-tests/src/egfs/* 验证 egfs 数据结构
 //! - 本文件验证 mmap/pwm 桥接的模型语义
 
-/// 简化的 VmaType (对应 edgine VmaType::FileBacked/Anonymous)
+/// 简化的 `VmaType` (对应 edgine `VmaType::FileBacked/Anonymous`)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum VmaType {
@@ -30,10 +30,10 @@ struct Vma {
     inode_id: u32,
     shared: bool,
     file_pwm: u64,
-    /// P3-I-19: 挂载点索引, 决定 #PF miss 时调哪个 FileSystem trait.
+    /// P3-I-19: 挂载点索引, 决定 #PF miss 时调哪个 `FileSystem` trait.
     /// mock 中用 Option<usize> (与 edgine 一致), 匿名为 None.
     mount_idx: Option<usize>,
-    vma_type: VmaType,
+    mapping_kind: VmaType,
 }
 
 impl Vma {
@@ -66,7 +66,7 @@ impl Vma {
             shared,
             file_pwm: pwm,
             mount_idx,
-            vma_type: VmaType::FileBacked,
+            mapping_kind: VmaType::FileBacked,
         }
     }
 
@@ -79,7 +79,7 @@ impl Vma {
             shared: false,
             file_pwm: 0,
             mount_idx: None,
-            vma_type: VmaType::Anonymous,
+            mapping_kind: VmaType::Anonymous,
         }
     }
 }
@@ -91,7 +91,7 @@ fn file_backed_vma_stores_pwm() {
     assert_eq!(vma.file_pwm, pwm);
     assert_eq!(vma.inode_id, 42);
     assert!(vma.shared);
-    assert_eq!(vma.vma_type, VmaType::FileBacked);
+    assert_eq!(vma.mapping_kind, VmaType::FileBacked);
 }
 
 #[test]
@@ -100,13 +100,13 @@ fn anon_vma_has_zero_pwm() {
     assert_eq!(vma.file_pwm, 0);
     assert_eq!(vma.inode_id, 0);
     assert!(!vma.shared);
-    assert_eq!(vma.vma_type, VmaType::Anonymous);
+    assert_eq!(vma.mapping_kind, VmaType::Anonymous);
 }
 
-/// 模拟 mmap_syscall 桥接: 接收用户 pwm, 写入 Vma.file_pwm
+/// 模拟 `mmap_syscall` 桥接: 接收用户 pwm, 写入 `Vma.file_pwm`
 fn mock_mmap_file(addr: usize, len: usize, fd: i32, pwm: u64) -> Vma {
     // 简化: fd + 1 → inode_id (与内核 fd→inode 简化映射一致)
-    let inode_id = (fd as u32).wrapping_add(1);
+    let inode_id = fd.cast_unsigned().wrapping_add(1);
     Vma::file_backed(addr, addr + len, 0, inode_id, pwm, true)
 }
 
@@ -123,8 +123,8 @@ fn mmap_syscall_passes_pwm_to_vma() {
     assert_eq!(vma.inode_id, 6);
 }
 
-/// #PF 同步填 pcache 时, 读 vma.file_pwm 调用 vfs_pread_inode
-/// 此处模拟该路径: 验证 vma.file_pwm 是被读取的, 不是其它字段
+/// #PF 同步填 pcache 时, 读 `vma.file_pwm` 调用 `vfs_pread_inode`
+/// 此处模拟该路径: 验证 `vma.file_pwm` 是被读取的, 不是其它字段
 fn mock_handle_pf(vma: &Vma) -> u64 {
     // edgine page_fault::handle_file_fault miss 路径:
     // `vfs_pread_inode(vma.inode_id, file_off, dst, vma.file_pwm)`
@@ -139,9 +139,9 @@ fn page_fault_reads_vma_file_pwm() {
     assert_eq!(mock_handle_pf(&vma), pwm, "PF must read vma.file_pwm");
 }
 
-/// 合并语义: 不同 file_pwm 的相邻 VMA 不可合并
+/// 合并语义: 不同 `file_pwm` 的相邻 VMA 不可合并
 fn should_merge(a: &Vma, b: &Vma) -> bool {
-    a.vma_type == b.vma_type && a.file_pwm == b.file_pwm
+    a.mapping_kind == b.mapping_kind && a.file_pwm == b.file_pwm
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn vma_merge_requires_same_pwm() {
     );
 }
 
-/// fork 后 Vma.file_pwm 继承 (vma.clone 镜像)
+/// fork 后 `Vma.file_pwm` 继承 (vma.clone 镜像)
 #[test]
 fn vma_clone_preserves_file_pwm() {
     let pwm: u64 = 0xABCD_EF01_2345_6789;
@@ -168,7 +168,7 @@ fn vma_clone_preserves_file_pwm() {
     assert!(!cloned.shared);
 }
 
-/// mremap 后 Vma.file_pwm 保留
+/// mremap 后 `Vma.file_pwm` 保留
 #[test]
 fn mremap_preserves_file_pwm() {
     let pwm: u64 = 0xFEDC_BA09_8765_4321;
@@ -180,7 +180,7 @@ fn mremap_preserves_file_pwm() {
     assert!(v_new.shared);
 }
 
-/// P3-I-19: file_backed 默认挂载到根 (RamFS, mount_idx = 0),
+/// P3-I-19: `file_backed` 默认挂载到根 (`RamFS`, `mount_idx` = 0),
 /// 与 edgine mmap 退到根一致.
 #[test]
 fn file_backed_defaults_to_root_mount() {
@@ -188,7 +188,7 @@ fn file_backed_defaults_to_root_mount() {
     assert_eq!(v.mount_idx, Some(0), "默认 mount_idx = 0 (RamFS)");
 }
 
-/// P3-I-19: 显式指定非根挂载 (例如 /dev 对应 DevFS), 必须原样保留.
+/// P3-I-19: 显式指定非根挂载 (例如 /dev 对应 `DevFS`), 必须原样保留.
 #[test]
 fn file_backed_with_explicit_mount() {
     let v = Vma::file_backed_with_mount(0x30000, 0x34000, 0, 12, 0xBB, false, Some(1));
@@ -203,7 +203,7 @@ fn anon_vma_has_no_mount() {
     assert_eq!(v.mount_idx, None, "匿名 VMA mount_idx = None");
 }
 
-/// P3-I-19: clone 必须保留 mount_idx (fork 后 #PF miss 仍能正确派发).
+/// P3-I-19: clone 必须保留 `mount_idx` (fork 后 #PF miss 仍能正确派发).
 #[test]
 fn vma_clone_preserves_mount_idx() {
     let v = Vma::file_backed_with_mount(0x50000, 0x54000, 0, 13, 0xCC, true, Some(2));
@@ -220,7 +220,7 @@ fn vma_preserves_address_range() {
     assert_eq!(v.end - v.start, 0x4000, "end - start = 映射长度 16KB");
 }
 
-/// 验证 Vma.offset 字段保留文件内偏移 (用于 #PF miss 时 vfs_pread_inode 定位)
+/// 验证 Vma.offset 字段保留文件内偏移 (用于 #PF miss 时 `vfs_pread_inode` 定位)
 #[test]
 fn vma_preserves_file_offset() {
     let v = Vma::file_backed(0x1000, 0x5000, 0x2000, 42, 0xAA, true);

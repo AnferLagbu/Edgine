@@ -43,9 +43,8 @@ fn no_legacy_signal_error_enum() {
     // 不应残留旧 5 字段变体名
     for legacy in &["ProcessExited", "InvalidSignal"] {
         assert!(
-            !src.contains(&format!("SignalError::{}", legacy)),
-            "SignalError::{} 已废弃, 应改走 KernelError 对应变体",
-            legacy
+            !src.contains(&format!("SignalError::{legacy}")),
+            "SignalError::{legacy} 已废弃, 应改走 KernelError 对应变体"
         );
     }
 }

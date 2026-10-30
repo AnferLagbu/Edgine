@@ -1,13 +1,13 @@
-//! net: sockaddr_in6 C 结构体与 FFI 翻译层验证 (sm_fi.rs)
+//! net: `sockaddr_in6` C 结构体与 FFI 翻译层验证 (`sm_fi.rs`)
 //!
 //! 验收:
-//!   - sm_fi.rs 定义 `SockaddrIn6` (#[repr(C)], 28 字节, 与 Linux 布局一致)
-//!   - SockaddrIn6 字段: family/port/flowinfo/addr/scope_id
+//!   - `sm_fi.rs` 定义 `SockaddrIn6` (#[repr(C)], 28 字节, 与 Linux 布局一致)
+//!   - `SockaddrIn6` 字段: `family/port/flowinfo/addr/scope_id`
 //!     (P-64 第十六批: clippy `struct_field_names` 要求去掉全体字段共有的 `sin6_`
 //!     前缀, 与 C 结构体的对应关系改由结构体 doc 说明; 布局不变)
-//!   - `write_sockaddr` 按 IpAddr 分支写 sockaddr_in (16B) / sockaddr_in6 (28B)
+//!   - `write_sockaddr` 按 `IpAddr` 分支写 `sockaddr_in` (16B) / `sockaddr_in6` (28B)
 //!   - `parse_endpoint_trait` 按 family (2/10) 分支解析端点
-//!   - `endpoint_from_smol` 支持 IpAddress::Ipv6 → NetEndpoint::new_v6
+//!   - `endpoint_from_smol` 支持 `IpAddress::Ipv6` → `NetEndpoint::new_v6`
 //!
 //! 追踪: DECISION-032 (IPv4/IPv6 双栈)
 //! SPDX-License-Identifier: MPL-2.0
@@ -17,7 +17,7 @@ use std::fs;
 const SM_FI_RS: &str = "../src/kernel/privileged/net/init/sm_fi.rs";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 #[test]
@@ -109,7 +109,6 @@ fn test_getsockname_uses_write_sockaddr() {
     let getsockname_count = src.matches("write_sockaddr(addr, addrlen, &ep);").count();
     assert!(
         getsockname_count >= 2,
-        "sm_getsockname / sm_getpeername 未复用 write_sockaddr (当前 {} 处)",
-        getsockname_count
+        "sm_getsockname / sm_getpeername 未复用 write_sockaddr (当前 {getsockname_count} 处)"
     );
 }

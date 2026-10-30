@@ -5,15 +5,15 @@
 //! 的机制组件); 分级阈值/算法留 functions (策略), 经注册注入。
 //!
 //! 静态契约:
-//! 1. MemoryPressure 枚举 / update_pressure / current_pressure 必在
+//! 1. `MemoryPressure` 枚举 / `update_pressure` / `current_pressure` 必在
 //!    privileged/mm/pressure.rs (机制权威)
 //! 2. privileged/mm/mod.rs 必声明 `pub mod pressure`
-//! 3. privileged/proc/oomd.rs 必引用 privileged::mm::pressure, 禁止引用 functions
-//! 4. functions/mm/memory_pressure.rs 必 deny unsafe_code, 保留阈值/分级算法/
-//!    set_thresholds, 并 re-export privileged API (functions→privileged 合法方向)
-//! 5. functions/mm/mod.rs init 必注册分级策略 (register_pressure_classifier)
+//! 3. privileged/proc/oomd.rs 必引用 `privileged::mm::pressure`, 禁止引用 functions
+//! 4. `functions/mm/memory_pressure.rs` 必 deny `unsafe_code`, 保留阈值/分级算法/
+//!    `set_thresholds`, 并 re-export privileged API (functions→privileged 合法方向)
+//! 5. functions/mm/mod.rs init 必注册分级策略 (`register_pressure_classifier`)
 //! 6. 4 级状态机变体 + 双重阈值 (绝对值 + 百分比) 契约保持
-//! 7. functions 文件不含 klog_ffi (避免 unsafe 边界)
+//! 7. functions 文件不含 `klog_ffi` (避免 unsafe 边界)
 
 use std::fs;
 use std::path::PathBuf;
@@ -86,7 +86,7 @@ fn method_body<'a>(src: &'a str, sig: &str) -> &'a str {
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return &rest[..open + i + 1];
+                    return &rest[..=(open + i)];
                 }
             }
             _ => {}
@@ -238,9 +238,8 @@ fn memory_pressure_uses_4_level_state_machine() {
     // 必 4 个级别
     for variant in ["Normal", "Warning", "Critical", "Emergency"] {
         assert!(
-            src.contains(&format!("    {} =", variant)),
-            "DECISION-O ②: MemoryPressure 必含 {} 变体",
-            variant
+            src.contains(&format!("    {variant} =")),
+            "DECISION-O ②: MemoryPressure 必含 {variant} 变体"
         );
     }
 }

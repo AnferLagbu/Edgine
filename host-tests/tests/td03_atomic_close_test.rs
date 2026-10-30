@@ -18,7 +18,7 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
 #[test]
@@ -34,14 +34,12 @@ fn test_vfs_close_uses_atomic_claim_and_clear() {
         .find("#[no_mangle]\npub fn ")
         .or_else(|| after[40..].find("pub fn vfs_"))
         .or_else(|| after[40..].find("pub fn "))
-        .map(|i| 40 + i)
-        .unwrap_or(after.len());
+        .map_or(after.len(), |i| 40 + i);
     let body = &after[..next_fn];
     // 验: 函数体内不能再调用 get_fd_info (V2 bug 的根源)
     assert!(
         !body.contains("get_fd_info("),
-        "vfs_close_internal 不应再调用 get_fd_info (TD-03 原子化后快照内置):\n{}",
-        body
+        "vfs_close_internal 不应再调用 get_fd_info (TD-03 原子化后快照内置):\n{body}"
     );
     // 验: 必须经 per-process FdTable::close_fd 的单一临界区原子 claim-and-clear
     // (B-9.5 全量下沉: 原 VFS_MANAGER.fd_table 已退役, fd 表归 Process.fd_table)

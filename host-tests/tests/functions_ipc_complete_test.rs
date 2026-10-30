@@ -27,11 +27,10 @@ fn test_functions_ipc_4_subsystems_migrated() {
         ("sem", "sem_destroy"),
     ];
     for (_sub, fn_name) in close_fns {
-        let needle = format!("fn {}(", fn_name);
+        let needle = format!("fn {fn_name}(");
         assert!(
             src.contains(&needle),
-            "functions/ipc 应实现 {} (I-54)",
-            needle
+            "functions/ipc 应实现 {needle} (I-54)"
         );
     }
 }
@@ -65,8 +64,7 @@ fn test_functions_ipc_0_unsafe_blocks() {
     }
     assert_eq!(
         unsafe_blocks, 0,
-        "functions/ipc 不应出现 unsafe 代码块, 实际 {} 处 (I-54)",
-        unsafe_blocks
+        "functions/ipc 不应出现 unsafe 代码块, 实际 {unsafe_blocks} 处 (I-54)"
     );
 }
 
@@ -86,11 +84,10 @@ fn test_functions_ipc_uses_privileged_safe_api() {
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
     for sub in &["pipe", "shm", "msgq"] {
-        let mod_decl = format!("pub mod {}", sub);
+        let mod_decl = format!("pub mod {sub}");
         assert!(
             src.contains(&mod_decl),
-            "functions/ipc 应声明本地 {} 子模块 (T6-1)",
-            sub
+            "functions/ipc 应声明本地 {sub} 子模块 (T6-1)"
         );
     }
     // 仍通过 privileged::ipc 访问全局状态

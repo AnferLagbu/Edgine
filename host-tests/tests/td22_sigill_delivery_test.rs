@@ -1,7 +1,7 @@
 //! I-02 补充验收: 用户态非法指令投递 SIGILL
 //!
-//! 验证 [privileged/idt/handlers.rs::InvalidOpcodeHandler] 的契约:
-//! 1. vector 6 必须从 create_handler 派发到 InvalidOpcodeHandler
+//! 验证 [`privileged/idt/handlers.rs::InvalidOpcodeHandler`] 的契约:
+//! 1. vector 6 必须从 `create_handler` 派发到 `InvalidOpcodeHandler`
 //! 2. SIGILL (4) 默认动作 = Core
 //! 3. handler 严重性分级 (user=Error / kernel=Fatal) 语义
 //! 4. UD2 最短 2 字节, 投递后 rip += 2 (避免立即重入)
@@ -10,16 +10,16 @@
 //! 删除本地 `decide_ud` / `Severity` 平行镜像, 改引内核真实源码:
 //! - `edgine::kernel::privileged::proc::{signal_default_action, SignalDefaultAction}`
 //!   — 信号默认动作 (proc 模块, host 可链接)
-//! - `create_handler` 派发表 → include_str! 静态契约扫描 (见下方不可测说明)
+//! - `create_handler` 派发表 → `include_str`! 静态契约扫描 (见下方不可测说明)
 //!
 //! ## 因内核 host 不可测已移除/降级
 //! 1. `create_handler` 所在 `privileged::idt` 模块在 host 下**无法链接**: 其依赖链
 //!    触发 `privileged::mm::read_user_cr3_asm` → `#[link_name = "USER_CR3_SAVE"]`
 //!    汇编符号 (boot/isr.asm 定义), host 无 isr.asm 产物 → rust-lld undefined symbol.
-//!    故派发表验证降级为 include_str! 静态契约 (等价于既有 sigaltstack_test 风格);
+//!    故派发表验证降级为 `include_str`! 静态契约 (等价于既有 `sigaltstack_test` 风格);
 //!    同时 `Severity` 枚举 (idt/handlers.rs) 亦不可 host 引用, severity 分级用例移除.
 //! 2. `InvalidOpcodeHandler::handle` 的行为镜像 (user-mode 投递 SIGILL+rip+2 /
-//!    kernel-mode Panic) 依赖 `InterruptFrame` + 全局 PROCESS_TABLE, 属 IDT 中断
+//!    kernel-mode Panic) 依赖 `InterruptFrame` + 全局 `PROCESS_TABLE`, 属 IDT 中断
 //!    路径上下文, 无法 host 直接调用; 对应用例已移除, 真实投递由 QEMU 集成测试覆盖.
 
 use edgine::kernel::privileged::proc::{SignalDefaultAction, signal_default_action};
@@ -28,7 +28,7 @@ use edgine::kernel::privileged::proc::{SignalDefaultAction, signal_default_actio
 const SIGILL: u8 = 4;
 /// #UD vector = 6 (x86_64 与 aarch64 一致)
 const VECTOR_UD: u8 = 6;
-/// UD2 最短 2 字节 (内核里用作 __builtin_trap / 调试桩)
+/// UD2 最短 2 字节 (内核里用作 __`builtin_trap` / 调试桩)
 const UD2_LEN: u64 = 2;
 
 #[test]
@@ -84,8 +84,7 @@ fn sigill_related_signals_are_core() {
         assert_eq!(
             signal_default_action(sig),
             SignalDefaultAction::Core,
-            "sig={} 默认动作应为 Core",
-            sig
+            "sig={sig} 默认动作应为 Core"
         );
     }
 }
@@ -96,8 +95,8 @@ fn rip_advance_is_exactly_two_bytes() {
     // "单条最短指令" 假设 +2 即可避免立即重入. 内核 handle 用
     // `rip.wrapping_add(2)` 步进, 此处验证算术语义.
     assert_eq!(UD2_LEN, 2);
-    let r0 = 0x401000u64;
-    let r1 = 0x401002u64;
+    let r0 = 0x0040_1000_u64;
+    let r1 = 0x0040_1002_u64;
     assert_eq!(r0.wrapping_add(UD2_LEN), r1);
     // 接近 64-bit 顶部时 +2 应当 wrap, 不 panic
     let boundary = u64::MAX - 1;

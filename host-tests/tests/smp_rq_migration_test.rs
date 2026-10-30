@@ -4,7 +4,7 @@
 //!
 //! E-II-b 把 x86_64 的 tick 源从"PIT → 只有 BSP 收"改成"每核 LAPIC 私有定时器",
 //! 于是 `Scheduler::tick` 里按"全内核只有一个核收 tick"写成的周期性全局副作用
-//! 第一次在多核上被激活。x86_64 e2e 由 6/6 退化为 1/6, 失败特征是**纯 RX 侧全灭**
+//! `第一次在多核上被激活。x86_64` e2e 由 6/6 退化为 1/6, 失败特征是**纯 RX 侧全灭**
 //! (`[net6]`/`[mcast]`/`[udp] recvfrom` 超时, `[tcp] bind` 失败) 而 TX 与 DHCP 正常
 //! —— 是状态被踩坏, 不是时序抖动。
 //!
@@ -99,7 +99,7 @@ fn fn_body<'a>(code: &'a str, sig: &str) -> Option<&'a str> {
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(&code[open..open + i + 1]);
+                    return Some(&code[open..=(open + i)]);
                 }
             }
             _ => {}

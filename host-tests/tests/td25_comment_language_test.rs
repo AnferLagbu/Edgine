@@ -1,6 +1,6 @@
 //! TD-24 / TD-25 注释语言一致性 audit 契约测试
 //!
-//! 验证 [scripts/audit_comment_language.py] 检测逻辑:
+//! 验证 [`scripts/audit_comment_language.py`] 检测逻辑:
 //! 1. 纯中文注释: 不报违规
 //! 2. 纯英文段落 (3+ 英文长词, 总长 > 30 字符): 报违规
 //! 3. 短英文注释 (引用/标识符/单词): 不报违规
@@ -10,8 +10,8 @@
 //! 7. 块注释 /* */: 同样检测
 //! 8. 真实 audit 脚本在最小 fixture 上零违规通过
 //!
-//! 通过子进程调用 audit_comment_language.py, 验证 end-to-end 行为.
-//! 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个 dead_code 警告 (防御性残留).
+//! 通过子进程调用 `audit_comment_language.py`, 验证 end-to-end 行为.
+//! 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个 `dead_code` 警告 (防御性残留).
 
 use std::fs;
 use std::io::Write;
@@ -119,11 +119,10 @@ fn test_pure_chinese_comment_passes() {
          }\n",
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
-    assert_eq!(code, 0, "纯中文注释不应报违规, stdout={}", stdout);
+    assert_eq!(code, 0, "纯中文注释不应报违规, stdout={stdout}");
     assert!(
         stdout.contains("PASSED"),
-        "期望 PASSED 提示, stdout={}",
-        stdout
+        "期望 PASSED 提示, stdout={stdout}"
     );
 }
 
@@ -145,16 +144,14 @@ fn test_pure_english_paragraph_violates() {
         ),
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
-    assert_eq!(code, 1, "纯英文段落应报违规, stdout={}", stdout);
+    assert_eq!(code, 1, "纯英文段落应报违规, stdout={stdout}");
     assert!(
         stdout.contains("FAILED"),
-        "期望 FAILED 提示, stdout={}",
-        stdout
+        "期望 FAILED 提示, stdout={stdout}"
     );
     assert!(
         stdout.contains("mod_b.rs"),
-        "应包含违规文件路径, stdout={}",
-        stdout
+        "应包含违规文件路径, stdout={stdout}"
     );
 }
 
@@ -173,8 +170,7 @@ fn test_short_english_comment_passes() {
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "短英文注释 (引用/单条) 不应报违规, stdout={}",
-        stdout
+        "短英文注释 (引用/单条) 不应报违规, stdout={stdout}"
     );
 }
 
@@ -193,8 +189,7 @@ fn test_mixed_chinese_english_passes() {
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "中英混杂 (中文字符占主体) 不应报违规, stdout={}",
-        stdout
+        "中英混杂 (中文字符占主体) 不应报违规, stdout={stdout}"
     );
 }
 
@@ -211,8 +206,7 @@ fn test_allowed_terms_dont_count() {
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "例外术语 (RCU/CFS/CR3/EINVAL) 不应算英文长词, stdout={}",
-        stdout
+        "例外术语 (RCU/CFS/CR3/EINVAL) 不应算英文长词, stdout={stdout}"
     );
 }
 
@@ -231,8 +225,7 @@ fn test_safety_short_english_passes() {
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "// SAFETY: 短英文 (≤ 30 字符 + ≤ 2 英文长词) 不报违规, stdout={}",
-        stdout
+        "// SAFETY: 短英文 (≤ 30 字符 + ≤ 2 英文长词) 不报违规, stdout={stdout}"
     );
 }
 
@@ -249,7 +242,7 @@ fn test_block_comment_detected() {
          pub fn f() {}\n",
     )];
     let (code, stdout, _stderr) = run_audit_on_fixture(files);
-    assert_eq!(code, 1, "纯英文块注释应报违规, stdout={}", stdout);
+    assert_eq!(code, 1, "纯英文块注释应报违规, stdout={stdout}");
 }
 
 // ── 8. 真实 audit 脚本可执行 ──────────────────────────────────
@@ -268,8 +261,7 @@ fn test_audit_script_executable() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "空 fixture 应 PASSED, stdout={}, stderr={}",
-        stdout, stderr
+        "空 fixture 应 PASSED, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -292,8 +284,7 @@ fn test_posix_signature_passes() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "POSIX 签名引用应 PASSED, stdout={}, stderr={}",
-        stdout, stderr
+        "POSIX 签名引用应 PASSED, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -316,8 +307,7 @@ fn test_bare_signature_passes() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "纯签名引用应 PASSED, stdout={}, stderr={}",
-        stdout, stderr
+        "纯签名引用应 PASSED, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -378,8 +368,7 @@ fn test_rust_code_example_passes() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "Rust 代码示例应 PASSED, stdout={}, stderr={}",
-        stdout, stderr
+        "Rust 代码示例应 PASSED, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -398,8 +387,7 @@ fn test_doc_code_block_skipped() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "文档代码块内英文应被豁免, stdout={}, stderr={}",
-        stdout, stderr
+        "文档代码块内英文应被豁免, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -414,8 +402,7 @@ fn test_c_code_example_passes() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "C 代码示例应 PASSED, stdout={}, stderr={}",
-        stdout, stderr
+        "C 代码示例应 PASSED, stdout={stdout}, stderr={stderr}"
     );
 }
 
@@ -453,7 +440,6 @@ fn test_spdx_doc_comment_passes() {
     let (code, stdout, stderr) = run_audit_on_fixture(files);
     assert_eq!(
         code, 0,
-        "SPDX 许可证头 (`//!` 形态) 应豁免, stdout={}, stderr={}",
-        stdout, stderr
+        "SPDX 许可证头 (`//!` 形态) 应豁免, stdout={stdout}, stderr={stderr}"
     );
 }

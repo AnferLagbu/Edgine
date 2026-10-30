@@ -1,4 +1,4 @@
-//! arch: ApStartupInfo 布局数值契约测试
+//! arch: `ApStartupInfo` 布局数值契约测试
 //!
 //! 追踪: P1.A + DECISION-050.
 //!
@@ -14,21 +14,21 @@
 //! ## 测试目的
 //!
 //! `privileged::arch::x86_64::smp_init::ApStartupInfo` (`#[repr(C, packed)]`) 与
-//! `privileged::arch::x86_64::trampoline.asm` 中 ApStartupInfo 必须**字节级一致**.
+//! `privileged::arch::x86_64::trampoline.asm` 中 `ApStartupInfo` 必须**字节级一致**.
 //! 任意一端修改字段顺序/类型后未同步另一端, BSP 将永远等不到 AP ready (固定循环
 //! 100ms 超时) 或 AP 等不到进入 64-bit 的入口.
 //!
 //! ## 测试策略
 //!
 //! host-tests 不链接 edgine 静态库 (裸二进制), 也无法直接读取 trampoline.asm.
-//! 本测试复刻 ApStartupInfo 的字段顺序与类型, 在 std 环境下**重放**编译期布局断言:
+//! 本测试复刻 `ApStartupInfo` 的字段顺序与类型, 在 std 环境下**重放**编译期布局断言:
 //!
 //! - `ApStartupInfo` 总大小 = 54 字节
-//! - `ready` 字段偏移 = 38 (汇编端 SINFO_READY 同值)
-//! - `done` 字段偏移 = 46 (汇编端 SINFO_DONE 同值)
+//! - `ready` 字段偏移 = 38 (汇编端 `SINFO_READY` 同值)
+//! - `done` 字段偏移 = 46 (汇编端 `SINFO_DONE` 同值)
 //! - 8 字节字段对齐无填充 (C packed 布局)
 //!
-//! 数值常量与 smp_init.rs `AP_STARTUP_INFO_SIZE` / `READY_OFFSET` / `DONE_OFFSET`
+//! 数值常量与 `smp_init.rs` `AP_STARTUP_INFO_SIZE` / `READY_OFFSET` / `DONE_OFFSET`
 //! 共享, 任一端修改触发双方不一致 (Rust 编译期断言 + 本测试运行期断言).
 //!
 //! ## 限制
@@ -41,8 +41,8 @@ use std::mem::{offset_of, size_of};
 
 /// 复刻 `privileged::arch::x86_64::smp_init::ApStartupInfo` 布局 (仅 std 测试可见).
 ///
-/// 字段顺序、类型必须与 smp_init.rs + trampoline.asm 完全一致.
-/// 任一端修改后, 本测试 + smp_init.rs 编译期断言将同时失败.
+/// 字段顺序、类型必须与 `smp_init.rs` + trampoline.asm 完全一致.
+/// 任一端修改后, 本测试 + `smp_init.rs` 编译期断言将同时失败.
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 struct ApStartupInfo {
@@ -60,17 +60,17 @@ struct ApStartupInfo {
 
 /// 总大小 = 54 字节 (10 字段 packed, 无填充).
 ///
-/// 必须等于 smp_init.rs `AP_STARTUP_INFO_SIZE` 与 trampoline.asm SINFO 总长.
+/// 必须等于 `smp_init.rs` `AP_STARTUP_INFO_SIZE` 与 trampoline.asm SINFO 总长.
 const EXPECTED_TOTAL_SIZE: usize = 54;
 
 /// `ready` 字段字节偏移 = 38.
 ///
-/// 必须等于 smp_init.rs `READY_OFFSET` 与 trampoline.asm `SINFO_READY equ SINFO_BASE + 38`.
+/// 必须等于 `smp_init.rs` `READY_OFFSET` 与 trampoline.asm `SINFO_READY equ SINFO_BASE + 38`.
 const EXPECTED_READY_OFFSET: usize = 38;
 
 /// `done` 字段字节偏移 = 46.
 ///
-/// 必须等于 smp_init.rs `DONE_OFFSET` 与 trampoline.asm `SINFO_DONE equ SINFO_BASE + 46`.
+/// 必须等于 `smp_init.rs` `DONE_OFFSET` 与 trampoline.asm `SINFO_DONE equ SINFO_BASE + 46`.
 const EXPECTED_DONE_OFFSET: usize = 46;
 
 /// `cpu_index` 字段字节偏移 = 42 (推导 `done` 偏移前的字段).

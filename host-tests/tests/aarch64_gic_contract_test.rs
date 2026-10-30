@@ -1,11 +1,11 @@
-//! aarch64 GICv3 初始化 — 静态契约测试
+//! aarch64 `GICv3` 初始化 — 静态契约测试
 //!
 //! 追踪: ISSUE-RT-002
 //! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## 背景
 //!
-//! ISSUE-RT-002: aarch64 GICv3 初始化或中断处理偶发挂起. 原始现象在
+//! ISSUE-RT-002: aarch64 `GICv3` 初始化或中断处理偶发挂起. 原始现象在
 //! QEMU TCG 下不可稳定复现, 故本轮为挂起补充**复验装备与回归防护**:
 //! 把"静默挂起"转化为"确定性报错" (redistributor 唤醒超时显式失败 +
 //! 初始化后置条件回读自检 + boot 入口 fail-fast + `GICv3 ready` 里程碑).
@@ -19,14 +19,14 @@
 //! - `init_distributor` 必须**显式置 ARE** (不得依赖平台默认值) 并在每次写
 //!   `GICD_CTLR` 后等待 `RWP` 清零;
 //! - `init()` 必须返回 `Result` 并在末尾执行后置条件自检;
-//! - 自检须回读 GICD_CTLR / GICR_WAKER / GICR_ISENABLER0 / ICC_IGRPEN1_EL1,
+//! - 自检须回读 `GICD_CTLR` / `GICR_WAKER` / `GICR_ISENABLER0` / `ICC_IGRPEN1_EL1`,
 //!   并委托架构中立纯逻辑 `gic_logic` 判定 (判据单源, host 侧可逐支路实证,
 //!   见 `aarch64_gic_logic_test.rs`); 唤醒超限与 ARE 判据同源;
-//! - 不得再使用 GICv2 兼容的 `GICD_ITARGETSR` (ARE=1 下为死写, 且自校正掩盖模型错误);
-//! - 不得再写 `GICR_CTLR` (其 bit0 实为 EnableLPIs, 非 redistributor 使能位);
+//! - 不得再使用 `GICv2` 兼容的 `GICD_ITARGETSR` (ARE=1 下为死写, 且自校正掩盖模型错误);
+//! - 不得再写 `GICR_CTLR` (其 bit0 实为 `EnableLPIs`, 非 redistributor 使能位);
 //! - boot 入口须 fail-fast 并打印 `GICv3 ready` 里程碑;
 //! - QEMU 启动脚本须断言该里程碑;
-//! - EL1h 与 EL0 两条 IRQ 路径须共用同一 SGI 分发 (防平行实现再次分叉).
+//! - `EL1h` 与 EL0 两条 IRQ 路径须共用同一 SGI 分发 (防平行实现再次分叉).
 
 use std::fs;
 use std::path::Path;
@@ -47,11 +47,11 @@ fn read(rel: &str) -> String {
 fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     let start = src
         .find(begin)
-        .unwrap_or_else(|| panic!("未找到起点标记: {}", begin));
+        .unwrap_or_else(|| panic!("未找到起点标记: {begin}"));
     let rest = &src[start..];
     let end_off = rest
         .find(end)
-        .unwrap_or_else(|| panic!("未找到终点标记: {}", end));
+        .unwrap_or_else(|| panic!("未找到终点标记: {end}"));
     &rest[..end_off]
 }
 
@@ -125,7 +125,7 @@ fn test_post_conditions_cover_key_registers() {
         "GICR_ISENABLER0",
         "icc_igrpen1_el1",
     ] {
-        assert!(body.contains(reg), "自检须回读寄存器: {}", reg);
+        assert!(body.contains(reg), "自检须回读寄存器: {reg}");
     }
     assert!(
         body.contains("gic_logic::verify_post_conditions("),
@@ -141,7 +141,7 @@ fn test_post_conditions_cover_key_registers() {
         "GICR_ISENABLER0 未使能 Timer PPI",
         "ICC_IGRPEN1_EL1 未使能",
     ] {
-        assert!(logic.contains(msg), "纯逻辑须覆盖后置条件: {}", msg);
+        assert!(logic.contains(msg), "纯逻辑须覆盖后置条件: {msg}");
     }
 }
 
@@ -219,7 +219,7 @@ fn test_qemu_script_asserts_gic_marker() {
     );
 }
 
-/// 内核 SGI 接收路由必须在 EL1h 与 EL0 两条 IRQ 路径上**等价**。
+/// 内核 SGI 接收路由必须在 `EL1h` 与 EL0 两条 IRQ 路径上**等价**。
 ///
 /// 追踪: ISSUE-RT-002 (中断处理域)。历史缺陷: EL0 IRQ 路径自带一份裁剪过的分发
 /// (仅处理 Timer PPI 与设备 SPI), 丢弃内核 SGI 7/13/14 —— 目标核在 EL0 时跨核
@@ -257,13 +257,8 @@ fn test_el0_and_el1_irq_paths_share_sgi_dispatch() {
     ] {
         assert!(
             shared.contains(cond),
-            "handle_irq 必须路由内核 SGI 条件: {}",
-            cond
+            "handle_irq 必须路由内核 SGI 条件: {cond}"
         );
-        assert!(
-            shared.contains(call),
-            "handle_irq 必须调用接收处理: {}",
-            call
-        );
+        assert!(shared.contains(call), "handle_irq 必须调用接收处理: {call}");
     }
 }

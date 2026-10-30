@@ -1,7 +1,7 @@
 //! W5 防回归: smoltcp 框架层 0 处 unsafe transmute
 //!
-//! REVAL-W W5 (2026-06-25): 把 smoltcp SocketHandle ↔ u32 的 unsafe transmute
-//! 替换为 transmute_copy (编译期 size 检查, 不依赖 repr 假设).
+//! REVAL-W W5 (2026-06-25): 把 smoltcp `SocketHandle` ↔ u32 的 unsafe transmute
+//! 替换为 `transmute_copy` (编译期 size 检查, 不依赖 repr 假设).
 //!
 //! ## 验收
 //!
@@ -11,7 +11,7 @@
 //!
 //! ## 历史 bug 修复
 //!
-//! W5 完成后, 第 2161 行 (smoltcp_net_stack_socket_open 内部) 仍残留 1 处
+//! W5 完成后, 第 2161 行 (`smoltcp_net_stack_socket_open` 内部) 仍残留 1 处
 //! unsafe transmute, 2026-06-25 在本测试触发后修复.
 
 use std::fs;
@@ -37,8 +37,7 @@ fn test_no_unsafe_transmute_in_init_rs() {
     let unsafe_transmute_count = content.matches("unsafe { core::mem::transmute(").count();
     assert_eq!(
         unsafe_transmute_count, 0,
-        "privileged/net/init.rs 仍有 {} 处 unsafe transmute (W5 反模式), 应改用 transmute_copy",
-        unsafe_transmute_count
+        "privileged/net/init.rs 仍有 {unsafe_transmute_count} 处 unsafe transmute (W5 反模式), 应改用 transmute_copy"
     );
 }
 
@@ -51,8 +50,7 @@ fn test_only_transmute_copy_in_init_rs() {
     let transmute_copy_count = content.matches("core::mem::transmute_copy").count();
     assert!(
         transmute_copy_count >= 2,
-        "transmute_copy 应至少 2 处 (as_u32_handle + smol_handle_from_u32), 实测: {}",
-        transmute_copy_count
+        "transmute_copy 应至少 2 处 (as_u32_handle + smol_handle_from_u32), 实测: {transmute_copy_count}"
     );
 }
 
@@ -102,7 +100,7 @@ fn test_as_u32_handle_and_smol_handle_from_u32_both_use_transmute_copy() {
         + content[as_u32_idx..]
             .find("\n}\n")
             .expect("as_u32_handle 应有函数体");
-    let as_u32_body = &content[as_u32_idx..as_u32_end + 1];
+    let as_u32_body = &content[as_u32_idx..=as_u32_end];
     assert!(
         as_u32_body.contains("transmute_copy(&h)"),
         "as_u32_handle 应使用 transmute_copy(&h) (而非 transmute)"
@@ -116,7 +114,7 @@ fn test_as_u32_handle_and_smol_handle_from_u32_both_use_transmute_copy() {
         + content[from_u32_idx..]
             .find("\n}\n")
             .expect("smol_handle_from_u32 应有函数体");
-    let from_u32_body = &content[from_u32_idx..from_u32_end + 1];
+    let from_u32_body = &content[from_u32_idx..=from_u32_end];
     assert!(
         from_u32_body.contains("transmute_copy::<usize"),
         "smol_handle_from_u32 应使用 transmute_copy::<usize, ...> (而非 transmute)"

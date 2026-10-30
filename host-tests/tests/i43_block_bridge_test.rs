@@ -1,9 +1,9 @@
 //! I-43: 块设备单一桥接入口不变式验证
 //!
 //! 验证修复后的状态契约:
-//! 1. `egdf_register_block` 仅在允许文件中被调用 (egdf/mod.rs + egdf/proto_block.rs)
-//! 2. 所有块设备驱动通过 `register_block_device` (proto_block) 注册
-//! 3. BlockDevice trait 的 blk_read/blk_write 签名与 BlockOps thunk 一致
+//! 1. `egdf_register_block` 仅在允许文件中被调用 (egdf/mod.rs + `egdf/proto_block.rs`)
+//! 2. 所有块设备驱动通过 `register_block_device` (`proto_block`) 注册
+//! 3. `BlockDevice` trait 的 `blk_read/blk_write` 签名与 `BlockOps` thunk 一致
 //!
 //! 主机端无法实际执行注册, 这里做静态契约验证: 读源文件做关键字检查.
 
@@ -12,7 +12,7 @@ use std::path::Path;
 const KERNEL_DIR: &str = "../src/kernel";
 
 fn read_source(path: &str) -> String {
-    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 /// 收集所有 .rs 文件 (递归)
@@ -89,9 +89,8 @@ fn test_block_drivers_use_register_block_device() {
 
     for driver in &driver_files {
         let path = Path::new(KERNEL_DIR).join(driver);
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue, // 文件不存在则跳过
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
         };
         // 驱动文件应包含 BlockDevice impl (直接或间接)
         let has_block_device_impl = content.contains("impl BlockDevice");
@@ -99,10 +98,7 @@ fn test_block_drivers_use_register_block_device() {
         // 至少应有其一 (有些驱动在 init 函数中注册, 不在驱动文件本身)
         if !has_block_device_impl && !has_register {
             // 可能通过其他路径注册, 仅记录不阻断
-            eprintln!(
-                "注意: {} 未直接包含 BlockDevice impl 或 register_block_device",
-                driver
-            );
+            eprintln!("注意: {driver} 未直接包含 BlockDevice impl 或 register_block_device");
         }
     }
 }

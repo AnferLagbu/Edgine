@@ -49,11 +49,11 @@ fn read(rel: &str) -> String {
 fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     let start = src
         .find(begin)
-        .unwrap_or_else(|| panic!("未找到起点标记: {}", begin));
+        .unwrap_or_else(|| panic!("未找到起点标记: {begin}"));
     let rest = &src[start..];
     let end_off = rest
         .find(end)
-        .unwrap_or_else(|| panic!("未找到终点标记: {}", end));
+        .unwrap_or_else(|| panic!("未找到终点标记: {end}"));
     &rest[..end_off]
 }
 
@@ -91,8 +91,7 @@ fn deferred_free_public_api_frozen() {
     for sig in PUBLIC_API {
         assert!(
             src.contains(sig),
-            "公共层缺少接口 `{}` (x86_64/aarch64 共用契约)",
-            sig
+            "公共层缺少接口 `{sig}` (x86_64/aarch64 共用契约)"
         );
     }
 }
@@ -103,8 +102,7 @@ fn x86_64_has_no_local_mechanism_copy() {
     for sym in FORBIDDEN_LOCAL_COPIES {
         assert!(
             !src.contains(sym),
-            "vmm_x86_64.rs 仍保留机制的本地副本 `{}` —— 违反「禁平行实现」",
-            sym
+            "vmm_x86_64.rs 仍保留机制的本地副本 `{sym}` —— 违反「禁平行实现」"
         );
     }
 }
@@ -116,18 +114,15 @@ fn both_backends_release_lock_wire_to_common_tail() {
         let release = slice_between(&src, "pub fn release_lock", "\n    }");
         assert!(
             release.contains("super::deferred_free::clear_shootdown_flag()"),
-            "{} release_lock 必须在持锁期间读-清需远程失效标志",
-            name
+            "{name} release_lock 必须在持锁期间读-清需远程失效标志"
         );
         assert!(
             release.contains("super::deferred_free::take_batch()"),
-            "{} release_lock 必须在持锁期间整条摘走批次链",
-            name
+            "{name} release_lock 必须在持锁期间整条摘走批次链"
         );
         assert!(
             release.contains("super::deferred_free::release_tail(shootdown_needed, batch)"),
-            "{} release_lock 必须在释放锁后走公共层收尾",
-            name
+            "{name} release_lock 必须在释放锁后走公共层收尾"
         );
     }
 }
@@ -213,13 +208,11 @@ fn all_chain_traversers_have_failclosed_walk_limit() {
         let body = slice_between(&src, fname, "\n}\n");
         assert!(
             body.contains("CHAIN_WALK_LIMIT"),
-            "{} 必须有 fail-closed 遍历上界 CHAIN_WALK_LIMIT",
-            fname
+            "{fname} 必须有 fail-closed 遍历上界 CHAIN_WALK_LIMIT"
         );
         assert!(
             body.contains("crate::klog_warn!"),
-            "{} 触顶必须告警 (便于诊断链损坏)",
-            fname
+            "{fname} 触顶必须告警 (便于诊断链损坏)"
         );
     }
 }

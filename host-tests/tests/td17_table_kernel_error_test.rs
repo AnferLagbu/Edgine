@@ -87,8 +87,7 @@ fn to_errno_method_present() {
     ] {
         assert!(
             to_errno_block.contains(variant),
-            "to_errno 必须映射 {} 变体",
-            variant
+            "to_errno 必须映射 {variant} 变体"
         );
     }
 }

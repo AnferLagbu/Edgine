@@ -3,10 +3,10 @@
 //! 验证 EGFS 端到端 API 在典型工作负载下的正确性:
 //! - 文件 / 目录 CRUD
 //! - seek / read / write 边界
-//! - 错误码 (NotFound / AlreadyExists / NotDirectory 等)
+//! - 错误码 (`NotFound` / `AlreadyExists` / `NotDirectory` 等)
 //! - 高级特性 (symlink / hardlink / xattr / chmod / chown)
 //! - Snapshot & Clone
-//! - FD 管理 (O_APPEND / 重复 close / 越界读)
+//! - FD 管理 (`O_APPEND` / 重复 close / 越界读)
 //!
 //! ## B08-14 迁移 (2026-09-06)
 //! 改引内核 `functions::fs::egfs::egfs_data` 真实实现 (host-test feature 暴露), 消除
@@ -15,7 +15,7 @@
 //!   creator=0 得最高特权级), 所有硬编码 pwm=1 替换为 `test_pwm()`.
 //! - 错误码走内核 `KernelError::as_i32()` (负 errno): InvalidArgument=-22 /
 //!   AlreadyExists=-17 / FileNotFound=-2 / Io=-5, 与测试版 mock 的裸 -1/-4 不同.
-//! - 内核 write 推进 fd offset (真实 POSIX 语义); O_APPEND (0x0400) open 后
+//! - 内核 write 推进 fd offset (真实 POSIX 语义); `O_APPEND` (0x0400) open 后
 //!   fd offset 初始化为文件末尾.
 //!
 //! ## 测试组织
@@ -24,7 +24,7 @@
 //! 暴露的 EGFS API.
 
 use edgine::kernel::functions::fs::egfs::dataset::EgfsDataset;
-use edgine::kernel::functions::fs::egfs::egfs_data::get_egfs;
+use edgine::kernel::functions::fs::egfs::egfs_data::{EgfsData, get_egfs};
 use edgine::kernel::privileged::error::KernelError;
 use edgine::kernel::privileged::sgeg::identity;
 use std::sync::{Mutex, Once, OnceLock};
@@ -76,6 +76,15 @@ fn egfs_comprehensive() {
 
     let egfs = get_egfs();
 
+    comprehensive_crud(egfs);
+    comprehensive_mutation(egfs);
+    comprehensive_bulk(egfs);
+
+    println!("\n=== All 10 EGFS Tests Passed ===\n");
+}
+
+/// CRUD 基线: init / 创建 / 读写 / 目录
+fn comprehensive_crud(egfs: &EgfsData) {
     test!(init, {
         ensure_egfs_init();
         assert!(egfs.is_initialized(), "EGFS should be initialized");
@@ -83,8 +92,8 @@ fn egfs_comprehensive() {
 
     test!(create_and_stat, {
         let fd = egfs.open("/test.txt", 0x0102, test_pwm()).unwrap();
-        assert!(fd >= 0, "open should succeed, got {}", fd);
-        egfs.close(fd as u32);
+        assert!(fd >= 0, "open should succeed, got {fd}");
+        egfs.close(fd.cast_unsigned());
         let stat = egfs.stat("/test.txt", test_pwm());
         assert!(stat.is_some(), "stat should find test.txt");
     });
@@ -92,23 +101,32 @@ fn egfs_comprehensive() {
     test!(write_and_read, {
         let fd = egfs.open("/test.txt", 0x0102, test_pwm()).unwrap();
         let data = b"Hello, Edgine EGFS!";
-        let written = egfs.write(fd as u32, data, data.len() as u32);
-        assert_eq_egfs!(written, data.len() as i32, "write count");
-        egfs.close(fd as u32);
+        let written = egfs.write(
+            fd.cast_unsigned(),
+            data,
+            u32::try_from(data.len()).expect("测试值必须能无损收窄"),
+        );
+        assert_eq_egfs!(
+            written,
+            i32::try_from(data.len()).expect("测试值必须能无损收窄"),
+            "write count"
+        );
+        egfs.close(fd.cast_unsigned());
 
         // read 用新 open 的 0x0001 fd, offset 从 0 开始, 无需 seek
         let fd = egfs.open("/test.txt", 0x0001, test_pwm()).unwrap();
         let mut buf = [0u8; 64];
-        let read = egfs.read(fd as u32, &mut buf, 64);
-        assert!(read > 0, "read should return > 0, got {}", read);
-        let read_str = core::str::from_utf8(&buf[..read as usize]).unwrap();
+        let read = egfs.read(fd.cast_unsigned(), &mut buf, 64);
+        assert!(read > 0, "read should return > 0, got {read}");
+        let read_str =
+            core::str::from_utf8(&buf[..usize::try_from(read).expect("测试值必须为非负")]).unwrap();
         assert_eq_egfs!(read_str, "Hello, Edgine EGFS!", "file content");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(mkdir, {
         let result = egfs.mkdir("/mydir", test_pwm());
-        assert!(result >= 0, "mkdir should succeed, got {}", result);
+        assert!(result >= 0, "mkdir should succeed, got {result}");
         let stat = egfs.stat("/mydir", test_pwm());
         assert!(stat.is_some(), "stat should find mydir");
         let obj = stat.unwrap();
@@ -118,35 +136,47 @@ fn egfs_comprehensive() {
     test!(create_file_in_dir, {
         let fd = egfs.open("/mydir/nested.txt", 0x0102, test_pwm()).unwrap();
         let data = b"nested content";
-        let w = egfs.write(fd as u32, data, data.len() as u32);
-        assert_eq_egfs!(w, data.len() as i32, "nested write count");
-        egfs.close(fd as u32);
+        let w = egfs.write(
+            fd.cast_unsigned(),
+            data,
+            u32::try_from(data.len()).expect("测试值必须能无损收窄"),
+        );
+        assert_eq_egfs!(
+            w,
+            i32::try_from(data.len()).expect("测试值必须能无损收窄"),
+            "nested write count"
+        );
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(read_nested, {
         let fd = egfs.open("/mydir/nested.txt", 0x0001, test_pwm()).unwrap();
         let mut buf = [0u8; 64];
-        let r = egfs.read(fd as u32, &mut buf, 64);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 64);
         assert!(r > 0, "nested read should return > 0");
-        let s = core::str::from_utf8(&buf[..r as usize]).unwrap();
+        let s =
+            core::str::from_utf8(&buf[..usize::try_from(r).expect("测试值必须为非负")]).unwrap();
         assert_eq_egfs!(s, "nested content", "nested file content");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
+}
 
+/// 变更路径: rename / unlink / 大块写读
+fn comprehensive_mutation(egfs: &EgfsData) {
     test!(rename, {
         let r = egfs.rename("/test.txt", "/renamed.txt", test_pwm());
         assert_eq_egfs!(r, 0, "rename should succeed");
 
         let fd = egfs.open("/renamed.txt", 0x0001, test_pwm()).unwrap();
         let mut buf = [0u8; 64];
-        let r = egfs.read(fd as u32, &mut buf, 64);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 64);
         assert!(r > 0, "renamed file should have content");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
 
         match egfs.open("/test.txt", 0x0001, test_pwm()) {
             Err(_) => {}
             Ok(fd) => {
-                egfs.close(fd as u32);
+                egfs.close(fd.cast_unsigned());
                 panic!("old name should not exist after rename");
             }
         }
@@ -158,7 +188,7 @@ fn egfs_comprehensive() {
         match egfs.open("/renamed.txt", 0x0001, test_pwm()) {
             Err(_) => {}
             Ok(fd) => {
-                egfs.close(fd as u32);
+                egfs.close(fd.cast_unsigned());
                 panic!("deleted file should not be openable");
             }
         }
@@ -166,61 +196,97 @@ fn egfs_comprehensive() {
 
     test!(large_write, {
         let fd = egfs.open("/large.bin", 0x0102, test_pwm()).unwrap();
-        let pattern: Vec<u8> = (0..1024u16).flat_map(|i| i.to_le_bytes()).collect();
-        let written = egfs.write(fd as u32, &pattern, pattern.len() as u32);
-        assert_eq_egfs!(written, pattern.len() as i32, "large write count");
-        egfs.close(fd as u32);
+        let pattern: Vec<u8> = (0..1024u16).flat_map(u16::to_le_bytes).collect();
+        let written = egfs.write(
+            fd.cast_unsigned(),
+            &pattern,
+            u32::try_from(pattern.len()).expect("测试值必须能无损收窄"),
+        );
+        assert_eq_egfs!(
+            written,
+            i32::try_from(pattern.len()).expect("测试值必须能无损收窄"),
+            "large write count"
+        );
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/large.bin", 0x0001, test_pwm()).unwrap();
         let mut read_buf = vec![0u8; pattern.len()];
         let buf_len = read_buf.len();
-        let r = egfs.read(fd as u32, &mut read_buf, buf_len as u32);
-        assert_eq_egfs!(r, pattern.len() as i32, "large read count");
+        let r = egfs.read(
+            fd.cast_unsigned(),
+            &mut read_buf,
+            u32::try_from(buf_len).expect("测试值必须能无损收窄"),
+        );
+        assert_eq_egfs!(
+            r,
+            i32::try_from(pattern.len()).expect("测试值必须能无损收窄"),
+            "large read count"
+        );
         assert_eq_egfs!(&read_buf[..], &pattern[..], "large file content");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
+}
 
+/// 批量与覆盖: 多文件 / overwrite / 不存在路径
+fn comprehensive_bulk(egfs: &EgfsData) {
     test!(multiple_files, {
         for i in 0..10 {
-            let name = format!("/multi_{}", i);
+            let name = format!("/multi_{i}");
             let fd = egfs.open(&name, 0x0102, test_pwm()).unwrap();
-            let content = format!("file number {}", i);
-            let w = egfs.write(fd as u32, content.as_bytes(), content.len() as u32);
-            let msg = format!("write multi_{}", i);
-            assert_eq_egfs!(w, content.len() as i32, msg);
-            egfs.close(fd as u32);
+            let content = format!("file number {i}");
+            let w = egfs.write(
+                fd.cast_unsigned(),
+                content.as_bytes(),
+                u32::try_from(content.len()).expect("测试值必须能无损收窄"),
+            );
+            let msg = format!("write multi_{i}");
+            assert_eq_egfs!(
+                w,
+                i32::try_from(content.len()).expect("测试值必须能无损收窄"),
+                msg
+            );
+            egfs.close(fd.cast_unsigned());
         }
         for i in 0..10 {
-            let name = format!("/multi_{}", i);
+            let name = format!("/multi_{i}");
             let stat = egfs.stat(&name, test_pwm());
-            assert!(stat.is_some(), "should find multi_{}", i);
+            assert!(stat.is_some(), "should find multi_{i}");
         }
     });
 
     test!(overwrite, {
         let fd = egfs.open("/overwrite.txt", 0x0102, test_pwm()).unwrap();
         let d1 = b"first version";
-        egfs.write(fd as u32, d1, d1.len() as u32);
-        egfs.close(fd as u32);
+        egfs.write(
+            fd.cast_unsigned(),
+            d1,
+            u32::try_from(d1.len()).expect("测试值必须能无损收窄"),
+        );
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/overwrite.txt", 0x0102, test_pwm()).unwrap();
         let d2 = b"second version - longer content!";
-        egfs.write(fd as u32, d2, d2.len() as u32);
-        egfs.close(fd as u32);
+        egfs.write(
+            fd.cast_unsigned(),
+            d2,
+            u32::try_from(d2.len()).expect("测试值必须能无损收窄"),
+        );
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/overwrite.txt", 0x0001, test_pwm()).unwrap();
         let mut buf = [0u8; 64];
-        let r = egfs.read(fd as u32, &mut buf, 64);
-        let s = core::str::from_utf8(&buf[..r as usize]).unwrap();
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 64);
+        let s =
+            core::str::from_utf8(&buf[..usize::try_from(r).expect("测试值必须为非负")]).unwrap();
         assert_eq_egfs!(s, "second version - longer content!", "overwrite content");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(open_nonexistent, {
         match egfs.open("/nonexistent", 0x0001, test_pwm()) {
             Err(_) => {}
             Ok(fd) => {
-                egfs.close(fd as u32);
+                egfs.close(fd.cast_unsigned());
                 panic!("open nonexistent should fail");
             }
         }
@@ -230,8 +296,6 @@ fn egfs_comprehensive() {
         let stat = egfs.stat("/nonexistent", test_pwm());
         assert!(stat.is_none(), "stat nonexistent should return None");
     });
-
-    println!("\n=== All 10 EGFS Tests Passed ===\n");
 }
 
 #[test]
@@ -242,12 +306,20 @@ fn egfs_error_paths() {
     let egfs = get_egfs();
     ensure_egfs_init();
 
+    error_paths_lookup(egfs);
+    error_paths_seek(egfs);
+
+    println!("\n=== EGFS Error Path Tests Passed ===\n");
+}
+
+/// 查找/打开/关闭类错误码
+fn error_paths_lookup(egfs: &EgfsData) {
     test!(open_without_create_flag_returns_not_found, {
         match egfs.open("/no_such_file.txt", 0x0001, test_pwm()) {
             Err(KernelError::FileNotFound) => {}
-            Err(e) => panic!("expected FileNotFound, got {:?}", e),
+            Err(e) => panic!("expected FileNotFound, got {e:?}"),
             Ok(fd) => {
-                egfs.close(fd as u32);
+                egfs.close(fd.cast_unsigned());
                 panic!("should fail with FileNotFound");
             }
         }
@@ -256,9 +328,9 @@ fn egfs_error_paths() {
     test!(open_with_create_flag_succeeds, {
         match egfs.open("/new_file.txt", 0x0102, test_pwm()) {
             Ok(fd) => {
-                egfs.close(fd as u32);
+                egfs.close(fd.cast_unsigned());
             }
-            Err(e) => panic!("open with O_CREAT should succeed, got {:?}", e),
+            Err(e) => panic!("open with O_CREAT should succeed, got {e:?}"),
         }
     });
 
@@ -286,7 +358,11 @@ fn egfs_error_paths() {
     test!(write_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let data = b"test";
-        let r = egfs.write(9999, data, data.len() as u32);
+        let r = egfs.write(
+            9999,
+            data,
+            u32::try_from(data.len()).expect("测试值必须能无损收窄"),
+        );
         assert_eq_egfs!(
             r,
             -22,
@@ -311,11 +387,11 @@ fn egfs_error_paths() {
 
     test!(rename_target_exists, {
         let fd1 = egfs.open("/rename_src.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd1 as u32, b"src", 3);
-        egfs.close(fd1 as u32);
+        egfs.write(fd1.cast_unsigned(), b"src", 3);
+        egfs.close(fd1.cast_unsigned());
         let fd2 = egfs.open("/rename_dst.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd2 as u32, b"dst", 3);
-        egfs.close(fd2 as u32);
+        egfs.write(fd2.cast_unsigned(), b"dst", 3);
+        egfs.close(fd2.cast_unsigned());
         // 内核差异: rename 目标已存在返回 AlreadyExists (-17, EEXIST), 测试版 mock 为 -4
         let r = egfs.rename("/rename_src.txt", "/rename_dst.txt", test_pwm());
         assert_eq_egfs!(
@@ -324,7 +400,10 @@ fn egfs_error_paths() {
             "rename to existing target should return -17 (AlreadyExists)"
         );
     });
+}
 
+/// seek 语义与越界 fd
+fn error_paths_seek(egfs: &EgfsData) {
     test!(seek_invalid_fd, {
         // 内核差异: invalid fd 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
         let r = egfs.seek(9999, 0, 0);
@@ -338,51 +417,65 @@ fn egfs_error_paths() {
     test!(seek_set, {
         let fd = egfs.open("/seek_test.txt", 0x0102, test_pwm()).unwrap();
         let data = b"0123456789ABCDEF";
-        egfs.write(fd as u32, data, data.len() as u32);
-        egfs.close(fd as u32);
+        egfs.write(
+            fd.cast_unsigned(),
+            data,
+            u32::try_from(data.len()).expect("测试值必须能无损收窄"),
+        );
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/seek_test.txt", 0x0001, test_pwm()).unwrap();
-        let pos = egfs.seek(fd as u32, 4, 0);
+        let pos = egfs.seek(fd.cast_unsigned(), 4, 0);
         assert_eq_egfs!(pos, 4, "seek SET to 4");
         let mut buf = [0u8; 4];
-        let r = egfs.read(fd as u32, &mut buf, 4);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 4);
         assert!(r > 0, "read after seek should succeed");
-        assert_eq_egfs!(&buf[..r as usize], b"4567", "read after seek content");
-        egfs.close(fd as u32);
+        assert_eq_egfs!(
+            &buf[..usize::try_from(r).expect("测试值必须为非负")],
+            b"4567",
+            "read after seek content"
+        );
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(seek_cur, {
         let fd = egfs.open("/seek_cur_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"ABCDEFGHIJ", 10);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"ABCDEFGHIJ", 10);
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/seek_cur_test.txt", 0x0001, test_pwm()).unwrap();
-        egfs.seek(fd as u32, 2, 0);
-        let pos = egfs.seek(fd as u32, 3, 1);
+        egfs.seek(fd.cast_unsigned(), 2, 0);
+        let pos = egfs.seek(fd.cast_unsigned(), 3, 1);
         assert_eq_egfs!(pos, 5, "seek CUR from 2 + 3 = 5");
         let mut buf = [0u8; 3];
-        let r = egfs.read(fd as u32, &mut buf, 3);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 3);
         assert!(r > 0);
-        assert_eq_egfs!(&buf[..r as usize], b"FGH", "read after seek CUR");
-        egfs.close(fd as u32);
+        assert_eq_egfs!(
+            &buf[..usize::try_from(r).expect("测试值必须为非负")],
+            b"FGH",
+            "read after seek CUR"
+        );
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(seek_end, {
         let fd = egfs.open("/seek_end_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"HELLO", 5);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"HELLO", 5);
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/seek_end_test.txt", 0x0001, test_pwm()).unwrap();
-        let pos = egfs.seek(fd as u32, -2i64, 2);
+        let pos = egfs.seek(fd.cast_unsigned(), -2i64, 2);
         assert_eq_egfs!(pos, 3, "seek END - 2 = 3");
         let mut buf = [0u8; 4];
-        let r = egfs.read(fd as u32, &mut buf, 4);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 4);
         assert!(r > 0);
-        assert_eq_egfs!(&buf[..r as usize], b"LO", "read after seek END");
-        egfs.close(fd as u32);
+        assert_eq_egfs!(
+            &buf[..usize::try_from(r).expect("测试值必须为非负")],
+            b"LO",
+            "read after seek END"
+        );
+        egfs.close(fd.cast_unsigned());
     });
-
-    println!("\n=== EGFS Error Path Tests Passed ===\n");
 }
 
 #[test]
@@ -393,19 +486,27 @@ fn egfs_advanced_features() {
     let egfs = get_egfs();
     ensure_egfs_init();
 
+    advanced_links(egfs);
+    advanced_meta(egfs);
+
+    println!("\n=== EGFS Advanced Feature Tests Passed ===\n");
+}
+
+/// 链接与扩展属性
+fn advanced_links(egfs: &EgfsData) {
     test!(symlink_create_and_readlink, {
         let fd = egfs.open("/link_target.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"target data", 11);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"target data", 11);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.symlink("/link_target.txt", "/my_symlink", test_pwm());
-        assert!(r >= 0, "symlink should succeed, got {}", r);
+        assert!(r >= 0, "symlink should succeed, got {r}");
     });
 
     test!(hardlink_create, {
         let fd = egfs.open("/hardlink_src.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"hardlink data", 13);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"hardlink data", 13);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.link("/hardlink_src.txt", "/hardlink_dst.txt", test_pwm());
         assert_eq_egfs!(r, 0, "hardlink should succeed");
@@ -413,11 +514,11 @@ fn egfs_advanced_features() {
 
     test!(hardlink_target_exists, {
         let fd = egfs.open("/hl_exist_src.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"src", 3);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"src", 3);
+        egfs.close(fd.cast_unsigned());
         let fd2 = egfs.open("/hl_exist_dst.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd2 as u32, b"dst", 3);
-        egfs.close(fd2 as u32);
+        egfs.write(fd2.cast_unsigned(), b"dst", 3);
+        egfs.close(fd2.cast_unsigned());
 
         // 内核差异: hardlink 目标已存在返回 AlreadyExists (-17, EEXIST), 测试版 mock 为 -4
         let r = egfs.link("/hl_exist_src.txt", "/hl_exist_dst.txt", test_pwm());
@@ -435,8 +536,8 @@ fn egfs_advanced_features() {
 
     test!(xattr_set_get_remove, {
         let fd = egfs.open("/xattr_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"xattr content", 13);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"xattr content", 13);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.setxattr(
             "/xattr_test.txt",
@@ -444,11 +545,11 @@ fn egfs_advanced_features() {
             b"hello world",
             test_pwm(),
         );
-        assert!(r >= 0, "setxattr should succeed, got {}", r);
+        assert!(r >= 0, "setxattr should succeed, got {r}");
 
         let mut buf = [0u8; 64];
         let r = egfs.getxattr("/xattr_test.txt", "user.comment", &mut buf, test_pwm());
-        assert!(r > 0, "getxattr should return data, got {}", r);
+        assert!(r > 0, "getxattr should return data, got {r}");
 
         let r = egfs.removexattr("/xattr_test.txt", "user.comment", test_pwm());
         assert_eq_egfs!(r, 0, "removexattr should succeed");
@@ -461,21 +562,24 @@ fn egfs_advanced_features() {
 
     test!(xattr_list, {
         let fd = egfs.open("/xattr_list.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"list test", 9);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"list test", 9);
+        egfs.close(fd.cast_unsigned());
 
         egfs.setxattr("/xattr_list.txt", "user.attr0", b"v0", test_pwm());
         egfs.setxattr("/xattr_list.txt", "user.attr1", b"v1", test_pwm());
 
         let mut buf = [0u8; 256];
         let r = egfs.listxattr("/xattr_list.txt", &mut buf, test_pwm());
-        assert!(r > 0, "listxattr should return data, got {}", r);
+        assert!(r > 0, "listxattr should return data, got {r}");
     });
+}
 
+/// 权限/属主/sync/统计
+fn advanced_meta(egfs: &EgfsData) {
     test!(chmod_basic, {
         let fd = egfs.open("/chmod_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"chmod", 5);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"chmod", 5);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.chmod("/chmod_test.txt", 0o755, test_pwm());
         assert_eq_egfs!(r, 0, "chmod should succeed");
@@ -493,8 +597,8 @@ fn egfs_advanced_features() {
 
     test!(chown_basic, {
         let fd = egfs.open("/chown_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"chown", 5);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"chown", 5);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.chown("/chown_test.txt", 42, test_pwm());
         assert_eq_egfs!(r, 0, "chown should succeed");
@@ -512,8 +616,8 @@ fn egfs_advanced_features() {
 
     test!(sync_operation, {
         let fd = egfs.open("/sync_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"sync data", 9);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"sync data", 9);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.sync();
         assert_eq_egfs!(r, 0, "sync should succeed");
@@ -526,8 +630,6 @@ fn egfs_advanced_features() {
             "stats should reflect activity"
         );
     });
-
-    println!("\n=== EGFS Advanced Feature Tests Passed ===\n");
 }
 
 #[test]
@@ -540,17 +642,17 @@ fn egfs_snapshot_clone() {
 
     test!(snapshot_create, {
         let fd = egfs.open("/snap_file.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"snapshot data", 13);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"snapshot data", 13);
+        egfs.close(fd.cast_unsigned());
 
         let r = egfs.snapshot_create("snap1");
-        assert!(r >= 0, "snapshot_create should succeed, got {}", r);
+        assert!(r >= 0, "snapshot_create should succeed, got {r}");
     });
 
     test!(snapshot_list, {
         let snap_mgr = &egfs.snap_mgr;
         let count = snap_mgr.snapshot_count();
-        assert!(count >= 1, "should have at least 1 snapshot, got {}", count);
+        assert!(count >= 1, "should have at least 1 snapshot, got {count}");
     });
 
     test!(snapshot_get, {
@@ -567,8 +669,8 @@ fn egfs_snapshot_clone() {
         let fd = egfs
             .open("/post_snap_file.txt", 0x0102, test_pwm())
             .unwrap();
-        egfs.write(fd as u32, b"after snapshot", 14);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"after snapshot", 14);
+        egfs.close(fd.cast_unsigned());
 
         let snap_mgr = &egfs.snap_mgr;
         let snaps = snap_mgr.list_snapshots(0);
@@ -614,7 +716,7 @@ fn egfs_snapshot_clone() {
         let source = snaps.iter().find(|s| s.get_name() == "clone_source");
         if let Some(snap) = source {
             let r = egfs.clone_create(snap.snap_id, "cloned_ds");
-            assert!(r >= 0, "clone_create should succeed, got {}", r);
+            assert!(r >= 0, "clone_create should succeed, got {r}");
         }
     });
 
@@ -641,8 +743,8 @@ fn egfs_fd_management() {
 
     test!(open_append_flag, {
         let fd = egfs.open("/append_test.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"first", 5);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"first", 5);
+        egfs.close(fd.cast_unsigned());
 
         // 内核差异: O_APPEND (0x0400) open 后 fd offset 初始化为文件末尾 (真实 POSIX
         // 语义), 直接 read 返回 0 (offset == size)。seek(0) 后可读全文。
@@ -650,35 +752,35 @@ fn egfs_fd_management() {
             .open("/append_test.txt", 0x0100 | 0x0400, test_pwm())
             .unwrap();
         let mut buf = [0u8; 32];
-        let r = egfs.read(fd as u32, &mut buf, 32);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 32);
         assert_eq_egfs!(
             r,
             0,
             "append mode open 后 offset 在文件末尾 (内核 POSIX 语义)"
         );
-        let pos = egfs.seek(fd as u32, 0, 0);
+        let pos = egfs.seek(fd.cast_unsigned(), 0, 0);
         assert_eq_egfs!(pos, 0, "seek back to 0");
-        let r = egfs.read(fd as u32, &mut buf, 32);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 32);
         assert_eq_egfs!(r, 5, "seek 后应读到 5 字节");
         assert_eq_egfs!(&buf[..5], b"first", "append 文件内容");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(open_existing_with_create, {
         let fd = egfs.open("/existing.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"original", 8);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"original", 8);
+        egfs.close(fd.cast_unsigned());
 
         let fd2 = egfs.open("/existing.txt", 0x0102, test_pwm());
         assert!(fd2.is_ok(), "open existing with O_CREAT should succeed");
-        egfs.close(fd2.unwrap() as u32);
+        egfs.close(fd2.unwrap().cast_unsigned());
     });
 
     test!(close_twice, {
         let fd = egfs.open("/double_close.txt", 0x0102, test_pwm()).unwrap();
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
         // 内核差异: 重复 close 返回 InvalidArgument (-22, EINVAL), 测试版 mock 为 -1
-        let r = egfs.close(fd as u32);
+        let r = egfs.close(fd.cast_unsigned());
         assert_eq_egfs!(
             r,
             -22,
@@ -688,34 +790,34 @@ fn egfs_fd_management() {
 
     test!(read_write_zero_bytes, {
         let fd = egfs.open("/zero_rw.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"data", 4);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"data", 4);
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/zero_rw.txt", 0x0001, test_pwm()).unwrap();
         let mut buf = [0u8; 4];
-        let r = egfs.read(fd as u32, &mut buf, 0);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 0);
         assert_eq_egfs!(r, 0, "read 0 bytes should return 0");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
 
         // 内核差异: write 的权限检查先于 0 字节短路 — 只读 fd 上 0 字节 write 返回
         // PermissionDenied (-1)。在可写 fd 上 0 字节 write 返回 0。
         let fd = egfs.open("/zero_rw.txt", 0x0102, test_pwm()).unwrap();
-        let w = egfs.write(fd as u32, b"", 0);
+        let w = egfs.write(fd.cast_unsigned(), b"", 0);
         assert_eq_egfs!(w, 0, "write 0 bytes should return 0");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
 
     test!(read_past_end, {
         let fd = egfs.open("/short_file.txt", 0x0102, test_pwm()).unwrap();
-        egfs.write(fd as u32, b"hi", 2);
-        egfs.close(fd as u32);
+        egfs.write(fd.cast_unsigned(), b"hi", 2);
+        egfs.close(fd.cast_unsigned());
 
         let fd = egfs.open("/short_file.txt", 0x0001, test_pwm()).unwrap();
-        egfs.seek(fd as u32, 100, 0);
+        egfs.seek(fd.cast_unsigned(), 100, 0);
         let mut buf = [0u8; 10];
-        let r = egfs.read(fd as u32, &mut buf, 10);
+        let r = egfs.read(fd.cast_unsigned(), &mut buf, 10);
         assert_eq_egfs!(r, 0, "read past end should return 0");
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     });
 
     println!("\n=== EGFS FD Management Tests Passed ===\n");
@@ -724,24 +826,24 @@ fn egfs_fd_management() {
 /// C1/T6-④ 时间戳写回: `FileSystem::fs_utimensat` → DMU 对象落库 → `fs_stat` 可观测
 ///
 /// 验收 (utimensat POSIX 语义):
-///   1. 显式 atime/mtime → fs_stat 读回同一值 (证明确实写回, 而非只填元数据)
-///   2. `u64::MAX` (= UTIME_OMIT) → 该字段保持原值
+///   1. 显式 atime/mtime → `fs_stat` 读回同一值 (证明确实写回, 而非只填元数据)
+///   2. `u64::MAX` (= `UTIME_OMIT`) → 该字段保持原值
 ///   3. 路径不存在 → 返回错误
 #[test]
 fn egfs_utimensat_writes_back_times() {
     use edgine::kernel::functions::fs::FileSystem;
+
+    const PATH: &str = "/times_utimensat.txt";
+    const ATIME: u64 = 1_700_000_000;
+    const MTIME: u64 = 1_700_000_123;
 
     let _guard = EGFS_TEST_LOCK.lock().unwrap();
     ensure_egfs_init();
     let egfs = get_egfs();
     let pwm = test_pwm();
 
-    const PATH: &str = "/times_utimensat.txt";
-    const ATIME: u64 = 1_700_000_000;
-    const MTIME: u64 = 1_700_000_123;
-
     let fd = egfs.open(PATH, 0x0102, pwm).unwrap();
-    egfs.close(fd as u32);
+    egfs.close(fd.cast_unsigned());
 
     egfs.fs_utimensat(PATH, ATIME, MTIME, pwm)
         .expect("fs_utimensat on existing file must succeed");

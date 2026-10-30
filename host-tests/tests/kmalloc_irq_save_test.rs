@@ -1,18 +1,18 @@
 //! kmalloc 中断安全锁契约测试 (P1-I-28)
 //!
 //! 验证:
-//! 1. kmalloc.rs::acquire_lock/release_lock 签名变更为 (无) -> IrqSaveFlags / (flags) -> ()
-//! 2. 源码静态扫描确认调用点一致 (let flags = self.acquire_lock(); ... self.release_lock(flags);)
-//! 3. 中断安全锁配对契约: lock_irqsave 返回 flags, unlock_irqrestore 接 flags
+//! 1. `kmalloc.rs::acquire_lock/release_lock` 签名变更为 (无) -> `IrqSaveFlags` / (flags) -> ()
+//! 2. 源码静态扫描确认调用点一致 (let flags = `self.acquire_lock()`; ... `self.release_lock(flags)`;)
+//! 3. 中断安全锁配对契约: `lock_irqsave` 返回 flags, `unlock_irqrestore` 接 flags
 //!
-//! 分册 9 项 2 (B09-21): 原第 2 条 (kmalloc_slab.rs 源文本静态扫描) 随
+//! 分册 9 项 2 (B09-21): 原第 2 条 (`kmalloc_slab.rs` 源文本静态扫描) 随
 //! `privileged/mm/kmalloc_slab.rs` 零引用孤岛整体删除而移除.
 //!
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `IrqSaveFlags` / `IRQ_DISABLED` / `disable_interrupts` /
 //! `restore_interrupts` / `acquire_lock` / `release_lock` / `MockHeap` 平行镜像,
-//! 改引内核真实源码 `edgine::kernel::privileged::sync::{SpinLock, IrqSpinLock,
-//! `IrqSaveFlags, disable_interrupts, restore_interrupts}`.
+//! 改引内核真实源码 `edgine::kernel::privileged::sync::{SpinLock, IrqSpinLock, IrqSaveFlags,
+//! disable_interrupts, restore_interrupts}` —— 五项一律取自内核, 不再保留本地镜像.
 //! 内核 `disable_interrupts`/`restore_interrupts` 在 host-test 下为桩 (no-op,
 //! B08-14 前置: host 无中断语义, 原子自旋仍正确互斥); `SpinLock`/`IrqSpinLock`
 //! 的原子自旋在 host 多线程下仍正确互斥.
@@ -20,8 +20,8 @@
 //! ## 与原镜像的差异 (以内核为权威)
 //! 原镜像用全局 `IRQ_DISABLED: AtomicBool` 模拟"持锁期间 IRQ disabled"状态;
 //! 内核 host-test 桩下 `disable_interrupts` 为 no-op, 无可观察的 disabled 状态.
-//! 故改为验证锁**配对契约** (lock_irqsave 返回 flags / is_locked 翻转 /
-//! IrqSpinLock RAII guard Drop 自动释放), 该契约即 kmalloc 临界区的实际保障.
+//! 故改为验证锁**配对契约** (`lock_irqsave` 返回 flags / `is_locked` 翻转 /
+//! `IrqSpinLock` RAII guard Drop 自动释放), 该契约即 kmalloc 临界区的实际保障.
 
 use edgine::kernel::privileged::sync::{
     IrqSaveFlags, IrqSpinLock, SpinLock, disable_interrupts, restore_interrupts,

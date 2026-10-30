@@ -8,8 +8,8 @@
 mod commands;
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use userlib::sys::*;
-use userlib::*;
+use userlib::sys::{env_getcwd, proc_exit, proc_get_pwm};
+use userlib::{print, print_dec, print_hex, println, read_line};
 
 /// 全局退出标记 (由 `exit` 命令设置)
 pub static MAIN_EXIT: AtomicBool = AtomicBool::new(false);
@@ -21,7 +21,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         userlib::print("at ");
         userlib::print(loc.file());
         userlib::print(":");
-        print_dec(loc.line() as i64);
+        print_dec(i64::from(loc.line()));
     }
     userlib::print("\n");
     proc_exit(1);
@@ -85,7 +85,7 @@ fn shell_main() {
 }
 
 #[unsafe(no_mangle)]
-pub fn _start() -> ! {
+pub extern "C" fn _start() -> ! {
     shell_main();
     proc_exit(0);
 }

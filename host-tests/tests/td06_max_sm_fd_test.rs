@@ -18,7 +18,7 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
 /// 合并读取 init.rs 与 init/sockets.rs 源码 (socket 容量配置所在位置).

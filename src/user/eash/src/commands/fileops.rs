@@ -1,6 +1,9 @@
-use userlib::sys::*;
+use userlib::sys::{
+    FT_DIR, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, UserDirEntry, env_chdir, env_getcwd, fs_close,
+    fs_mkdir, fs_read, fs_readdir, fs_rename, fs_rmdir, fs_unlink, fs_write,
+};
 /// 文件操作命令: dir, cd, pwd, cat, mkdir, touch, del, cp, mv, save
-use userlib::*;
+use userlib::{file_open, print, print_dec, println};
 
 use super::{Cmd, as_str, path_arg};
 
@@ -50,7 +53,7 @@ pub fn dir(cmd: &Cmd) {
             count += 1;
         }
     }
-    fs_close(fd);
+    let _ = fs_close(fd);
     if count == 0 {
         println("  (empty)");
     }
@@ -95,10 +98,13 @@ pub fn cat(cmd: &Cmd) {
             if n <= 0 {
                 break;
             }
-            buf[n as usize] = 0;
-            print(core::str::from_utf8(&buf[..n as usize]).unwrap_or("<binary>"));
+            buf[usize::try_from(n).expect("n 已确认大于 0")] = 0;
+            print(
+                core::str::from_utf8(&buf[..usize::try_from(n).expect("n 已确认大于 0")])
+                    .unwrap_or("<binary>"),
+            );
         }
-        fs_close(fd);
+        let _ = fs_close(fd);
     } else {
         println("cat: missing file");
     }
@@ -129,7 +135,7 @@ pub fn touch(cmd: &Cmd) {
             println("'");
             return;
         }
-        fs_close(fd);
+        let _ = fs_close(fd);
         print("Created: ");
         print_nb(&p);
         println("");
@@ -180,7 +186,7 @@ pub fn cp(cmd: &Cmd) {
         print("cp: cannot create '");
         print(dst);
         println("'");
-        fs_close(fd_src);
+        let _ = fs_close(fd_src);
         return;
     }
 
@@ -191,13 +197,13 @@ pub fn cp(cmd: &Cmd) {
         if n <= 0 {
             break;
         }
-        fs_write(fd_dst, &buf[..n as usize]);
-        total += n as u64;
+        let _ = fs_write(fd_dst, &buf[..usize::try_from(n).expect("n 已确认大于 0")]);
+        total += u64::try_from(n).expect("n 已确认大于 0");
     }
-    fs_close(fd_src);
-    fs_close(fd_dst);
+    let _ = fs_close(fd_src);
+    let _ = fs_close(fd_dst);
     print("Copied ");
-    print_dec(total as i64);
+    print_dec(i64::try_from(total).expect("累计字节数超出 i64"));
     println(" bytes");
 }
 
@@ -245,8 +251,8 @@ pub fn save(cmd: &Cmd) {
         return;
     }
     let n = fs_write(fd, text_str.as_bytes());
-    fs_close(fd);
+    let _ = fs_close(fd);
     print("Wrote ");
-    print_dec(n as i64);
+    print_dec(i64::from(n));
     println(" bytes");
 }

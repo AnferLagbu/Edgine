@@ -1,4 +1,4 @@
-//! DECISION-H storage 专项: NVMe/AHCI 架构契约验证 (3 号子步 storage_init 退位后)
+//! DECISION-H storage 专项: NVMe/AHCI 架构契约验证 (3 号子步 `storage_init` 退位后)
 //!
 //! 验证退位后的状态契约 (functions 权威, privileged 机制保留):
 //! 1. privileged `nvme.rs` 仅剩 wire 类型 (NvmeCommand/NvmeCompletion), 控制器业务已删
@@ -6,8 +6,8 @@
 //! 3. privileged `storage_init` 已整体退位 (无 ATA 回退路径); PCI AHCI/NVMe + ATA
 //!    探测/注册全部由 functions 接管
 //! 4. functions `storage_init` 调用 `_block` 适配器注册 EGDF + MSI-X 接线
-//! 5. crate root lib.rs 编排 functions storage_init (合法双向编排者)
-//! 6. 双侧均无文件级 dead_code 豁免 (I-49 契约延续)
+//! 5. crate root lib.rs 编排 functions `storage_init` (合法双向编排者)
+//! 6. 双侧均无文件级 `dead_code` 豁免 (I-49 契约延续)
 //!
 //! 主机端无法实际跑 PCI 探测, 这里做静态契约验证: 读源文件做关键字检查.
 
@@ -39,7 +39,7 @@ fn test_privileged_nvme_wire_types_only() {
     let src = read_source(PRIVILEGED_DIR, "nvme.rs");
     // wire 类型必须保留 (privileged safe wrapper 与 functions 驱动共用)
     for sym in ["pub struct NvmeCommand", "pub struct NvmeCompletion"] {
-        assert!(src.contains(sym), "privileged nvme.rs 缺失 {}", sym);
+        assert!(src.contains(sym), "privileged nvme.rs 缺失 {sym}");
     }
     // 控制器业务必须已退位 (DECISION-H 3 号子步)
     assert!(
@@ -61,7 +61,7 @@ fn test_privileged_ahci_wire_types_only() {
         "pub struct AhciCommandTable",
         "pub struct H2dFis",
     ] {
-        assert!(src.contains(sym), "privileged ahci.rs 缺失 {}", sym);
+        assert!(src.contains(sym), "privileged ahci.rs 缺失 {sym}");
     }
     // HBA 寄存器布局与控制器业务必须已退位
     for sym in [
@@ -71,8 +71,7 @@ fn test_privileged_ahci_wire_types_only() {
     ] {
         assert!(
             !src.contains(sym),
-            "privileged ahci.rs 仍含 {} (应已迁 functions)",
-            sym
+            "privileged ahci.rs 仍含 {sym} (应已迁 functions)"
         );
     }
     assert!(
@@ -116,7 +115,7 @@ fn test_privileged_storage_init_removed() {
         "nvme_register_msix_isr",
         "nvme_register_functions_msix_dispatch",
     ] {
-        assert!(code.contains(sym), "privileged mod.rs 缺失机制入口 {}", sym);
+        assert!(code.contains(sym), "privileged mod.rs 缺失机制入口 {sym}");
     }
 }
 
@@ -209,9 +208,7 @@ fn test_no_dead_code_allow_in_storage() {
         let src = read_source(dir, name);
         assert!(
             !src.contains("#![allow(dead_code)]") && !src.contains("#![allow(unused)]"),
-            "{}/{} 含文件级 dead_code 豁免",
-            dir,
-            name
+            "{dir}/{name} 含文件级 dead_code 豁免"
         );
     }
 }

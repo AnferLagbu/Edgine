@@ -34,8 +34,7 @@ fn test_smoltcp_vendored_version_is_0_14() {
         .expect("smoltcp/Cargo.toml 缺少 version 字段");
     assert!(
         version_line.contains("0.14"),
-        "smoltcp vendored 版本已变更为: {} (I-08 决策保持 0.14.x)",
-        version_line
+        "smoltcp vendored 版本已变更为: {version_line} (I-08 决策保持 0.14.x)"
     );
 }
 
@@ -117,7 +116,6 @@ fn test_no_uncommitted_local_patch_to_vendored_smoltcp() {
     // vendored 副本若被修改, 应通过 I-08 评估后再合并
     assert!(
         out.trim().is_empty(),
-        "vendored smoltcp 有未提交修改, 需先评估:\n{}",
-        out
+        "vendored smoltcp 有未提交修改, 需先评估:\n{out}"
     );
 }

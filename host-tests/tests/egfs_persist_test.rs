@@ -41,32 +41,43 @@ fn egfs_persistence_roundtrip() {
 
     let pwm = test_pwm();
     for i in 0..5 {
-        let name = format!("/file_{}", i);
+        let name = format!("/file_{i}");
         let fd = egfs.open(&name, 0x0102, pwm).unwrap();
-        let data = format!("data for file {}", i);
+        let data = format!("data for file {i}");
         assert_eq!(
-            egfs.write(fd as u32, data.as_bytes(), data.len() as u32),
-            data.len() as i32
+            egfs.write(
+                fd.cast_unsigned(),
+                data.as_bytes(),
+                u32::try_from(data.len()).expect("测试值必须能无损收窄")
+            ),
+            i32::try_from(data.len()).expect("测试值必须能无损收窄")
         );
-        egfs.close(fd as u32);
+        egfs.close(fd.cast_unsigned());
     }
     egfs.mkdir("/docs", pwm);
     let fd = egfs.open("/docs/readme.txt", 0x0102, pwm).unwrap();
     let c = b"Persist test data";
-    assert_eq!(egfs.write(fd as u32, c, c.len() as u32), c.len() as i32);
-    egfs.close(fd as u32);
+    assert_eq!(
+        egfs.write(
+            fd.cast_unsigned(),
+            c,
+            u32::try_from(c.len()).expect("测试值必须能无损收窄")
+        ),
+        i32::try_from(c.len()).expect("测试值必须能无损收窄")
+    );
+    egfs.close(fd.cast_unsigned());
 
     assert_eq!(egfs.sync(), 0, "sync should succeed");
     println!("  Files written and synced ✓");
 
     println!("--- Phase 2: Verify pre-reset ---");
     for i in 0..5 {
-        let name = format!("/file_{}", i);
-        let fd = egfs.open(&name, 0x0001, pwm).unwrap() as u32;
+        let name = format!("/file_{i}");
+        let fd = egfs.open(&name, 0x0001, pwm).unwrap().cast_unsigned();
         let mut buf = [0u8; 64];
         let r = egfs.read(fd, &mut buf, 64);
-        let s = std::str::from_utf8(&buf[..r as usize]).unwrap();
-        assert_eq!(s, format!("data for file {}", i));
+        let s = std::str::from_utf8(&buf[..usize::try_from(r).expect("测试值必须为非负")]).unwrap();
+        assert_eq!(s, format!("data for file {i}"));
         egfs.close(fd);
     }
     println!("  All files readable ✓");

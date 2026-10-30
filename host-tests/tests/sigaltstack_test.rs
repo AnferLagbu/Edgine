@@ -2,26 +2,26 @@
 //!
 //! 验证信号投递路径对 sigaltstack 的支持:
 //! 1. 进程设置 sigaltstack (addr!=0, size>=frame) 后,
-//!    do_signal_deliver 必须使用替代栈顶部, 不写主栈 (主栈溢出场景不死锁)
-//! 2. SS_ONSTACK 标记位: 进入信号 handler 前置位, 防止重入信号再次落回替代栈
-//! 3. SS_DISABLE 标记位: 用户禁用替代栈时, 投递回退到主栈
+//!    `do_signal_deliver` 必须使用替代栈顶部, 不写主栈 (主栈溢出场景不死锁)
+//! 2. `SS_ONSTACK` 标记位: 进入信号 handler 前置位, 防止重入信号再次落回替代栈
+//! 3. `SS_DISABLE` 标记位: 用户禁用替代栈时, 投递回退到主栈
 //! 4. 替代栈容量不足时, 回退到主栈
-//! 5. sigreturn 时清除 SS_ONSTACK 标记 (允许下一次信号再次落回替代栈)
+//! 5. sigreturn 时清除 `SS_ONSTACK` 标记 (允许下一次信号再次落回替代栈)
 //!
 //! ## B08-20 处置 (2026-09-06): 算法镜像移除, 静态契约保留
 //!
-//! 原 `pick_frame_rsp` 镜像 `do_signal_deliver` 的 use_alternate 决策
+//! 原 `pick_frame_rsp` 镜像 `do_signal_deliver` 的 `use_alternate` 决策
 //! (privileged/proc/signal.rs:552-567). 评估结论: **该决策 host 不可直接测** —
-//! 它内联于 `do_signal_deliver` 函数体, 依赖全局 PROCESS_TABLE (当前进程
+//! 它内联于 `do_signal_deliver` 函数体, 依赖全局 `PROCESS_TABLE` (当前进程
 //! `sigaltstack_*` 字段) + `InterruptFrame` 指针 + `do_signal_default_action`
 //! (可能终止进程), 无法在 host 环境以函数形式调用.
 //!
 //! 按 B08-20/21 消并规则: 本地 `MockSigaltstack` / `pick_frame_rsp` / `make_ss`
-//! 平行实现与对应用例已删除. **保留**已有效的 include_str 静态契约 (源码文本
+//! 平行实现与对应用例已删除. **保留**已有效的 `include_str` 静态契约 (源码文本
 //! 扫描, 验证 signal.rs 实现替代栈字段读取/决策/sigreturn 清位), 真实投递
 //! 语义由 QEMU 集成测试覆盖.
 //!
-//! 待内核将 use_alternate 决策提炼为 pub 纯函数后可恢复 host 侧算法验证 (记录待办).
+//! 待内核将 `use_alternate` 决策提炼为 pub 纯函数后可恢复 host 侧算法验证 (记录待办).
 
 #[test]
 fn source_signal_uses_sigaltstack() {

@@ -4,12 +4,12 @@
 //! 现改引内核 `functions::sgeg::policy` 真实实现 (host-test feature 暴露).
 //!
 //! ## B08-20 迁移 (2026-09-06)
-//! 删除本地 CapBits / CapabilityMatrix / VIABLE_FLOOR 平行实现, 改引内核
+//! 删除本地 `CapBits` / `CapabilityMatrix` / `VIABLE_FLOOR` 平行实现, 改引内核
 //! `functions::sgeg::policy::{CapBits, CapDomain, CapMatrix, InMemoryMatrix, VIABLE_FLOOR}`
 //! 与 `functions::sgeg::capability` 能力位常量; 原 `#![allow(dead_code)]` (F9 违规)
 //! 随常量表删除而消失.
 //!
-//! ## 因内核 host 不可测已移除 (current_pwm 部分)
+//! ## 因内核 host 不可测已移除 (`current_pwm` 部分)
 //! 原镜像 `functions/fs/mount.rs::current_pwm` (pwm==0 → EACCES) 与
 //! `privileged/sgeg/api.rs::pwm_has_capability` 简化判定已移除:
 //! - 内核 `current_pwm()` 为私有函数 (`fn`), 依赖 `sgeg::api::pwm_get_current()`
@@ -20,8 +20,8 @@
 //!
 //! ## 覆盖
 //! 1. 16 个 domain 全部参与 (grant/revoke/has/superset 路径全覆盖)
-//! 2. viable floor 的 FS_READ|FS_EXECUTE + PROC_FORK|PROC_EXEC 不变
-//!    (内核 policy::VIABLE_FLOOR 追加 USER_MGMT::LIST, 与 capability::VIABLE_FLOOR 不同)
+//! 2. viable floor 的 `FS_READ|FS_EXECUTE` + `PROC_FORK|PROC_EXEC` 不变
+//!    (内核 `policy::VIABLE_FLOOR` 追加 `USER_MGMT::LIST`, 与 `capability::VIABLE_FLOOR` 不同)
 //! 3. 越界 domain 静默失败
 
 use edgine::kernel::functions::sgeg::capability::{
@@ -82,8 +82,7 @@ fn matrix_viable_floor_is_minimal() {
     ] {
         assert!(
             cm.get(d).is_empty(),
-            "domain {:?} 在 viable floor 必须为 0",
-            d
+            "domain {d:?} 在 viable floor 必须为 0"
         );
     }
 }
@@ -94,8 +93,7 @@ fn matrix_all_grants_every_domain() {
     for d in 0..16u8 {
         assert!(
             cm.get(CapDomain(d)).contains(CapBits(SYS_CAP_ALL)),
-            "domain {} 应有全权",
-            d
+            "domain {d} 应有全权"
         );
     }
 }
@@ -286,8 +284,7 @@ fn all_16_domains_covered_by_viable_or_zero() {
     // 内核 policy VIABLE_FLOOR 非空域: FS / PROC / USER_MGMT
     assert!(
         nonzero_domains >= 3,
-        "viable floor 应至少有 FS/PROC/USER_MGMT 非空, 实际 = {}",
-        nonzero_domains
+        "viable floor 应至少有 FS/PROC/USER_MGMT 非空, 实际 = {nonzero_domains}"
     );
     // 16 个 domain 全部 0..=15 可寻址 (set/get 不应越界)
     for d in 0..16u8 {

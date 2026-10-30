@@ -16,7 +16,7 @@
 //! # 判别力边界 (重要)
 //! 本用例是**并发健壮性 + 回归防护**: 可捕获 `fetch_add` 被误改为
 //! 非原子 load/store RMW (导致丢失更新)、意外重置计数器、撕裂写等回归。
-//! 但 **不声称** 证明 `AcqRel` 相对 `Relaxed` 的必要性——x86_64 的 TSO 模型下,
+//! 但 **不声称** 证明 `AcqRel` 相对 `Relaxed` `的必要性——x86_64` 的 TSO 模型下,
 //! `lock` 前缀 RMW 本身即全屏障, `Relaxed` 与 `AcqRel` 在运行时不可区分。
 //! 真正对弱序 (Release/Acquire) 语义的判别需待 aarch64 SMP 落地后再补。
 

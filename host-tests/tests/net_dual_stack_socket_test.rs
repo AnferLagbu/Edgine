@@ -1,12 +1,12 @@
 //! net: V4/V6 双栈 socket 行为契约验证
 //!
 //! 验收:
-//!   - sm_socket (sm_fi.rs) 接受 domain=2 (AF_INET) 与 domain=10 (AF_INET6)
-//!   - privileged/net/socket_types.rs `Domain` 枚举含 `Inet6 = 10`
+//!   - `sm_socket` (`sm_fi.rs`) 接受 domain=2 (`AF_INET`) 与 domain=10 (`AF_INET6`)
+//!   - `privileged/net/socket_types.rs` `Domain` 枚举含 `Inet6 = 10`
 //!     (DECISION-J 2026-09-13: wire 类型迁回 privileged, functions 侧 re-export)
 //!   - functions/net/syscall.rs bind/connect 按 family 分流 (2|10 → fw)
 //!   - privileged/net/syscall.rs `raw_read_sockaddr_in6` 28 字节 copy-in
-//!   - SmoltcpNetStack (smoltcp_impl.rs) sockaddr 转换支持 V6 (28 字节)
+//!   - `SmoltcpNetStack` (`smoltcp_impl.rs`) sockaddr 转换支持 V6 (28 字节)
 //!
 //! 追踪: DECISION-032 (IPv4/IPv6 双栈)
 //! SPDX-License-Identifier: MPL-2.0
@@ -20,7 +20,7 @@ const FW_SYSCALL_RS: &str = "../src/kernel/privileged/net/syscall.rs";
 const SMOLTCP_IMPL_RS: &str = "../src/kernel/functions/net/smoltcp_impl.rs";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 #[test]
@@ -53,8 +53,7 @@ fn test_functions_syscall_bind_connect_dual_stack() {
     let branches = src.matches("2 | 10 =>").count();
     assert!(
         branches >= 2,
-        "functions/net/syscall.rs bind/connect 未按 family 分流 (2|10), 当前 {} 处",
-        branches
+        "functions/net/syscall.rs bind/connect 未按 family 分流 (2|10), 当前 {branches} 处"
     );
 }
 
@@ -98,7 +97,6 @@ fn test_smoltcp_impl_recv_buffers_28_bytes() {
     let buf_count = src.matches("[0u8; 28]").count();
     assert!(
         buf_count >= 3,
-        "SmoltcpNetStack recvfrom/accept 栈缓冲未扩至 28 字节 (当前 {} 处)",
-        buf_count
+        "SmoltcpNetStack recvfrom/accept 栈缓冲未扩至 28 字节 (当前 {buf_count} 处)"
     );
 }

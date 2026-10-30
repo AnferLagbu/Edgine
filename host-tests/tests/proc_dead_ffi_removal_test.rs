@@ -333,8 +333,7 @@ fn cpu_queue_and_wait_queue_are_reached_via_safe_api() {
         let src = strip_comments(&read_src(rel));
         assert!(
             squash(&src).contains("proc::init_cpu_queue("),
-            "AP 启动链不再登记 per-CPU 队列 ({}); 队列初始化只能走 safe API",
-            rel
+            "AP 启动链不再登记 per-CPU 队列 ({rel}); 队列初始化只能走 safe API"
         );
     }
     let sched = strip_comments(&read_src("src/kernel/privileged/proc/scheduler.rs"));

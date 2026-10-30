@@ -1,10 +1,10 @@
-//! TD-02: 统一 FdAllocator — 静态契约测试
+//! TD-02: 统一 `FdAllocator` — 静态契约测试
 //!
 //! 验证 `privileged/proc/fd_alloc.rs`:
-//!   - FdPlan 各范围互不重叠 (含方案 C 的 VFS 段)
+//!   - `FdPlan` 各范围互不重叠 (含方案 C 的 VFS 段)
 //!   - Smoltcp 段基址紧贴 VFS 上界, 与 [0, 64) 命名空间不重叠 (方案 C)
-//!   - alloc_fd / free_fd / subsystem_of 行为正确
-//!   - 启动期不变量 (verify_plan) 满足
+//!   - `alloc_fd` / `free_fd` / `subsystem_of` 行为正确
+//!   - 启动期不变量 (`verify_plan`) 满足
 
 use std::fs;
 use std::path::Path;
@@ -167,10 +167,10 @@ fn test_v2_subsystems_reference_fdplan() {
             .parent()
             .unwrap()
             .join(rel_path);
-        let src = fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", rel_path));
-        let needle = format!("pub const {}: i32 =", const_name);
+        let src = fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {rel_path}"));
+        let needle = format!("pub const {const_name}: i32 =");
         let found = src.lines().any(|l| l.trim().starts_with(&needle));
-        assert!(found, "{} 定义缺失 in {}", const_name, rel_path);
+        assert!(found, "{const_name} 定义缺失 in {rel_path}");
         assert!(
             src.contains(expected_ref),
             "{} 必须引用 {} (TD-02 V2 单一来源), 实为: {}",
@@ -231,12 +231,10 @@ fn test_v3_subsystems_use_fd_at_not_base_plus() {
             .parent()
             .unwrap()
             .join(path);
-        let src = fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path));
+        let src = fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"));
         assert!(
             src.contains(expected),
-            "{} 必须使用 {} (TD-02 V3)",
-            path,
-            expected
+            "{path} 必须使用 {expected} (TD-02 V3)"
         );
     }
 }

@@ -2,6 +2,7 @@
 use crate::sys;
 use crate::sys::{O_CREAT, O_RDONLY, O_WRONLY};
 
+#[must_use]
 pub fn file_open(path: &[u8], flags: i32) -> i32 {
     let mut p = [0u8; 256];
     let len = core::cmp::min(path.len(), 255);
@@ -9,9 +10,16 @@ pub fn file_open(path: &[u8], flags: i32) -> i32 {
     p[len] = 0;
     // mode 仅在 O_CREAT 时有效, 其他情况传 0 (POSIX 语义)
     let mode = if (flags & O_CREAT) != 0 { 0o644 } else { 0 };
-    sys::fs_open(&p[..len + 1], flags, mode)
+    sys::fs_open(&p[..=len], flags, mode)
 }
 
+/// 以 4 KiB 缓冲把 `src_path` 逐块拷到 `dst_path`; 任一端打开失败即返 `false`.
+///
+/// # Panics
+///
+/// `fs_read` 返回的字节数超出 `usize` 时 panic —— 该值已在 `n > 0` 分支内,
+/// 且上界是 4096 字节的读缓冲.
+#[must_use]
 pub fn file_copy(src_path: &[u8], dst_path: &[u8]) -> bool {
     let rfd = file_open(src_path, O_RDONLY);
     if rfd < 0 {
@@ -19,7 +27,7 @@ pub fn file_copy(src_path: &[u8], dst_path: &[u8]) -> bool {
     }
     let wfd = file_open(dst_path, O_CREAT | O_WRONLY);
     if wfd < 0 {
-        sys::fs_close(rfd);
+        let _ = sys::fs_close(rfd);
         return false;
     }
     let mut buf = [0u8; 4096];
@@ -28,9 +36,9 @@ pub fn file_copy(src_path: &[u8], dst_path: &[u8]) -> bool {
         if n <= 0 {
             break;
         }
-        sys::fs_write(wfd, &buf[..n as usize]);
+        let _ = sys::fs_write(wfd, &buf[..usize::try_from(n).expect("n 已确认大于 0")]);
     }
-    sys::fs_close(rfd);
-    sys::fs_close(wfd);
+    let _ = sys::fs_close(rfd);
+    let _ = sys::fs_close(wfd);
     true
 }

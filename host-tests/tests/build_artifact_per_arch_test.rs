@@ -52,7 +52,7 @@ const SHARED_ARTIFACTS: &[&str] = &[
 ];
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 /// 剥掉整行注释 (`#` / `//` / `/*` / 块注释续行 `*`), 只留实际生效的指令行.
@@ -61,7 +61,7 @@ fn read(path: &str) -> String {
 /// 引用点, 因此扫描前必须剔除; 未剔除的注释会让本测试退化为"注释不许提旧事".
 fn strip_comment_lines(src: &str) -> Vec<String> {
     src.lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.starts_with('#') && !l.starts_with("//") && !l.starts_with("/*"))
         .filter(|l| !l.starts_with('*'))
         .map(String::from)
@@ -237,7 +237,7 @@ fn test_build_sh_all_links_both_architectures() {
     let at = sh
         .find("all)")
         .unwrap_or_else(|| panic!("ci/build.sh 缺少 all) 分支"));
-    let body = &sh[at..sh[at..].find(";;").map(|e| at + e).unwrap_or(sh.len())];
+    let body = &sh[at..sh[at..].find(";;").map_or(sh.len(), |e| at + e)];
     assert!(
         body.contains("link_kernel \"x86_64\""),
         "ci/build.sh 的 all 分支未链接 x86_64"

@@ -46,7 +46,7 @@ fn test_fsx_tmpfs() {
     let stats = fsx.run().expect("fsx tmpfs test 失败");
 
     assert_eq!(stats.errors, 0, "fsx tmpfs test 出现数据完整性错误");
-    println!("tmpfs stats: {:?}", stats);
+    println!("tmpfs stats: {stats:?}");
 }
 
 /// ext2 测试 (10 万次操作)
@@ -65,7 +65,7 @@ fn test_fsx_ext2() {
     let stats = fsx.run().expect("fsx ext2 test 失败");
 
     assert_eq!(stats.errors, 0, "fsx ext2 test 出现数据完整性错误");
-    println!("ext2 stats: {:?}", stats);
+    println!("ext2 stats: {stats:?}");
 }
 
 /// exfat 测试 (10 万次操作)
@@ -84,7 +84,7 @@ fn test_fsx_exfat() {
     let stats = fsx.run().expect("fsx exfat test 失败");
 
     assert_eq!(stats.errors, 0, "fsx exfat test 出现数据完整性错误");
-    println!("exfat stats: {:?}", stats);
+    println!("exfat stats: {stats:?}");
 }
 
 /// overlayfs 测试 (10 万次操作)
@@ -103,7 +103,7 @@ fn test_fsx_overlayfs() {
     let stats = fsx.run().expect("fsx overlayfs test 失败");
 
     assert_eq!(stats.errors, 0, "fsx overlayfs test 出现数据完整性错误");
-    println!("overlayfs stats: {:?}", stats);
+    println!("overlayfs stats: {stats:?}");
 }
 
 /// 压力测试: 并发操作 (10 万次, CI 可接受)
@@ -122,5 +122,5 @@ fn test_fsx_stress() {
     let stats = fsx.run().expect("fsx stress test 失败");
 
     assert_eq!(stats.errors, 0, "fsx stress test 出现数据完整性错误");
-    println!("stress stats: {:?}", stats);
+    println!("stress stats: {stats:?}");
 }

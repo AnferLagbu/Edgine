@@ -26,7 +26,7 @@ const A64_EXCEPTION: &str = "../src/kernel/privileged/arch/aarch64/exception.rs"
 const X64_HANDLERS: &str = "../src/kernel/privileged/idt/handlers.rs";
 const QEMU_SCRIPT: &str = "../scripts/qemu_boot_test.sh";
 
-/// 双架构共用的运行期里程碑 (由 init 打印, qemu_boot_test.sh 判定).
+/// 双架构共用的运行期里程碑 (由 init 打印, `qemu_boot_test.sh` 判定).
 const MILESTONE: &str = "[KPTI] EL0 kernel high-half access denied";
 
 fn read(p: &str) -> String {
@@ -47,7 +47,7 @@ fn fn_body(src: &str, signature: &str) -> String {
         .find(signature)
         .unwrap_or_else(|| panic!("未找到函数签名 {signature:?}"));
     let rest = &src[start..];
-    let end = rest.find("\n}").map(|i| i + 2).unwrap_or(rest.len());
+    let end = rest.find("\n}").map_or(rest.len(), |i| i + 2);
     rest[..end].to_string()
 }
 
@@ -138,7 +138,11 @@ fn test_init_probe_reads_kernel_high_half() {
         "探针必须以 read_volatile 解引用内核高半区别名 (不得被优化掉)"
     );
     assert!(
-        src.contains("if wait_pid(probe as i32) != 0"),
+        src.contains("let probe_pid = i32::try_from(probe).expect("),
+        "fork 返回值必须经 i32::try_from + 中文 expect 收敛成 pid_t —— `as i32` 会静默截断"
+    );
+    assert!(
+        src.contains("if wait_pid(probe_pid) != 0"),
         "父进程必须按退出码判定 —— 非 0 即内核终止了探针子进程"
     );
     assert!(

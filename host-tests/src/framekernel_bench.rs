@@ -8,11 +8,11 @@
 //! - 论文性能数据采集
 //!
 //! ## 覆盖的热点路径
-//! 1. `page_flags_bench`: PageFlags 位运算 (PRESENT/WRITABLE/USER/NX)
-//! 2. `pte_set_flags_bench`: PageTableEntry.set_flags 原子位操作
-//! 3. `iomem_alias_bench`: IoMem 别名区间注册 (重叠检测, 内核 `IoMem::new`)
+//! 1. `page_flags_bench`: `PageFlags` 位运算 (PRESENT/WRITABLE/USER/NX)
+//! 2. `pte_set_flags_bench`: `PageTableEntry.set_flags` 原子位操作
+//! 3. `iomem_alias_bench`: `IoMem` 别名区间注册 (重叠检测, 内核 `IoMem::new`)
 //! 4. `capability_check_bench`: 能力矩阵域位检查 (内核 `PolicyEngine::check`)
-//! 5. `dma_state_machine_bench`: DmaStream 状态机迁移
+//! 5. `dma_state_machine_bench`: `DmaStream` 状态机迁移
 //! 6. `sha256_block_bench`: SHA-256 哈希 (sgeg 身份, 内核 `sha256`)
 //! 7. `attribution_classify_bench`: 故障归属分类 (freg)
 //! 8. `recovery_decide_bench`: 恢复策略决策 (freg)
@@ -125,6 +125,7 @@ use std::sync::atomic::Ordering;
 /// 每轮执行 64 个位运算, 使每轮有可测量的耗时
 const PAGE_FLAGS_BATCH: u64 = 64;
 
+#[must_use]
 pub fn page_flags_bench(iters: u64) -> u128 {
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
     let start = Instant::now();
@@ -135,10 +136,10 @@ pub fn page_flags_bench(iters: u64) -> u128 {
             if (i + j) & 1 == 0 {
                 f |= PageFlags::NX;
             }
-            if (i + j) & 3 == 0 {
+            if (i + j).trailing_zeros() >= 2 {
                 f |= PageFlags::GLOBAL;
             }
-            if (i + j) & 7 == 0 {
+            if (i + j).trailing_zeros() >= 3 {
                 f |= PageFlags::ACCESSED;
             }
             sink ^= f.bits();
@@ -147,7 +148,7 @@ pub fn page_flags_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     // 归一化到 "单操作时间": 总耗时 (ns) / (iters * BATCH), 转 ps 避免精度损失
     let elapsed = start.elapsed().as_nanos();
-    let total_ops = (iters as u128) * (PAGE_FLAGS_BATCH as u128);
+    let total_ops = u128::from(iters) * u128::from(PAGE_FLAGS_BATCH);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -157,6 +158,7 @@ pub fn page_flags_bench(iters: u64) -> u128 {
 // 注: 内核实现以 `AtomicU64` + Acquire/Release 承载位域, 且 `set_flags` 取 `&self`
 // 而非旧 mock 的裸 `u64` 写入 — 语义与性能特征以内核为准, 基线随实现重录.
 
+#[must_use]
 pub fn pte_set_flags_bench(iters: u64) -> u128 {
     let pte = PageTableEntry::from_value(0x0);
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE;
@@ -174,7 +176,7 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     // 归一化到 "单操作时间" (1 轮 = 1 次 PTE 位域更新), 转 ps 避免精度损失
     let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 3. IoMem 别名区间注册 (来自 privileged/iomem.rs) ======
@@ -189,16 +191,23 @@ pub fn pte_set_flags_bench(iters: u64) -> u128 {
 /// bench 预置的已注册 MMIO 区段数 (与旧 mock 的 30 条基线对齐)
 const IOMEM_BASELINE_ENTRIES: u64 = 30;
 
+/// bench: `IoMem` 别名表查重吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// 底层 `IoMem` 构造/注册断言失败时 panic.
+#[must_use]
 pub fn iomem_alias_bench(iters: u64) -> u128 {
+    const BATCH: u64 = 32;
     // 预置基线区段: 句柄须存活至计时结束 (Drop 即注销, 表回退到 0 条)
-    let mut baseline = Vec::with_capacity(IOMEM_BASELINE_ENTRIES as usize);
+    let mut baseline =
+        Vec::with_capacity(usize::try_from(IOMEM_BASELINE_ENTRIES).expect("测试值必须能无损收窄"));
     for i in 0..IOMEM_BASELINE_ENTRIES {
         // SAFETY: phys 仅为纯算术载体 — `IoMem::new` 只做对齐/溢出/别名冲突校验
         // (`mmio_virt` 为 `phys_to_virt` 纯换算), 不解引用该地址, 无 MMIO 访问.
         let m = unsafe { IoMem::new(PhysAddr(0x1000 + i * 0x1000), 0x800, "bench.iomem") };
         baseline.push(m.expect("bench 基线 MMIO 区段注册失败"));
     }
-    const BATCH: u64 = 32;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
@@ -217,7 +226,7 @@ pub fn iomem_alias_bench(iters: u64) -> u128 {
     sink ^= baseline.len() as u64;
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    let total_ops = (iters as u128) * (BATCH as u128);
+    let total_ops = u128::from(iters) * u128::from(BATCH);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -247,19 +256,26 @@ const BENCH_CAP_DOMAINS: [CapDomain; 16] = [
     CapDomain::RESERVED,
 ];
 
+/// bench: 能力矩阵校验吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// 能力矩阵构造/注册断言失败时 panic.
+#[must_use]
 pub fn capability_check_bench(iters: u64) -> u128 {
+    const BATCH: u64 = 64;
     let m = InMemoryMatrix::new();
     // 预置各域能力位 (域下标与旧 mock 的 grant 序列对齐: 1/3/2/5)
     let _ = m.set(CapDomain::FS, CapBits(0b11));
     let _ = m.set(CapDomain::PROC, CapBits(0b10101));
     let _ = m.set(CapDomain::NET, CapBits(0b1111));
     let _ = m.set(CapDomain::USER_MGMT, CapBits(0b1));
-    const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
-            let dom = BENCH_CAP_DOMAINS[((i * BATCH + j) as usize) & 0xF];
+            let dom = BENCH_CAP_DOMAINS
+                [usize::try_from(i * BATCH + j).expect("测试值必须能无损收窄") & 0xF];
             let bits = CapBits(1u64 << ((i + j) & 0x1F));
             if PolicyEngine::check(&m, dom, bits) == PolicyResult::Allow {
                 sink ^= 1;
@@ -268,7 +284,7 @@ pub fn capability_check_bench(iters: u64) -> u128 {
     }
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    let total_ops = (iters as u128) * (BATCH as u128);
+    let total_ops = u128::from(iters) * u128::from(BATCH);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -289,12 +305,18 @@ unsafe fn bench_frame(paddr: u64, order: u8) -> Frame {
     unsafe { Frame::from_raw(PhysAddr(paddr), order) }
 }
 
+/// bench: DMA 状态机迁移吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// `DmaStream` 构造 (`from_frame`) 失败时 panic.
+#[must_use]
 pub fn dma_state_machine_bench(iters: u64) -> u128 {
+    const BATCH: u64 = 64;
     // SAFETY: 0x10000 页对齐, 见 bench_frame() 说明
     let frame = unsafe { bench_frame(0x10000, 0) };
     let mut s = DmaStream::from_frame(frame, DmaDirection::Bidirectional)
         .expect("bidirectional DmaStream 构造失败");
-    const BATCH: u64 = 64;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for _ in 0..iters {
@@ -314,7 +336,7 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
     // 1 op = 1 次状态机迁移 (每 BATCH 轮 = 2 次迁移)
-    let total_ops = (iters as u128) * (BATCH as u128) * 2;
+    let total_ops = u128::from(iters) * u128::from(BATCH) * 2;
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -327,6 +349,7 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
 // 2 次压缩 (数据块 + 填充块) 并编码输出, 故 1 op 口径改为 1 次完整 `sha256` 调用.
 // 输入经 `black_box` 屏蔽常量传播, 避免编译器把整轮折叠为一次调用.
 
+#[must_use]
 pub fn sha256_block_bench(iters: u64) -> u128 {
     let block = [0u8; 64];
     let start = Instant::now();
@@ -337,7 +360,7 @@ pub fn sha256_block_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     // 归一化到 "单操作时间" (1 轮 = 1 次完整 `sha256` 调用), 转 ps 避免精度损失
     let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 7. Attribution classify (来自 functions/freg/attribution.rs) ======
@@ -350,6 +373,12 @@ pub fn sha256_block_bench(iters: u64) -> u128 {
 // `panic_rip`, 按落入 `TCB_RANGES` / `SERVICE_RANGES` 静态地址区间判定归属,
 // 两者输入面不同. bench 现按内核契约以伪 RIP 序列驱动归属判定.
 
+/// bench: 故障归因分类吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// 底层归因策略构造/断言失败时 panic.
+#[must_use]
 pub fn attribution_classify_bench(iters: u64) -> u128 {
     // 三类伪 RIP: TCB 区间 / Functions 区间 / 两区间外 (Unknown)
     let rips: Vec<u64> = (0..256u64)
@@ -362,7 +391,9 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
-        match FaultAttributor::attribute(rips[(i as usize) & 0xFF]) {
+        match FaultAttributor::attribute(
+            rips[usize::try_from(i).expect("测试值必须能无损收窄") & 0xFF],
+        ) {
             FaultAttribution::Tcb { .. } => sink ^= 1,
             FaultAttribution::Service { domain_id, .. } => sink ^= domain_id,
             FaultAttribution::CrossLayer { .. } => sink ^= 0xCAFE,
@@ -372,7 +403,7 @@ pub fn attribution_classify_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     // 归一化到 "单操作时间" (1 轮 = 1 次归属判定), 转 ps 避免精度损失
     let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 8. Recovery decide (来自 functions/freg/recovery_policy.rs) ======
@@ -400,14 +431,21 @@ fn bench_signal(i: u64) -> FaultSignal {
     }
 }
 
+/// bench: 恢复决策吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// 故障信号构造断言失败时 panic.
 pub fn recovery_decide_bench(iters: u64) -> u128 {
-    let signals: Vec<FaultSignal> = (0..64).map(bench_signal).collect();
     const BATCH: u64 = 64;
+    let signals: Vec<FaultSignal> = (0..64).map(bench_signal).collect();
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
-            let a = RecoveryPolicy::decide(&signals[((i * BATCH + j) as usize) & 0x3F]);
+            let a = RecoveryPolicy::decide(
+                &signals[usize::try_from(i * BATCH + j).expect("测试值必须能无损收窄") & 0x3F],
+            );
             sink ^= match a {
                 RecoveryAction::Noop => 0,
                 RecoveryAction::FREGBaseRecovery => 1,
@@ -419,7 +457,7 @@ pub fn recovery_decide_bench(iters: u64) -> u128 {
     }
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / (iters as u128)
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 9. PMM 物理页分配 (来自 privileged/mm/pmm.rs) ======
@@ -430,12 +468,14 @@ pub fn recovery_decide_bench(iters: u64) -> u128 {
 
 /// 模拟物理内存 64MB (buddy 完整覆盖 order-0..9)
 const BENCH_MEM_SIZE: u64 = 64 * 1024 * 1024;
-/// 模拟内核镜像末尾 16MB (init_bitmap 前的内核保留区)
+/// 模拟内核镜像末尾 16MB (`init_bitmap` 前的内核保留区)
 const BENCH_KERNEL_END: u64 = 16 * 1024 * 1024;
 /// bench 预分配页数 (与旧 mock 的 512 位基线对齐)
 const BENCH_PREALLOC_PAGES: usize = 512;
 
+#[must_use]
 pub fn bitmap_scan_bench(iters: u64) -> u128 {
+    const BATCH: u64 = 32;
     let pmm = PhysicalMemoryManager::new();
     pmm.inject_meta_store(VecMetaStore::new());
     pmm.init(BENCH_MEM_SIZE, BENCH_KERNEL_END);
@@ -448,7 +488,6 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
             None => break,
         }
     }
-    const BATCH: u64 = 32;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
@@ -464,7 +503,7 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
     sink ^= baseline.len() as u64;
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    elapsed.saturating_mul(1_000) / (iters as u128)
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 11. Socket WaitQueue (来自 privileged/net/wait_queue.rs) ======
@@ -484,22 +523,29 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 // 全部同步原语由内核实现承担 (host-test 下 `IrqSpinLock` 的禁中断为 no-op).
 
 /// bench 工作集 fd 数: 16 — 仅为延迟测量选定的小工作集 (cache 友好, 轮询
-/// mark_waiting→try_wake), **不等于** 内核 Smoltcp 段 FD 容量 (生产宽度为
+/// `mark_waiting→try_wake`), **不等于** 内核 Smoltcp 段 FD 容量 (生产宽度为
 /// `FdPlan::SMOLTCP.capacity` = 256). 本 bench 不依赖内核 fd 空间, 自持固定队列数.
 const BENCH_FD_WORKING_SET: usize = 16;
 
+/// bench: Socket 等待队列 mark/wake 吞吐量 (单操作皮秒数)
+///
+/// # Panics
+///
+/// 等待队列状态断言失败时 panic.
+#[must_use]
 pub fn socket_wait_queue_bench(iters: u64) -> u128 {
+    // 1 轮 (BATCH) = 1000 次并发 send/wake 路径 = 验收目标
+    const BATCH: u64 = 1000;
     let queues: Vec<SocketWaitQueue> = (0..BENCH_FD_WORKING_SET)
         .map(|_| SocketWaitQueue::new())
         .collect();
-    // 1 轮 (BATCH) = 1000 次并发 send/wake 路径 = 验收目标
-    const BATCH: u64 = 1000;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for i in 0..iters {
         for j in 0..BATCH {
             // 轮询 16 个 fd, 每个 fd 上做 mark_waiting + try_wake
-            let fd = ((i * BATCH + j) as usize) % BENCH_FD_WORKING_SET;
+            let fd = usize::try_from(i * BATCH + j).expect("测试值必须能无损收窄")
+                % BENCH_FD_WORKING_SET;
             queues[fd].mark_waiting();
             if queues[fd].try_wake(WakeReason::Readable) {
                 sink ^= 1;
@@ -510,7 +556,7 @@ pub fn socket_wait_queue_bench(iters: u64) -> u128 {
     sink ^= u64::from(queues[0].is_pending()) | u64::from(queues[0].wake_count());
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
-    let total_ops = (iters as u128) * (BATCH as u128);
+    let total_ops = u128::from(iters) * u128::from(BATCH);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -545,12 +591,13 @@ const VQ_USED_OFFSET: usize = (VQ_AVAIL_OFFSET + 4 + 2 * VQ_SIZE as usize + 2 + 
 /// `backing` 为 8 字节对齐的宿主堆块且长度 ≥ `VQ_BACKING_BYTES`, 其生命周期必须
 /// 覆盖返回的 `VirtQueue` (调用方需在更外层作用域持有该后备块).
 unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
-    let base = backing.as_mut_ptr().cast::<u8>();
+    let words = backing.as_mut_ptr();
     // SAFETY: 见函数文档 — 后备块对齐/大小/存活性由调用方保证, 分段偏移在块内.
+    // 描述符/环指针一律从 8 字节对齐的 `*mut u64` 派生, 不做 `*mut u8` 上加严转换.
     unsafe {
-        let desc = base.cast::<VqDesc>();
-        let avail = base.add(VQ_AVAIL_OFFSET);
-        let used = base.add(VQ_USED_OFFSET);
+        let desc = words.cast::<VqDesc>();
+        let avail = words.cast::<u8>().add(VQ_AVAIL_OFFSET);
+        let used = words.cast::<u8>().add(VQ_USED_OFFSET);
         for i in 0..VQ_SIZE {
             (*desc.add(i as usize)).next = if i + 1 < VQ_SIZE { i + 1 } else { 0xFFFF };
         }
@@ -574,13 +621,20 @@ unsafe fn bench_virtqueue(backing: &mut [u64]) -> VirtQueue {
 ///
 /// # SAFETY
 /// `vq` 的 used 环必须指向有效后备块 (见 `bench_virtqueue`), 且调用方独占访问.
-unsafe fn bench_device_complete(vq: &mut VirtQueue, head: u16, len: u32) {
+unsafe fn bench_device_complete(vq: &mut VirtQueue, backing: &mut [u64], head: u16, len: u32) {
     // SAFETY: 见函数文档. used.idx 位于基址偏移 2, 环项 = 头 4B + (idx % num) * 8.
+    // 指针一律从 8 字节对齐的 `*mut u64` 派生 (used 段 4 字节对齐由布局常量保证).
     unsafe {
-        let used = vq.used;
-        let idx = core::ptr::read_volatile(used.add(2) as *const u16);
-        let elem = used.add(4 + (usize::from(idx % vq.num)) * core::mem::size_of::<VqUsedElem>())
-            as *mut VqUsedElem;
+        let base = backing.as_mut_ptr();
+        let idx_ptr = base.byte_add(VQ_USED_OFFSET + 2).cast::<u16>();
+        let idx = core::ptr::read_volatile(idx_ptr);
+        let elem = base
+            .byte_add(
+                VQ_USED_OFFSET
+                    + 4
+                    + (usize::from(idx % vq.num)) * core::mem::size_of::<VqUsedElem>(),
+            )
+            .cast::<VqUsedElem>();
         core::ptr::write_volatile(
             elem,
             VqUsedElem {
@@ -588,16 +642,17 @@ unsafe fn bench_device_complete(vq: &mut VirtQueue, head: u16, len: u32) {
                 len,
             },
         );
-        core::ptr::write_volatile(used.add(2) as *mut u16, idx.wrapping_add(1));
+        core::ptr::write_volatile(idx_ptr, idx.wrapping_add(1));
     }
 }
 
+#[must_use]
 pub fn virtio_blk_io_bench(iters: u64) -> u128 {
+    // 1 轮 (BATCH) = 32 次 4K 写 (覆盖整个 virtqueue 一次)
+    const BATCH: u64 = 32;
     let mut backing = vec![0u64; VQ_BACKING_BYTES / 8];
     // SAFETY: backing 在本函数作用域内存活, 覆盖 vq 全部使用期; Vec<u64> 为 8 字节对齐
     let mut vq = unsafe { bench_virtqueue(&mut backing) };
-    // 1 轮 (BATCH) = 32 次 4K 写 (覆盖整个 virtqueue 一次)
-    const BATCH: u64 = 32;
     let start = Instant::now();
     let mut sink: u64 = 0;
     for _ in 0..iters {
@@ -611,7 +666,7 @@ pub fn virtio_blk_io_bench(iters: u64) -> u128 {
             vq.submit(h1);
             vq.commit_and_kick();
             // SAFETY: vq.used 指向本函数作用域内的 backing
-            unsafe { bench_device_complete(&mut vq, h1, BLK_4K_BYTES) };
+            unsafe { bench_device_complete(&mut vq, &mut backing, h1, BLK_4K_BYTES) };
             if let Some((id, len)) = vq.pop_used() {
                 sink ^= u64::from(id) ^ u64::from(len);
             }
@@ -623,7 +678,7 @@ pub fn virtio_blk_io_bench(iters: u64) -> u128 {
     std::hint::black_box(sink);
     let elapsed = start.elapsed().as_nanos();
     // 归一化: 1 op = 1 个 4K 写请求 (prepare+link+submit+kick+complete+pop+reclaim)
-    let total_ops = (iters as u128) * (BATCH as u128);
+    let total_ops = u128::from(iters) * u128::from(BATCH);
     elapsed.saturating_mul(1_000) / total_ops
 }
 
@@ -645,6 +700,7 @@ pub fn virtio_blk_io_bench(iters: u64) -> u128 {
 /// 1 op = 1 次 `verify` 调用. 1 op 包含:
 /// - 通过 `&dyn BpfVerifier` 间接调用 `StandardBpfVerifier::verify`
 /// - 匹配 `VerifyResult`
+#[must_use]
 pub fn bpf_verifier_dispatch_bench(iters: u64) -> u128 {
     // 最小合法程序: ALU64 MOV r0,0 + EXIT — 通过内核 7 条规则的全部检查路径
     let insns = vec![
@@ -667,7 +723,7 @@ pub fn bpf_verifier_dispatch_bench(iters: u64) -> u128 {
     // 防御性: 防止编译器优化掉 sink
     std::hint::black_box(sink);
     // 1 op = 1 次 verify 调用
-    elapsed.saturating_mul(1_000) / (iters as u128)
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -722,7 +778,9 @@ fn sysctl_bench_init() {
         for (i, name) in SYSCTL_BENCH_NAMES.iter().enumerate() {
             let kind = sysctl_bench_kind(i);
             let initial = match kind {
-                SysctlKind::Int => SysctlValue::Int(i as i64),
+                SysctlKind::Int => {
+                    SysctlValue::Int(i64::try_from(i).expect("测试值必须能在目标宽度内表示"))
+                }
                 SysctlKind::UInt => SysctlValue::UInt(i as u64),
                 SysctlKind::Bool => SysctlValue::Bool(i % 2 == 0),
             };
@@ -734,16 +792,21 @@ fn sysctl_bench_init() {
 /// bench: sysctl write 吞吐量
 ///
 /// 1 轮 (BATCH) = 16 次 write. 节点注册在首次进入时一次性完成 (见 `sysctl_bench_init`).
+///
+/// # Panics
+///
+/// sysctl 节点注册/写入断言失败时 panic.
+#[must_use]
 pub fn sysctl_bench(iters: u64) -> u128 {
-    sysctl_bench_init();
     const BATCH: u64 = 16;
+    sysctl_bench_init();
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         for i in 0..BATCH {
-            let idx = (i as usize) % SYSCTL_NODES;
+            let idx = usize::try_from(i).expect("测试值必须能无损收窄") % SYSCTL_NODES;
             let val = match sysctl_bench_kind(idx) {
-                SysctlKind::Int => SysctlValue::Int(i as i64 + (r as i64) * 1000),
+                SysctlKind::Int => SysctlValue::Int(i.cast_signed() + r.cast_signed() * 1000),
                 SysctlKind::UInt => SysctlValue::UInt(i + r * 1000),
                 SysctlKind::Bool => SysctlValue::Bool(r % 2 == 0),
             };
@@ -754,7 +817,7 @@ pub fn sysctl_bench(iters: u64) -> u128 {
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
     // 1 op = 1 次 write
-    elapsed.saturating_mul(1_000) / (iters as u128 * BATCH as u128)
+    elapsed.saturating_mul(1_000) / (u128::from(iters) * u128::from(BATCH))
 }
 
 // ============================================================================
@@ -774,13 +837,18 @@ pub struct BenchBlockDevice {
 
 impl BenchBlockDevice {
     /// 构造 `capacity_sectors` 个扇区, 首 2 字节写入扇区号 (便于区分扇区)
+    ///
+    /// # Panics
+    ///
+    /// 扇区号低位提取失败时 panic (掩码后必落在 `u8` 范围内, 实际不可达).
+    #[must_use]
     pub fn new(capacity_sectors: usize) -> Self {
         Self {
             storage: (0..capacity_sectors)
                 .map(|i| {
                     let mut s = [0u8; 512];
-                    s[0] = (i & 0xFF) as u8;
-                    s[1] = ((i >> 8) & 0xFF) as u8;
+                    s[0] = u8::try_from(i & 0xFF).expect("测试值必须能无损收窄");
+                    s[1] = u8::try_from((i >> 8) & 0xFF).expect("测试值必须能无损收窄");
                     s
                 })
                 .collect(),
@@ -790,7 +858,7 @@ impl BenchBlockDevice {
 
 impl BlockDevice for BenchBlockDevice {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
-        let s = sector as usize;
+        let s = usize::try_from(sector).expect("测试值必须能无损收窄");
         if s >= self.storage.len() {
             return KernelError::Io.as_i32();
         }
@@ -798,7 +866,7 @@ impl BlockDevice for BenchBlockDevice {
         0
     }
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
-        let s = sector as usize;
+        let s = usize::try_from(sector).expect("测试值必须能无损收窄");
         if s >= self.storage.len() {
             return KernelError::Io.as_i32();
         }
@@ -820,11 +888,13 @@ fn bench_blk_drive() -> u8 {
     static SLOT: OnceLock<u8> = OnceLock::new();
     *SLOT.get_or_init(|| {
         let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(1024)));
-        egdf_register_block_dev("bench_blk", None, None, dev) as u8
+        u8::try_from(egdf_register_block_dev("bench_blk", None, None, dev))
+            .expect("测试值必须能无损收窄")
     })
 }
 
 /// bench: T-4.1 块设备 I/O 路径 throughput (经内核 egdf dispatch)
+#[must_use]
 pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
     let drive = bench_blk_drive();
 
@@ -846,7 +916,7 @@ pub fn blk_dev_dispatch_bench(iters: u64) -> u128 {
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
     // 1 op = 1 读 + 1 写 = 2 实际 ops
-    elapsed.saturating_mul(1_000) / (iters as u128 * 2)
+    elapsed.saturating_mul(1_000) / (u128::from(iters) * 2)
 }
 
 // ============================================================================
@@ -864,6 +934,7 @@ const BENCH_EPOLL_MASK: u32 = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLHUP;
 static BENCH_VFS_POLL_POLICY: StandardVfsPollPolicy = StandardVfsPollPolicy;
 
 /// bench: REVAL-6.1 策略决策路径 throughput
+#[must_use]
 pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
     let policy = VfsPollPolicyRef::Registered(&BENCH_VFS_POLL_POLICY);
 
@@ -893,7 +964,7 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
         };
         sink ^= policy.events_for(ctx) & BENCH_EPOLL_MASK;
         // 偶尔插入 invalid fd
-        if r & 0xFF == 0 {
+        if r.trailing_zeros() >= 8 {
             let inv_ctx = VfsPollContext {
                 valid: false,
                 file_type: VfsFileType::File,
@@ -903,7 +974,7 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -915,19 +986,20 @@ pub fn vfs_poll_dispatch_bench(iters: u64) -> u128 {
 // 与内核真实行为位一致.
 
 /// bench: ZAP insert / lookup / contains 路径 throughput
+#[must_use]
 pub fn zap_dispatch_bench(iters: u64) -> u128 {
     // 容量 > 键空间, 保证 insert 分支始终走「查找已有键」真实路径
     let zap = EgfsZap::with_capacity(512);
     // 预热: 填满键空间
     for i in 0..256u64 {
-        zap.insert_u64(&format!("k_{}", i), i);
+        zap.insert_u64(&format!("k_{i}"), i);
     }
     // bench: insert + lookup + contains 旋转
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
         let key = format!("k_{}", r & 0xFF);
-        if r & 0x3 == 0 {
+        if r.trailing_zeros() >= 2 {
             // insert (已有键 → 原地更新)
             let _ = zap.insert_u64(&key, r);
         } else if r & 0x3 == 1 {
@@ -947,7 +1019,7 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -960,6 +1032,7 @@ pub fn zap_dispatch_bench(iters: u64) -> u128 {
 // 均由内核承担.
 
 /// bench: TXG 事务组迁移 + 脏块登记 路径 throughput
+#[must_use]
 pub fn txg_dispatch_bench(iters: u64) -> u128 {
     let mut txg = EgfsTxgGroup::new();
     txg.init(1);
@@ -971,7 +1044,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        if r & 0x7 == 0 {
+        if r.trailing_zeros() >= 3 {
             // transition (稀有)
             let id = txg.transition();
             sink = sink.wrapping_add(id);
@@ -985,7 +1058,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -997,6 +1070,7 @@ pub fn txg_dispatch_bench(iters: u64) -> u128 {
 // 计数唯一实现 (内核为 `Mutex<Vec<EgfsDmuObject>>`, 查询与计数为线性扫描).
 
 /// bench: DMU 对象分配 / 查询 路径 throughput
+#[must_use]
 pub fn dmu_dispatch_bench(iters: u64) -> u128 {
     let dmu = EgfsObjSet::new();
     dmu.init(0x100);
@@ -1007,7 +1081,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        if r & 0x3 == 0 {
+        if r.trailing_zeros() >= 2 {
             // alloc File
             if let Some(id) = dmu.alloc_obj(EgfsObjType::File, 0x100) {
                 sink = sink.wrapping_add(id);
@@ -1029,7 +1103,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -1041,6 +1115,7 @@ pub fn dmu_dispatch_bench(iters: u64) -> u128 {
 // 唯一实现. 注: 内核 vdev 上限为 `EgfsSpaConfig::max_vdevs` (默认 8).
 
 /// bench: SPA 池状态读 + 事务组推进 路径 throughput
+#[must_use]
 pub fn spa_dispatch_bench(iters: u64) -> u128 {
     let spa = EgfsSpa::new();
     spa.init("bench");
@@ -1051,7 +1126,7 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        if r & 0x7 == 0 {
+        if r.trailing_zeros() >= 3 {
             // advance_txg (稀有)
             sink = sink.wrapping_add(spa.advance_txg());
         } else if r & 0x3 == 1 {
@@ -1067,7 +1142,7 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -1079,7 +1154,8 @@ pub fn spa_dispatch_bench(iters: u64) -> u128 {
 // (`ncols` / `nparity` / `ashift`) + `level` 枚举方法表达几何, 无 `is_single` /
 // `is_mirror` 谓词, 故此处按内核真实访问面测量.
 
-/// bench: RAID-Z 几何查询 (ncols / nparity / max_failures / ashift) throughput
+/// bench: RAID-Z 几何查询 (ncols / nparity / `max_failures` / ashift) throughput
+#[must_use]
 pub fn raidz_dispatch_bench(iters: u64) -> u128 {
     let map = EgfsRaidzMap::new(EgfsRaidzLevel::RaidZ1, 3, 9);
     // 预热
@@ -1098,7 +1174,7 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -1113,7 +1189,8 @@ pub fn raidz_dispatch_bench(iters: u64) -> u128 {
 /// ARC 初始容量 (内核 `HV_ARC_DEFAULT_SIZE` 量级, 保证预热后仍有淘汰余量)
 const BENCH_ARC_MAX_SIZE: usize = 100;
 
-/// 基准: ARC trait 派发 (lookup / insert / hit_count / current_size) 吞吐量
+/// 基准: ARC trait 派发 (lookup / insert / `hit_count` / `current_size`) 吞吐量
+#[must_use]
 pub fn arc_dispatch_bench(iters: u64) -> u128 {
     let arc: Box<dyn ArcCache> = Box::new(StandardArc::new());
     arc.init(BENCH_ARC_MAX_SIZE);
@@ -1126,7 +1203,7 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
     let mut sink: u64 = 0;
     for r in 0..iters {
         let k = EgfsArcKey::new(0, r & 0xFF, 0);
-        if r & 0x3 == 0 {
+        if r.trailing_zeros() >= 2 {
             // lookup
             if arc.lookup(&k) {
                 sink = sink.wrapping_add(1);
@@ -1144,7 +1221,7 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -1156,7 +1233,8 @@ pub fn arc_dispatch_bench(iters: u64) -> u128 {
 // `is_enabled` / `set_enabled` / `current_seq()` / `committed_seq()` 访问器,
 // 序列号域为 `AtomicU64` 直读.
 
-/// bench: ZIL 日志 (add_record / current_seq / pending_count / commit) throughput
+/// bench: ZIL 日志 (`add_record` / `current_seq` / `pending_count` / commit) throughput
+#[must_use]
 pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
     let zil = EgfsZil::new();
     zil.init();
@@ -1167,7 +1245,7 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        if r & 0x7 == 0 {
+        if r.trailing_zeros() >= 3 {
             // commit (稀有)
             zil.commit((r & 0x3) + 1);
         } else if r & 0x3 == 1 {
@@ -1183,7 +1261,7 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ============================================================================
@@ -1198,7 +1276,8 @@ pub fn zil_log_dispatch_bench(iters: u64) -> u128 {
 /// 预热用 ZIL 记录数 (等于内核单块记录上限 15, 使 serialize 走满块路径)
 const BENCH_ZIL_PERSIST_RECORDS: u64 = 15;
 
-/// bench: ZIL 持久化 (serialize / deserialize / mark_written) throughput
+/// bench: ZIL 持久化 (serialize / deserialize / `mark_written`) throughput
+#[must_use]
 pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
     let persist = EgfsZilPersist::new();
     let zil = EgfsZil::new();
@@ -1214,7 +1293,7 @@ pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
     let start = Instant::now();
     let mut sink: u64 = 0;
     for r in 0..iters {
-        if r & 0x3 == 0 {
+        if r.trailing_zeros() >= 2 {
             // serialize
             if let Some(b) = EgfsZilPersist::serialize_zil_to_block(&zil, 1) {
                 sink = sink.wrapping_add(b.len() as u64);
@@ -1232,7 +1311,7 @@ pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
     }
     let elapsed = start.elapsed().as_nanos();
     std::hint::black_box(sink);
-    elapsed.saturating_mul(1_000) / iters as u128
+    elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
 // ====== 编排器 ======
@@ -1264,7 +1343,7 @@ pub struct BenchReport {
 ///
 /// 修复 (G-07 收尾轮, 详见 docs/plan/archive/framekernel-bench-measure-fix.md): 历史上闭包
 /// 捕获字面量 iters, 自适应放大值从未传入 bench; 且 measure 把 bench 返回的
-/// ps_per_op 当作"总耗时"再除以放大后的 iters, 二次归一化使记录值 = 实际/10⁴
+/// `ps_per_op` 当作"总耗时"再除以放大后的 iters, 二次归一化使记录值 = 实际/10⁴
 /// (单操作 < 10ns 者直接折叠为 0). 现为「一次预热 + 一次计时」, 三项字段自洽:
 /// `iterations` = 实际轮数, `total_ns` = 计时轮实测墙钟, `ps_per_op` = bench 自报单操作值.
 fn measure<F: Fn(u64) -> u128>(name: &str, category: &str, iters: u64, f: F) -> BenchEntry {
@@ -1274,12 +1353,12 @@ fn measure<F: Fn(u64) -> u128>(name: &str, category: &str, iters: u64, f: F) -> 
     let ps_per_op = f(iters);
     let total_ns = start.elapsed().as_nanos();
     let ns_per_op = ps_per_op / 1_000;
-    let ns_per_op_frac = (ps_per_op as f64) / 1_000.0;
-    let ops_per_sec = if ns_per_op_frac > 0.0 {
-        (1_000_000_000.0 / ns_per_op_frac) as u128
-    } else {
-        0
-    };
+    // 亚纳秒小数部分 = 整数 ns + 皮秒余数/1000; 用 `u32` 中转以免 u128→f64 精度丢失
+    let ns_whole = u32::try_from(ns_per_op).unwrap_or(u32::MAX);
+    let ps_remainder = u32::try_from(ps_per_op % 1_000).unwrap_or(0);
+    let ns_per_op_frac = f64::from(ns_whole) + f64::from(ps_remainder) / 1_000.0;
+    // ops/s = 1e12 ps/s ÷ 单操作皮秒数, 全整数运算 (与 1e9/ns 同值)
+    let ops_per_sec = 1_000_000_000_000u128.checked_div(ps_per_op).unwrap_or(0);
     BenchEntry {
         name: name.to_string(),
         category: category.to_string(),
@@ -1581,7 +1660,7 @@ mod tests {
         vq.commit_and_kick();
         // 设备侧完成 → pop_used 取回链头
         // SAFETY: vq.used 指向本作用域内 backing
-        unsafe { bench_device_complete(&mut vq, h1, BLK_4K_BYTES) };
+        unsafe { bench_device_complete(&mut vq, &mut backing, h1, BLK_4K_BYTES) };
         assert_eq!(vq.pop_used(), Some((h1, BLK_4K_BYTES)));
         // 无新完成 → None
         assert_eq!(vq.pop_used(), None);
@@ -1701,7 +1780,8 @@ mod tests {
         static SLOT: OnceLock<u8> = OnceLock::new();
         *SLOT.get_or_init(|| {
             let dev: &'static mut BenchBlockDevice = Box::leak(Box::new(BenchBlockDevice::new(4)));
-            egdf_register_block_dev("bench_blk_small", None, None, dev) as u8
+            u8::try_from(egdf_register_block_dev("bench_blk_small", None, None, dev))
+                .expect("测试值必须能无损收窄")
         })
     }
 

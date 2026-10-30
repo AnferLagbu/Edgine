@@ -4,7 +4,7 @@
 //!
 //! `functions/egdf/mod.rs` 是对 `privileged/egdf` 的安全代理 (强类型
 //! `DeviceId`/`Proto`/`DeviceState` + `Result<_, EGDFError>`), 但 host-tests
-//! 侧此前只有静态契约检查 ([i43_block_bridge_test.rs]), 缺少对其注册表语义与
+//! 侧此前只有静态契约检查 ([`i43_block_bridge_test.rs`]), 缺少对其注册表语义与
 //! 块设备 IO dispatch 的专项运行验证。本文件补齐该缺口。
 //!
 //! ## 覆盖范围
@@ -49,8 +49,8 @@ impl MockBlk {
             storage: (0..sectors)
                 .map(|i| {
                     let mut s = [0u8; 512];
-                    s[0] = (i & 0xFF) as u8;
-                    s[1] = ((i >> 8) & 0xFF) as u8;
+                    s[0] = u8::try_from(i & 0xFF).expect("测试值必须能无损收窄");
+                    s[1] = u8::try_from((i >> 8) & 0xFF).expect("测试值必须能无损收窄");
                     s
                 })
                 .collect(),
@@ -60,7 +60,7 @@ impl MockBlk {
 
 impl BlockDevice for MockBlk {
     fn blk_read(&mut self, sector: u64, buf: &mut [u8]) -> i32 {
-        let idx = sector as usize;
+        let idx = usize::try_from(sector).expect("测试值必须能无损收窄");
         if idx >= self.storage.len() {
             return FwError::Io.as_i32();
         }
@@ -69,7 +69,7 @@ impl BlockDevice for MockBlk {
     }
 
     fn blk_write(&mut self, sector: u64, buf: &[u8]) -> i32 {
-        let idx = sector as usize;
+        let idx = usize::try_from(sector).expect("测试值必须能无损收窄");
         if idx >= self.storage.len() {
             return FwError::Io.as_i32();
         }
@@ -157,7 +157,8 @@ fn egdf_block_io_dispatch() {
     // 经 privileged 注册带 trait 引用的块设备; 表为空, 故其 drive 下标为 0。
     // `Box::leak` 与 `egdf_register_block_dev` 的 `&'static mut` 契约一致, 测试进程内一次性泄漏。
     let dev: &'static mut MockBlk = Box::leak(Box::new(MockBlk::new(8)));
-    let drive = egdf_register_block_dev("mock_blk_io", None, None, dev) as u8;
+    let drive = u8::try_from(egdf_register_block_dev("mock_blk_io", None, None, dev))
+        .expect("测试值必须能无损收窄");
     assert_eq!(drive, 0, "空表注册后 drive 下标应为 0");
 
     // 元信息: 计数 / 存在性 / 总扇区数。

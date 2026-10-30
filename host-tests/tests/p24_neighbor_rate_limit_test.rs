@@ -1,8 +1,8 @@
 //! P-24: smoltcp 邻居发现限速本地化守卫
 //!
 //! 背景: vendored smoltcp 0.14 上游用单一全缓存 `silent_until: Instant` 做邻居发现
-//! 限速——任一目的地发出 ARP/NS 后, 整张缓存静音 SILENT_TIME(1s), 他址 `lookup` 返
-//! RateLimited (不发请求). 本机 IPv4 ARP(网关) 与 IPv6 ND(SLAAC) 共用一张缓存并发发现,
+//! 限速——任一目的地发出 ARP/NS 后, 整张缓存静音 `SILENT_TIME(1s)`, 他址 `lookup` 返
+//! `RateLimited` (不发请求). 本机 IPv4 ARP(网关) 与 IPv6 ND(SLAAC) 共用一张缓存并发发现,
 //! 导致网关 ARP 被 IPv6 流量饿死, 首个出站 UDP 包从未离 NIC (见
 //! `docs/plan/net-e2e-tcp-echo-flakiness.md` P-24).
 //!
@@ -30,7 +30,7 @@ fn read_src(rel: &str) -> String {
 const NEIGHBOR_RS: &str = "src/kernel/functions/net/smoltcp/src/iface/neighbor.rs";
 const INTERFACE_MOD_RS: &str = "src/kernel/functions/net/smoltcp/src/iface/interface/mod.rs";
 
-/// `Cache::silent_until` 必须是 per-destination 的 LinearMap, 而非上游单一 Instant.
+/// `Cache::silent_until` 必须是 per-destination 的 `LinearMap`, 而非上游单一 Instant.
 #[test]
 fn test_silent_until_is_per_destination_map() {
     let src = read_src(NEIGHBOR_RS);
@@ -70,7 +70,7 @@ fn test_lookup_checks_rate_limit_per_destination() {
     );
 }
 
-/// `flush` 必须同时清空 silent_until 环, 防止限速记录跨 flush 残留.
+/// `flush` 必须同时清空 `silent_until` 环, 防止限速记录跨 flush 残留.
 #[test]
 fn test_flush_clears_silent_ring() {
     let src = read_src(NEIGHBOR_RS);

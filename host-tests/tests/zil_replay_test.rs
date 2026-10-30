@@ -94,7 +94,7 @@ fn truncated_block_is_rejected_silently() {
 fn bad_magic_block_is_rejected_silently() {
     // 构造合法块后破坏 magic (offset 0)
     let mut block = build_block(1, 1);
-    block[0..4].copy_from_slice(&0xDEADBEEFu32.to_le_bytes());
+    block[0..4].copy_from_slice(&0xDEAD_BEEF_u32.to_le_bytes());
     let result = EgfsZilPersist::deserialize_zil_from_block(&block);
     assert!(result.is_empty(), "错误 magic → 空");
 }

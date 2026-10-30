@@ -1,4 +1,4 @@
-//! ELF loader RacyCell 静态分配器消除验证 (P1-I-32)
+//! ELF loader `RacyCell` 静态分配器消除验证 (P1-I-32)
 //!
 //! 验证:
 //! 1. `src/kernel/privileged/proc/user_proc.rs` 和 `src/kernel/privileged/proc/elf.rs` 中
@@ -18,7 +18,7 @@ fn load_elf_mock(cpu_id: u32, page_count: usize) -> Vec<u64> {
 
     let actual = page_count.min(MAX_LOAD_PAGES);
     for (i, page) in allocated_pages.iter_mut().enumerate().take(actual) {
-        *page = (cpu_id as u64) * 0x1_0000_0000 + i as u64;
+        *page = u64::from(cpu_id) * 0x1_0000_0000 + i as u64;
     }
     allocated_pages[..actual].to_vec()
 }
@@ -29,7 +29,7 @@ fn single_load_records_page_count() {
     let result = load_elf_mock(0, 10);
     assert_eq!(result.len(), 10, "P1-I-32: 10 页应全部记录");
     for (i, &v) in result.iter().enumerate() {
-        assert_eq!(v, i as u64, "P1-I-32: cpu=0 第 {} 页应为 {}", i, i);
+        assert_eq!(v, i as u64, "P1-I-32: cpu=0 第 {i} 页应为 {i}");
     }
 }
 
@@ -47,15 +47,13 @@ fn two_concurrent_loads_have_isolated_buffers() {
     for (i, (&v0, &v1)) in r0.iter().zip(r1.iter()).enumerate() {
         // cpu0: 基址 = 0x0 + i
         // cpu1: 基址 = 0x1_0000_0000 + i
-        assert_eq!(v0, i as u64, "P1-I-32: cpu0 第 {} 页 = {}", i, i);
+        assert_eq!(v0, i as u64, "P1-I-32: cpu0 第 {i} 页 = {i}");
         assert_eq!(
             v1,
             0x1_0000_0000u64 + i as u64,
-            "P1-I-32: cpu1 第 {} 页 = base+{} (无 cpu0 数据污染)",
-            i,
-            i
+            "P1-I-32: cpu1 第 {i} 页 = base+{i} (无 cpu0 数据污染)"
         );
-        assert_ne!(v0, v1, "P1-I-32: cpu0/cpu1 第 {} 页必须不同 (无串台)", i);
+        assert_ne!(v0, v1, "P1-I-32: cpu0/cpu1 第 {i} 页必须不同 (无串台)");
     }
 }
 
@@ -71,14 +69,12 @@ fn eights_cpus_concurrent_have_isolated_buffers() {
         .collect();
 
     for (cpu, result) in results.iter().enumerate() {
-        assert_eq!(result.len(), 50, "P1-I-32: cpu={} 应记录 50 页", cpu);
+        assert_eq!(result.len(), 50, "P1-I-32: cpu={cpu} 应记录 50 页");
         for (i, &v) in result.iter().enumerate() {
             assert_eq!(
                 v,
                 (cpu as u64) * 0x1_0000_0000 + i as u64,
-                "P1-I-32: cpu={} 第 {} 页数据未串台",
-                cpu,
-                i
+                "P1-I-32: cpu={cpu} 第 {i} 页数据未串台"
             );
         }
     }
@@ -98,8 +94,8 @@ fn buffer_truncation_at_1024() {
 #[test]
 fn stack_buffer_8kb_fits() {
     // 8KB = 1024 * 8 = [u64; 1024] 栈上分配, 验证大小
-    let _buf = [0u64; MAX_LOAD_PAGES];
-    assert_eq!(core::mem::size_of_val(&_buf), 8 * 1024);
+    let buf = [0u64; MAX_LOAD_PAGES];
+    assert_eq!(core::mem::size_of_val(&buf), 8 * 1024);
 }
 
 #[test]

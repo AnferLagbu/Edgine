@@ -11,12 +11,12 @@
 //! - 本文件验证整体压力下的稳定性
 //!
 //! ## 与性能基准的分工
-//! - `framekernel_bench` 测量 ns_per_op 微基准
+//! - `framekernel_bench` 测量 `ns_per_op` 微基准
 //! - 本文件验证 `assert!(rc >= 1)` 等业务正确性约束
 //!
 //! ## B08-14 迁移 (2026-09-06)
 //! 改引内核 `functions::fs::egfs` 真实实现 (host-test feature 暴露), 消除
-//! 平行实现依赖. API 与测试版同构 (get_cas/sha256/CasIndex/CasHash/
+//! 平行实现依赖. API 与测试版同构 (`get_cas/sha256/CasIndex/CasHash`/
 //! EgfsBlockPointer/EgfsZap/EgfsZil), 仅 import 路径变化.
 
 use edgine::kernel::functions::fs::egfs::{bp, dedup, zap, zil};
@@ -31,12 +31,12 @@ fn stress_cas_insert_lookup_100() {
         bp.set_birth(i);
         cas.insert(hash, bp);
         let found = cas.lookup(&hash);
-        assert!(found.is_some(), "CAS insert+lookup failed at {}", i);
+        assert!(found.is_some(), "CAS insert+lookup failed at {i}");
         let rc = cas.ref_count(&hash);
-        assert!(rc >= 1, "ref_count >= 1 at {}", i);
+        assert!(rc >= 1, "ref_count >= 1 at {i}");
     }
     let (_h, _m, s) = cas.get_stats();
-    assert!(s >= 100, "synced >= 100: got {}", s);
+    assert!(s >= 100, "synced >= 100: got {s}");
 }
 
 #[test]
@@ -71,23 +71,23 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
     let dec = thread::spawn(|| {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
-            let hash = dedup::sha256(format!("abba-dec-{}", i).as_bytes());
+            let hash = dedup::sha256(format!("abba-dec-{i}").as_bytes());
             let mut bp = bp::EgfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
-            assert_eq!(cas.ref_count(&hash), 1, "abba-dec-{} count", i);
-            assert_eq!(cas.ref_dec(&hash), 0, "abba-dec-{} dec", i);
-            assert!(!cas.is_known(&hash), "abba-dec-{} known", i);
+            assert_eq!(cas.ref_count(&hash), 1, "abba-dec-{i} count");
+            assert_eq!(cas.ref_dec(&hash), 0, "abba-dec-{i} dec");
+            assert!(!cas.is_known(&hash), "abba-dec-{i} known");
         }
     });
     let ins = thread::spawn(|| {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
-            let hash = dedup::sha256(format!("abba-ins-{}", i).as_bytes());
+            let hash = dedup::sha256(format!("abba-ins-{i}").as_bytes());
             let mut bp = bp::EgfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
-            assert!(cas.lookup(&hash).is_some(), "abba-ins-{} lookup", i);
+            assert!(cas.lookup(&hash).is_some(), "abba-ins-{i} lookup");
         }
     });
     dec.join().expect("dec 线程 panic");
@@ -98,19 +98,18 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
 fn stress_zap_hash_collision_256() {
     let z = zap::EgfsZap::with_capacity(256);
     for i in 0..256 {
-        let name = format!("entry_{:04}", i);
-        let value = (i * 9973) ^ 0xDEADBEEF;
-        assert!(z.insert_u64(&name, value), "ZAP insert #{} failed", i);
+        let name = format!("entry_{i:04}");
+        let value = (i * 9973) ^ 0xDEAD_BEEF;
+        assert!(z.insert_u64(&name, value), "ZAP insert #{i} failed");
     }
     assert_eq!(z.len(), 256);
     for i in 0..256 {
-        let name = format!("entry_{:04}", i);
-        let expected = (i * 9973) ^ 0xDEADBEEF;
+        let name = format!("entry_{i:04}");
+        let expected = (i * 9973) ^ 0xDEAD_BEEF;
         assert_eq!(
             z.lookup_u64(&name),
             Some(expected),
-            "ZAP lookup mismatch at {}",
-            i
+            "ZAP lookup mismatch at {i}"
         );
     }
     z.remove("entry_0000");
@@ -122,11 +121,14 @@ fn stress_zap_clear_reuse_10_rounds() {
     let z = zap::EgfsZap::new();
     for round in 0..10 {
         for i in 0..50 {
-            z.insert_u64(&format!("k{}", i), i as u64);
+            z.insert_u64(
+                &format!("k{i}"),
+                u64::try_from(i).expect("测试值必须为非负"),
+            );
         }
-        assert_eq!(z.len(), 50, "round {}: len != 50", round);
+        assert_eq!(z.len(), 50, "round {round}: len != 50");
         z.clear();
-        assert_eq!(z.len(), 0, "round {}: not empty after clear", round);
+        assert_eq!(z.len(), 0, "round {round}: not empty after clear");
     }
 }
 
@@ -137,9 +139,9 @@ fn stress_sha256_deterministic_100() {
         let data = i.to_le_bytes();
         let h1 = dedup::sha256(&data);
         let h2 = dedup::sha256(&data);
-        assert_eq!(h1, h2, "sha256 non-deterministic at {}", i);
+        assert_eq!(h1, h2, "sha256 non-deterministic at {i}");
         if i > 0 {
-            assert_ne!(h1, prev, "sha256 collision at {}", i);
+            assert_ne!(h1, prev, "sha256 collision at {i}");
         }
         prev = h1;
     }

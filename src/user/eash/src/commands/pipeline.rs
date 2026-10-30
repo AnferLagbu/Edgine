@@ -4,8 +4,8 @@
 
 use core::ffi::CStr;
 use core::str::from_utf8;
-use userlib::sys::*;
-use userlib::*;
+use userlib::sys::{dup2_fd, fork, fs_close, fs_open, pipe_create, proc_exec, proc_exit, wait_pid};
+use userlib::{print, println};
 
 const MAX_PIPELINE: usize = 8;
 const STDOUT: i32 = 1;
@@ -59,7 +59,7 @@ fn find_byte(slice: &[u8], byte: u8, start: usize) -> Option<usize> {
     None
 }
 
-fn parse_single_segment<'a>(raw: &'a [u8]) -> Segment<'a> {
+fn parse_single_segment(raw: &[u8]) -> Segment<'_> {
     let mut seg = Segment {
         cmd_buf: [0u8; 256],
         cmd_len: 0,
@@ -70,10 +70,10 @@ fn parse_single_segment<'a>(raw: &'a [u8]) -> Segment<'a> {
         redir_kind: RedirKind::None,
     };
 
-    let _len = raw.len().min(255);
+    let len = raw.len().min(255);
 
     // 复制到 cmd_buf
-    let copy_len = _len.min(255);
+    let copy_len = len.min(255);
     seg.cmd_buf[..copy_len].copy_from_slice(&raw[..copy_len]);
     seg.cmd_buf[copy_len] = 0;
     seg.cmd_len = copy_len;
@@ -161,7 +161,7 @@ fn parse_single_segment<'a>(raw: &'a [u8]) -> Segment<'a> {
             break;
         }
 
-        seg.argv[seg.argc] = &seg.cmd_buf[pos] as *const u8;
+        seg.argv[seg.argc] = &raw const seg.cmd_buf[pos];
         seg.argc += 1;
         if seg.argc >= 16 {
             break;
@@ -180,6 +180,69 @@ fn parse_single_segment<'a>(raw: &'a [u8]) -> Segment<'a> {
 }
 
 use core::mem::MaybeUninit;
+
+/// 管道段子进程体: 接好上下游管道与 `<` / `>` 重定向后 `exec` 目标程序;
+/// exec 失败即打印诊断并以退出码 1 结束 (不返回).
+fn run_pipeline_child(seg: &Segment, prev_pipe: &[i32; 2], cur_pipe: &[i32; 2]) -> ! {
+    // 输入: 来自上一个管道
+    if prev_pipe[0] >= 0 {
+        let _ = dup2_fd(prev_pipe[0], STDIN);
+        let _ = fs_close(prev_pipe[0]);
+        let _ = fs_close(prev_pipe[1]);
+    }
+
+    // 输出: 到下一个管道
+    if cur_pipe[1] >= 0 {
+        let _ = dup2_fd(cur_pipe[1], STDOUT);
+        let _ = fs_close(cur_pipe[0]);
+        let _ = fs_close(cur_pipe[1]);
+    }
+
+    // 输入重定向 <
+    if let Some(file) = seg.redir_in {
+        let fd = fs_open(file, 0, 0);
+        if fd >= 0 {
+            let _ = dup2_fd(fd, STDIN);
+            let _ = fs_close(fd);
+        } else {
+            print("eash: cannot open ");
+            println(from_utf8(file).unwrap_or("?"));
+            proc_exit(1);
+        }
+    }
+
+    // 输出重定向 >
+    if let Some(file) = seg.redir_out {
+        let flags = match seg.redir_kind {
+            RedirKind::StdoutAppend => 0x401, // O_WRONLY | O_CREAT | O_APPEND
+            _ => 0x201,                       // O_WRONLY | O_CREAT | O_TRUNC
+        };
+        let fd = fs_open(file, flags, 0o644);
+        if fd >= 0 {
+            let _ = dup2_fd(fd, STDOUT);
+            let _ = fs_close(fd);
+        } else {
+            print("eash: cannot create ");
+            println(from_utf8(file).unwrap_or("?"));
+            proc_exit(1);
+        }
+    }
+
+    let argv = &seg.argv[..=seg.argc];
+    let path = seg.argv[0];
+    if path.is_null() {
+        proc_exit(1);
+    }
+
+    // null 终止路径方便 exec
+    let path_slice = unsafe { CStr::from_ptr(path.cast::<core::ffi::c_char>()) }.to_bytes();
+    let _ = proc_exec(path_slice, argv);
+    // exec 失败
+    print("eash: ");
+    print(from_utf8(path_slice).unwrap_or("?"));
+    println(": exec failed");
+    proc_exit(1);
+}
 
 pub fn execute_pipeline(input: &[u8]) {
     let len = input.len();
@@ -223,7 +286,7 @@ pub fn execute_pipeline(input: &[u8]) {
     }
 
     let segments: &[Segment] =
-        unsafe { core::slice::from_raw_parts(segments.as_ptr() as *const Segment, seg_count) };
+        unsafe { core::slice::from_raw_parts(segments.as_ptr().cast::<Segment>(), seg_count) };
 
     // 执行管道
     let mut prev_pipe: [i32; 2] = [-1, -1];
@@ -238,109 +301,49 @@ pub fn execute_pipeline(input: &[u8]) {
             return;
         }
 
-        let pid = fork() as i32;
+        let pid = i32::try_from(fork()).expect("fork 返回值超出 i32");
         if pid < 0 {
             println("eash: fork() failed");
             // 清理所有管道
             for fd in &prev_pipe {
                 if *fd >= 0 {
-                    fs_close(*fd);
+                    let _ = fs_close(*fd);
                 }
             }
             for fd in &cur_pipe {
                 if *fd >= 0 {
-                    fs_close(*fd);
+                    let _ = fs_close(*fd);
                 }
             }
             return;
         }
 
         if pid == 0 {
-            // ──────── 子进程 ────────
-
-            // 输入: 来自上一个管道
-            if prev_pipe[0] >= 0 {
-                dup2_fd(prev_pipe[0], STDIN);
-                fs_close(prev_pipe[0]);
-                fs_close(prev_pipe[1]);
-            }
-
-            // 输出: 到下一个管道
-            if cur_pipe[1] >= 0 {
-                dup2_fd(cur_pipe[1], STDOUT);
-                fs_close(cur_pipe[0]);
-                fs_close(cur_pipe[1]);
-            }
-
-            // 输入重定向 <
-            if let Some(file) = segments[i].redir_in {
-                let fd = fs_open(file, 0, 0);
-                if fd >= 0 {
-                    dup2_fd(fd, STDIN);
-                    fs_close(fd);
-                } else {
-                    print("eash: cannot open ");
-                    println(from_utf8(file).unwrap_or("?"));
-                    proc_exit(1);
-                }
-            }
-
-            // 输出重定向 >
-            if let Some(file) = segments[i].redir_out {
-                let flags = match segments[i].redir_kind {
-                    RedirKind::StdoutAppend => 0x401, // O_WRONLY | O_CREAT | O_APPEND
-                    _ => 0x201,                       // O_WRONLY | O_CREAT | O_TRUNC
-                };
-                let fd = fs_open(file, flags, 0o644);
-                if fd >= 0 {
-                    dup2_fd(fd, STDOUT);
-                    fs_close(fd);
-                } else {
-                    print("eash: cannot create ");
-                    println(from_utf8(file).unwrap_or("?"));
-                    proc_exit(1);
-                }
-            }
-
-            let argv = &segments[i].argv[..(segments[i].argc + 1)];
-            let path = segments[i].argv[0];
-            if path.is_null() {
-                proc_exit(1);
-            }
-
-            // null 终止路径方便 exec
-            let path_slice = unsafe { CStr::from_ptr(path as *const core::ffi::c_char) }.to_bytes();
-            proc_exec(path_slice, argv);
-            // exec 失败
-            print("eash: ");
-            print(from_utf8(path_slice).unwrap_or("?"));
-            println(": exec failed");
-            proc_exit(1);
-        } else {
-            // ──────── 父进程 ────────
-            pids[i] = pid;
-
-            // 关闭不用的管道 fd
-            if prev_pipe[0] >= 0 {
-                fs_close(prev_pipe[0]);
-                fs_close(prev_pipe[1]);
-            }
-
-            // 当前管道的读端传给下一段
-            prev_pipe = cur_pipe;
+            run_pipeline_child(&segments[i], &prev_pipe, &cur_pipe);
         }
+        // ──────── 父进程 ────────
+        pids[i] = pid;
+
+        // 关闭不用的管道 fd
+        if prev_pipe[0] >= 0 {
+            let _ = fs_close(prev_pipe[0]);
+            let _ = fs_close(prev_pipe[1]);
+        }
+
+        // 当前管道的读端传给下一段
+        prev_pipe = cur_pipe;
     }
 
     // 关闭最后的管道 fd
     if prev_pipe[0] >= 0 {
-        fs_close(prev_pipe[0]);
-        fs_close(prev_pipe[1]);
+        let _ = fs_close(prev_pipe[0]);
+        let _ = fs_close(prev_pipe[1]);
     }
 
     // 等待所有子进程
     for &pid in &pids[..seg_count] {
         if pid >= 0 {
-            wait_pid(pid);
+            let _ = wait_pid(pid);
         }
     }
 }

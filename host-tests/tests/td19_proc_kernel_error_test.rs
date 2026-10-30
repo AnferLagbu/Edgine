@@ -46,8 +46,7 @@ fn no_legacy_elf_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 ElfError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 ElfError::Kernel(KernelError::...)"
         );
     }
 }
@@ -64,7 +63,7 @@ fn elf_error_preserves_seven_specific_variants() {
         "TooManyPhdr",
         "MapFailed",
     ] {
-        assert!(src.contains(variant), "ElfError 应保留 {} 变体", variant);
+        assert!(src.contains(variant), "ElfError 应保留 {variant} 变体");
     }
 }
 
@@ -89,8 +88,7 @@ fn elf_error_to_errno_present() {
     ] {
         assert!(
             block.contains(variant),
-            "ElfError::to_errno 必须映射 {} 变体",
-            variant
+            "ElfError::to_errno 必须映射 {variant} 变体"
         );
     }
     // 验证 POSIX 目标: ENOEXEC=8, EINVAL=22, ENOMEM=12
@@ -127,8 +125,7 @@ fn elf_error_from_kernel_str_uses_kernel_wrapper() {
             .count();
     assert!(
         kernel_count >= 2,
-        "ElfError::from_kernel_str 至少应有 2 处使用 Kernel(K::...) 包装, 实际: {}",
-        kernel_count
+        "ElfError::from_kernel_str 至少应有 2 处使用 Kernel(K::...) 包装, 实际: {kernel_count}"
     );
 }
 
@@ -164,8 +161,7 @@ fn no_legacy_mlock_error_variants() {
             || src.contains(&format!("    {},", legacy.replace("MlockError::", "")));
         assert!(
             !has_variant_decl,
-            "{} 旧变体声明应废弃, 应改走 Kernel(KernelError::...) 包装",
-            legacy
+            "{legacy} 旧变体声明应废弃, 应改走 Kernel(KernelError::...) 包装"
         );
     }
 }
@@ -175,7 +171,7 @@ fn mlock_error_preserves_not_mapped() {
     let src = read(MLOCK_RS);
     let enum_block_start = src.find("pub enum MlockError {").expect("MlockError 存在");
     let search_from = enum_block_start + "pub enum MlockError {".len();
-    let enum_block_end = src[search_from..].find("}").expect("enum 闭合") + search_from;
+    let enum_block_end = src[search_from..].find('}').expect("enum 闭合") + search_from;
     let enum_block = &src[enum_block_start..enum_block_end];
     assert!(
         enum_block.contains("NotMapped"),
@@ -220,8 +216,7 @@ fn mlock_error_from_errno_uses_kernel_wrapper() {
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
         kernel_count >= 6,
-        "MlockError::from_errno 至少应有 6 处使用 Kernel(K::...) 包装 (EINVAL/EFAULT/ENOMEM/ENOSPC/EAGAIN/EPERM/兜底), 实际: {}",
-        kernel_count
+        "MlockError::from_errno 至少应有 6 处使用 Kernel(K::...) 包装 (EINVAL/EFAULT/ENOMEM/ENOSPC/EAGAIN/EPERM/兜底), 实际: {kernel_count}"
     );
 }
 
@@ -267,8 +262,7 @@ fn no_legacy_proc_error_variants() {
             || src.contains(&format!("    {},", legacy.replace("ProcError::", "")));
         assert!(
             !has_variant_decl,
-            "{} 旧变体声明应废弃, 应改走 ProcError::Kernel(KernelError::...) 包装",
-            legacy
+            "{legacy} 旧变体声明应废弃, 应改走 ProcError::Kernel(KernelError::...) 包装"
         );
     }
 }
@@ -278,7 +272,7 @@ fn proc_error_preserves_exited() {
     let src = read(PROC_MOD_RS);
     let enum_block_start = src.find("pub enum ProcError {").expect("ProcError 存在");
     let search_from = enum_block_start + "pub enum ProcError {".len();
-    let enum_block_end = src[search_from..].find("}").expect("enum 闭合") + search_from;
+    let enum_block_end = src[search_from..].find('}').expect("enum 闭合") + search_from;
     let enum_block = &src[enum_block_start..enum_block_end];
     assert!(
         enum_block.contains("Exited"),
@@ -316,8 +310,7 @@ fn proc_error_from_i32_uses_kernel_wrapper() {
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
         kernel_count >= 4,
-        "ProcError::from_i32 至少应有 4 处使用 Kernel(K::...) 包装 (-1/-2/-3/-22), 实际: {}",
-        kernel_count
+        "ProcError::from_i32 至少应有 4 处使用 Kernel(K::...) 包装 (-1/-2/-3/-22), 实际: {kernel_count}"
     );
     // 验证 -1 → NoSuchProcess
     assert!(
@@ -333,8 +326,7 @@ fn deny_unsafe_code_intact() {
         let first = src.lines().next().expect("non-empty");
         assert!(
             first.contains("#![deny(unsafe_code)]"),
-            "{} 顶部必须含 #![deny(unsafe_code)]",
-            name
+            "{name} 顶部必须含 #![deny(unsafe_code)]"
         );
         // 过滤 doc 注释行 (以 //! 开头) 避免误判
         let code_lines: String = src
@@ -346,8 +338,7 @@ fn deny_unsafe_code_intact() {
             code_lines.matches("unsafe {").count() + code_lines.matches("unsafe fn").count();
         assert_eq!(
             unsafe_count, 0,
-            "{} 必须 0 unsafe 块 (code 区域, 排除 doc 注释)",
-            name
+            "{name} 必须 0 unsafe 块 (code 区域, 排除 doc 注释)"
         );
     }
 }

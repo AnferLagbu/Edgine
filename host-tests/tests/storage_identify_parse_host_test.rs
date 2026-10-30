@@ -1,4 +1,4 @@
-//! NVMe Identify 解析 host 集成测试 (§6.4 storage 专项 0 号子步)
+//! `NVMe` Identify 解析 host 集成测试 (§6.4 storage 专项 0 号子步)
 //!
 //! §6.4 直接方案 B: `nvme_read_identify_*` 解析 helper 从 privileged 迁 functions
 //! (纯逻辑, 输入为 DMA 缓冲区字节切片). 本测试直接引用内核 functions 真实
@@ -8,9 +8,9 @@
 //! 覆盖:
 //! 1. Identify Controller: nn (offset 516, LE u32) + mn (offset 24, 40 字节空终止)
 //! 2. Identify Namespace 字段: nsze (offset 0, LE u64) + flbas (offset 26) +
-//!    其中 lbaf_data (offset 128 + lbaf_idx*4, LE u32)
+//!    其中 `lbaf_data` (offset 128 + `lbaf_idx`*4, LE u32)
 //! 3. 短缓冲区: 长度不足返回 None
-//! 4. lbaf_idx >= 16 时, lbaf_data = 0
+//! 4. `lbaf_idx` >= 16 时, `lbaf_data` = 0
 
 use edgine::kernel::functions::driver::storage::nvme::{
     parse_identify_controller, parse_identify_namespace,

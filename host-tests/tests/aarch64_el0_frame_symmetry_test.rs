@@ -140,8 +140,7 @@ fn test_el0_return_restores_x3_x4_from_stash() {
     for forbidden in ["ldp x2, x3, [sp, #(8 * 2)]", "ldp x4, x5, [sp, #(8 * 4)]"] {
         assert!(
             !ret.contains(&norm(forbidden)),
-            "el0_return 不得用 {:?} 直接恢复 x3/x4 (切表后内核栈不可达)",
-            forbidden
+            "el0_return 不得用 {forbidden:?} 直接恢复 x3/x4 (切表后内核栈不可达)"
         );
     }
     // 帧内 x3/x4 的暂存必须早于 x0-x29 的恢复.

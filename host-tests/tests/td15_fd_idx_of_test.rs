@@ -76,14 +76,12 @@ fn test_subsystem_local_fd_to_idx_no_base_arith() {
             // 形如 `fd - SFD_FD_BASE`, `fd - EFD_FD_BASE`, `fd - TFD_FD_BASE`,
             // `fd - UDS_FD_BASE` 都不应出现 (本地反查已迁出).
             for base in &["SFD_FD_BASE", "EFD_FD_BASE", "TFD_FD_BASE", "UDS_FD_BASE"] {
-                let sub_pattern = format!(" - {} ", base);
-                let add_pattern = format!(" + {} ", base);
-                if t.contains(&sub_pattern) || t.contains(&add_pattern) {
-                    panic!(
-                        "{}:{} 含本地 `*_FD_BASE ± 字面量` 算术, 应改走 fd_alloc::idx_of: {}",
-                        path, line_no, t
-                    );
-                }
+                let sub_pattern = format!(" - {base} ");
+                let add_pattern = format!(" + {base} ");
+                assert!(
+                    !(t.contains(&sub_pattern) || t.contains(&add_pattern)),
+                    "{path}:{line_no} 含本地 `*_FD_BASE ± 字面量` 算术, 应改走 fd_alloc::idx_of: {t}"
+                );
             }
         }
     }
@@ -98,7 +96,7 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
         let needle = "fn fd_to_idx(fd: i32)";
         let pos = src
             .find(needle)
-            .unwrap_or_else(|| panic!("{}: 应有 fn fd_to_idx (TD-15)", path));
+            .unwrap_or_else(|| panic!("{path}: 应有 fn fd_to_idx (TD-15)"));
         let body_start = pos;
         // 找到函数体结束: 第一个匹配的 `}` 在不缩进的行
         let mut body_end = src.len();
@@ -123,8 +121,7 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
         let body = &src[body_start..body_end];
         assert!(
             body.contains("fd_alloc::idx_of") || body.contains("proc::idx_of"),
-            "{}: fd_to_idx 体内必须调用 idx_of (TD-15)",
-            path
+            "{path}: fd_to_idx 体内必须调用 idx_of (TD-15)"
         );
     }
 }
@@ -139,13 +136,11 @@ fn test_timerfd_base_uses_fd_plan_not_literal_240() {
         .expect("TFD_FD_BASE 定义必须存在");
     assert!(
         line.contains("FdPlan::TIMER_FD.base"),
-        "TFD_FD_BASE 必须引用 FdPlan::TIMER_FD.base: {}",
-        line
+        "TFD_FD_BASE 必须引用 FdPlan::TIMER_FD.base: {line}"
     );
     assert!(
         !line.contains("= 240"),
-        "TFD_FD_BASE 不能再硬编码 240 (与 smoltcp 重叠): {}",
-        line
+        "TFD_FD_BASE 不能再硬编码 240 (与 smoltcp 重叠): {line}"
     );
 }
 
@@ -165,7 +160,6 @@ fn test_fd_plan_invariant_still_holds() {
     let count = src.matches("Self::TIMER_FD").count();
     assert!(
         count >= 2,
-        "Self::TIMER_FD 至少出现 2 次 (range_for + ALL), 实际 {} 次 (TD-15)",
-        count
+        "Self::TIMER_FD 至少出现 2 次 (range_for + ALL), 实际 {count} 次 (TD-15)"
     );
 }

@@ -91,6 +91,26 @@ pub struct UserDiskInfo {
 // 系统调用门 — 双架构
 // ============================================================
 
+// syscall 寄存器参数: 有符号值按二补码零扩展为 u64 (与 Linux syscall ABI 位型一致, 不 panic)
+fn arg_bits(v: i64) -> u64 {
+    v.cast_unsigned()
+}
+
+// 内核 i64 返回值 → POSIX i32 返回面 (越界即 panic, 正常返回值恒在范围内)
+fn ret_i32(v: i64) -> i32 {
+    i32::try_from(v).expect("内核返回值超出 i32 范围")
+}
+
+// 内核 i64 返回值 → u32 (仅用于 uid/gid/umask 等无符号结果)
+fn ret_u32(v: i64) -> u32 {
+    u32::try_from(v).expect("内核返回值超出 u32 范围")
+}
+
+// 内核 i64 返回值 → isize (sendto/recvfrom 族的字节数与错误码返回面)
+fn ret_isize(v: i64) -> isize {
+    isize::try_from(v).expect("内核返回值超出 isize 范围")
+}
+
 #[cfg(target_arch = "x86_64")]
 unsafe fn sys0(num: u64) -> i64 {
     let ret: i64;
@@ -103,7 +123,7 @@ unsafe fn sys1(num: u64, a1: u64) -> i64 {
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -112,7 +132,7 @@ unsafe fn sys2(num: u64, a1: u64, a2: u64) -> i64 {
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -121,7 +141,7 @@ unsafe fn sys3(num: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -130,7 +150,7 @@ unsafe fn sys4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -139,7 +159,7 @@ unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -148,7 +168,7 @@ unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -
     let ret: i64;
     // SAFETY: syscall 指令通过 C ABI 与内核互操作，调用方保证参数有效性
     unsafe {
-        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, in("r9") a6, lateout("rax") ret, out("rcx") _, out("r11") _)
+        asm!("syscall", in("rax") num, in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, in("r9") a6, lateout("rax") ret, out("rcx") _, out("r11") _);
     };
     ret
 }
@@ -175,7 +195,7 @@ unsafe fn sys2(num: u64, a1: u64, a2: u64) -> i64 {
 unsafe fn sys3(num: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let ret: i64;
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, lateout("x0") ret)
+        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, lateout("x0") ret);
     };
     ret
 }
@@ -183,7 +203,7 @@ unsafe fn sys3(num: u64, a1: u64, a2: u64, a3: u64) -> i64 {
 unsafe fn sys4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
     let ret: i64;
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, lateout("x0") ret)
+        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, lateout("x0") ret);
     };
     ret
 }
@@ -191,7 +211,7 @@ unsafe fn sys4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
 unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     let ret: i64;
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, lateout("x0") ret)
+        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, lateout("x0") ret);
     };
     ret
 }
@@ -199,7 +219,7 @@ unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
 unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> i64 {
     let ret: i64;
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, in("x6") a6, lateout("x0") ret)
+        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, in("x6") a6, lateout("x0") ret);
     };
     ret
 }
@@ -210,34 +230,55 @@ unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -
 
 pub fn read(fd: i32, buf: &mut [u8]) -> i32 {
     unsafe {
-        sys3(
+        ret_i32(sys3(
             SYS_READ,
-            fd as u64,
+            arg_bits(i64::from(fd)),
             buf.as_mut_ptr() as u64,
             buf.len() as u64,
-        ) as i32
+        ))
     }
 }
+#[must_use]
 pub fn write(fd: i32, buf: &[u8]) -> i32 {
-    unsafe { sys3(SYS_WRITE, fd as u64, buf.as_ptr() as u64, buf.len() as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_WRITE,
+            arg_bits(i64::from(fd)),
+            buf.as_ptr() as u64,
+            buf.len() as u64,
+        ))
+    }
 }
+#[must_use]
 pub fn open(path: &[u8], flags: i32, mode: i32) -> i32 {
-    unsafe { sys3(SYS_OPEN, path.as_ptr() as u64, flags as u64, mode as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_OPEN,
+            path.as_ptr() as u64,
+            arg_bits(i64::from(flags)),
+            arg_bits(i64::from(mode)),
+        ))
+    }
 }
+#[must_use]
 pub fn close(fd: i32) -> i32 {
-    unsafe { sys1(SYS_CLOSE, fd as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_CLOSE, arg_bits(i64::from(fd)))) }
 }
+#[must_use]
 pub fn getpid() -> u64 {
-    unsafe { sys0(SYS_GETPID) as u64 }
+    unsafe { sys0(SYS_GETPID).cast_unsigned() }
 }
+#[must_use]
 pub fn fork() -> u64 {
-    unsafe { sys0(SYS_FORK) as u64 }
+    unsafe { sys0(SYS_FORK).cast_unsigned() }
 }
+#[must_use]
 pub fn getuid() -> u32 {
-    unsafe { sys0(SYS_GETUID) as u32 }
+    unsafe { ret_u32(sys0(SYS_GETUID)) }
 }
+#[must_use]
 pub fn geteuid() -> u32 {
-    unsafe { sys0(SYS_GETEUID) as u32 }
+    unsafe { ret_u32(sys0(SYS_GETEUID)) }
 }
 pub fn sched_yield() {
     unsafe {
@@ -254,12 +295,13 @@ pub fn sync() {
 // Edgine 兼容 wrapper — 保留原有语义，内部映射到 POSIX/PWM 编号
 // ============================================================
 
+#[must_use]
 pub fn proc_exec(path: &[u8], argv: &[*const u8]) -> i64 {
     unsafe { sys3(SYS_EXECVE, path.as_ptr() as u64, argv.as_ptr() as u64, 0) }
 }
 pub fn proc_exit(code: i32) -> ! {
     unsafe {
-        sys1(SYS_EXIT, code as u64);
+        sys1(SYS_EXIT, arg_bits(i64::from(code)));
     }
     loop {
         if cfg!(target_arch = "x86_64") {
@@ -273,8 +315,9 @@ pub fn proc_exit(code: i32) -> ! {
         }
     }
 }
+#[must_use]
 pub fn proc_get_pwm() -> u64 {
-    unsafe { sys0(SYS_SGEG_GET_PWM) as u64 }
+    unsafe { sys0(SYS_SGEG_GET_PWM).cast_unsigned() }
 }
 pub fn proc_yield() {
     unsafe {
@@ -283,52 +326,88 @@ pub fn proc_yield() {
 }
 
 pub fn pipe_create(fds: &mut [i32; 2]) -> i32 {
-    unsafe { sys1(SYS_PIPE, fds.as_mut_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_PIPE, fds.as_mut_ptr() as u64)) }
 }
+#[must_use]
 pub fn dup_fd(oldfd: i32) -> i32 {
-    unsafe { sys1(SYS_DUP, oldfd as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_DUP, arg_bits(i64::from(oldfd)))) }
 }
+#[must_use]
 pub fn dup2_fd(oldfd: i32, newfd: i32) -> i32 {
-    unsafe { sys2(SYS_DUP2, oldfd as u64, newfd as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_DUP2,
+            arg_bits(i64::from(oldfd)),
+            arg_bits(i64::from(newfd)),
+        ))
+    }
 }
+#[must_use]
 pub fn wait_pid(pid: i32) -> i64 {
-    unsafe { sys3(SYS_WAIT4, pid as u64, 0, 0) }
+    unsafe { sys3(SYS_WAIT4, arg_bits(i64::from(pid)), 0, 0) }
 }
 
+#[must_use]
 pub fn fs_open(path: &[u8], flags: i32, m: i32) -> i32 {
-    unsafe { sys3(SYS_OPEN, path.as_ptr() as u64, flags as u64, m as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_OPEN,
+            path.as_ptr() as u64,
+            arg_bits(i64::from(flags)),
+            arg_bits(i64::from(m)),
+        ))
+    }
 }
+#[must_use]
 pub fn fs_close(fd: i32) -> i32 {
-    unsafe { sys1(SYS_CLOSE, fd as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_CLOSE, arg_bits(i64::from(fd)))) }
 }
 pub fn fs_read(fd: i32, buf: &mut [u8]) -> i32 {
     unsafe {
-        sys3(
+        ret_i32(sys3(
             SYS_READ,
-            fd as u64,
+            arg_bits(i64::from(fd)),
             buf.as_mut_ptr() as u64,
             buf.len() as u64,
-        ) as i32
+        ))
     }
 }
+#[must_use]
 pub fn fs_write(fd: i32, buf: &[u8]) -> i32 {
-    unsafe { sys3(SYS_WRITE, fd as u64, buf.as_ptr() as u64, buf.len() as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_WRITE,
+            arg_bits(i64::from(fd)),
+            buf.as_ptr() as u64,
+            buf.len() as u64,
+        ))
+    }
 }
 
+#[must_use]
 pub fn fs_mkdir(path: &[u8]) -> i32 {
-    unsafe { sys2(SYS_MKDIR, path.as_ptr() as u64, 0o755) as i32 }
+    unsafe { ret_i32(sys2(SYS_MKDIR, path.as_ptr() as u64, 0o755)) }
 }
+#[must_use]
 pub fn fs_rmdir(path: &[u8]) -> i32 {
-    unsafe { sys1(SYS_RMDIR, path.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_RMDIR, path.as_ptr() as u64)) }
 }
+#[must_use]
 pub fn fs_unlink(path: &[u8]) -> i32 {
-    unsafe { sys1(SYS_UNLINK, path.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_UNLINK, path.as_ptr() as u64)) }
 }
+#[must_use]
 pub fn fs_rename(old: &[u8], new: &[u8]) -> i32 {
-    unsafe { sys2(SYS_RENAME, old.as_ptr() as u64, new.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys2(SYS_RENAME, old.as_ptr() as u64, new.as_ptr() as u64)) }
 }
 pub fn fs_readdir(fd: i32, entry: &mut UserDirEntry) -> i32 {
-    unsafe { sys2(SYS_GETDENTS, fd as u64, entry as *mut UserDirEntry as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_GETDENTS,
+            arg_bits(i64::from(fd)),
+            core::ptr::from_mut::<UserDirEntry>(entry) as u64,
+        ))
+    }
 }
 pub fn fs_sync() {
     unsafe {
@@ -336,21 +415,24 @@ pub fn fs_sync() {
     }
 }
 
+#[must_use]
 pub fn fs_mount(src: &[u8], tgt: &[u8], typ: &[u8], opt: &[u8]) -> i32 {
     unsafe {
-        sys4(
+        ret_i32(sys4(
             SYS_MOUNT,
             src.as_ptr() as u64,
             tgt.as_ptr() as u64,
             typ.as_ptr() as u64,
             opt.as_ptr() as u64,
-        ) as i32
+        ))
     }
 }
+#[must_use]
 pub fn fs_unmount(t: &[u8]) -> i32 {
-    unsafe { sys1(166, t.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(166, t.as_ptr() as u64)) }
 }
 
+#[must_use]
 pub fn auth_login(n: &[u8], p: &[u8]) -> i64 {
     unsafe { sys2(SYS_SGEG_LOGIN, n.as_ptr() as u64, p.as_ptr() as u64) }
 }
@@ -359,86 +441,101 @@ pub fn auth_logout() {
         sys0(SYS_SGEG_LOGOUT);
     }
 }
+#[must_use]
 pub fn auth_create_first(pw: &[u8]) -> i32 {
-    unsafe { sys1(SYS_SGEG_CREATE_FIRST, pw.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_SGEG_CREATE_FIRST, pw.as_ptr() as u64)) }
 }
+#[must_use]
 pub fn auth_change_password(o: &[u8], n: &[u8]) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_CHANGE_PASSWORD,
             o.as_ptr() as u64,
             n.as_ptr() as u64,
-        ) as i32
+        ))
     }
 }
 
 pub fn env_getcwd(buf: &mut [u8]) -> i32 {
-    unsafe { sys2(SYS_GETCWD, buf.as_mut_ptr() as u64, buf.len() as u64) as i32 }
+    unsafe { ret_i32(sys2(SYS_GETCWD, buf.as_mut_ptr() as u64, buf.len() as u64)) }
 }
+#[must_use]
 pub fn env_chdir(path: &[u8]) -> i32 {
-    unsafe { sys1(SYS_CHDIR, path.as_ptr() as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_CHDIR, path.as_ptr() as u64)) }
 }
 
 pub fn gethostname(buf: &mut [u8]) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_GETHOSTNAME,
             buf.as_mut_ptr() as u64,
             buf.len() as u64,
-        ) as i32
+        ))
     }
 }
+#[must_use]
 pub fn sethostname(name: &[u8]) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_SETHOSTNAME,
             name.as_ptr() as u64,
             name.len() as u64,
-        ) as i32
+        ))
     }
 }
+#[must_use]
 pub fn reboot(cmd: i32) -> i64 {
-    unsafe { sys1(SYS_SGEG_REBOOT, cmd as u64) }
+    unsafe { sys1(SYS_SGEG_REBOOT, arg_bits(i64::from(cmd))) }
 }
 pub fn proc_list(buf: &mut [u8], max_entries: u32) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_PROC_LIST,
             buf.as_mut_ptr() as u64,
-            max_entries as u64,
-        ) as i32
+            u64::from(max_entries),
+        ))
     }
 }
 
 pub fn disk_list(disks: &mut [u64]) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_DISK_LIST,
             disks.as_mut_ptr() as u64,
             disks.len() as u64,
-        ) as i32
+        ))
     }
 }
 pub fn disk_info(id: u32, info: &mut UserDiskInfo) -> i32 {
     unsafe {
-        sys2(
+        ret_i32(sys2(
             SYS_SGEG_DISK_INFO,
-            id as u64,
-            info as *mut UserDiskInfo as u64,
-        ) as i32
+            u64::from(id),
+            core::ptr::from_mut::<UserDiskInfo>(info) as u64,
+        ))
     }
 }
+#[must_use]
 pub fn disk_format(id: u32) -> i32 {
-    unsafe { sys2(SYS_SGEG_DISK_FORMAT, id as u64, c"egfs".as_ptr() as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_SGEG_DISK_FORMAT,
+            u64::from(id),
+            c"egfs".as_ptr() as u64,
+        ))
+    }
 }
+#[must_use]
 pub fn disk_partition(id: u32, sectors: u64) -> i64 {
-    unsafe { sys2(SYS_SGEG_DISK_PARTITION, id as u64, sectors) }
+    unsafe { sys2(SYS_SGEG_DISK_PARTITION, u64::from(id), sectors) }
 }
+#[must_use]
 pub fn boot_install(id: u32) -> i64 {
-    unsafe { sys1(SYS_SGEG_DISK_INSTALL, id as u64) }
+    unsafe { sys1(SYS_SGEG_DISK_INSTALL, u64::from(id)) }
 }
+#[must_use]
 pub fn fat_format(id: u32) -> i64 {
-    unsafe { sys1(SYS_SGEG_FAT_FORMAT, id as u64) }
+    unsafe { sys1(SYS_SGEG_FAT_FORMAT, u64::from(id)) }
 }
 // T2 批 5 (syscall-followup): 补 wrapper — 原仅常量无 wrapper 无调用 (T3 登记)
 pub fn hotplug_status(buf: &mut [u8]) -> i64 {
@@ -472,32 +569,53 @@ pub struct Timespec {
     pub tv_nsec: i64,
 }
 
+#[must_use]
 pub fn truncate(path: &[u8], length: i64) -> i32 {
-    unsafe { sys2(SYS_TRUNCATE, path.as_ptr() as u64, length as u64) as i32 }
+    unsafe { ret_i32(sys2(SYS_TRUNCATE, path.as_ptr() as u64, arg_bits(length))) }
 }
+#[must_use]
 pub fn ftruncate(fd: i32, length: i64) -> i32 {
-    unsafe { sys2(SYS_FTRUNCATE, fd as u64, length as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_FTRUNCATE,
+            arg_bits(i64::from(fd)),
+            arg_bits(length),
+        ))
+    }
 }
+#[must_use]
 pub fn fsync(fd: i32) -> i32 {
-    unsafe { sys1(SYS_FSYNC, fd as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_FSYNC, arg_bits(i64::from(fd)))) }
 }
+#[must_use]
 pub fn getpgid(pid: i32) -> i64 {
-    unsafe { sys1(SYS_GETPGID, pid as u64) }
+    unsafe { sys1(SYS_GETPGID, arg_bits(i64::from(pid))) }
 }
+#[must_use]
 pub fn setsid() -> i64 {
     unsafe { sys0(SYS_SETSID) }
 }
+#[must_use]
 pub fn gettid() -> i64 {
     unsafe { sys0(SYS_GETTID) }
 }
+#[must_use]
 pub fn umask(mask: u32) -> u32 {
-    unsafe { sys1(SYS_UMASK, mask as u64) as u32 }
+    unsafe { ret_u32(sys1(SYS_UMASK, u64::from(mask))) }
 }
+#[must_use]
 pub fn nanosleep(req: &Timespec) -> i32 {
-    unsafe { sys2(SYS_NANOSLEEP, req as *const Timespec as u64, 0) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_NANOSLEEP,
+            core::ptr::from_ref::<Timespec>(req) as u64,
+            0,
+        ))
+    }
 }
+#[must_use]
 pub fn kill(pid: i32, sig: i32) -> i32 {
-    unsafe { sys2(62, pid as u64, sig as u64) as i32 }
+    unsafe { ret_i32(sys2(62, arg_bits(i64::from(pid)), arg_bits(i64::from(sig)))) }
 }
 
 // ============================================================
@@ -520,15 +638,17 @@ pub struct FbInfo {
     pub height: u32,
     pub pitch: u32,
     pub bpp: u8,
-    pub _pad: [u8; 3],
+    pub reserved: [u8; 3],
 }
 
 pub fn fb_open(info: &mut FbInfo) -> i64 {
-    unsafe { sys1(SYS_FB_OPEN, info as *mut FbInfo as u64) }
+    unsafe { sys1(SYS_FB_OPEN, core::ptr::from_mut::<FbInfo>(info) as u64) }
 }
+#[must_use]
 pub fn fb_mmap(addr: u64, size: u64, prot: i32) -> i64 {
-    unsafe { sys3(SYS_FB_MMAP, addr, size, prot as u64) }
+    unsafe { sys3(SYS_FB_MMAP, addr, size, arg_bits(i64::from(prot))) }
 }
+#[must_use]
 pub fn fb_release(addr: u64) -> i64 {
     unsafe { sys1(SYS_FB_RELEASE, addr) }
 }
@@ -676,28 +796,67 @@ pub struct RUsage {
 // 网络 syscall wrapper
 // ============================================================
 
+#[must_use]
 pub fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
-    unsafe { sys3(SYS_SOCKET, domain as u64, sock_type as u64, protocol as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_SOCKET,
+            arg_bits(i64::from(domain)),
+            arg_bits(i64::from(sock_type)),
+            arg_bits(i64::from(protocol)),
+        ))
+    }
 }
 
+#[must_use]
 pub fn bind(sockfd: i32, addr: *const u8, addrlen: u32) -> i32 {
-    unsafe { sys3(SYS_BIND, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_BIND,
+            arg_bits(i64::from(sockfd)),
+            addr as u64,
+            u64::from(addrlen),
+        ))
+    }
 }
 
+#[must_use]
 pub fn listen(sockfd: i32, backlog: i32) -> i32 {
-    unsafe { sys2(SYS_LISTEN, sockfd as u64, backlog as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_LISTEN,
+            arg_bits(i64::from(sockfd)),
+            arg_bits(i64::from(backlog)),
+        ))
+    }
 }
 
 pub fn accept(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
-    unsafe { sys3(SYS_ACCEPT, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_ACCEPT,
+            arg_bits(i64::from(sockfd)),
+            addr as u64,
+            addrlen as u64,
+        ))
+    }
 }
 
+#[must_use]
 pub fn connect(sockfd: i32, addr: *const u8, addrlen: u32) -> i32 {
-    unsafe { sys3(SYS_CONNECT, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_CONNECT,
+            arg_bits(i64::from(sockfd)),
+            addr as u64,
+            u64::from(addrlen),
+        ))
+    }
 }
 
 // sendto/recvfrom 为 6 参数 syscall; 显式传入 a5/a6 (含 null) 以规避内核从
 // r8/r9 采集残留寄存器值被误当作地址指针的隐患 (见 DECISION-032).
+#[must_use]
 pub fn sendto(
     sockfd: i32,
     buf: *const u8,
@@ -707,15 +866,15 @@ pub fn sendto(
     destlen: u32,
 ) -> isize {
     unsafe {
-        sys6(
+        ret_isize(sys6(
             SYS_SENDTO,
-            sockfd as u64,
+            arg_bits(i64::from(sockfd)),
             buf as u64,
             len as u64,
-            flags as u64,
+            arg_bits(i64::from(flags)),
             dest as u64,
-            destlen as u64,
-        ) as isize
+            u64::from(destlen),
+        ))
     }
 }
 
@@ -728,99 +887,139 @@ pub fn recvfrom(
     srclen: *mut u32,
 ) -> isize {
     unsafe {
-        sys6(
+        ret_isize(sys6(
             SYS_RECVFROM,
-            sockfd as u64,
+            arg_bits(i64::from(sockfd)),
             buf as u64,
             len as u64,
-            flags as u64,
+            arg_bits(i64::from(flags)),
             src as u64,
             srclen as u64,
-        ) as isize
+        ))
     }
 }
 
+#[must_use]
 pub fn send(sockfd: i32, buf: *const u8, len: usize, flags: i32) -> isize {
     unsafe {
-        sys6(
+        ret_isize(sys6(
             SYS_SENDTO,
-            sockfd as u64,
+            arg_bits(i64::from(sockfd)),
             buf as u64,
             len as u64,
-            flags as u64,
+            arg_bits(i64::from(flags)),
             0,
             0,
-        ) as isize
+        ))
     }
 }
 
 pub fn recv(sockfd: i32, buf: *mut u8, len: usize, flags: i32) -> isize {
     unsafe {
-        sys6(
+        ret_isize(sys6(
             SYS_RECVFROM,
-            sockfd as u64,
+            arg_bits(i64::from(sockfd)),
             buf as u64,
             len as u64,
-            flags as u64,
+            arg_bits(i64::from(flags)),
             0,
             0,
-        ) as isize
+        ))
     }
 }
 
+#[must_use]
 pub fn sendmsg(sockfd: i32, msg: *const Msghdr, flags: i32) -> isize {
-    unsafe { sys3(SYS_SENDMSG, sockfd as u64, msg as u64, flags as u64) as isize }
+    unsafe {
+        ret_isize(sys3(
+            SYS_SENDMSG,
+            arg_bits(i64::from(sockfd)),
+            msg as u64,
+            arg_bits(i64::from(flags)),
+        ))
+    }
 }
 
 pub fn recvmsg(sockfd: i32, msg: *mut Msghdr, flags: i32) -> isize {
-    unsafe { sys3(SYS_RECVMSG, sockfd as u64, msg as u64, flags as u64) as isize }
+    unsafe {
+        ret_isize(sys3(
+            SYS_RECVMSG,
+            arg_bits(i64::from(sockfd)),
+            msg as u64,
+            arg_bits(i64::from(flags)),
+        ))
+    }
 }
 
+#[must_use]
 pub fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: u32) -> i32 {
     unsafe {
-        sys5(
+        ret_i32(sys5(
             SYS_SETSOCKOPT,
-            sockfd as u64,
-            level as u64,
-            optname as u64,
+            arg_bits(i64::from(sockfd)),
+            arg_bits(i64::from(level)),
+            arg_bits(i64::from(optname)),
             optval as u64,
-            optlen as u64,
-        ) as i32
+            u64::from(optlen),
+        ))
     }
 }
 
 pub fn getsockopt(sockfd: i32, level: i32, optname: i32, optval: *mut u8, optlen: *mut u32) -> i32 {
     unsafe {
-        sys5(
+        ret_i32(sys5(
             SYS_GETSOCKOPT,
-            sockfd as u64,
-            level as u64,
-            optname as u64,
+            arg_bits(i64::from(sockfd)),
+            arg_bits(i64::from(level)),
+            arg_bits(i64::from(optname)),
             optval as u64,
             optlen as u64,
-        ) as i32
+        ))
     }
 }
 
 pub fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
-    unsafe { sys3(SYS_GETSOCKNAME, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_GETSOCKNAME,
+            arg_bits(i64::from(sockfd)),
+            addr as u64,
+            addrlen as u64,
+        ))
+    }
 }
 
 pub fn getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
-    unsafe { sys3(SYS_GETPEERNAME, sockfd as u64, addr as u64, addrlen as u64) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_GETPEERNAME,
+            arg_bits(i64::from(sockfd)),
+            addr as u64,
+            addrlen as u64,
+        ))
+    }
 }
 
-/// `shutdown(sockfd, how)` — D7 半关语义透传 (SHUT_RD/SHUT_WR/SHUT_RDWR).
+/// `shutdown(sockfd, how)` — D7 半关语义透传 (`SHUT_RD`/`SHUT_WR`/`SHUT_RDWR`).
+#[must_use]
 pub fn shutdown(sockfd: i32, how: i32) -> i32 {
-    unsafe { sys2(SYS_SHUTDOWN, sockfd as u64, how as u64) as i32 }
+    unsafe {
+        ret_i32(sys2(
+            SYS_SHUTDOWN,
+            arg_bits(i64::from(sockfd)),
+            arg_bits(i64::from(how)),
+        ))
+    }
 }
 
+#[must_use]
 pub fn close_socket(sockfd: i32) -> i32 {
-    unsafe { sys1(SYS_CLOSE, sockfd as u64) as i32 }
+    unsafe { ret_i32(sys1(SYS_CLOSE, arg_bits(i64::from(sockfd)))) }
 }
 
+#[must_use]
 pub fn ioctl(fd: i32, request: u64, arg: u64) -> i32 {
-    unsafe { sys3(SYS_IOCTL, fd as u64, request, arg) as i32 }
+    unsafe { ret_i32(sys3(SYS_IOCTL, arg_bits(i64::from(fd)), request, arg)) }
 }
 
 // ============================================================
@@ -834,8 +1033,16 @@ pub const O_NONBLOCK: i32 = 0o4000;
 
 /// `fcntl(fd, cmd, arg)` — 对 socket fd `F_SETFL | O_NONBLOCK` 使其 recv/recvfrom
 /// 立即返回 `-EAGAIN` (非阻塞轮询语义), 供有界重试探针使用.
+#[must_use]
 pub fn fcntl(fd: i32, cmd: i32, arg: u64) -> i32 {
-    unsafe { sys3(SYS_FCNTL, fd as u64, cmd as u64, arg) as i32 }
+    unsafe {
+        ret_i32(sys3(
+            SYS_FCNTL,
+            arg_bits(i64::from(fd)),
+            arg_bits(i64::from(cmd)),
+            arg,
+        ))
+    }
 }
 
 // ============================================================
@@ -856,11 +1063,11 @@ pub struct PollFd {
 /// 归 P5 阻塞睡眠), 就绪计数即时返回.
 pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
     unsafe {
-        sys3(
+        ret_i32(sys3(
             SYS_POLL,
             fds.as_mut_ptr() as u64,
             fds.len() as u64,
-            timeout as u64,
-        ) as i32
+            arg_bits(i64::from(timeout)),
+        ))
     }
 }

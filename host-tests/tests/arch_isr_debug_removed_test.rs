@@ -1,4 +1,4 @@
-//! arch: isr.asm / mod.rs enter_user_asm 诊断代码 (out 0x3F8) 已物理删除
+//! arch: isr.asm / mod.rs `enter_user_asm` 诊断代码 (out 0x3F8) 已物理删除
 //!
 //! 追踪: P3.A.1 + P3.A.2 + P3.A.3 (DECISION-055 实际方案: 直接删除).
 //!
@@ -12,13 +12,13 @@
 //!
 //! host-tests 不链接 edgine 静态库, 复刻诊断字符集常量, 验证:
 //! 1. 诊断字符集 (T/X/U/V/E/P/K/L/N/M/O/W/Y/Q/R/Z) 不再出现于 ASCII 控制字符输出
-//! 2. 0x3F8 串口地址不再被用于诊断 (保留 I/O 端口写入机制如 SystemArch::outb)
+//! 2. 0x3F8 串口地址不再被用于诊断 (保留 I/O 端口写入机制如 `SystemArch::outb`)
 /// 追踪 P3.A: 验证诊断字符集常量定义 + 字符集不再被批量写入.
 const DIAGNOSTIC_CHARS: &[u8] = b"TXUVEPKLNMOWYQRZ";
 const DIAGNOSTIC_CHARS_LEN: usize = 16;
 
 /// 模拟内核中的诊断输出特征 (P3.A 之前).
-/// 在 isr.asm / mod.rs enter_user_asm 中, 每个 `out dx, al` 输出1 个 ASCII 诊断字符.
+/// 在 isr.asm / mod.rs `enter_user_asm` 中, 每个 `out dx, al` 输出1 个 ASCII 诊断字符.
 /// 测试验证这些字符不再批量出现 (生产路径不应再有这些字符).
 #[test]
 fn diagnostic_chars_set_is_known() {
@@ -34,7 +34,7 @@ fn diagnostic_chars_set_is_known() {
 #[test]
 fn diagnostic_chars_unique() {
     let mut sorted: Vec<u8> = DIAGNOSTIC_CHARS.to_vec();
-    sorted.sort();
+    sorted.sort_unstable();
     sorted.dedup();
     assert_eq!(
         sorted.len(),
@@ -57,7 +57,10 @@ fn diagnostic_chars_excludes_serial_write_safe_chars() {
 fn irq_stub_z_diagnostic_removed_documented() {
     // P3.A.1: isr.asm IRQ stub 中原本每 IRQ 输出 'Z' (行 60-63), 现已删除.
     // 本测试仅文档化此事实, 不直接验证二进制 (QEMU 启动测试覆盖).
-    let z_count_before = DIAGNOSTIC_CHARS.iter().filter(|&&c| c == b'Z').count();
+    let z_count_before: usize = DIAGNOSTIC_CHARS
+        .iter()
+        .map(|&c| usize::from(c == b'Z'))
+        .sum();
     assert_eq!(
         z_count_before, 1,
         "字符集定义中 'Z' 出现 1 次 (记录 P3.A.1 删除的字符)"
@@ -65,7 +68,7 @@ fn irq_stub_z_diagnostic_removed_documented() {
 }
 
 /// P3.A.2 + P3.A.3 完成的总指标: isr.asm 42 处 + mod.rs 30 处 = 71 处 `out dx, al` 删除.
-/// 不在源码中保留任何 `out 0x3F8, al` 诊断字符输出 (除 SystemArch::outb 机制).
+/// 不在源码中保留任何 `out 0x3F8, al` 诊断字符输出 (除 `SystemArch::outb` 机制).
 #[test]
 fn diagnostic_out_total_removed_count() {
     // P3.A 累计删除 71 处 out dx, al:
@@ -127,9 +130,7 @@ fn isr_asm_preserves_syscall_frame_and_dispatch() {
     ] {
         assert!(
             content.contains(needle),
-            "isr.asm 缺失结构化代码: {} ({})",
-            needle,
-            desc
+            "isr.asm 缺失结构化代码: {needle} ({desc})"
         );
     }
 }

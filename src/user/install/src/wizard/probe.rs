@@ -8,7 +8,7 @@ use userlib::sys::{self, UserDiskInfo};
 use userlib::{print, print_dec, println, read_line};
 
 pub(crate) const MAX_DISKS: usize = 4;
-const MIN_DISK_SECTORS: u64 = 262144; // 128 MB (sector = 512 bytes)
+const MIN_DISK_SECTORS: u64 = 262_144; // 128 MB (sector = 512 bytes)
 
 static mut DISK_COUNT: i32 = 0;
 static mut SELECTED_DISK: i32 = -1;
@@ -44,16 +44,17 @@ static mut DISK_LIST: [UserDiskInfo; MAX_DISKS] = [
 ];
 
 pub fn selected() -> (u32, u64) {
-    let idx = unsafe { SELECTED_DISK } as usize;
+    let idx =
+        usize::try_from(unsafe { SELECTED_DISK }).expect("selected() 仅在 choose() 成功后调用");
     let info = unsafe { &DISK_LIST[idx] };
-    (info.disk_id, info.sectors as u64)
+    (info.disk_id, u64::from(info.sectors))
 }
 
 fn atoi(buf: &[u8], len: usize) -> i32 {
     let mut v: i32 = 0;
     for &c in &buf[..len] {
         if c.is_ascii_digit() {
-            v = v * 10 + (c - b'0') as i32;
+            v = v * 10 + i32::from(c - b'0');
         }
     }
     v
@@ -75,30 +76,30 @@ pub fn detect() -> i32 {
     }
     println("");
     print("Detected ");
-    print_dec(count as i64);
+    print_dec(i64::from(count));
     println(" disk(s):");
     println("");
     let mut usable = 0;
-    for i in 0..(count as usize) {
+    for i in 0..usize::try_from(count).expect("count 已确认大于 0") {
         let info = unsafe { &mut DISK_LIST[i] };
-        sys::disk_info(disk_ids[i] as u32, info);
+        sys::disk_info(u32::try_from(disk_ids[i]).expect("磁盘 ID 超出 u32"), info);
         print("  [");
-        print_dec(i as i64);
+        print_dec(i64::try_from(i).expect("磁盘下标超出 i64"));
         print("] Disk ");
-        print_dec(info.disk_id as i64);
+        print_dec(i64::from(info.disk_id));
         print(": ");
         let model = core::str::from_utf8(&info.model).unwrap_or("Unknown");
         print(model.trim_end_matches('\0'));
         print(" (");
         let size_mb = info.sectors / 2 / 1024;
         if size_mb >= 1024 {
-            print_dec((size_mb / 1024) as i64);
+            print_dec(i64::from(size_mb / 1024));
             print(" GB");
         } else {
-            print_dec(size_mb as i64);
+            print_dec(i64::from(size_mb));
             print(" MB");
         }
-        if (info.sectors as u64) < MIN_DISK_SECTORS {
+        if u64::from(info.sectors) < MIN_DISK_SECTORS {
             println(") [SKIP: too small, need >=128 MB]");
         } else {
             usable += 1;
@@ -116,7 +117,7 @@ pub fn detect() -> i32 {
 pub fn choose() -> i32 {
     println("");
     println("Select a disk for installation:");
-    let count = unsafe { DISK_COUNT as usize };
+    let count = usize::try_from(unsafe { DISK_COUNT }).expect("choose() 在 detect() 成功之后调用");
 
     // 单盘警告: 安装介质与目标可能是同一磁盘
     if count == 1 {
@@ -129,7 +130,7 @@ pub fn choose() -> i32 {
     }
 
     print("Enter disk number (0-");
-    print_dec((count - 1) as i64);
+    print_dec(i64::try_from(count - 1).expect("磁盘数超出 i64"));
     print("): ");
     let mut buf = [0u8; 8];
     let len = read_line(&mut buf);
@@ -138,14 +139,14 @@ pub fn choose() -> i32 {
         return -1;
     }
     let sel = atoi(&buf, len);
-    if sel < 0 || sel as usize >= count {
+    if sel < 0 || usize::try_from(sel).expect("已排除负值") >= count {
         println("  [ERROR] Invalid selection.");
         return -1;
     }
 
     // 容量检查
-    let info = unsafe { &DISK_LIST[sel as usize] };
-    if (info.sectors as u64) < MIN_DISK_SECTORS {
+    let info = unsafe { &DISK_LIST[usize::try_from(sel).expect("已通过范围校验")] };
+    if u64::from(info.sectors) < MIN_DISK_SECTORS {
         let model = core::str::from_utf8(&info.model).unwrap_or("Unknown");
         print("  [ERROR] Disk ");
         print(model.trim_end_matches('\0'));

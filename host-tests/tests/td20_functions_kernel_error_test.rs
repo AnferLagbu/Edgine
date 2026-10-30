@@ -66,8 +66,7 @@ fn no_legacy_net_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 NetError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 NetError::Kernel(KernelError::...)"
         );
     }
 }
@@ -96,8 +95,7 @@ fn no_legacy_ipc_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 IpcError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 IpcError::Kernel(KernelError::...)"
         );
     }
 }
@@ -118,8 +116,7 @@ fn no_legacy_sync_error_variants() {
     for legacy in &["SyncError::WouldBlock", "SyncError::Other"] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 SyncError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 SyncError::Kernel(KernelError::...)"
         );
     }
 }
@@ -141,8 +138,7 @@ fn no_legacy_pi_mutex_error_variants() {
         let legacy = &"PiMutexError::WouldBlock";
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 PiMutexError::Kernel(KernelError::WouldBlock)",
-            legacy
+            "{legacy} 已废弃, 应改走 PiMutexError::Kernel(KernelError::WouldBlock)"
         );
     }
 }
@@ -167,8 +163,7 @@ fn no_legacy_devtree_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 DevTreeError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 DevTreeError::Kernel(KernelError::...)"
         );
     }
 }
@@ -198,8 +193,7 @@ fn no_legacy_egdf_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 EGDFError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 EGDFError::Kernel(KernelError::...)"
         );
     }
 }
@@ -226,8 +220,7 @@ fn no_legacy_storage_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 StorageError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 StorageError::Kernel(KernelError::...)"
         );
     }
 }
@@ -248,8 +241,7 @@ fn no_legacy_pwm_error_variants() {
     for legacy in &["PwmError::NotFound", "PwmError::Other"] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 PwmError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 PwmError::Kernel(KernelError::...)"
         );
     }
 }
@@ -280,8 +272,7 @@ fn no_legacy_session_error_variants() {
     for legacy in &["SessionError::NotFound", "SessionError::TooManySessions"] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 SessionError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 SessionError::Kernel(KernelError::...)"
         );
     }
 }
@@ -310,8 +301,7 @@ fn all_to_errno_methods_present() {
             || (src.contains("to_errno") && src.contains("Self::Kernel(e) => e.as_errno()"));
         assert!(
             has_to_errno,
-            "{} 中 {} 必须有 to_errno 方法 (或委托 Kernel::as_errno)",
-            file, marker
+            "{file} 中 {marker} 必须有 to_errno 方法 (或委托 Kernel::as_errno)"
         );
     }
 }

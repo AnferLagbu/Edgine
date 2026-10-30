@@ -7,7 +7,7 @@
 //! 阻断单二进制双架构运行.
 //!
 //! 批次 Z ④: 旧 privileged virtio-net 驱动已删除 (权威迁 functions, 经
-//! NetOps 安全桥接入), 本文件仅保留 e1000 架构无关契约.
+//! `NetOps` 安全桥接入), 本文件仅保留 e1000 架构无关契约.
 
 use std::fs;
 use std::path::Path;
@@ -83,7 +83,6 @@ fn test_functions_virtio_net_no_arch_mutex_let_assigns() {
     let mutexes = find_arch_mutex_let_assigns(&src);
     assert!(
         mutexes.is_empty(),
-        "functions virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {:?}",
-        mutexes
+        "functions virtio/net.rs 仍存在编译时架构互斥的 let 赋值 (I-53): {mutexes:?}"
     );
 }

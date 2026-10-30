@@ -15,7 +15,7 @@ use edgine_abi::socket::{
     SO_RCVTIMEO, SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
 };
 
-/// level 常量: `<asm-generic/socket.h>` SOL_SOCKET + `<linux/in.h>` IPPROTO_*.
+/// level 常量: `<asm-generic/socket.h>` `SOL_SOCKET` + `<linux/in.h>` IPPROTO_*.
 #[test]
 fn abi_sockopt_levels_match_asm_generic() {
     assert_eq!(SOL_SOCKET, 1, "SOL_SOCKET 偏离 asm-generic");
@@ -33,7 +33,7 @@ fn abi_sockopt_levels_match_asm_generic() {
     );
 }
 
-/// SOL_SOCKET 层选项: `<asm-generic/socket.h>`.
+/// `SOL_SOCKET` 层选项: `<asm-generic/socket.h>`.
 #[test]
 fn abi_sol_socket_options_match_asm_generic() {
     assert_eq!(SO_REUSEADDR, 2);
@@ -62,7 +62,7 @@ fn abi_layer_options_match_asm_generic() {
 }
 
 /// 值域唯一性: SO_*/TCP_* 同名不同值的历史漂移不可能在单源下复活, 但
-/// "两个不同名常量意外取同值"仍需拦住（SOL_SOCKET=1 与 SO_TYPE=3 各有独立
+/// "`两个不同名常量意外取同值"仍需拦住（SOL_SOCKET=1` 与 `SO_TYPE=3` 各有独立
 /// 语义位; 此处显式复核一组历史上易混值）.
 #[test]
 fn abi_no_accidental_value_collision() {

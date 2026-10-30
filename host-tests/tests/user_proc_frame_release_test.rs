@@ -123,7 +123,7 @@ fn cr3_release_is_gated(body: &str) -> bool {
     body.contains(".frame_dec(") && body.contains("destroy_user_page_table(")
 }
 
-/// `create` 回滚只归还未映射的 guard 尾页 (偏移 USER_STACK_SIZE 之后).
+/// `create` 回滚只归还未映射的 guard 尾页 (偏移 `USER_STACK_SIZE` 之后).
 fn create_rollback_releases_only_unmapped_guard(body: &str) -> bool {
     count(body, "free_phys_page(") == 1 && body.contains("stack_pages as u64 + USER_STACK_SIZE")
 }
@@ -321,6 +321,13 @@ fn pmm_calls_are_pierced_for_attribution() {
 
 #[test]
 fn negative_control_predicates_reject_regressions() {
+    assert_pre_free_loop_rejected();
+    assert_rollback_degradations_rejected();
+    assert_destroy_single_source_rejected();
+    assert_gated_single_source_rollback_rejected();
+}
+
+fn assert_pre_free_loop_rejected() {
     // 逐字贴回被删除的 pre-free 循环 (destroy 与 replace_user_space 各一份).
     let regressed_destroy = "\
     fn destroy(&self, proc: NonNull<UserProcess>, keep_kstack: bool) {
@@ -345,7 +352,9 @@ fn negative_control_predicates_reject_regressions() {
         !regressed_destroy.contains(".frame_dec("),
         "负控制失效: 样本本身就没有计数门, 却未被 cr3_release_is_gated 拒掉"
     );
+}
 
+fn assert_rollback_degradations_rejected() {
     // 回滚路径退化: ELF 加载失败时逐个归还已映射页.
     let regressed_elf = "\
     pub fn load_elf_from_memory(&self) -> i32 {
@@ -378,7 +387,9 @@ fn negative_control_predicates_reject_regressions() {
         !create_rollback_releases_only_unmapped_guard(regressed_guard),
         "负控制失效: 回滚归还了已映射页却未被识别"
     );
+}
 
+fn assert_destroy_single_source_rejected() {
     // 销毁路径失去单源实现 (USER 位过滤或延迟释放被删).
     let regressed_vmm = "\
     pub fn destroy_page_table(&self, pml4: u64) {
@@ -407,7 +418,9 @@ unsafe extern \"C\" {
         !extern_block_is_pmm_free(regressed_extern),
         "负控制失效: extern C 里的 PMM 声明未被识别"
     );
+}
 
+fn assert_gated_single_source_rollback_rejected() {
     // 回滚缺状态标记 (P-16 的原始缺陷形状): 直接调单源, 被 is_exited 门拒掉.
     let regressed_no_state = "\
     fn rollback_unrun_process(proc_ref: &UserProcRef) {

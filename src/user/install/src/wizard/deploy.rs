@@ -77,7 +77,7 @@ pub fn deploy_all() -> i32 {
             println(m.desc);
             missing = true;
         } else {
-            sys::fs_close(fd);
+            let _ = sys::fs_close(fd);
         }
     }
     if missing {
@@ -112,9 +112,9 @@ pub fn deploy_all() -> i32 {
     }
     println("");
     print("  Deployed: ");
-    print_dec(ok as i64);
+    print_dec(i64::from(ok));
     print(" / ");
-    print_dec((ok + fail) as i64);
+    print_dec(i64::from(ok + fail));
     println("");
     if fail > 0 {
         println("  [ERROR] Some files could not be written to disk.");

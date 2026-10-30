@@ -1,6 +1,6 @@
-use userlib::sys::*;
+use userlib::sys::{auth_change_password, auth_login, auth_logout, proc_get_pwm};
 /// 身份认证命令: login, logout, who, passwd
-use userlib::*;
+use userlib::{cmp, print, print_hex, println, read_line};
 
 use super::{Cmd, as_str};
 
@@ -19,7 +19,7 @@ pub fn login(cmd: &Cmd) {
     let pbl = core::cmp::min(pw.len(), 127);
     pb[..pbl].copy_from_slice(&pw.as_bytes()[..pbl]);
     pb[pbl] = 0;
-    let result = auth_login(&nb[..nbl + 1], &pb[..pbl + 1]);
+    let result = auth_login(&nb[..=nbl], &pb[..=pbl]);
     if result > 0 {
         print("Logged in: ");
         print_hex(proc_get_pwm());

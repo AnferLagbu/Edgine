@@ -6,14 +6,14 @@
 //!   3. 创建 N 个文件 → 扫描延迟 < 1s
 //!
 //! 注: host 端使用 host-tests/src/egfs/ 的 mock 数据结构 (与 kernel 内
-//! 数据结构同形状, 但 std::sync::Mutex + std::vec), 不依赖真实块设备.
-//! 真实端到端 (QEMU) 见 tests/integration/run_integration_tests.py.
+//! 数据结构同形状, 但 `std::sync::Mutex` + `std::vec`), 不依赖真实块设备.
+//! 真实端到端 (QEMU) 见 `tests/integration/run_integration_tests.py`.
 //!
 //! Mock 语义契约:
-//!   - EgfsDataset::create_file: 分配 objset id 并插入 dir_zap (若 cap 满则静默失败)
-//!   - EgfsZil::add_record: 追加到 records, 分配递增 seq
-//!   - EgfsZil::commit(txg): 移除所有 txg <= txg 的 records
-//!   - EgfsZil::replay(): 返回当前 records (模拟"重启后重放未提交日志")
+//!   - `EgfsDataset::create_file`: 分配 objset id 并插入 `dir_zap` (若 cap 满则静默失败)
+//!   - `EgfsZil::add_record`: 追加到 records, 分配递增 seq
+//!   - `EgfsZil::commit(txg)`: 移除所有 txg <= txg 的 records
+//!   - `EgfsZil::replay()`: 返回当前 records (模拟"重启后重放未提交日志")
 //!
 //! ## B08-14 迁移 (2026-09-06)
 //! 改引内核 `functions::fs::egfs` 真实实现 (host-test feature 暴露), 消除
@@ -178,10 +178,10 @@ fn e2e_thousand_files_scan_latency() {
     let n = 1000usize;
     let mut obj_ids = Vec::with_capacity(n);
     for i in 0..n {
-        let name = format!("file_{:04}.dat", i);
+        let name = format!("file_{i:04}.dat");
         let obj = root
             .create_file(&name, ROOT_OWNER)
-            .unwrap_or_else(|| panic!("create_file {} 失败", i));
+            .unwrap_or_else(|| panic!("create_file {i} 失败"));
         obj_ids.push(obj);
         zil.add_record(EgfsZilRecord::new_create(1, /* root obj */ 1, &name));
     }
@@ -191,20 +191,19 @@ fn e2e_thousand_files_scan_latency() {
     let start = Instant::now();
     let mut found = 0usize;
     for (i, expected_obj) in obj_ids.iter().enumerate() {
-        let name = format!("file_{:04}.dat", i);
+        let name = format!("file_{i:04}.dat");
         let looked_up = root.dir_zap.lookup_u64(&name);
         assert_eq!(
             looked_up,
             Some(*expected_obj),
-            "file_{:04}.dat dir_zap 查找失败",
-            i
+            "file_{i:04}.dat dir_zap 查找失败"
         );
         found += 1;
     }
     let elapsed = start.elapsed();
 
     // 3) 性能预算: 1000 次扫描 < 1s
-    assert_eq!(found, n, "所有 {} 个文件都应能被扫描到", n);
+    assert_eq!(found, n, "所有 {n} 个文件都应能被扫描到");
     assert!(
         elapsed.as_secs() < 1,
         "扫描 1000 文件耗时 {}s (> 1s, I-05 性能预算)",
@@ -217,7 +216,7 @@ fn e2e_thousand_files_scan_latency() {
         .iter()
         .filter(|r| r.rec_type == EgfsZilRecordType::Create)
         .count();
-    assert_eq!(create_count, n, "ZIL create 记录数应为 {}", n);
+    assert_eq!(create_count, n, "ZIL create 记录数应为 {n}");
 }
 
 // ========================================================================

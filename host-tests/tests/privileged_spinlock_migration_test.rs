@@ -1,11 +1,11 @@
-//! privileged spin::Mutex → IrqSpinLock 迁移契约测试 (P1-I-17)
+//! privileged `spin::Mutex` → `IrqSpinLock` 迁移契约测试 (P1-I-17)
 //!
 //! 验证:
 //! 1. 全 privileged 模块 `use spin::Mutex` 计数 = 0
 //! 2. 全 privileged 模块 `spin::Mutex<` (内联) 计数 = 0
-//! 3. 全 privileged 模块 `spin::Once` 计数 = 0 (改用 OnceLock)
-//! 4. 自研 IrqSpinLock 替换完毕
-//! 5. 源码静态文本扫描: 各模块必须从 privileged::sync::irq_spinlock 导入 IrqSpinLock
+//! 3. 全 privileged 模块 `spin::Once` 计数 = 0 (改用 `OnceLock`)
+//! 4. 自研 `IrqSpinLock` 替换完毕
+//! 5. 源码静态文本扫描: 各模块必须从 `privileged::sync::irq_spinlock` 导入 `IrqSpinLock`
 //!
 //! 主机端测试: 验证源码静态契约. 真实锁替换由编译期保证 (类型签名兼容).
 
@@ -21,7 +21,7 @@ fn read_src(rel: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
         rel
     );
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path, e))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 
 fn privileged_root() -> String {
@@ -115,8 +115,7 @@ fn irq_spinlock_adopted_in_migrated_files() {
         let content = read_src(f);
         assert!(
             uses_privileged_irq_spinlock(&content),
-            "P1-I-17: {} 必须从 privileged 路径导入 IrqSpinLock",
-            f
+            "P1-I-17: {f} 必须从 privileged 路径导入 IrqSpinLock"
         );
     }
     // D8: tickless 已按 §4.1 归属判据下沉 functions, 锁仍来自 privileged 安全 API.
@@ -124,15 +123,15 @@ fn irq_spinlock_adopted_in_migrated_files() {
         "{}/../src/kernel/functions/timer/tickless.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    let tickless = fs::read_to_string(&tickless_path)
-        .unwrap_or_else(|e| panic!("read {}: {}", tickless_path, e));
+    let tickless =
+        fs::read_to_string(&tickless_path).unwrap_or_else(|e| panic!("read {tickless_path}: {e}"));
     assert!(
         uses_privileged_irq_spinlock(&tickless),
         "P1-I-17: functions/timer/tickless.rs 必须从 privileged 路径导入 IrqSpinLock",
     );
 }
 
-/// 源码是否从 privileged 路径导入 IrqSpinLock (别名导入亦算).
+/// 源码是否从 privileged 路径导入 `IrqSpinLock` (别名导入亦算).
 fn uses_privileged_irq_spinlock(content: &str) -> bool {
     content.contains("use crate::privileged::sync::IrqSpinLock")
         || content.contains("use crate::privileged::sync::irq_spinlock::IrqSpinLock")

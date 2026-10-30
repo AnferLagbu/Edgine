@@ -27,7 +27,7 @@ fn read(path: &str) -> String {
         .parent()
         .unwrap()
         .join(path);
-    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {}", path))
+    fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {path}"))
 }
 
 #[test]
@@ -38,10 +38,7 @@ fn test_vfs_close_cloexec_fds_collects_before_closing() {
         .expect("vfs_close_cloexec_fds 必须存在");
     let after = &src[body_start..];
     // 函数体到下一个顶层 pub 项 (下一个 pub fn / pub extern)
-    let next_fn = after[1..]
-        .find("\npub ")
-        .map(|i| 1 + i)
-        .unwrap_or(after.len());
+    let next_fn = after[1..].find("\npub ").map_or(after.len(), |i| 1 + i);
     let body = &after[..next_fn];
     // 必须先收集成 owned Vec 再关闭 — 若在持有 fd_table 锁的迭代中直接 close,
     // vfs_close_internal 会再次获取同一把锁导致自锁死.
@@ -118,10 +115,7 @@ fn test_vfs_open_internal_consumes_cloexec() {
         .find("pub extern \"C\" fn vfs_open_internal")
         .expect("vfs_open_internal 必须存在");
     let after = &src[body_start..];
-    let next_fn = after[1..]
-        .find("\npub ")
-        .map(|i| 1 + i)
-        .unwrap_or(after.len());
+    let next_fn = after[1..].find("\npub ").map_or(after.len(), |i| 1 + i);
     let body = &after[..next_fn];
     assert!(
         body.contains("VfsOpenFlags::CLOEXEC"),
@@ -146,10 +140,7 @@ fn test_sys_fcntl_wires_fd_cloexec_flag() {
         .find("pub fn fcntl_syscall")
         .expect("fcntl_syscall 必须存在");
     let after = &src[body_start..];
-    let next_fn = after[1..]
-        .find("\npub ")
-        .map(|i| 1 + i)
-        .unwrap_or(after.len());
+    let next_fn = after[1..].find("\npub ").map_or(after.len(), |i| 1 + i);
     let body = &after[..next_fn];
     assert!(
         body.contains("is_cloexec"),

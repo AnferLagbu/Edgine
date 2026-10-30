@@ -1,4 +1,4 @@
-//! Errno::from_ret 映射完整性契约测试 (B05-04)
+//! `Errno::from_ret` 映射完整性契约测试 (B05-04)
 //!
 //! 权威实现: `privileged::errno::Errno` 的 `from_ret` (DECISION-J 2026-09-13:
 //! syscall/types 迁回 privileged, functions 侧 re-export 兼容). 本测试经
@@ -26,11 +26,10 @@ const ALL_DEFINED_ERRNOS: &[i32] = &[
 fn all_defined_errnos_round_trip() {
     // B05-04: 每个已定义 Errno 变体 must 可往返 (from_ret(-n) == n)
     for &n in ALL_DEFINED_ERRNOS {
-        let mapped = Errno::from_ret(-(n as i64)).as_i32();
+        let mapped = Errno::from_ret(-i64::from(n)).as_i32();
         assert_eq!(
             mapped, n,
-            "B05-04: from_ret(-{}) 应映射回 {} (Errno 变体), 实际 = {}",
-            n, n, mapped
+            "B05-04: from_ret(-{n}) 应映射回 {n} (Errno 变体), 实际 = {mapped}"
         );
     }
 }
@@ -40,8 +39,8 @@ fn all_defined_errnos_round_trip_negative_input() {
     // 输入必须是负数 (POSIX -errno 约定); 非负数无意义
     for &n in ALL_DEFINED_ERRNOS {
         // from_ret 对负数输入取绝对值映射
-        let mapped = Errno::from_ret(-(n as i64)).as_i32();
-        assert!(mapped > 0, "B05-04: 映射结果必须为正 errno, 输入 -{}", n);
+        let mapped = Errno::from_ret(-i64::from(n)).as_i32();
+        assert!(mapped > 0, "B05-04: 映射结果必须为正 errno, 输入 -{n}");
     }
 }
 
@@ -52,8 +51,7 @@ fn unknown_errno_falls_back_to_einval() {
         let mapped = Errno::from_ret(-unknown).as_i32();
         assert_eq!(
             mapped, 22,
-            "B05-04: from_ret(-{}) 应回退 EINVAL(22), 实际 = {}",
-            unknown, mapped
+            "B05-04: from_ret(-{unknown}) 应回退 EINVAL(22), 实际 = {mapped}"
         );
     }
 }

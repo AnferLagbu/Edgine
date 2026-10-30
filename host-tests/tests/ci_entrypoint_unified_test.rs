@@ -19,7 +19,7 @@ const AGENTS_MD: &str = "../AGENTS.md";
 const REQUIREMENTS_SH: &str = "../scripts/requirements.sh";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 /// 取出 Makefile.ci 中定义的目标名 (行首 `name:` 形式, 忽略变量赋值与注释).
@@ -266,7 +266,7 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
 
 /// P-53 结构锁: F9 全仓执法路径 = 脚本 + 冻结侧车 + 两档 audit 腿, 三要素任一失效即红.
 ///
-/// 病灶形态 (P-53 测绘): §5 F9 的「检查方式」只有 rustc dead_code lint, 而 rustc 只
+/// 病灶形态 (P-53 测绘): §5 F9 的「检查方式」只有 rustc `dead_code` lint, 而 rustc 只
 /// 覆盖被编译到的路径; 仓内兜底只有 4 份 host-tests 里按手抄文件清单跑的 grep. 同族的
 /// 三种退化必须被本锁挡住:
 /// ① 脚本写出来却不接线 (P-49 的「零调用者脚本」形态);
@@ -276,9 +276,9 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
 ///
 /// 五臂:
 /// ① 五树扫描根 / vendored 按路径分量排除 / 扫描根缺失 fail-closed 出口齐备;
-/// ② 属性位置锚定检测 + 自测执行点 + 死代码抑制先于基线写入 (dead_code 永不进基线);
+/// ② 属性位置锚定检测 + 自测执行点 + 死代码抑制先于基线写入 (`dead_code` 永不进基线);
 /// ③ 基线唯一写入口是 --update-baseline, 读取侧必须双向对账 (over + under);
-/// ④ 腿在 AUDIT_REQUIRED_LEGS 里, mark_leg 与 audit_leg_missing 成对, 且位于 0.5n
+/// ④ 腿在 `AUDIT_REQUIRED_LEGS` 里, `mark_leg` 与 `audit_leg_missing` 成对, 且位于 0.5n
 ///    到位断言之前 (放后面则「本腿未跑」不进单点比对);
 /// ⑤ 侧车快照真实存在, 且 _meta.disposition 点名承接工程 P-64.
 #[test]
@@ -380,12 +380,12 @@ fn test_p53_f9_dead_code_comment_gate_is_wired() {
 ///
 /// 六条判据:
 /// ① `AUDIT_REQUIRED_LEGS_FULL` 是 `腿名:相对路径` 成对的双引号字面量, ≥9 条
-///    (实测 9 = 6 存量阻断腿 + 2 自测腿 + 1 编译器口径债册腿; 第 8 条 audit_selftest 由
-///    P-50 ③ 追加, 第 9 条 missing_docs_debt 由 P-59 裁定 ① 追加);
+///    (实测 9 = 6 存量阻断腿 + 2 自测腿 + 1 编译器口径债册腿; 第 8 条 `audit_selftest` 由
+///    P-50 ③ 追加, 第 9 条 `missing_docs_debt` 由 P-59 裁定 ① 追加);
 /// ② 每条相对路径在 `scripts/` 下真实存在 (含 `tests/` 子目录里的自测腿) —— 清单漂移即红;
 /// ③ 腿名与 quick 档清单不相交, 且 step 2e 位于 quick 早退分支**之后** —— 挪进 quick
 ///    或把整块前移都会让弱档恒红, 由此臂转红;
-/// ④ 2e 块内「遍历清单 + mark_leg_full 登记 + P-46 存在性包装 + audit_leg_missing 出口 +
+/// ④ 2e 块内「遍历清单 + `mark_leg_full` 登记 + P-46 存在性包装 + `audit_leg_missing` 出口 +
 ///    到位断言」五要素齐备 —— 只留清单删掉执行体 ⇒ 红;
 /// ⑤ 报告腿的非阻断形态必须显式点名腿名并写明「不判退出码」与另立案号 —— 把报告腿
 ///    伪装成门禁 (或把阻断腿悄悄降级) 都由此臂转红;
@@ -394,7 +394,14 @@ fn test_p53_f9_dead_code_comment_gate_is_wired() {
 #[test]
 fn test_audit_sh_full_only_legs_are_wired() {
     let sh = read(AUDIT_SH);
+    let specs = full_leg_specs(&sh);
+    let block = step_2e_block(&sh);
+    assert_step_2e_wiring(block);
+    assert_p58_report_leg_is_blocking(block, &specs);
+    assert_full_claim_names_step_2e(&sh);
+}
 
+fn full_leg_specs(sh: &str) -> Vec<&str> {
     let required_line = sh
         .lines()
         .find(|l| l.trim_start().starts_with("AUDIT_REQUIRED_LEGS_FULL="))
@@ -454,6 +461,10 @@ fn test_audit_sh_full_only_legs_are_wired() {
         );
     }
 
+    specs
+}
+
+fn step_2e_block(sh: &str) -> &str {
     let quick_exit = sh
         .find("if [ \"$MODE\" = \"quick\" ]")
         .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支 —— 档位语义已变"));
@@ -466,11 +477,13 @@ fn test_audit_sh_full_only_legs_are_wired() {
          成两档都跑, 与 §2.3/头部自述的覆盖边界分叉"
     );
     let block = &sh[block_start..];
-    let block = match block.find("\nstep \"") {
+    match block.find("\nstep \"") {
         Some(next) => &block[..next],
         None => block,
-    };
+    }
+}
 
+fn assert_step_2e_wiring(block: &str) {
     // ④ 五要素: 遍历清单 / 登记 / 存在性包装 / 硬失败出口 / 到位断言.
     for element in [
         "for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL",
@@ -493,7 +506,9 @@ fn test_audit_sh_full_only_legs_are_wired() {
         block.contains("err \"审计腿"),
         "步骤 2e 里阻断腿的非零出口消失 —— 判了退出码却不阻断, 等于没判"
     );
+}
 
+fn assert_p58_report_leg_is_blocking(block: &str, specs: &[&str]) {
     // ⑤ P-58: 报告腿已升为阻断腿 —— 步骤 2e 里不允许再出现任何非阻断豁免分支.
     assert!(
         !block.contains("报告腿") && !block.contains("不判退出码"),
@@ -509,7 +524,9 @@ fn test_audit_sh_full_only_legs_are_wired() {
         "full 档清单里没有 obsolete_naming 腿 —— P-58 升阻断后的执法点丢失, \
          废弃命名扫描退回无人执行的脚本"
     );
+}
 
+fn assert_full_claim_names_step_2e(sh: &str) {
     // ⑥ 档位自述与实际结构一致 (P-48 甲 同族).
     let header = &sh[..sh
         .find("set -euo pipefail")
@@ -677,10 +694,10 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
     let sec_22_start = agents
         .find("### 2.2 核心审计脚本（硬规则门槛）")
         .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.2 标题"));
-    let sec_22_end = agents[sec_22_start..]
-        .find("### 2.3 验证门槛")
-        .map(|i| sec_22_start + i)
-        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"));
+    let sec_22_end = agents[sec_22_start..].find("### 2.3 验证门槛").map_or_else(
+        || panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"),
+        |i| sec_22_start + i,
+    );
     let sec_22 = &agents[sec_22_start..sec_22_end];
     for needle in [
         "定点锁口径",
@@ -780,7 +797,7 @@ fn test_p61_repr_c_is_tree_level_discovery() {
 /// 判据:
 /// ① 脚本含 feature 清单、逐位期望能力行、默认构建全 off 断言与复原步骤;
 /// ② 运行维只在 `ARCH=all` 执行 (逐架构快查不重复付构建成本);
-/// ③ Makefile 两处 RUST_LIB 规则 + kernel.bin 重链规则都挂特征内容戳记
+/// ③ Makefile 两处 `RUST_LIB` 规则 + kernel.bin 重链规则都挂特征内容戳记
 ///    (feature 变化强制 cargo 重建; cargo 命中缓存时 .a 可能带旧 mtime, 需戳记强制重链);
 /// ④ AGENTS §2.3 门槛 5 点名 P-62 feature 运行维.
 #[test]
@@ -952,12 +969,12 @@ fn test_gate_criterion_mode_is_single_sourced() {
     let step_2c = sh
         .find("step \"2c/6")
         .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2c (rustfmt 门禁)"));
-    let step_2d = sh
+    let release_compile_pos = sh
         .find("step \"2d/6")
         .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2d (P-44 release 维 compile-only)"));
     assert!(
-        step_2c < quick_exit && quick_exit < step_2d,
-        "quick 早退位置变了 (2c={step_2c} exit={quick_exit} 2d={step_2d}) —— 头部自述与 §2.3 \
+        step_2c < quick_exit && quick_exit < release_compile_pos,
+        "quick 早退位置变了 (2c={step_2c} exit={quick_exit} 2d={release_compile_pos}) —— 头部自述与 §2.3 \
          里「quick 到 2c 即退出」的覆盖边界陈述需同步"
     );
     let full_claim = claim_lines
@@ -1013,6 +1030,217 @@ fn test_audit_sh_clippy_covers_both_arches() {
         "步骤 2 被挪到 quick 早退之后 (2={start} exit={quick_exit}) —— 裁定是双档加维, \
          quick 也必须有 aarch64 clippy"
     );
+}
+
+/// 把 shell 的行尾反斜杠续行折成单条逻辑行, 以便按「一条命令」为单位断言旗标组合
+/// (四树腿的命令都跨两行写, 直接 `contains` 会因换行漏判).
+fn logical_lines(block: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for line in block.lines() {
+        if let Some(head) = line.trim_end().strip_suffix('\\') {
+            cur.push_str(head);
+            cur.push(' ');
+        } else {
+            cur.push_str(line);
+            out.push(cur.trim().to_string());
+            cur.clear();
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// 取 `ci/audit.sh` 步骤 2 的整块文本 (到下一条 `step "` 为止, 即含「2 续」四树扩围).
+fn step_2_block(sh: &str) -> &str {
+    let start = sh
+        .find("step \"2/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2 (clippy pedantic)"));
+    let block = &sh[start..];
+    match block.find("\nstep \"") {
+        Some(next) => &block[..next],
+        None => block,
+    }
+}
+
+/// P-63 甲: clippy pedantic 的射程必须是四树 (host-tests / src/user / src/rust 壳 /
+/// edgine-abi), 且各腿的形态约束逐条钉死.
+///
+/// 病灶: 步骤 2 的 `-D clippy::pedantic` 只覆盖 `src/kernel` 三成员, 四树长期只受
+/// 「默认 clippy + rustfmt」约束, 实测存量 1199 (host-tests) + 444 (src/user) 条
+/// pedantic 诊断. 清零之后若不接回归锁, 下一次退化只会以「摘掉整条腿」的形式出现
+/// (F9 侧车为零 ⇒ 加 `#[allow(clippy::…)]` 在本仓直接红, 摘腿不会).
+///
+/// 五臂 (形态要点均为本轮实测, 单源见 `ci/audit.sh` 步骤 2 续的注释):
+/// ① host-tests 腿带 `--all-targets` (存量绝大多数在 tests/ 集成用例里, 只 lint lib
+///    即假绿) + `--no-deps` + pedantic 双 `-D`;
+/// ② src/user 腿带 `--workspace` + 双裸机三元组循环 + `--no-deps` + pedantic, 且
+///    **不得**带 `--all-targets` (七个成员都是无 test harness 的裸机 crate, 该开关
+///    直接 E0463 + 缺 `#[panic_handler]`, 腿恒红 ⇒ 只会诱发摘腿);
+/// ③ 壳与 edgine-abi 在同一条循环里逐一点名 (edgine-abi 是独立 workspace, 步骤 2 的
+///    `--workspace` 与 cargo 的 workspace-wrapper 语义都覆盖不到它);
+/// ④ 四腿一律位于 quick 早退分支之前 (裁定为双档加维, P-52 甲 同族);
+/// ⑤ 头部自述 (工具栈段点名四树 / quick 段点名 pedantic) 与实际结构一致 —— 自述分叉
+///    是 P-48 甲 病灶.
+/// 在折行后的逻辑行里定位一条 clippy 腿 (判据 = 同时含 `cargo clippy` 与该 manifest).
+fn clippy_leg<'a>(lines: &'a [String], manifest: &str) -> &'a str {
+    let leg: &String = lines
+        .iter()
+        .find(|l| l.contains("cargo clippy") && l.contains(manifest))
+        .unwrap_or_else(|| {
+            panic!("步骤 2 找不到 {manifest} 的 clippy pedantic 腿 —— P-63 甲 裁定四树扩围")
+        });
+    leg.as_str()
+}
+
+/// 断言一组旗标都在同一条腿里 (缺一即红, 失败消息带整条命令便于定位).
+fn assert_leg_flags(leg: &str, flags: &[&str], who: &str) {
+    for flag in flags {
+        assert!(leg.contains(flag), "{who} pedantic 腿缺 {flag}: {leg}");
+    }
+}
+
+/// 臂 ②: src/user 腿 = 双裸机三元组循环 + `--workspace`, 且严禁 `--all-targets`.
+fn assert_user_leg_is_dual_arch(lines: &[String]) {
+    let loop_head = lines
+        .iter()
+        .find(|l| {
+            l.trim_start().starts_with("for target in ")
+                && l.split_whitespace()
+                    .any(|t| t.trim_end_matches(';') == "aarch64-unknown-none")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "步骤 2 没有 src/user 的双裸机三元组循环头 (aarch64-unknown-none) —— \
+                 单架构腿看不到 #[cfg(target_arch)] 另一侧的诊断"
+            )
+        });
+    assert!(
+        loop_head
+            .split_whitespace()
+            .any(|t| t.trim_end_matches(';') == "x86_64-unknown-none"),
+        "src/user 循环头未点名 x86_64-unknown-none: {loop_head}"
+    );
+    let leg = clippy_leg(lines, "src/user/Cargo.toml");
+    assert_leg_flags(
+        leg,
+        &[
+            "--workspace",
+            "--no-deps",
+            "--target \"${target}\"",
+            "-D warnings",
+            "-D clippy::pedantic",
+        ],
+        "src/user",
+    );
+    assert!(
+        !leg.contains("--all-targets"),
+        "src/user 腿重新带上 --all-targets —— 七个成员都是无 test harness 的裸机 crate, \
+         该开关会 E0463 + 缺 #[panic_handler] 让腿恒红: {leg}"
+    );
+}
+
+/// 臂 ③: 壳与 edgine-abi 在同一条循环里逐一点名, 且循环变量真喂给 `--manifest-path`.
+fn assert_shell_and_abi_legs(lines: &[String]) {
+    let loop_head = lines
+        .iter()
+        .find(|l| l.trim_start().starts_with("for SHELL_MANIFEST in "))
+        .unwrap_or_else(|| panic!("步骤 2 没有 src/rust 壳 / edgine-abi 的循环头"));
+    for manifest in ["src/rust/Cargo.toml", "src/rust/edgine-abi/Cargo.toml"] {
+        assert!(
+            loop_head
+                .split_whitespace()
+                .any(|t| t.trim_end_matches(';') == manifest),
+            "壳/ABI 循环头未点名 {manifest} —— edgine-abi 是独立 workspace, \
+             步骤 2 的 --workspace 覆盖不到它: {loop_head}"
+        );
+    }
+    let leg = lines
+        .iter()
+        .find(|l| l.contains("cargo clippy") && l.contains("\"$SHELL_MANIFEST\""))
+        .unwrap_or_else(|| panic!("壳/ABI 循环体没有把循环变量喂给 --manifest-path"));
+    assert_leg_flags(
+        leg,
+        &["--no-deps", "-D warnings", "-D clippy::pedantic"],
+        "壳/ABI",
+    );
+}
+
+/// 臂 ④: 四树腿一律位于 quick 早退分支之前 (裁定双档加维, P-52 甲 同族).
+fn assert_four_tree_legs_are_in_quick_band(sh: &str, block: &str) {
+    let block_start = sh
+        .find("step \"2/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2 (clippy pedantic)"));
+    let quick_exit = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支"));
+    for anchor in [
+        "host-tests/Cargo.toml --release --all-targets",
+        "src/user/Cargo.toml --release --workspace",
+        "for SHELL_MANIFEST in src/rust/Cargo.toml",
+    ] {
+        let pos = block_start
+            + block
+                .find(anchor)
+                .unwrap_or_else(|| panic!("步骤 2 定位不到四树腿锚点: {anchor}"));
+        assert!(
+            pos < quick_exit,
+            "四树 pedantic 腿被挪到 quick 早退之后 ({anchor} 处 {pos} >= exit {quick_exit}) —— \
+             裁定是双档加维"
+        );
+    }
+}
+
+/// 臂 ⑤: 头部自述与实际结构一致 (工具栈段点名四树 / quick 段点名 pedantic).
+fn assert_header_claims_four_trees(sh: &str) {
+    let header = &sh[..sh
+        .find("set -euo pipefail")
+        .unwrap_or_else(|| panic!("ci/audit.sh 头部自述块定位失败"))];
+    let stack_start = header
+        .find("# 工具栈:")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 `# 工具栈:` 自述行"));
+    let stack_end = header
+        .find("# 用法:")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 `# 用法:` 行, 工具栈段无法定界"));
+    let stack = &header[stack_start..stack_end];
+    for tree in ["host-tests", "src/user", "edgine-abi"] {
+        assert!(
+            stack.contains(tree),
+            "工具栈自述未点名 {tree} —— 四树扩围与自述分叉 (P-48 甲 同族)"
+        );
+    }
+    let quick_start = header
+        .find("# - quick:")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少 `# - quick:` 自述行"));
+    assert!(
+        header[quick_start..].contains("pedantic"),
+        "quick 档自述未点名 pedantic 维 —— 四树腿在 quick 档执行却不自述即回到 P-48 甲 病灶"
+    );
+}
+
+#[test]
+fn test_audit_sh_clippy_pedantic_covers_four_trees() {
+    let sh = read(AUDIT_SH);
+    let block = step_2_block(&sh);
+    let lines = logical_lines(block);
+
+    // 臂 ①: host-tests 腿的 --all-targets 是覆盖面承重旗标 (存量绝大多数在 tests/)
+    assert_leg_flags(
+        clippy_leg(&lines, "host-tests/Cargo.toml"),
+        &[
+            "--all-targets",
+            "--no-deps",
+            "-D warnings",
+            "-D clippy::pedantic",
+        ],
+        "host-tests",
+    );
+    assert_user_leg_is_dual_arch(&lines);
+    assert_shell_and_abi_legs(&lines);
+    assert_four_tree_legs_are_in_quick_band(&sh, block);
+    assert_header_claims_four_trees(&sh);
 }
 
 #[test]
@@ -1173,17 +1401,23 @@ fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
 /// 白名单必须列全 P-71 拆出的四个 crate (只写 `kernel` 会退化成只扫 glue 的假绿).
 ///
 /// 病灶: ① 「3 SAFETY 注释覆盖率统计」用 `grep -c "unsafe {"` 对 `grep -c "// SAFETY:"`
-/// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 audit_safety_coverage.py (1722/1722) 同名不同尺,
+/// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 `audit_safety_coverage.py` (1722/1722) 同名不同尺,
 /// 且百分比本身不成立; ② 「6 模块级 SAFETY 不变式」数的是注释文案出现频次, 实测全仓仅
-/// user_proc.rs 1 个文件命中、阈值 >=5 ⇒ 每次 full 都稳定打黄字. 删除后 Lockbud 4→3,
+/// `user_proc.rs` 1 个文件命中、阈值 >=5 ⇒ 每次 full 都稳定打黄字. 删除后 Lockbud 4→3,
 /// QEMU 7→4. ③ Lockbud 派发器把第一个 `--` 之前的参数当自身 flags (未知 flag 被
-/// unwrap_or_default 静默丢弃), 原调用无 `--` ⇒ `--manifest-path` 丢失、扫不到 kernel;
+/// `unwrap_or_default` 静默丢弃), 原调用无 `--` ⇒ `--manifest-path` 丢失、扫不到 kernel;
 /// 且默认 `exit_code_on_bug=false`, 有发现也退 0. 上游还要求项目与 lockbud 同版本 nightly,
 /// 已装但版本不匹配时必须记 skip 而不是让 full 永久转红.
 #[test]
 fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
     let sh = read(AUDIT_SH);
+    assert_p56_statistics_legs_absent(&sh);
+    assert_p56_steps_renumbered(&sh);
+    assert_lockbud_call_shape(&sh);
+    assert_lockbud_requirements();
+}
 
+fn assert_p56_statistics_legs_absent(sh: &str) {
     assert!(
         !sh.contains("step \"3/6 SAFETY"),
         "「SAFETY 注释覆盖率统计」统计腿复活 —— 它与 audit_safety_coverage.py 同名不同尺, \
@@ -1197,7 +1431,9 @@ fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
         !sh.contains("Framekernel privilege wrapper"),
         "步骤 6 的魔数串探测残留 —— 该判据统计的不是不变式, 而是五个词的出现次数"
     );
+}
 
+fn assert_p56_steps_renumbered(sh: &str) {
     assert!(
         sh.contains("step \"3/6 Lockbud"),
         "Lockbud 腿未按 P-56 重编号为 3/6 —— 删除两条统计腿后步骤序号必须连续"
@@ -1227,7 +1463,9 @@ fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
         !header_line.contains("SAFETY 统计腿"),
         "头部仍把已删除的 SAFETY 统计腿写进 full 覆盖清单 (自述与结构脱节)"
     );
+}
 
+fn assert_lockbud_call_shape(sh: &str) {
     // P-56 丙 + H-1 乙: Lockbud 三态与调用形态 (2026-10-30 实测口径).
     assert!(
         sh.contains("rustup run \"$LOCKBUD_TOOLCHAIN\" lockbud --version"),
@@ -1277,7 +1515,9 @@ fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
         "Lockbud 腿的假绿守卫回退成只数回放日志 —— 必须同时要求「本轮实编 crate 数」达标, \
          否则复用旧产物时 cargo 回放的 Detecting deadlock 会让守卫失效 (H-1 ④)"
     );
+}
 
+fn assert_lockbud_requirements() {
     let req = read(REQUIREMENTS_SH);
     assert!(
         req.contains("has_cmd cargo-lockbud && has_cmd lockbud"),
@@ -1293,10 +1533,6 @@ fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
         !req.contains("cargo +nightly lockbud --help"),
         "requirements.sh 仍用 `cargo +nightly lockbud --help` 作判据 —— 它只验证派发器能打印 \
          帮助, 既不看 wrapper 能否加载, 又重复计数 (P-56 丙①③)"
-    );
-    assert!(
-        req.contains("rsproxy.cn") && req.contains("ghproxy.net"),
-        "requirements.sh 缺少国内镜像安装记录 (P-56 丙 的实测安装路径)"
     );
 }
 
@@ -1409,6 +1645,7 @@ fn test_p57_log_self_reports_mode_and_environment_ledger() {
 ///   且「写一段说明就涨几个点」(53 → 65 → 69), 读数不可解释、永不收敛.
 /// - **判定**: 默认形态无条件退 0, 只有 `--actionable-only` 才判退出码 ⇒
 ///   接入 CI 就是「绿 ≠ 拦住」; `--include-archive` 实为 no-op.
+///
 /// 裁定 (用户): 废弃名彻底废弃 + 扫描器校正并升为阻断腿, 产物命名一律并入 Edgine.
 ///
 /// 判据:
@@ -1490,14 +1727,13 @@ fn test_p58_obsolete_naming_gate_is_repo_wide() {
     );
 
     // ⑤ CI 接线与 §2.2 自述一致.
-    let full_start = sh
-        .find("AUDIT_REQUIRED_LEGS_FULL=\"")
-        .map(|i| i + "AUDIT_REQUIRED_LEGS_FULL=\"".len())
-        .unwrap_or_else(|| panic!("full 档腿清单定位失败"));
+    let full_start = sh.find("AUDIT_REQUIRED_LEGS_FULL=\"").map_or_else(
+        || panic!("full 档腿清单定位失败"),
+        |i| i + "AUDIT_REQUIRED_LEGS_FULL=\"".len(),
+    );
     let full_end = sh[full_start..]
         .find('"')
-        .map(|i| full_start + i)
-        .unwrap_or_else(|| panic!("full 档腿清单缺少收尾"));
+        .map_or_else(|| panic!("full 档腿清单缺少收尾"), |i| full_start + i);
     assert!(
         sh[full_start..full_end].contains("obsolete_naming:scan_obsolete_naming.py"),
         "full 档清单没有接线废弃命名腿 —— 扫描器退回零调用者 (P-49 同族)"
@@ -1518,6 +1754,7 @@ fn test_p58_obsolete_naming_gate_is_repo_wide() {
 /// - `audit_public_api_docs.py` 的两面靠 `--strict` 分流, 而 CI 步骤 2e 按
 ///   `python3 scripts/<腿>.py` **无参**调起 ⇒ 533 处 impl 面存量在门禁里根本没有执法点.
 /// - 脚本报告行号偏到声明前的空行 (`^\s*` 吞 `\n`), 实测 247 条错锚 —— 按行号施工会改错处.
+///
 /// 裁定 (用户): ① rustc `missing_docs` 作准; ② 533 处基线对账升阻断; ③ 行号本轮顺带修;
 /// 追加「存量不应冻结 —— 既然会报就属于代码仍有问题」⇒ 债册是待办清单不是豁免面,
 /// 每批补写完就把该模块转 `#![deny(missing_docs)]` 硬执法 (清零工程 P-66).
@@ -1635,22 +1872,22 @@ fn test_p59_f8_is_enforced_by_rustc_missing_docs() {
     );
 }
 
-/// P-60 结构锁: OnceCell 扩四树、F8 射程写明, 两处「自述与实装不符」缺陷不许回退.
+/// P-60 结构锁: `OnceCell` 扩四树、F8 射程写明, 两处「自述与实装不符」缺陷不许回退.
 ///
 /// 病灶 (P-60 立案测绘, HEAD 实测):
-/// - `audit_once_cell.py` 自述「全项目统一 OnceCell 抽象」却只扫 `src/kernel/functions`;
+/// - `audit_once_cell.py` 自述「全项目统一 `OnceCell` 抽象」却只扫 `src/kernel/functions`;
 ///   另三树 (host-tests / src/user / kani-harness) 零覆盖, 扩根实测 0 违规 / 871 文件.
 /// - `audit_safety_coverage.py` 注释称「过滤掉 arch/ 子目录」, 而 `discover_modules`
 ///   从 privileged/mod.rs 发现 `pub mod arch`、`collect_rs_files` 递归归集 ⇒ 注释与实装相反.
-/// - `audit_c_naming.py` 读失败 (OSError / 非 UTF-8) 静默 continue ⇒ 扫描面静默缩小,
+/// - `audit_c_naming.py` 读失败 (`OSError` / 非 UTF-8) 静默 continue ⇒ 扫描面静默缩小,
 ///   与 P-46「静默消失」同族, 只是粒度到了单文件.
 /// - F8 射程从未写明: 编译器面只覆盖 `src/kernel` 三成员、语言面只覆盖 `privileged/`,
 ///   而 host-tests / src/user 实测 154 处缺中文 doc (默认面) 不在任何门禁射程 ⇒ 须显式裁定.
 ///
 /// 判据:
-/// ① once_cell 覆盖四树 + 循环由 BASES 驱动 + 根缺失 fail-closed;
-/// ② safety_coverage 不再声称过滤 arch, 且 arch 确在实装射程 (`pub mod arch` 在位);
-/// ③ c_naming 读失败进 read_errors 并影响退出码, 不再静默 continue;
+/// ① `once_cell` 覆盖四树 + 循环由 BASES 驱动 + 根缺失 fail-closed;
+/// ② `safety_coverage` 不再声称过滤 arch, 且 arch 确在实装射程 (`pub mod arch` 在位);
+/// ③ `c_naming` 读失败进 `read_errors` 并影响退出码, 不再静默 continue;
 /// ④ AGENTS §2.2 写明 F8 射程与「不在射程」的三树.
 #[test]
 fn test_p60_scope_closure_and_silent_skips_fixed() {
@@ -1710,10 +1947,10 @@ fn test_p60_scope_closure_and_silent_skips_fixed() {
     let sec_22_start = agents
         .find("### 2.2 核心审计脚本（硬规则门槛）")
         .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.2 标题"));
-    let sec_22_end = agents[sec_22_start..]
-        .find("### 2.3 验证门槛")
-        .map(|i| sec_22_start + i)
-        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"));
+    let sec_22_end = agents[sec_22_start..].find("### 2.3 验证门槛").map_or_else(
+        || panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"),
+        |i| sec_22_start + i,
+    );
     let sec_22 = &agents[sec_22_start..sec_22_end];
     for needle in [
         "F8 射程口径",
@@ -1734,7 +1971,7 @@ fn test_p60_scope_closure_and_silent_skips_fixed() {
 ///
 /// 病灶 (P-59 债册腿设计时读源, 本轮首次补做负控制): 债册只看编译器读数, 而
 /// `#![allow(missing_docs)]` 会让读数下降 —— 「真补写」与「关灯」在门禁里同形,
-/// 重导快照即可复绿. F9 的 `audit_dead_code_comment.py` 族清单只含 dead_code/unused*
+/// 重导快照即可复绿. F9 的 `audit_dead_code_comment.py` 族清单只含 `dead_code/unused`*
 /// 与 `clippy::`, 不含一般 rustc lint ⇒ 这一盏灯原本无人看.
 ///
 /// 判据:

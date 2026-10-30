@@ -63,15 +63,25 @@ fn pipe_write_then_read_roundtrip() {
 
     let payload = b"edgine-pipe";
     assert_eq!(
-        pipe_write_safe(&mut ns, wk, payload, payload.len() as u32),
-        Ok(payload.len() as u32),
+        pipe_write_safe(
+            &mut ns,
+            wk,
+            payload,
+            u32::try_from(payload.len()).expect("测试值必须能无损收窄")
+        ),
+        Ok(u32::try_from(payload.len()).expect("测试值必须能无损收窄")),
         "写入应返回完整字节数"
     );
 
     let mut buf = [0u8; 16];
     assert_eq!(
-        pipe_read_safe(&mut ns, rk, &mut buf, payload.len() as u32),
-        Ok(payload.len() as u32),
+        pipe_read_safe(
+            &mut ns,
+            rk,
+            &mut buf,
+            u32::try_from(payload.len()).expect("测试值必须能无损收窄")
+        ),
+        Ok(u32::try_from(payload.len()).expect("测试值必须能无损收窄")),
         "读取应返回写入的字节数"
     );
     assert_eq!(&buf[..payload.len()], payload, "往返内容必须一致");
@@ -140,8 +150,13 @@ fn pipe_full_buffer_rejects_or_partially_writes() {
 
     let fill = vec![0xABu8; PIPE_BUFFER_SIZE];
     assert_eq!(
-        pipe_write_safe(&mut ns, wk, &fill, PIPE_BUFFER_SIZE as u32),
-        Ok(PIPE_BUFFER_SIZE as u32),
+        pipe_write_safe(
+            &mut ns,
+            wk,
+            &fill,
+            u32::try_from(PIPE_BUFFER_SIZE).expect("测试值必须能无损收窄")
+        ),
+        Ok(u32::try_from(PIPE_BUFFER_SIZE).expect("测试值必须能无损收窄")),
         "恰好填满缓冲区应成功"
     );
     assert_eq!(
@@ -152,8 +167,13 @@ fn pipe_full_buffer_rejects_or_partially_writes() {
 
     let mut drained = vec![0u8; PIPE_BUFFER_SIZE];
     assert_eq!(
-        pipe_read_safe(&mut ns, rk, &mut drained, PIPE_BUFFER_SIZE as u32),
-        Ok(PIPE_BUFFER_SIZE as u32),
+        pipe_read_safe(
+            &mut ns,
+            rk,
+            &mut drained,
+            u32::try_from(PIPE_BUFFER_SIZE).expect("测试值必须能无损收窄")
+        ),
+        Ok(u32::try_from(PIPE_BUFFER_SIZE).expect("测试值必须能无损收窄")),
         "应能读回全部已写数据"
     );
     assert!(drained.iter().all(|&b| b == 0xAB), "读回内容必须一致");
@@ -391,9 +411,8 @@ fn privileged_pipe_ffi_retired_and_strategy_clean() {
         "pipe_close",
     ] {
         assert!(
-            !strategy.contains(&format!("fn {}(", method)),
-            "IpcStrategy 不得再承载管道方法 {} (管道走 VFS fd 对象模型)",
-            method
+            !strategy.contains(&format!("fn {method}(")),
+            "IpcStrategy 不得再承载管道方法 {method} (管道走 VFS fd 对象模型)"
         );
     }
 }

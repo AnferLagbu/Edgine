@@ -46,7 +46,7 @@ fn slice_between(src: &str, start: &str, end: &str) -> String {
     rest[..j].to_string()
 }
 
-/// 1. `enter_user` 的 EL0 SPSR 必须清 I 位 (0x340), 且语义为 EL0t。
+/// 1. `enter_user` 的 EL0 SPSR 必须清 I 位 (0x340), 且语义为 `EL0t`。
 #[test]
 fn test_enter_user_el0_spsr_has_irq_unmasked() {
     let src = read(A64_MOD);

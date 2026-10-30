@@ -2,14 +2,14 @@
 use crate::sys;
 
 pub fn print(s: &str) {
-    sys::fs_write(1, s.as_bytes());
+    let _ = sys::fs_write(1, s.as_bytes());
 }
 pub fn println(s: &str) {
     print(s);
     print("\n");
 }
 pub fn print_char(c: u8) {
-    sys::fs_write(1, &[c]);
+    let _ = sys::fs_write(1, &[c]);
 }
 
 pub fn print_hex(mut val: u64) {
@@ -20,9 +20,14 @@ pub fn print_hex(mut val: u64) {
         val >>= 4;
     }
     print("0x");
-    sys::fs_write(1, &buf);
+    let _ = sys::fs_write(1, &buf);
 }
 
+/// 十进制打印 `i64` (负数带 `-` 前缀).
+///
+/// # Panics
+///
+/// 取模结果超出 `u8` 时 panic —— `val` 已在本函数内取绝对值, 余数恒在 0..=9.
 pub fn print_dec(mut val: i64) {
     let mut buf = [0u8; 21];
     let mut i = 20;
@@ -36,7 +41,7 @@ pub fn print_dec(mut val: i64) {
     } else {
         while val > 0 {
             i -= 1;
-            buf[i] = b'0' + (val % 10) as u8;
+            buf[i] = b'0' + u8::try_from(val % 10).expect("末位十进制数字必在 u8 范围");
             val /= 10;
         }
     }
@@ -45,7 +50,7 @@ pub fn print_dec(mut val: i64) {
         buf[i] = b'-';
     }
     // 有效数字区为 buf[i..20] (索引 20 为填充位); 切片上界若取 21 会多输出 1 个 NUL
-    sys::fs_write(1, &buf[i..20]);
+    let _ = sys::fs_write(1, &buf[i..20]);
 }
 
 pub fn read_line(buf: &mut [u8]) -> usize {

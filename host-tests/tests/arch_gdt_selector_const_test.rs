@@ -13,8 +13,8 @@
 //! 简化方案:
 //!
 //! - 汇编侧保留硬编码 0x1B / 0x23 (字节长度与原 push 0x23 一致, 不破坏 layout)
-//! - Rust 侧 gdt.rs pub const 是 Rust 代码单一来源 (SELECTOR_USER_DATA/CODE)
-//! - 链接脚本 x86_64.ld `SELECTOR_USER_DATA_RPL3 = ABSOLUTE(0x1B)` 等
+//! - Rust 侧 gdt.rs pub const 是 Rust 代码单一来源 (`SELECTOR_USER_DATA/CODE`)
+//! - 链接脚本 `x86_64.ld` `SELECTOR_USER_DATA_RPL3 = ABSOLUTE(0x1B)` 等
 //!   ABS 符号供 host-tests 引用, 同时作为文档化单一来源
 //! - 本测试 host 端复刻 0x18 / 0x1B / 0x20 / 0x23 / 0x08 / 0x10 / 0x28 等值,
 //!   验证汇编硬编码与 gdt.rs 注释中声明的常量值一致 (人工 review)
@@ -22,8 +22,8 @@
 //! 未来若 GDT 重排 (例如添加 ring-1/r0 用户段), 需同步修改:
 //! 1. gdt.rs `init_gdt_entries()` 段描述顺序
 //! 2. gdt.rs `pub const SELECTOR_*` 值
-//! 3. x86_64.ld `SELECTOR_*` 与 `SELECTOR_*_RPL3` 值
-//! 4. isr.asm / switch.asm / enter_user_asm 硬编码 0x1B / 0x23
+//! 3. `x86_64.ld` `SELECTOR_*` 与 `SELECTOR_*_RPL3` 值
+//! 4. isr.asm / switch.asm / `enter_user_asm` 硬编码 0x1B / 0x23
 //! 5. 本测试的 `EXPECTED_*` 常量
 //!
 //! ## 限制
@@ -32,7 +32,7 @@
 //! 字节编码. 验证手段: `make ARCH=x86_64` 后 `objdump -d other/build/x86_64/kernel.bin | grep 0x1B`.
 
 /// 期望值: 与 gdt.rs `pub const SELECTOR_*` 同步.
-/// 若 GDT 重排, 修改此测试必须同步修改 gdt.rs / x86_64.ld / isr.asm 等.
+/// 若 GDT 重排, 修改此测试必须同步修改 gdt.rs / `x86_64.ld` / isr.asm 等.
 const EXPECTED_SELECTOR_NULL: u16 = 0x00;
 const EXPECTED_SELECTOR_KERNEL_CODE: u16 = 0x08;
 const EXPECTED_SELECTOR_KERNEL_DATA: u16 = 0x10;

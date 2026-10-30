@@ -5,9 +5,9 @@
 //! `get_max_sockets` / `set_max_sockets` (参数化 `&AtomicUsize`) 平行实现,
 //! 改引内核真实源码 `edgine::kernel::privileged::net::init` (net/init/sockets.rs):
 //! - `MAX_SOCKETS` (pub const 256) / `configure_max_sockets` / `get_max_sockets` /
-//!   `set_max_sockets` (pub, 操作全局 `G_MAX_SOCKETS` AtomicUsize, host 无硬件依赖)
+//!   `set_max_sockets` (pub, 操作全局 `G_MAX_SOCKETS` `AtomicUsize`, host 无硬件依赖)
 //! - `DEFAULT_MAX_SOCKETS` (1024) 为内核私有常量, 测试侧不再镜像 (行为经
-//!   `configure_max_sockets` 生效值 = MAX_SOCKETS 验证: 1024 > 256 截断).
+//!   `configure_max_sockets` 生效值 = `MAX_SOCKETS` 验证: 1024 > 256 截断).
 //!
 //! 内核实现操作**全局** `G_MAX_SOCKETS` (非参数化), 测试在并行线程间共享 →
 //! 全部调参用例合并为单个顺序测试函数避免互踩.
@@ -16,7 +16,7 @@ use edgine::kernel::privileged::net::init::{
     MAX_SOCKETS, configure_max_sockets, get_max_sockets, set_max_sockets,
 };
 
-/// 内核配置/调参语义 (顺序执行, 共享全局 G_MAX_SOCKETS)
+/// 内核配置/调参语义 (顺序执行, 共享全局 `G_MAX_SOCKETS`)
 #[test]
 fn max_sockets_config_semantics() {
     // 默认值 1024 > 上限 256 → configure 截断为 MAX_SOCKETS
@@ -53,7 +53,7 @@ fn max_sockets_config_semantics() {
     assert_eq!(get_max_sockets(), MAX_SOCKETS);
 }
 
-/// 内核 MAX_SOCKETS 编译期常量 = 256
+/// 内核 `MAX_SOCKETS` 编译期常量 = 256
 #[test]
 fn max_sockets_const_is_256() {
     assert_eq!(

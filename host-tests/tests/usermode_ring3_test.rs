@@ -9,7 +9,7 @@
 //! 1. 签名必须是 `-> !` (永不返回)
 //! 2. 必须调用 `Arch::enter_user` (具体 impl, 因为 Arch 是 trait 抽象)
 //! 3. x86_64 路径必须传 ctx.rip / ctx.rsp / ctx.rdi
-//! 4. aarch64 路径必须传 ctx.elr_el1 / ctx.sp_el0 / ctx.x0
+//! 4. aarch64 路径必须传 `ctx.elr_el1` / `ctx.sp_el0` / ctx.x0
 //! 5. 禁止占位实现 `*ctx` / `return *ctx`
 //! 6. 禁止调用 `unsafe { *_vmspace = ... }` 等未实现形式
 
@@ -50,8 +50,7 @@ fn enter_user_mode_signature_is_noreturn() {
     let sig = &arch_block[..fn_end];
     assert!(
         sig.contains("-> !"),
-        "P1-I-02: enter_user_mode 必须返回 `!` (noreturn), 当前签名: {}",
-        sig
+        "P1-I-02: enter_user_mode 必须返回 `!` (noreturn), 当前签名: {sig}"
     );
 }
 
@@ -149,8 +148,7 @@ fn no_placeholder_return_ctx() {
     for line in code_lines {
         assert!(
             !line.contains("return *ctx") && !line.trim().ends_with("*ctx"),
-            "P1-I-02: 检测到占位实现 `*ctx` / `return *ctx`, 行: {}",
-            line
+            "P1-I-02: 检测到占位实现 `*ctx` / `return *ctx`, 行: {line}"
         );
     }
 }
@@ -186,5 +184,5 @@ fn find_matching_brace(s: &str, open_idx: usize) -> usize {
             }
         }
     }
-    panic!("unmatched brace at {}", open_idx);
+    panic!("unmatched brace at {open_idx}");
 }

@@ -3,8 +3,8 @@
 //! ## B08-20 迁移 (2026-09-06)
 //! 删除本地 `FakeProcess` / `ProcessState` 镜像 / `do_signal_send` /
 //! `do_signal_send_inner` 平行实现, 改引内核真实源码:
-//! - `edgine::kernel::privileged::proc::signal::do_signal_send` (全局 PROCESS_TABLE)
-//! - `edgine::kernel::privileged::proc::ProcessState` (functions::proc::types 权威)
+//! - `edgine::kernel::privileged::proc::signal::do_signal_send` (全局 `PROCESS_TABLE`)
+//! - `edgine::kernel::privileged::proc::ProcessState` (`functions::proc::types` 权威)
 //! - 通过真实 `Process::new` + `PROCESS_TABLE.insert` 构造宿主进程, 测试后
 //!   `remove_and_free` 清理 (PID 经 `allocate_pid` 唯一分配, 避免并行互踩).
 //!
@@ -27,7 +27,7 @@ use edgine::kernel::privileged::proc::ProcessState;
 use edgine::kernel::privileged::proc::process::{PROCESS_TABLE, Process};
 use edgine::kernel::privileged::proc::signal::do_signal_send;
 
-/// 宿主进程句柄: 构造 + 插入全局 PROCESS_TABLE, Drop 时回收
+/// 宿主进程句柄: 构造 + 插入全局 `PROCESS_TABLE`, Drop 时回收
 struct TestProc {
     pid: u32,
 }
@@ -167,7 +167,7 @@ fn zombie_recovery_not_via_signal() {
     let proc = TestProc::new(ProcessState::Zombie);
     for sig in 1..=63u8 {
         let res = do_signal_send(proc.pid(), sig);
-        assert_eq!(res, Err(-3), "Zombie 对 sig={} 应返回 -3", sig);
+        assert_eq!(res, Err(-3), "Zombie 对 sig={sig} 应返回 -3");
     }
     assert_eq!(proc.state(), ProcessState::Zombie);
     assert_eq!(proc.pending(), 0);

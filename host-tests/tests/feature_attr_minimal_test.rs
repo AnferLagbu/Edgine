@@ -2,7 +2,7 @@
 //!
 //! 验证 maintenance-2026-06-11.md I-09 验收:
 //!   - edgine 不再依赖 `#![feature(asm)]` (已稳定为 `core::arch::asm!`)
-//!   - edgine 内 `feature(` 总数 ≤ 1 (仅 alloc_error_handler)
+//!   - edgine 内 `feature(` 总数 ≤ 1 (仅 `alloc_error_handler`)
 //!   - 所有内联汇编均走 `core::arch::asm!` 路径, 不再裸用 `asm!`
 //!
 //! 任何新增 `#![feature(...)]` 顶层声明需要先在 I-09 评估中说明.
@@ -57,24 +57,12 @@ fn test_edgine_lib_rs_feature_count_minimal() {
     let count = head.matches("#![feature(").count();
     assert!(
         count <= 1,
-        "edgine 顶层 #![feature(...)] 数量 = {} (> 1, I-09 要求最小化).\n当前:\n{}",
-        count,
-        head
+        "edgine 顶层 #![feature(...)] 数量 = {count} (> 1, I-09 要求最小化).\n当前:\n{head}"
     );
 }
 
 #[test]
 fn test_kernel_uses_core_arch_asm_not_bare_asm() {
-    // 扫描 privileged/, 内联汇编必须走 `core::arch::asm!` 路径.
-    // 允许两种风格:
-    //   1) `core::arch::asm!(...)` 直接限定
-    //   2) `use core::arch::asm;` 后裸用 `asm!(...)` (仍来自稳定 core::arch)
-    // 不允许: 完全没有 core::arch 来源的 `asm!(...)` 调用
-    //         `llvm_asm!` 旧式调用
-    // 例外: smoltcp/benches (vendored 第三方, 不在审查范围).
-    let privileged = repo_root().join("src/kernel/privileged");
-    let mut bad: Vec<String> = Vec::new();
-
     fn walk(dir: &Path, out: &mut Vec<String>, privileged_root: &Path) {
         if let Ok(rd) = fs::read_dir(dir) {
             for entry in rd.flatten() {
@@ -85,9 +73,8 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
                     }
                     walk(&p, out, privileged_root);
                 } else if p.extension().and_then(|s| s.to_str()) == Some("rs") {
-                    let src = match fs::read_to_string(&p) {
-                        Ok(s) => s,
-                        Err(_) => return,
+                    let Ok(src) = fs::read_to_string(&p) else {
+                        return;
                     };
 
                     // 文件级导入: `use core::arch::asm;` 允许裸用
@@ -124,6 +111,15 @@ fn test_kernel_uses_core_arch_asm_not_bare_asm() {
             }
         }
     }
+    // 扫描 privileged/, 内联汇编必须走 `core::arch::asm!` 路径.
+    // 允许两种风格:
+    //   1) `core::arch::asm!(...)` 直接限定
+    //   2) `use core::arch::asm;` 后裸用 `asm!(...)` (仍来自稳定 core::arch)
+    // 不允许: 完全没有 core::arch 来源的 `asm!(...)` 调用
+    //         `llvm_asm!` 旧式调用
+    // 例外: smoltcp/benches (vendored 第三方, 不在审查范围).
+    let privileged = repo_root().join("src/kernel/privileged");
+    let mut bad: Vec<String> = Vec::new();
 
     walk(&privileged, &mut bad, &privileged);
 

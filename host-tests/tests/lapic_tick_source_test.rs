@@ -18,7 +18,7 @@
 //!    会在"报支持但忽略 bit18"的核上从此没有 tick. 必须再写后回读.
 //! 5. **每核自装配 + 编排次序**: LAPIC 是每核私有寄存器, 只能本核写; 因此
 //!    全局 tick 源参数 (`clockevent::setup`) 必须先于次级核上线发布, 使启动序列
-//!    不存在"AP 先上线、参数未定"的窗口 (对齐 Linux clocksource_init → cpu_up),
+//!    不存在"AP 先上线、参数未定"的窗口 (对齐 Linux `clocksource_init` → `cpu_up`),
 //!    也就不需要超时等待与降级分支.
 //! 6. **到达率与簿记率绑定**: 恢复周期 tick 时 `hz` 必须等于时基簿记频率
 //!    (E-II-a 的 aarch64 教训: 10 ms 周期簿记 1000 Hz ⇒ 记账慢 10 倍).
@@ -206,7 +206,7 @@ fn fn_body<'a>(code: &'a str, sig: &str) -> Option<&'a str> {
             '}' => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(&code[open..open + i + 1]);
+                    return Some(&code[open..=(open + i)]);
                 }
             }
             _ => {}
@@ -224,7 +224,7 @@ fn const_u8(path: &str, name: &str) -> u32 {
         .unwrap_or_else(|| panic!("{path} 中未找到常量 {name}"));
     src[at + pat.len()..]
         .chars()
-        .take_while(|c| c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
         .collect::<String>()
         .parse::<u32>()
         .unwrap_or_else(|e| panic!("常量 {name} 解析失败: {e}"))
@@ -252,9 +252,8 @@ fn orchestration_position(lib_lines: &str) -> Option<(usize, usize, usize, usize
 
 /// `interrupt_late_init()` 体内仍拉起次级核 (与 tick 源参数发布构成竞态窗口).
 fn bringup_inside_late_init(arch_lines: &str) -> bool {
-    let start = match arch_lines.find("fn interrupt_late_init()") {
-        Some(i) => i,
-        None => return false,
+    let Some(start) = arch_lines.find("fn interrupt_late_init()") else {
+        return false;
     };
     let rest = &arch_lines[start..];
     let end = rest
@@ -522,6 +521,12 @@ fn test_tick_isr_path_stays_silent() {
 
 #[test]
 fn test_negative_control_predicates_reject_regressions() {
+    assert_fixture_predicates_accept_regressions();
+    assert_predicates_reject_correct_shapes();
+    assert_isr_stub_vector_mismatch_rejected();
+}
+
+fn assert_fixture_predicates_accept_regressions() {
     // 抽 `Fixture` 别名避免 `&str` + `fn(&str) -> bool` 内嵌元组达 clippy `type_complexity` 阈值.
     type Fixture<'a> = (&'a str, &'a str, for<'b> fn(&'b str) -> bool);
     let fixtures: &[Fixture<'_>] = &[
@@ -590,7 +595,9 @@ fn test_negative_control_predicates_reject_regressions() {
             "负控制失效: 谓词未识别合成回退样本 {name:?} —— 该门禁已形同虚设"
         );
     }
+}
 
+fn assert_predicates_reject_correct_shapes() {
     // 反向: 正确形态不得亮起.
     let good = squash(
         "manager.register_irq(TICK_IRQ, timer_tick_handler, \"LAPIC Timer\", 0)?;
@@ -639,7 +646,9 @@ fn test_negative_control_predicates_reject_regressions() {
         ap_self_arm_position(&arm_too_early).is_none(),
         "负控制失效: 未识别 AP 在 register_cpu 之前自装配"
     );
+}
 
+fn assert_isr_stub_vector_mismatch_rejected() {
     // isr.asm 一致性: 向量号与常量不符必须被拒.
     let asm_wrong_vector = squash("irq_stub 128, 32");
     assert!(

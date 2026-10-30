@@ -21,7 +21,7 @@
 //!
 //! ## 为何用静态契约
 //!
-//! 内核该常量为 `pub(crate)`, host-tests (host-test feature, 非 kernel_test)
+//! 内核该常量为 `pub(crate)`, host-tests (host-test feature, 非 `kernel_test`)
 //! 无法数值引用; 且驱动模块 `e1000_impl` 被
 //! `#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]` 门控.
 //! 故采用**源码文本分析**方式固化位域契约, 防止回归重新引入错误位.
@@ -45,7 +45,7 @@ fn read(rel: &str) -> String {
 fn const_line<'a>(src: &'a str, name: &str) -> &'a str {
     src.lines()
         .find(|l| l.contains(name) && l.contains(": u32 ="))
-        .unwrap_or_else(|| panic!("未找到常量定义行: {}", name))
+        .unwrap_or_else(|| panic!("未找到常量定义行: {name}"))
 }
 
 const IO_RS: &str = "src/kernel/privileged/driver/net/e1000_io.rs";
@@ -108,6 +108,6 @@ fn test_driver_still_references_these_constants() {
         "E1000_CTRL_FRCDPX",
         "E1000_RCTL_BSIZE_2048",
     ] {
-        assert!(src.contains(name), "functions e1000.rs 未引用 {}", name);
+        assert!(src.contains(name), "functions e1000.rs 未引用 {name}");
     }
 }

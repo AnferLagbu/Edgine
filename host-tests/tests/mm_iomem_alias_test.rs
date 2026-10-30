@@ -1,4 +1,4 @@
-//! mm: IoMem 别名检测集成测试
+//! mm: `IoMem` 别名检测集成测试
 //!
 //! 追踪: I-25
 //!
@@ -18,7 +18,7 @@
 //! ## 与镜像的差异 (以内核为权威)
 //! - 内核容量/冲突判定在 `AliasRegistry` 内 (固定数组, 无 Vec 扩容);
 //!   对齐/零长/溢出校验在 `IoMem::new`.
-//! - **溢出语义漂移**: 镜像用 `saturating_add` (溢出钳到 u64::MAX 仍注册成功),
+//! - **溢出语义漂移**: 镜像用 `saturating_add` (溢出钳到 `u64::MAX` 仍注册成功),
 //!   内核用 `checked_add` **拒绝** `phys+len` 溢出 (B03-22 修复) → 断言已同步为 Err.
 //! - 无 count/capacity 访问器: 容量行为经 "注册 64 项成功 + 第 65 项失败" 验证.
 //!
@@ -37,6 +37,13 @@ use edgine::kernel::privileged::mm::PhysAddr;
 /// 保证容量用例 (需 64 槽全空) 不被其他小节占用干扰.
 #[test]
 fn alias_registry_semantics() {
+    alias_registry_basic_checks();
+    alias_registry_release_and_capacity();
+    alias_registry_slot_reuse();
+    alias_registry_pci_and_overflow();
+}
+
+fn alias_registry_basic_checks() {
     // ── 基本注册 ──
     {
         // SAFETY: 仅测试注册表算法, 返回句柄不做读写, 伪造 phys 不被解引用
@@ -101,7 +108,9 @@ fn alias_registry_semantics() {
             "紧邻区间不重叠应可注册"
         );
     }
+}
 
+fn alias_registry_release_and_capacity() {
     // ── unregister 后重新注册 (Drop 释放) ──
     {
         let m = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
@@ -130,14 +139,14 @@ fn alias_registry_semantics() {
     {
         let mut held = Vec::new();
         for i in 0..MAX_MMIO_MAPPINGS {
-            let phys = 0x100000u64 + (i as u64) * 0x1000;
+            let phys = 0x0010_0000_u64 + (i as u64) * 0x1000;
             // SAFETY: 仅构造句柄不读写, 伪造 phys 不被解引用
             let m = unsafe { IoMem::new(PhysAddr(phys), 0x100, "dev") };
-            assert!(m.is_ok(), "第 {} 项注册应成功", i);
+            assert!(m.is_ok(), "第 {i} 项注册应成功");
             held.push(m.expect("刚确认 Ok"));
         }
         // 65 项 → 容量满
-        let phys65 = 0x100000u64 + MAX_MMIO_MAPPINGS as u64 * 0x1000;
+        let phys65 = 0x0010_0000_u64 + MAX_MMIO_MAPPINGS as u64 * 0x1000;
         // SAFETY: 同前
         let full = unsafe { IoMem::new(PhysAddr(phys65), 0x100, "dev") };
         assert_eq!(
@@ -147,7 +156,9 @@ fn alias_registry_semantics() {
         );
         // held 出作用域 Drop → 全部 unregister
     }
+}
 
+fn alias_registry_slot_reuse() {
     // ── 释放一半后再注册 (碎片化复用) ──
     {
         let mut held = Vec::new();
@@ -155,7 +166,7 @@ fn alias_registry_semantics() {
             let phys = 0x1_0000_0000u64 + (i as u64) * 0x10_0000;
             // SAFETY: 同前
             let m = unsafe { IoMem::new(PhysAddr(phys), 0x1000, "dev") };
-            assert!(m.is_ok(), "stress 注册 i={}", i);
+            assert!(m.is_ok(), "stress 注册 i={i}");
             held.push(m.expect("刚确认 Ok"));
         }
         // 释放奇数项 (1,3,5,...,63): 逆序 swap_remove, 只移除原始奇数下标元素
@@ -165,13 +176,15 @@ fn alias_registry_semantics() {
         assert_eq!(held.len(), MAX_MMIO_MAPPINGS / 2, "应保留 32 个偶数项");
         // 空出 32 槽, 重新注册 32 个新区间
         for i in 0..32 {
-            let phys = 0x2_0000_0000u64 + (i as u64) * 0x10_0000;
+            let phys = 0x2_0000_0000u64 + u64::try_from(i).expect("测试值必须为非负") * 0x10_0000;
             // SAFETY: 同前
             let m = unsafe { IoMem::new(PhysAddr(phys), 0x1000, "new-dev") };
-            assert!(m.is_ok(), "复用槽位注册 i={}", i);
+            assert!(m.is_ok(), "复用槽位注册 i={i}");
         }
     }
+}
 
+fn alias_registry_pci_and_overflow() {
     // ── PCI BAR 模拟场景 ──
     {
         // SAFETY: 同前
@@ -227,7 +240,7 @@ fn alias_registry_semantics() {
     }
 }
 
-/// 内核 MAX_MMIO_MAPPINGS 常量 = 64 (与 iomem.rs AliasRegistry 固定数组容量一致)
+/// 内核 `MAX_MMIO_MAPPINGS` 常量 = 64 (与 iomem.rs `AliasRegistry` 固定数组容量一致)
 #[test]
 fn max_mmio_mappings_is_64() {
     assert_eq!(

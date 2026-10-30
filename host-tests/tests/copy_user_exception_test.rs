@@ -1,14 +1,14 @@
 //! P0-I-36/37/38: exception table 缺失修复验证测试
 //!
 //! 验证 3 处内核写用户空间 (coredump / socket / signal) 已切换到
-//! 异常表保护版 copy_from_user / copy_to_user:
+//! 异常表保护版 `copy_from_user` / `copy_to_user`:
 //! - 用户 munmap 正在传输的缓冲区, 内核返回 EFAULT 而非 panic
 //! - socket send/recv 缓冲区失效, 返回 EFAULT
 //! - 信号栈帧写入失败, 信号不投递但进程继续运行
 //!
-//! host-tests 不链接 edgine; 复刻 copy_user 的核心接口契约来
+//! host-tests 不链接 edgine; 复刻 `copy_user` 的核心接口契约来
 //! 验证调用方语义: 返回 Result<usize, ()>, 失败时调用方必须
-//! 把 EFAULT / SIG_IGN 路径走通.
+//! 把 EFAULT / `SIG_IGN` 路径走通.
 
 // ============================================================================
 // 模型: 异常表保护版 copy API 契约
@@ -20,8 +20,8 @@ enum CopyOutcome {
     Efault,
 }
 
-/// 模拟 privileged/mm::copy_user::copy_to_user
-/// 失败场景: user_dst 落在 "已 munmap 区间" 集合中.
+/// 模拟 `privileged/mm::copy_user::copy_to_user`
+/// 失败场景: `user_dst` 落在 "已 munmap 区间" 集合中.
 fn mock_copy_to_user(
     user_dst: u64,
     src: &[u8],
@@ -37,7 +37,7 @@ fn mock_copy_to_user(
     CopyOutcome::Ok(len.min(src.len()))
 }
 
-/// 模拟 privileged/mm::copy_user::copy_from_user
+/// 模拟 `privileged/mm::copy_user::copy_from_user`
 fn mock_copy_from_user(
     kernel_dst: &mut [u8],
     user_src: u64,
@@ -164,7 +164,7 @@ struct SignalFrame {
 }
 
 /// 模拟 I-38 修复后的 signal 投递:
-/// 三段写入 (ret_addr / SignalFrame / trampoline) 任一失败,
+/// 三段写入 (`ret_addr` / `SignalFrame` / trampoline) 任一失败,
 /// 不投递信号, 进程继续运行.
 fn try_deliver_signal(
     frame_rsp: u64,
@@ -175,7 +175,10 @@ fn try_deliver_signal(
     let frame_size = core::mem::size_of::<SignalFrame>();
     let ret_addr_bytes = (frame_rsp + 8 + frame_size as u64).to_ne_bytes();
     let sigframe_bytes = unsafe {
-        core::slice::from_raw_parts(sigframe as *const SignalFrame as *const u8, frame_size)
+        core::slice::from_raw_parts(
+            std::ptr::from_ref::<SignalFrame>(sigframe).cast::<u8>(),
+            frame_size,
+        )
     };
     let ok_ret = mock_copy_to_user(frame_rsp, &ret_addr_bytes, 8, unmapped);
     let ok_frame = mock_copy_to_user(frame_rsp + 8, sigframe_bytes, frame_size, unmapped);
@@ -433,7 +436,7 @@ fn signal_frame_bytes_roundtrip_preserves_register_values() {
         rax: 0,
         int_no: 13,
         err_code: 0,
-        rip: 0x401000,
+        rip: 0x0040_1000,
         cs: 0x1B,
         rflags: 0x0202,
         rsp: 0x7FFF_F000,
@@ -441,9 +444,8 @@ fn signal_frame_bytes_roundtrip_preserves_register_values() {
         signum: 11,
     };
     let frame_size = core::mem::size_of::<SignalFrame>();
-    let bytes = unsafe {
-        core::slice::from_raw_parts(&sigframe as *const SignalFrame as *const u8, frame_size)
-    };
+    let bytes =
+        unsafe { core::slice::from_raw_parts((&raw const sigframe).cast::<u8>(), frame_size) };
     // 验证 r15 首字段 (小端序低字节在前)
     assert_eq!(
         bytes[0..8],

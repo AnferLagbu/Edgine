@@ -1,8 +1,8 @@
 //! sigreturn trampoline 机器码契约测试 (P1-I-40)
 //!
 //! 验证:
-//! 1. x86_64 trampoline 编码 = mov eax, 15 + syscall (SYS_RT_SIGRETURN = 15)
-//! 2. aarch64 trampoline 编码 = movz x8, #139 + svc #0 (SYS_RT_SIGRETURN = 139)
+//! 1. x86_64 trampoline 编码 = mov eax, 15 + syscall (`SYS_RT_SIGRETURN` = 15)
+//! 2. aarch64 trampoline 编码 = movz x8, #139 + svc #0 (`SYS_RT_SIGRETURN` = 139)
 //! 3. 双架构在 host 端通过 union 表达, 跨平台编译期验证
 //!
 //! 主机端测试平台: 借用 host CPU 架构的 trampoline 与固定字节序列做 hex 对比.
@@ -14,7 +14,7 @@ const EXPECTED: &[u8] = &[0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 #[cfg(target_arch = "aarch64")]
 const EXPECTED: &[u8] = &[0xD2, 0x80, 0x11, 0x68, 0xD4, 0x00, 0x00, 0x01];
 
-/// 镜像内核 SIGRETURN_TRAMPOLINE
+/// 镜像内核 `SIGRETURN_TRAMPOLINE`
 #[cfg(target_arch = "x86_64")]
 const SIGRETURN_TRAMPOLINE: [u8; 7] = [0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 

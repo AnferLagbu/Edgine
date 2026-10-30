@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
 
-use userlib::sys::*;
-use userlib::*;
+use userlib::sys::{FbInfo, fb_mmap, fb_open, fb_release, proc_exit};
+use userlib::{print_dec, println, str, sys};
 
-const FB_USER_VADDR: u64 = 0x100000000;
+const FB_USER_VADDR: u64 = 0x1_0000_0000;
 const FONT_DATA: &[u8] = include_bytes!("font8x16.raw");
 const GLYPH_W: u32 = 8;
 const GLYPH_H: u32 = 16;
@@ -73,7 +73,7 @@ impl Terminal {
         }
     }
 
-    fn put_pixel(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
+    fn put_pixel(&mut self, x: u32, y: u32, red: u8, green: u8, blue: u8) {
         if x >= self.width || y >= self.height {
             return;
         }
@@ -84,32 +84,35 @@ impl Terminal {
         }
         match self.fmt {
             PixelFmt::RGB565 => {
-                let v = ((r as u16 >> 3) << 11) | ((g as u16 >> 2) << 5) | (b as u16 >> 3);
-                fb[off] = v as u8;
-                fb[off + 1] = (v >> 8) as u8;
+                let v = ((u16::from(red) >> 3) << 11)
+                    | ((u16::from(green) >> 2) << 5)
+                    | (u16::from(blue) >> 3);
+                let bytes = v.to_le_bytes();
+                fb[off] = bytes[0];
+                fb[off + 1] = bytes[1];
             }
             PixelFmt::RGB888 => {
-                fb[off] = b;
-                fb[off + 1] = g;
-                fb[off + 2] = r;
+                fb[off] = blue;
+                fb[off + 1] = green;
+                fb[off + 2] = red;
             }
             PixelFmt::ARGB8888 => {
-                fb[off] = b;
-                fb[off + 1] = g;
-                fb[off + 2] = r;
+                fb[off] = blue;
+                fb[off + 1] = green;
+                fb[off + 2] = red;
                 fb[off + 3] = 255;
             }
         }
     }
 
-    fn fill_rect(&mut self, x: u32, y: u32, w: u32, h: u32, c: Rgb) {
+    fn fill_rect(&mut self, x: u32, y: u32, width: u32, height: u32, color: Rgb) {
         let start_y = y;
-        let end_y = (y + h).min(self.height);
+        let end_y = (y + height).min(self.height);
         let start_x = x;
-        let end_x = (x + w).min(self.width);
+        let end_x = (x + width).min(self.width);
         for py in start_y..end_y {
             for px in start_x..end_x {
-                self.put_pixel(px, py, c.r, c.g, c.b);
+                self.put_pixel(px, py, color.r, color.g, color.b);
             }
         }
     }
@@ -233,41 +236,14 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
         userlib::print("at ");
         userlib::print(loc.file());
         userlib::print(":");
-        print_dec(loc.line() as i64);
+        print_dec(i64::from(loc.line()));
     }
     userlib::print("\n");
     proc_exit(1);
 }
 
-#[unsafe(no_mangle)]
-pub fn _start() -> ! {
-    println("[fbterm] Starting user-space terminal...");
-
-    let mut info = FbInfo {
-        phys_addr: 0,
-        size: 0,
-        width: 0,
-        height: 0,
-        pitch: 0,
-        bpp: 0,
-        _pad: [0; 3],
-    };
-    if fb_open(&mut info) < 0 {
-        println("[fbterm] ERROR: no framebuffer device");
-        proc_exit(1);
-    }
-
-    if fb_mmap(FB_USER_VADDR, info.size, 3) < 0 {
-        println("[fbterm] ERROR: fb_mmap failed");
-        proc_exit(1);
-    }
-
-    let fb_slice =
-        unsafe { core::slice::from_raw_parts_mut(FB_USER_VADDR as *mut u8, info.size as usize) };
-
-    let mut term = Terminal::new(fb_slice, info.width, info.height, info.pitch, info.bpp);
-    term.draw_screen();
-
+/// 开机横幅: 版本行 + 说明行 + 首个提示符.
+fn show_banner(term: &mut Terminal) {
     term.cursor_col = 0;
     term.cursor_row = 0;
     term.write_str(
@@ -284,6 +260,96 @@ pub fn _start() -> ! {
     term.newline();
     term.newline();
     term.show_prompt();
+}
+
+/// fbterm 内建命令派发 (`help` / `clear` / `exit`): 返回 `true` 表示请求退出 REPL.
+/// 未识别命令打印提示, 空命令静默忽略.
+fn dispatch_command(term: &mut Terminal, cmd: &[u8]) -> bool {
+    if cmd == b"help" {
+        term.write_str(
+            "  help   - Show this message",
+            Rgb::new(200, 200, 220),
+            Rgb::new(20, 20, 28),
+        );
+        term.newline();
+        term.write_str(
+            "  clear  - Clear screen",
+            Rgb::new(200, 200, 220),
+            Rgb::new(20, 20, 28),
+        );
+        term.newline();
+        term.write_str(
+            "  exit   - Quit fbterm",
+            Rgb::new(200, 200, 220),
+            Rgb::new(20, 20, 28),
+        );
+        term.newline();
+        term.write_str(
+            "  colors - Show color palette (WIP)",
+            Rgb::new(200, 200, 220),
+            Rgb::new(20, 20, 28),
+        );
+        term.newline();
+    } else if cmd == b"clear" {
+        term.scroll_top = 0;
+        term.draw_screen();
+        term.cursor_row = 0;
+    } else if cmd == b"exit" {
+        term.write_str("Goodbye.", Rgb::new(255, 200, 100), Rgb::new(20, 20, 28));
+        term.newline();
+        return true;
+    } else if cmd.is_empty() {
+    } else {
+        term.write_str(
+            "Unknown command. Type 'help'.",
+            Rgb::new(255, 150, 150),
+            Rgb::new(20, 20, 28),
+        );
+        term.newline();
+    }
+    false
+}
+
+/// fbterm 入口: 打开帧缓冲设备 → 映射到用户地址 → 跑行编辑 REPL.
+///
+/// # Panics
+///
+/// 帧缓冲用户映射地址或内核回报的尺寸超出 `usize` 时 panic —— 二者分别是链接期
+/// 常量与内核实测值, 正常路径不可达.
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    println("[fbterm] Starting user-space terminal...");
+
+    let mut info = FbInfo {
+        phys_addr: 0,
+        size: 0,
+        width: 0,
+        height: 0,
+        pitch: 0,
+        bpp: 0,
+        reserved: [0; 3],
+    };
+    if fb_open(&mut info) < 0 {
+        println("[fbterm] ERROR: no framebuffer device");
+        proc_exit(1);
+    }
+
+    if fb_mmap(FB_USER_VADDR, info.size, 3) < 0 {
+        println("[fbterm] ERROR: fb_mmap failed");
+        proc_exit(1);
+    }
+
+    let fb_addr = usize::try_from(FB_USER_VADDR).expect("帧缓冲用户映射地址超出 usize");
+    let fb_len = usize::try_from(info.size).expect("帧缓冲尺寸超出 usize");
+    // SAFETY: fb_mmap 已在上方把该地址映射为可写帧缓冲, 长度取自内核回报的尺寸
+    let fb_slice = unsafe {
+        core::slice::from_raw_parts_mut(core::ptr::with_exposed_provenance_mut(fb_addr), fb_len)
+    };
+
+    let mut term = Terminal::new(fb_slice, info.width, info.height, info.pitch, info.bpp);
+    term.draw_screen();
+
+    show_banner(&mut term);
 
     loop {
         let mut c = 0u8;
@@ -306,47 +372,8 @@ pub fn _start() -> ! {
                     }
                     term.newline();
 
-                    if &cmd_buf[..cmd_len] == b"help" {
-                        term.write_str(
-                            "  help   - Show this message",
-                            Rgb::new(200, 200, 220),
-                            Rgb::new(20, 20, 28),
-                        );
-                        term.newline();
-                        term.write_str(
-                            "  clear  - Clear screen",
-                            Rgb::new(200, 200, 220),
-                            Rgb::new(20, 20, 28),
-                        );
-                        term.newline();
-                        term.write_str(
-                            "  exit   - Quit fbterm",
-                            Rgb::new(200, 200, 220),
-                            Rgb::new(20, 20, 28),
-                        );
-                        term.newline();
-                        term.write_str(
-                            "  colors - Show color palette (WIP)",
-                            Rgb::new(200, 200, 220),
-                            Rgb::new(20, 20, 28),
-                        );
-                        term.newline();
-                    } else if &cmd_buf[..cmd_len] == b"clear" {
-                        term.scroll_top = 0;
-                        term.draw_screen();
-                        term.cursor_row = 0;
-                    } else if &cmd_buf[..cmd_len] == b"exit" {
-                        term.write_str("Goodbye.", Rgb::new(255, 200, 100), Rgb::new(20, 20, 28));
-                        term.newline();
+                    if dispatch_command(&mut term, &cmd_buf[..cmd_len]) {
                         break;
-                    } else if cmd_len == 0 {
-                    } else {
-                        term.write_str(
-                            "Unknown command. Type 'help'.",
-                            Rgb::new(255, 150, 150),
-                            Rgb::new(20, 20, 28),
-                        );
-                        term.newline();
                     }
                     term.line_len = 0;
                 }
@@ -355,7 +382,9 @@ pub fn _start() -> ! {
             b'\x7f' | b'\x08' => {
                 if term.line_len > 0 {
                     term.line_len -= 1;
-                    if term.cursor_col > term.prompt.len() as u32 {
+                    if term.cursor_col
+                        > u32::try_from(term.prompt.len()).expect("提示符长度超出 u32")
+                    {
                         term.cursor_col -= 1;
                         term.draw_glyph(
                             b' ',

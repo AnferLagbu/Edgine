@@ -1,12 +1,12 @@
-//! P2-I-41: Socket WaitQueue 基础设施 host-test
+//! P2-I-41: Socket `WaitQueue` 基础设施 host-test
 //!
 //! 验证:
-//! 1. wait_queue.rs 模块存在并导出关键类型
-//! 2. SocketWaitQueue 行为契约 (mark_waiting / try_wake / is_pending)
-//! 3. SocketWaitQueueTable 边界 (按 `MAX_SM_FD` 定长 + 越界返回 None)
-//! 4. poll_network 末尾调用 try_wake (静态契约)
-//! 5. 单元测试 (wait_queue.rs 内 #[cfg(test)]) 数量
-//! 6. 与框架/服务边界: SOCKET_WAIT_QUEUES 是 privileged 内 static (不在 functions 暴露)
+//! 1. `wait_queue.rs` 模块存在并导出关键类型
+//! 2. `SocketWaitQueue` 行为契约 (`mark_waiting` / `try_wake` / `is_pending`)
+//! 3. `SocketWaitQueueTable` 边界 (按 `MAX_SM_FD` 定长 + 越界返回 None)
+//! 4. `poll_network` 末尾调用 `try_wake` (静态契约)
+//! 5. 单元测试 (`wait_queue.rs` 内 #[cfg(test)]) 数量
+//! 6. 与框架/服务边界: `SOCKET_WAIT_QUEUES` 是 privileged 内 static (不在 functions 暴露)
 
 use std::fs;
 use std::path::PathBuf;
@@ -219,10 +219,7 @@ fn unit_tests_inside_wait_queue_module() {
 fn wake_without_pending_does_not_count() {
     let src = read_src("src/kernel/privileged/net/wait_queue.rs");
     // 行为契约: try_wake 无人等待时 wake_count 不递增
-    let test_block = src
-        .rsplit_once("#[cfg(test)]")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+    let test_block = src.rsplit_once("#[cfg(test)]").map_or("", |(_, b)| b);
     assert!(
         test_block.contains("fn wake_without_waiter_is_noop"),
         "P2-I-41: 必须存在 'wake_without_waiter_is_noop' 单元测试"
@@ -275,8 +272,7 @@ fn collect_waiters_is_non_destructive() {
         .expect("P5b: 缺 collect_waiters");
     let end = src[start..]
         .find("pub fn collect_expired")
-        .map(|i| start + i)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |i| start + i);
     let body = &src[start..end];
     assert!(
         body.contains(".load("),
@@ -503,7 +499,7 @@ fn hex_const(src: &str, name: &str) -> u32 {
     let hex = after
         .strip_prefix("0x")
         .unwrap_or_else(|| panic!("{name} 非 0x 字面值: {after}"));
-    let digits: String = hex.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
+    let digits: String = hex.chars().take_while(char::is_ascii_hexdigit).collect();
     u32::from_str_radix(&digits, 16).unwrap_or_else(|e| panic!("{name} 解析失败: {e}"))
 }
 
@@ -519,7 +515,7 @@ fn msg_dontwait_abi_single_value() {
 
     let user_v = hex_const(&user, "MSG_DONTWAIT: i32");
     let sm_v = hex_const(&sm, "MSG_DONTWAIT: i32");
-    let sc_v = hex_const(&sc, "MSG_DONTWAIT_FLAG: u32");
+    let syscall_v = hex_const(&sc, "MSG_DONTWAIT_FLAG: u32");
 
     assert_eq!(
         user_v, LINUX_MSG_DONTWAIT,
@@ -530,12 +526,12 @@ fn msg_dontwait_abi_single_value() {
         "sm_fi MSG_DONTWAIT 偏离 Linux ABI"
     );
     assert_eq!(
-        sc_v, LINUX_MSG_DONTWAIT,
+        syscall_v, LINUX_MSG_DONTWAIT,
         "functions syscall MSG_DONTWAIT_FLAG 偏离 Linux ABI"
     );
     assert_eq!(
         user_v, sm_v,
         "用户态与内核侧 MSG_DONTWAIT 不一致 (位漂移会静默失效)"
     );
-    assert_eq!(sc_v, sm_v, "kernel 内部两处 MSG_DONTWAIT 不一致");
+    assert_eq!(syscall_v, sm_v, "kernel 内部两处 MSG_DONTWAIT 不一致");
 }

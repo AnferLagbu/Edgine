@@ -1,7 +1,7 @@
 //! I-46: DHCP fallback 静态 IP 集中常量验证
 //!
 //! 验证:
-//! 1. net::types 模块导出 FALLBACK_IPV4 / FALLBACK_PREFIX / FALLBACK_GATEWAY
+//! 1. `net::types` 模块导出 `FALLBACK_IPV4` / `FALLBACK_PREFIX` / `FALLBACK_GATEWAY`
 //! 2. 常量值与 QEMU user-mode networking 默认 (10.0.2.0/24) 一致
 //! 3. init.rs 中 fallback 路径已引用本常量 (不再硬编码)
 //! 4. 集中化后, 任何修改需走单一来源
@@ -17,7 +17,7 @@ const TYPES_RS: &str = "../src/kernel/privileged/net/types.rs";
 const INIT_RS: &str = "../src/kernel/privileged/net/init.rs";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 #[test]
@@ -89,11 +89,6 @@ fn test_init_uses_fallback_constants() {
 
 #[test]
 fn test_no_duplicate_fallback_magic_numbers() {
-    // 反向校验: 在 net/init.rs 的非测试代码中不应有 10.0.2.15 硬编码.
-    // 测试代码 (#[cfg(test)] mod tests) 使用这些字面量做断言是允许的.
-    let init_src = read(INIT_RS);
-    let types_src = read(TYPES_RS);
-
     // 剥离 #[cfg(test)] mod tests { ... } 块, 只看生产代码
     fn strip_test_blocks(src: &str) -> String {
         let mut out = String::new();
@@ -147,6 +142,11 @@ fn test_no_duplicate_fallback_magic_numbers() {
         }
         out
     }
+    // 反向校验: 在 net/init.rs 的非测试代码中不应有 10.0.2.15 硬编码.
+    // 测试代码 (#[cfg(test)] mod tests) 使用这些字面量做断言是允许的.
+    let init_src = read(INIT_RS);
+    let types_src = read(TYPES_RS);
+
     let prod_init = strip_test_blocks(&init_src);
 
     let literal_in_init = prod_init.matches("[10, 0, 2, 15]").count();

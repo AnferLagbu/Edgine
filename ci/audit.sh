@@ -1,10 +1,12 @@
 #!/bin/bash
 # Edgine 内核代码审计脚本
-# 工具栈: cargo check (双架构) + clippy (pedantic, 含 feature 维) + rustfmt
+# 工具栈: cargo check (双架构) + clippy (pedantic: 内核双架构 + host-tests / src/user /
+#         src/rust 壳 / edgine-abi 四树, 含 feature 维) + rustfmt
 #         + audit_*.py 审计腿群 + Lockbud 死锁扫描 + QEMU 真实启动 (full 档)
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
-# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 双架构) + 2c rustfmt, 到 2c 后即退出
+# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 内核双架构 + 四树 pedantic
+#           扩围, 2b feature 维) + 2c rustfmt, 到 2c 后即退出
 # - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3 Lockbud + 4 QEMU
 #
 # P-56 甲: 原「3 SAFETY 注释覆盖率统计」与「6 模块级 SAFETY 不变式」两条统计腿已删除 ——
@@ -534,7 +536,7 @@ done
 popd > /dev/null
 
 # ── 2. Clippy pedantic (x86_64 + aarch64) ──────────────────────
-step "2/6 Clippy pedantic (x86_64 + aarch64, lib only)"
+step "2/6 Clippy pedantic (内核 x86_64 + aarch64 lib, 及 host-tests / src/user / 壳 / edgine-abi)"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
 # B01-28 修复: clippy 命令与 CI (ci-x86.yml clippy-pedantic job) 对齐:
@@ -570,6 +572,66 @@ for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     fi
 done
 popd > /dev/null
+
+# ── 2 续. Clippy pedantic 四树扩围 (P-63 甲) ──────────────────
+# 病灶: 步骤 2 的 `-D clippy::pedantic` 只覆盖 src/kernel 三成员 (kernel /
+# kernel-privileged / kernel-functions), 于是 host-tests / src/user / src/rust 壳 /
+# edgine-abi 四树长期只受「默认 clippy + rustfmt」约束. 实测存量 (2026-10-30 读数,
+# 判据 = 本腿同款命令去掉 `-D`): host-tests 1199 条 / src/user 444 条 pedantic 诊断,
+# 现已清零 —— 清零读数本身就是本腿的负控 (同一命令形态在清零前能数出四位数诊断).
+#
+# 形态要点 (均为实测约束, 改动前先复现):
+#   · host-tests 必须 `--all-targets`: 存量绝大多数在 tests/ 集成用例里, 只 lint lib
+#     会退化成假绿;
+#   · src/user **不得** `--all-targets`: 七个成员都是裸机 crate (无 test harness),
+#     该开关直接 E0463 (can't find crate for `test`) + 缺 `#[panic_handler]`;
+#     改用 `--workspace` 覆盖七成员, 且必须双架构 —— aarch64 腿曾暴露 x86_64 单架构
+#     看不到的未用导入 (`#[cfg(target_arch = "x86_64")]` 探针的 ABI 常量);
+#   · edgine-abi 是独立 workspace (不是 kernel 成员), 步骤 2 的 `--workspace` 与
+#     cargo 的 RUSTC_WORKSPACE_WRAPPER 语义都覆盖不到它, 必须单独点名;
+#   · 四腿一律 `--no-deps`: path 依赖 (kernel / userlib) 的诊断已由步骤 2 与本腿其它
+#     成员负责, 不 `--no-deps` 会把同一诊断重复计数, 读数失真.
+set +e
+HT_CLIPPY_OUT=$(cargo clippy --manifest-path host-tests/Cargo.toml --release --all-targets --no-deps \
+    --target-dir other/target -- -D warnings -D clippy::pedantic 2>&1)
+HT_CLIPPY_RC=$?
+set -e
+printf '%s\n' "$HT_CLIPPY_OUT" | tail -10
+if [ "$HT_CLIPPY_RC" -eq 0 ]; then
+    ok "clippy pedantic (host-tests, --all-targets): passed"
+else
+    err "clippy pedantic (host-tests) 失败 (exit=$HT_CLIPPY_RC, 见上方输出)"
+fi
+
+for target in x86_64-unknown-none aarch64-unknown-none; do
+    set +e
+    USER_CLIPPY_OUT=$(cargo clippy --manifest-path src/user/Cargo.toml --release --workspace --no-deps \
+        --target "${target}" -- -D warnings -D clippy::pedantic 2>&1)
+    USER_CLIPPY_RC=$?
+    set -e
+    printf '%s\n' "$USER_CLIPPY_OUT" | tail -10
+    if [ "$USER_CLIPPY_RC" -eq 0 ]; then
+        ok "clippy pedantic (src/user, ${target}): passed"
+    else
+        err "clippy pedantic (src/user, ${target}) 失败 (exit=$USER_CLIPPY_RC, 见上方输出)"
+    fi
+done
+
+# src/rust 壳与 edgine-abi 都跑 host target: 壳是 host-tests 引用的 rlib 门面,
+# edgine-abi 是内核态/用户态共享的常量单源 (零依赖), 两者都不含裸机专属顶层约束.
+for SHELL_MANIFEST in src/rust/Cargo.toml src/rust/edgine-abi/Cargo.toml; do
+    set +e
+    SHELL_CLIPPY_OUT=$(cargo clippy --manifest-path "$SHELL_MANIFEST" --release --no-deps \
+        --target-dir other/target -- -D warnings -D clippy::pedantic 2>&1)
+    SHELL_CLIPPY_RC=$?
+    set -e
+    printf '%s\n' "$SHELL_CLIPPY_OUT" | tail -10
+    if [ "$SHELL_CLIPPY_RC" -eq 0 ]; then
+        ok "clippy pedantic (${SHELL_MANIFEST}): passed"
+    else
+        err "clippy pedantic (${SHELL_MANIFEST}) 失败 (exit=$SHELL_CLIPPY_RC, 见上方输出)"
+    fi
+done
 
 # ── 2b. Clippy feature 维 (kernel_test + host-test, J-01/G-02/G-18) ──
 # J-01 (2026-09-08): E-03 同源双编译后 feature 门控代码 lint 纳入门槛.

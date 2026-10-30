@@ -59,8 +59,7 @@ fn no_legacy_fs_error_variants() {
     ] {
         assert!(
             !src.contains(legacy),
-            "{} 已废弃, 应改走 FsError::Kernel(KernelError::...)",
-            legacy
+            "{legacy} 已废弃, 应改走 FsError::Kernel(KernelError::...)"
         );
     }
 }
@@ -91,8 +90,7 @@ fn to_errno_method_present() {
     ] {
         assert!(
             to_errno_block.contains(variant),
-            "to_errno 必须映射 {} 变体",
-            variant
+            "to_errno 必须映射 {variant} 变体"
         );
     }
 }
@@ -135,18 +133,13 @@ fn kernel_error_exposes_all_fs_posix_variants() {
         "NoSpace",
         "CrossDevice",
     ] {
-        assert!(
-            src.contains(variant),
-            "KernelError 必须暴露 {} 变体",
-            variant
-        );
+        assert!(src.contains(variant), "KernelError 必须暴露 {variant} 变体");
     }
     // 验证 from_i32 + as_errno 双向映射覆盖
     for errno_num in &[2, 16, 17, 18, 20, 21, 28, 30, 36] {
         assert!(
-            src.contains(&format!("{} => Self::", errno_num)),
-            "KernelError::from_i32({}) 必须显式映射",
-            errno_num
+            src.contains(&format!("{errno_num} => Self::")),
+            "KernelError::from_i32({errno_num}) 必须显式映射"
         );
     }
 }
@@ -170,8 +163,7 @@ fn usages_all_use_kernel_wrapper() {
         .min(src.matches("KernelError::").count());
     assert!(
         kernel_count >= 8,
-        "FsError 至少应有 8 处用 Kernel(KernelError::...) 包装, 实际: {}",
-        kernel_count
+        "FsError 至少应有 8 处用 Kernel(KernelError::...) 包装, 实际: {kernel_count}"
     );
 }
 

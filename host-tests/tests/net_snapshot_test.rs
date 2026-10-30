@@ -1,14 +1,14 @@
-//! P2-I-44: 网络快照 (net_save / net_restore) host-test
+//! P2-I-44: 网络快照 (`net_save` / `net_restore`) host-test
 //!
 //! 验证:
-//! 1. save.rs 模块存在, 暴露 NetSnapshot / save / load / clear / is_valid
-//! 2. NetSnapshot 字段完整 (MAC, IP, GW, prefix, FD 表, 状态, 校验)
+//! 1. save.rs 模块存在, 暴露 `NetSnapshot` / save / load / clear / `is_valid`
+//! 2. `NetSnapshot` 字段完整 (MAC, IP, GW, prefix, FD 表, 状态, 校验)
 //! 3. 校验和能检测篡改
 //! 4. save → load → clear 流程闭环
-//! 5. net_save 不再是空函数体 (静态契约: 必须有 snap::save 调用)
-//! 6. net_restore 读取快照并应用 (必须调用 snap::load)
+//! 5. `net_save` 不再是空函数体 (静态契约: 必须有 `snap::save` 调用)
+//! 6. `net_restore` 读取快照并应用 (必须调用 `snap::load`)
 //! 7. net/mod.rs 注册了 save 模块
-//! 8. NET_SNAPSHOT_LOCK 不可与 NET_LOCK 死锁 (本测试仅镜像源代码契约)
+//! 8. `NET_SNAPSHOT_LOCK` 不可与 `NET_LOCK` 死锁 (本测试仅镜像源代码契约)
 //! 9. 单元测试数量
 
 use std::fs;
@@ -92,10 +92,7 @@ fn checksum_catches_tampering() {
         src.contains("compute_checksum"),
         "P2-I-44: 必须实现 compute_checksum 用于篡改检测"
     );
-    let test_block = src
-        .rsplit_once("#[cfg(test)]")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+    let test_block = src.rsplit_once("#[cfg(test)]").map_or("", |(_, b)| b);
     assert!(
         test_block.contains("fn tampering_breaks_checksum"),
         "P2-I-44: 必须有 tampering_breaks_checksum 单元测试"
@@ -105,10 +102,7 @@ fn checksum_catches_tampering() {
 #[test]
 fn save_load_roundtrip_unit() {
     let src = read_src("src/kernel/privileged/net/save.rs");
-    let test_block = src
-        .rsplit_once("#[cfg(test)]")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+    let test_block = src.rsplit_once("#[cfg(test)]").map_or("", |(_, b)| b);
     assert!(
         test_block.contains("fn save_load_roundtrip"),
         "P2-I-44: 必须有 save_load_roundtrip 单元测试"
@@ -134,8 +128,7 @@ fn net_save_not_empty_anymore() {
     // 找下一个 fn (即 net_restore) 之前的范围
     let next_fn = src[start..]
         .find("\nunsafe fn net_restore()")
-        .map(|o| start + o)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |o| start + o);
     let body = &src[start..next_fn];
     assert!(
         !body.contains("unsafe fn net_save() {}\n") && !body.contains("unsafe fn net_save(){}"),
@@ -160,8 +153,7 @@ fn net_restore_reads_snapshot() {
         .unwrap_or_else(|| panic!("P2-I-44: 找不到 {marker}"));
     let next_fn = src[start..]
         .find("\nunsafe fn net_reset()")
-        .map(|o| start + o)
-        .unwrap_or(src.len());
+        .map_or(src.len(), |o| start + o);
     let body = &src[start..next_fn];
     assert!(
         body.contains("snap::load()"),

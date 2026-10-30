@@ -1,9 +1,9 @@
-//! net: IPv6 地址抽象类型定义验证 (iface_trait.rs)
+//! net: IPv6 地址抽象类型定义验证 (`iface_trait.rs`)
 //!
 //! 验收:
-//!   - iface_trait.rs 定义 `Ipv6Addr(pub [u8; 16])` 新类型
-//!   - iface_trait.rs 定义 `enum IpAddr { V4, V6 }` 统一地址类型
-//!   - iface_trait.rs 定义 `Ipv6Cidr` (地址 + 前缀长度)
+//!   - `iface_trait.rs` 定义 `Ipv6Addr(pub [u8; 16])` 新类型
+//!   - `iface_trait.rs` 定义 `enum IpAddr { V4, V6 }` 统一地址类型
+//!   - `iface_trait.rs` 定义 `Ipv6Cidr` (地址 + 前缀长度)
 //!   - 提供 `new_v4` / `new_v6` / `into_ip_addr` 双栈迁移辅助
 //!   - 提供 `is_loopback` / `is_multicast` / `is_unspecified` 判定
 //!   - 内置单元测试覆盖 IPv6 构造/转换/match
@@ -16,7 +16,7 @@ use std::fs;
 const IFACE_TRAIT_RS: &str = "../src/kernel/privileged/net/iface_trait.rs";
 
 fn read(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {} failed: {}", path, e))
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
 #[test]

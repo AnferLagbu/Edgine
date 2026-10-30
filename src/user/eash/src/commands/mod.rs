@@ -90,8 +90,7 @@ impl Cmd {
         // 切到 `start..start+len` 避免相对偏移再次相加, 否则 get(1) 跨过自身 NUL
         // 把后续参数也吞进 slice. eash dispatch 之前因此可能读到错位的参数.
         let len = core::ffi::CStr::from_bytes_until_nul(&self.args[start..])
-            .map(|c| c.to_bytes().len())
-            .unwrap_or(0);
+            .map_or(0, |c| c.to_bytes().len());
         &self.args[start..start + len]
     }
 }
@@ -288,7 +287,7 @@ pub fn dispatch(cmd: &Cmd) {
 }
 
 fn run_external(cmd: &Cmd) {
-    use userlib::*;
+    use userlib::println;
 
     // 构建路径: 尝试 /usr/bin/<name> 和 ./<name>
     let name = cmd.get(0);
@@ -300,7 +299,7 @@ fn run_external(cmd: &Cmd) {
         let len = name.len().min(255);
         path_buf[..len].copy_from_slice(name);
         path_buf[len] = 0;
-        &path_buf[..len + 1]
+        &path_buf[..=len]
     } else {
         let prefix = b"/usr/bin/\0";
         let plen = 9;
@@ -309,7 +308,7 @@ fn run_external(cmd: &Cmd) {
         path_buf[plen - 1] = b'/';
         path_buf[plen..plen + nlen].copy_from_slice(&name[..nlen]);
         path_buf[plen + nlen] = 0;
-        &path_buf[..plen + nlen + 1]
+        &path_buf[..=(plen + nlen)]
     };
 
     // 构建 argv
@@ -332,26 +331,25 @@ fn run_external(cmd: &Cmd) {
     }
 
     for i in 0..argc {
-        argv_ptrs[i] = &arg_buf[arg_offsets[i]] as *const u8;
+        argv_ptrs[i] = &raw const arg_buf[arg_offsets[i]];
     }
     argv_ptrs[argc] = core::ptr::null();
 
-    let pid = userlib::sys::fork() as i32;
+    let pid = i32::try_from(userlib::sys::fork()).expect("fork 返回值超出 i32");
     if pid < 0 {
         println("eash: fork failed");
         return;
     }
     if pid == 0 {
         // 子进程
-        userlib::sys::proc_exec(&path[..path.len() - 1], &argv_ptrs[..argc + 1]);
+        let _ = userlib::sys::proc_exec(&path[..path.len() - 1], &argv_ptrs[..=argc]);
         // exec 失败
         userlib::print("eash: ");
         userlib::print(name_str(name));
         userlib::println(": not found");
         userlib::sys::proc_exit(1);
-    } else {
-        userlib::sys::wait_pid(pid);
     }
+    let _ = userlib::sys::wait_pid(pid);
 }
 
 fn name_str(name: &[u8]) -> &str {

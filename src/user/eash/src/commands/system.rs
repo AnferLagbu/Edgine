@@ -57,7 +57,7 @@ pub fn ps(_: &Cmd) {
 
     println("PID   STATE   PWM     PRI  NAME");
     println("----- ------- -------- ---- --------");
-    for i in 0..count as usize {
+    for i in 0..usize::try_from(count).expect("count 已确认大于 0") {
         let entry = &buf[i * 64..(i + 1) * 64];
         let pid = u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]);
         let state = entry[4];
@@ -86,11 +86,7 @@ pub fn ps(_: &Cmd) {
             .unwrap_or("?")
             .trim_end_matches('\0');
 
-        let _ = write!(
-            FmtWriter,
-            "{:<5} {:<6} {:08X}  {:>4}  ",
-            pid, state_str, pwm, pri
-        );
+        let _ = write!(FmtWriter, "{pid:<5} {state_str:<6} {pwm:08X}  {pri:>4}  ");
         println(name_str);
     }
 }
@@ -98,11 +94,11 @@ pub fn ps(_: &Cmd) {
 /// reboot: 重启系统
 pub fn reboot(_: &Cmd) {
     println("Rebooting...");
-    sys_reboot(0); // cmd=0: normal reboot
+    let _ = sys_reboot(0); // cmd=0: normal reboot
 }
 
 /// halt: 关机
 pub fn halt(_: &Cmd) {
     println("Halting...");
-    sys_reboot(1); // cmd=1: shutdown/halt
+    let _ = sys_reboot(1); // cmd=1: shutdown/halt
 }

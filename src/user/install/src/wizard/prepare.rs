@@ -39,7 +39,7 @@ pub fn execute(disk_id: u32, sectors: u64) -> i32 {
     let r = sys::disk_format(disk_id);
     if r != 0 {
         print(" FAILED (error ");
-        print_dec(r as i64);
+        print_dec(i64::from(r));
         println(")");
         println("  [ABORT] System partition format failed. Disk may need re-initialization.");
         return -1;

@@ -13,7 +13,7 @@ fn mkdir(path: &[u8]) {
     let len = core::cmp::min(path.len(), 127);
     p[..len].copy_from_slice(&path[..len]);
     p[len] = 0;
-    sys::fs_mkdir(&p[..len + 1]);
+    let _ = sys::fs_mkdir(&p[..=len]);
 }
 
 pub fn hostname() {
@@ -26,7 +26,7 @@ pub fn hostname() {
     let name: &[u8] = if len == 0 {
         DEFAULT_HOSTNAME
     } else {
-        &h[..len + 1]
+        &h[..=len]
     };
     let name_len = if len == 0 { 9 } else { len };
     let r = sys::sethostname(&name[..name_len]);
@@ -39,8 +39,8 @@ pub fn hostname() {
     }
     let fd = fs::file_open(HOSTNAME_FILE, sys::O_CREAT | sys::O_WRONLY | sys::O_TRUNC);
     if fd >= 0 {
-        sys::fs_write(fd, &name[..name_len]);
-        sys::fs_close(fd);
+        let _ = sys::fs_write(fd, &name[..name_len]);
+        let _ = sys::fs_close(fd);
     }
     println("");
     println("System configuration complete!");
@@ -85,7 +85,7 @@ pub fn fstab() {
         return;
     }
     let content = b"# Edgine Filesystem Configuration\n# Format: source mountpoint type options\n\nnone    /dev    devfs   defaults\nnone    /proc   procfs  defaults\nnone    /temp   ramfs   defaults,size=64M\n";
-    sys::fs_write(fd, content);
-    sys::fs_close(fd);
+    let _ = sys::fs_write(fd, content);
+    let _ = sys::fs_close(fd);
     println("  [OK] fstab created");
 }

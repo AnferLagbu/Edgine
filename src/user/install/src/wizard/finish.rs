@@ -20,8 +20,8 @@ pub fn execute() -> i32 {
         println("Error: Failed to create installation marker!");
         return -1;
     }
-    sys::fs_write(fd, b"installed\n");
-    sys::fs_close(fd);
+    let _ = sys::fs_write(fd, b"installed\n");
+    let _ = sys::fs_close(fd);
     sys::fs_sync();
 
     println("");
@@ -37,14 +37,14 @@ pub fn execute() -> i32 {
     read_line(&mut buf);
     println("Rebooting system...");
     delay_loop(10_000_000);
-    sys::reboot(0);
+    let _ = sys::reboot(0);
     0
 }
 
 pub fn check_marker() -> bool {
     let fd = fs::file_open(MARKER_FILE, sys::O_RDONLY);
     if fd >= 0 {
-        sys::fs_close(fd);
+        let _ = sys::fs_close(fd);
         false
     } else {
         true

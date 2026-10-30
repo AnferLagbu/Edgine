@@ -1,11 +1,11 @@
-//! Plan B Inode trait + OpenFile + per-process FdTable 契约测试
+//! Plan B Inode trait + `OpenFile` + per-process `FdTable` 契约测试
 //!
 //! 验证 Plan B 架构变更的静态契约:
 //! 1. Inode trait 定义在 functions/fs/inode.rs
-//! 2. OpenFile 持有 Arc<dyn Inode> (非 inode_id: u32)
-//! 3. per-process FdTable 定义在 privileged/proc/fd_table.rs, 仅存 handle_id (u32)
-//! 4. FileSystem::fs_open 返回 Arc<dyn Inode> (非 FsOpenResult)
-//! 5. 7 个 FS 均有原生 Inode 实现 (非 LegacyInode)
+//! 2. `OpenFile` 持有 Arc<dyn Inode> (非 `inode_id`: u32)
+//! 3. per-process `FdTable` 定义在 `privileged/proc/fd_table.rs`, 仅存 `handle_id` (u32)
+//! 4. `FileSystem::fs_open` 返回 Arc<dyn Inode> (非 `FsOpenResult`)
+//! 5. 7 个 FS 均有原生 Inode 实现 (非 `LegacyInode`)
 
 use std::fs;
 
@@ -15,7 +15,7 @@ fn read_file(relative_path: &str) -> String {
         env!("CARGO_MANIFEST_DIR"),
         relative_path
     );
-    fs::read_to_string(&path).unwrap_or_else(|_| panic!("read {}", relative_path))
+    fs::read_to_string(&path).unwrap_or_else(|_| panic!("read {relative_path}"))
 }
 
 // ============================================================================

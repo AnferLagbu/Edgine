@@ -23,7 +23,7 @@
 //!
 //! ## 覆盖契约
 //!
-//! - PSCI 函数 ID 编码 (SYSTEM_OFF/RESET/VERSION/CPU_ON);
+//! - PSCI 函数 ID 编码 (`SYSTEM_OFF/RESET/VERSION/CPU_ON`);
 //! - `PsciError` 负返回码 ↔ 变体一一映射;
 //! - 次核启动槽 `ApBootInfo` 尺寸 (80 字节) 与字段顺序 ↔ 汇编字节偏移;
 //! - 启动槽 / 入口 stub 的低半区符号与链接脚本高半区别名。
@@ -47,11 +47,11 @@ fn read(rel: &str) -> String {
 fn slice_between<'a>(src: &'a str, begin: &str, end: &str) -> &'a str {
     let start = src
         .find(begin)
-        .unwrap_or_else(|| panic!("未找到起点标记: {}", begin));
+        .unwrap_or_else(|| panic!("未找到起点标记: {begin}"));
     let rest = &src[start..];
     let end_off = rest
         .find(end)
-        .unwrap_or_else(|| panic!("未找到终点标记: {}", end));
+        .unwrap_or_else(|| panic!("未找到终点标记: {end}"));
     &rest[..end_off]
 }
 
@@ -129,8 +129,7 @@ fn psci_error_variants_present() {
     ] {
         assert!(
             src.contains(variant),
-            "PsciError 缺少变体 {} (ARM PSCI 负返回码映射)",
-            variant
+            "PsciError 缺少变体 {variant} (ARM PSCI 负返回码映射)"
         );
     }
     assert!(
@@ -157,8 +156,7 @@ fn psci_error_code_mapping_frozen() {
         let arm = format!("{code} => Some(Self::{variant})");
         assert!(
             src.contains(&arm),
-            "PsciError::from_i64 缺少映射分支 `{}` (PSCI 负返回码契约)",
-            arm
+            "PsciError::from_i64 缺少映射分支 `{arm}` (PSCI 负返回码契约)"
         );
     }
     assert!(
@@ -197,11 +195,10 @@ fn ap_boot_slot_field_order_matches_asm() {
         let decl = format!("{name}: u64,");
         let at = body
             .find(&decl)
-            .unwrap_or_else(|| panic!("ApBootInfo 缺少字段声明 `{}`", decl));
+            .unwrap_or_else(|| panic!("ApBootInfo 缺少字段声明 `{decl}`"));
         assert!(
             at >= last,
-            "ApBootInfo 字段 {} 声明顺序错乱 (偏移递增被破坏)",
-            name
+            "ApBootInfo 字段 {name} 声明顺序错乱 (偏移递增被破坏)"
         );
         last = at;
     }
@@ -212,9 +209,7 @@ fn ap_boot_slot_field_order_matches_asm() {
     for (name, offset) in AP_BOOT_FIELDS.iter().zip(AP_BOOT_FIELD_OFFSETS.iter()) {
         assert!(
             stub.contains(offset),
-            "ap_entry_asm 缺少访问槽字段 {} 的偏移 `{}` (Rust↔汇编布局契约)",
-            name,
-            offset
+            "ap_entry_asm 缺少访问槽字段 {name} 的偏移 `{offset}` (Rust↔汇编布局契约)"
         );
     }
 
@@ -228,8 +223,7 @@ fn ap_boot_slot_field_order_matches_asm() {
     ] {
         assert!(
             stub.contains(reg),
-            "ap_entry_asm 缺少 `{}` (槽字段未绑定到对应系统寄存器)",
-            reg
+            "ap_entry_asm 缺少 `{reg}` (槽字段未绑定到对应系统寄存器)"
         );
     }
 }
@@ -288,8 +282,7 @@ fn per_cpu_gic_enables_all_kernel_sgis() {
     ] {
         assert!(
             src.contains(decl),
-            "gic.rs 必须集中定义内核 SGI 编号: {}",
-            decl
+            "gic.rs 必须集中定义内核 SGI 编号: {decl}"
         );
     }
 
@@ -302,8 +295,7 @@ fn per_cpu_gic_enables_all_kernel_sgis() {
     ] {
         assert!(
             init.contains(call),
-            "init_per_cpu (BSP/AP 共用入口) 必须使能: {}",
-            call
+            "init_per_cpu (BSP/AP 共用入口) 必须使能: {call}"
         );
     }
 

@@ -1,8 +1,8 @@
-//! DECISION-K: IpcStrategy 注册时序门禁测试 (2026-09-12)
+//! DECISION-K: `IpcStrategy` 注册时序门禁测试 (2026-09-12)
 //!
 //! 验证 (静态契约):
 //! 1. 注册点前置: `register_default_ipc_strategy()` 在 lib.rs 中位于
-//!    `interrupt_late_init` **之前** (kernel_init 早期, 删去 VFS 后约束)
+//!    `interrupt_late_init` **之前** (`kernel_init` 早期, 删去 VFS 后约束)
 //! 2. 未注册降级契约: `current_ipc_strategy()` 返回 `Option` (不 panic);
 //!    13 处 FFI 调用点含 `Errno::Enosys` 降级 (逻辑错误降级原则, 不进 freg 恢复)
 
@@ -60,8 +60,7 @@ fn current_ipc_strategy_returns_option() {
     );
     let current_fn = src
         .split_once("pub fn current_ipc_strategy")
-        .map(|(_, b)| b)
-        .unwrap_or("");
+        .map_or("", |(_, b)| b);
     assert!(
         !current_fn.contains("panic!"),
         "current_ipc_strategy 不得 panic (未注册降级契约)"
