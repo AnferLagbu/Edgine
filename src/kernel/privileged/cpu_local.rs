@@ -113,7 +113,7 @@ impl<T> CpuLocal<T> {
 /// `CpuLocal::get_mut` 返回的独占借用守卫
 ///
 /// 代替直接返回 `&mut T` 的裸引用, 独占语义仍由调用方 (per-CPU 独占访问)
-/// 保证; 守卫仅承载该引用并通过 [`Deref`] / [`DerefMut`] 提供原引用用法,
+/// 保证; 守卫仅承载该引用并通过 [`core::ops::Deref`] / [`core::ops::DerefMut`] 提供原引用用法,
 /// 需要取出原引用时用 [`Self::into_inner`].
 pub struct CpuLocalMut<'a, T> {
     /// 被守卫的独占引用

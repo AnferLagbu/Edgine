@@ -252,7 +252,7 @@ impl IdtManager {
     /// * `isr0x82` - 恢复中断 (int 0x82) 地址
     ///
     /// 启动顺序契约 (I-24) 的校验由 x86_64 专属的
-    /// [`Self::validate_boot_order`] 承担, 调用方须在调用本函数前完成校验。
+    /// `Self::validate_boot_order` 承担, 调用方须在调用本函数前完成校验。
     pub fn init(
         &self,
         isr_table: &[u64; 32],
@@ -353,11 +353,11 @@ impl IdtManager {
     /// 校验启动顺序契约 (I-24): TSS init (`set_ist[0..4]`) 必须在 IDT init 之前完成.
     ///
     /// 校验关键 IST (0-3) 已填充非零栈顶, 避免 #DF/NMI/#PF/0x82 触发时切换到 0 栈顶.
-    /// 注释格式: IDT IST=N → TSS ist[N-1]
-    ///   #DF  (vec 8)  → IDT IST=1 → TSS ist[0]
-    ///   NMI  (vec 2)  → IDT IST=2 → TSS ist[1]
-    ///   #PF  (vec 14) → IDT IST=4 → TSS ist[3]
-    ///   0x82 (恢复)   → IDT IST=3 → TSS ist[2]
+    /// 注释格式: IDT IST=N → `TSS ist[N-1]`
+    ///   #DF  (vec 8)  → IDT IST=1 → `TSS ist[0]`
+    ///   NMI  (vec 2)  → IDT IST=2 → `TSS ist[1]`
+    ///   #PF  (vec 14) → IDT IST=4 → `TSS ist[3]`
+    ///   0x82 (恢复)   → IDT IST=3 → `TSS ist[2]`
     ///
     /// # Errors
     /// 关键 IST (0-3) 未填充非零栈顶时返回 `Err` 的描述文本。
