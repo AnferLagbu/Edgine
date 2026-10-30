@@ -1,7 +1,7 @@
 #!/bin/bash
 # Edgine 内核代码审计脚本
 # 工具栈: cargo check (双架构) + clippy (pedantic, 含 feature 维) + rustfmt
-#         + audit_*.py 审计腿群 + Lockbud 死锁/数据竞争扫描 + QEMU 真实启动 (full 档)
+#         + audit_*.py 审计腿群 + Lockbud 死锁扫描 + QEMU 真实启动 (full 档)
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
 # - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 双架构) + 2c rustfmt, 到 2c 后即退出
@@ -717,44 +717,82 @@ else
     err "P-49 存量审计腿未到位:${AUDIT_MISSING_LEGS_FULL} (fail-closed, 不接受假绿)"
 fi
 
-# ── 3. Lockbud 死锁/数据竞争扫描 ────────────────────────────────
+# ── 3. Lockbud 死锁扫描 ───────────────────────────────────────
 # P-47 甲「状态分离」: 原写法 `cargo lockbud … || LOCKBUD_RESULT=$?` 的非零结果只打成
 # 一句「可能发现潜在问题或工具未安装」的黄字且不改退出码. 本机实测 `command -v
-# cargo-lockbud` 为空 ⇒ full 每次都走该合并分支, §2.2 宣称的死锁/数据竞争扫描从未
+# cargo-lockbud` 为空 ⇒ full 每次都走该合并分支, §2.2 宣称的死锁扫描从未
 # 产生过一次读数, 而日志看起来像执行过. 现拆三态:
 #   工具缺失 → skip_leg 记入「因环境缺失未执行腿数」(不改退出码, 与 P-55 乙 对 QEMU 的裁定同语义);
 #   真跑非零 → err 阻断, 与 §2.2 把该项列为「强制」一致.
 # P-56 丙 (2026-10-23 按国内镜像真装一次) 的三条实测订正:
 #   ① 装机名两个: `cargo install --path .` 同时产出 `lockbud` (rustc wrapper) 与
 #      `cargo-lockbud` (cargo 子命令派发). 本仓调用 `cargo lockbud` 派发的是后者, 故存在性
-#      探 `cargo-lockbud`; 但缺 `lockbud` 时 wrapper 起不来, 两个都探. requirements.sh 原注
-#      「只装 lockbud」不成立, 已按实测改写.
+#      探 `cargo-lockbud`; 但缺 `lockbud` 时 wrapper 起不来, 两个都探.
 #   ② 上游硬前提: 项目必须用与 lockbud **同版本**的 nightly 编译 (上游 README). 本机装出的
 #      lockbud 内建 rustc = 1.95.0-nightly (efc9e1b50 2026-02-06), 本仓钉 nightly-2026-10-02;
-#      用 2026-02-07 编译本树实测失败: kernel 5 处 E0658 (`uint_bit_width` 未稳定) + sha2 0.11
-#      codegen `rustc-LLVM ERROR: Do not know how to split the result of this operator!`.
-#      ⇒ 「已安装」不等于「可执行」. 匹配判据 = 用仓库工具链加载一次 wrapper: 能加载 ⇒ 版本
-#      匹配可跑; `librustc_driver-*.so: cannot open shared object file` ⇒ skip 并点名实测原因.
+#      在仓库工具链下加载 wrapper 时 `librustc_driver-*.so` dlopen 失败 ⇒ 「已安装」不等于
+#      「可执行」. 匹配判据 = 用目标工具链加载一次 wrapper.
 #   ③ 调用形态两处缺陷: 派发器把第一个 `--` **之前**的参数塞进 LOCKBUD_FLAGS (lockbud 的 clap
 #      解析, 无法识别的 flag 被 unwrap_or_default 静默丢弃), **之后**才原样交给 `cargo build`;
 #      原写法没有 `--`, `--manifest-path` 等全被丢弃 ⇒ 退化为在 src/rust 裸跑 `cargo build`,
 #      扫不到 kernel. 现补 `--` 分界; 另加 `--exit-code-on-bug` (默认 false, 有发现也退 0,
-#      「零发现」会假绿) 与 `-l kernel` (上游建议只分析本仓 crate, 避免依赖噪声).
-step "3/6 Lockbud 死锁/数据竞争扫描"
+#      「零发现」会假绿).
+# H-1 乙 (2026-10-30 用户裁定): 腿绑 `nightly-2026-02-07` **只取读数** —— 该工具链与 wrapper
+# 内建 rustc 逐字相同 (1.95.0-nightly 2026-02-06) 且已装 rustc-dev/rust-src, 是唯一能加载
+# wrapper 的已装工具链; 仓库工具链仍钉 nightly-2026-10-02, 编译正确性判据不受影响. 该绑定属
+# 「审计口径」决策 (非仓库工具链跑门禁), 故注释到此为止, 读数只作粗筛, 不替代仓库工具链验证.
+# H-1 落地时的四点实测 (改这几处参数前先复跑, 否则腿会静默退化成假绿):
+#   ① 本树在 2026-02-07 下**原样编不过**: 4 处 E0658 (result_option_map_or_default /
+#      uint_bit_width / atomic_try_update ×2), 均为 2026-10 才稳定的 std API. ⇒ 用
+#      `-Zcrate-attr=feature(...)` 注入特性门 (不改源码); 注意 RUSTFLAGS 会**覆盖**
+#      src/rust/.cargo/config.toml 的 target rustflags, 故 `-C relocation-model=static
+#      -C link-arg=-nostdlib` 必须在本变量里重述.
+#   ② 该工具链编译 sha2 0.11 在 **debug** 档触发 `rustc-LLVM ERROR: Do not know how to split
+#      the result of this operator!` (P-56 记录的同一个), release 档通过 ⇒ 必须 `--release`.
+#   ③ `-k all` 在 kernel-privileged 上让 lockbud 自身 ICE ⇒ 本腿固定 `-k deadlock` (腿的声明
+#      范围就是死锁; atomicity/memory/panic 检测器不带门禁, 数据竞争静态面仍由
+#      audit_deadlock_matrix.py 承担).
+#   ④ P-71 拆 crate 后 `-l kernel` 只命中 glue crate (白名单是按 crate 名精确匹配,
+#      kernel-privileged/functions/edgine-abi 都不在内) ⇒ 必须列全本仓 crate; 且 lockbud
+#      **只在编译期分析**: 复用 target-dir 时 cargo 不重编, 还会把上次 wrapper 的 stderr
+#      回放进本轮输出 —— 实测温跑 0.08s / 零 Compiling, 却仍有 4 条 `Detecting deadlock`
+#      (时间戳全是上一轮的), 单看分析条数会假绿. 故专用 target-dir 每轮 rm -rf (承重),
+#      并把「本轮实编 crate 数」与「分析条数」分别对 crate 数对账, 任一不足都拒绝.
+step "3/6 Lockbud 死锁扫描"
 pushd src/rust > /dev/null
 unset RUSTC_WRAPPER
-REPO_TOOLCHAIN="$(sed -n 's/^channel *= *"\([^"]*\)"/\1/p' "$PROJECT_ROOT/rust-toolchain.toml")"
+LOCKBUD_TOOLCHAIN="nightly-2026-02-07"
+LOCKBUD_CRATES="kernel,kernel-privileged,kernel-functions,edgine-abi"
+LOCKBUD_TARGET_DIR="$PROJECT_ROOT/other/target-lockbud"
+# RUSTFLAGS 覆盖 target rustflags ⇒ 三条 -C 与特性门都写在同一处 (见上方实测①).
+LOCKBUD_RUSTFLAGS='-C relocation-model=static -C link-arg=-nostdlib -Zcrate-attr=feature(result_option_map_or_default,uint_bit_width,atomic_try_update)'
+IFS=',' read -r -a LOCKBUD_CRATE_ARR <<< "$LOCKBUD_CRATES"
+LOCKBUD_EXPECTED=${#LOCKBUD_CRATE_ARR[@]}
 if ! command -v cargo-lockbud >/dev/null 2>&1 || ! command -v lockbud >/dev/null 2>&1; then
     skip_leg "lockbud" "工具缺失: lockbud / cargo-lockbud 不在 PATH (两者由同一次 cargo install 产出, 安装步骤见 scripts/requirements.sh)"
-elif ! LOCKBUD_RUSTC="$(timeout 5 rustup run "$REPO_TOOLCHAIN" lockbud --version 2>&1)"; then
-    skip_leg "lockbud" "工具与仓库工具链不匹配: lockbud 内建 rustc 无法在 ${REPO_TOOLCHAIN} 下加载 (上游要求项目与 lockbud 同版本 nightly; 实测内建 1.95.0-nightly 2026-02-06, 用该 nightly 编译本树失败 E0658 + sha2 LLVM error, 见 P-56)"
+elif ! rustup toolchain list 2>/dev/null | grep -q "^${LOCKBUD_TOOLCHAIN}-"; then
+    skip_leg "lockbud" "取证工具链未安装: ${LOCKBUD_TOOLCHAIN} (wrapper 内建 rustc 1.95.0-nightly 2026-02-06, 只有同版本工具链能加载; 安装: rustup toolchain install ${LOCKBUD_TOOLCHAIN} --component rust-src,rustc-dev)"
+elif ! rustup component list --installed --toolchain "$LOCKBUD_TOOLCHAIN" 2>/dev/null | grep -q '^rust-src'; then
+    skip_leg "lockbud" "取证工具链缺 rust-src: build-std 无法编标准库 (rustup component add rust-src --toolchain ${LOCKBUD_TOOLCHAIN})"
+elif ! LOCKBUD_RUSTC="$(timeout 5 rustup run "$LOCKBUD_TOOLCHAIN" lockbud --version 2>&1)"; then
+    skip_leg "lockbud" "工具与取证工具链不匹配: lockbud 内建 rustc 无法在 ${LOCKBUD_TOOLCHAIN} 下加载 (上游要求同版本 nightly; 实测内建 1.95.0-nightly 2026-02-06)"
 else
-    LOCKBUD_OUT=$(cargo lockbud --exit-code-on-bug -l kernel -- --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1) && LOCKBUD_RC=0 || LOCKBUD_RC=$?
-    printf '%s\n' "$LOCKBUD_OUT" | tail -25
-    if [ "$LOCKBUD_RC" -eq 0 ]; then
-        ok "lockbud: 扫描通过 (零发现; 内建 ${LOCKBUD_RUSTC})"
+    # 冷缓存承重: 复用旧产物时 cargo 会回放上一轮 wrapper 日志 (见上方实测④), 每轮必须重建.
+    rm -rf "$LOCKBUD_TARGET_DIR"
+    LOCKBUD_OUT=$(RUSTFLAGS="$LOCKBUD_RUSTFLAGS" LOCKBUD_LOG=debug \
+        cargo +"$LOCKBUD_TOOLCHAIN" lockbud -k deadlock --exit-code-on-bug -l "$LOCKBUD_CRATES" -- \
+        --release --manifest-path ../kernel/Cargo.toml --target x86_64-unknown-none \
+        --target-dir "$LOCKBUD_TARGET_DIR" "${BUILD_STD_CFG[@]}" 2>&1) && LOCKBUD_RC=0 || LOCKBUD_RC=$?
+    LOCKBUD_ANALYZED=$(printf '%s\n' "$LOCKBUD_OUT" | grep -c "Detecting deadlock" || true)
+    LOCKBUD_BUILT=$(printf '%s\n' "$LOCKBUD_OUT" | grep -cE '^   Compiling (kernel|kernel-privileged|kernel-functions|edgine-abi) v' || true)
+    if [ "$LOCKBUD_RC" -ne 0 ]; then
+        printf '%s\n' "$LOCKBUD_OUT" | grep -vE '^\[[0-9T:.-]+Z DEBUG lockbud' | tail -30
+        err "lockbud: 扫描返回非零 (exit=${LOCKBUD_RC}, 已分析 ${LOCKBUD_ANALYZED}/${LOCKBUD_EXPECTED} crate) —— --exit-code-on-bug 下非零即发现问题, 按 §2.2「强制」阻断 (P-47 甲 / P-56 ③)"
+    elif [ "$LOCKBUD_ANALYZED" -lt "$LOCKBUD_EXPECTED" ] || [ "$LOCKBUD_BUILT" -lt "$LOCKBUD_EXPECTED" ]; then
+        printf '%s\n' "$LOCKBUD_OUT" | grep -vE '^\[[0-9T:.-]+Z DEBUG lockbud' | tail -30
+        err "lockbud: 扫描读数不可信 (分析 ${LOCKBUD_ANALYZED}/${LOCKBUD_EXPECTED}, 本轮实编 ${LOCKBUD_BUILT}/${LOCKBUD_EXPECTED} crate) —— 白名单失配则分析不到, 复用旧产物则由 cargo 回放假读数; 两种都不算扫描发生 (不接受假绿)"
     else
-        err "lockbud: 扫描返回非零 (exit=${LOCKBUD_RC}) —— --exit-code-on-bug 下非零即发现问题, 按 §2.2「强制」阻断 (P-47 甲 / P-56 ③)"
+        ok "lockbud: 扫描通过 (实编并分析 ${LOCKBUD_ANALYZED}/${LOCKBUD_EXPECTED} crate, 零发现; wrapper 内建 ${LOCKBUD_RUSTC})"
     fi
 fi
 popd > /dev/null

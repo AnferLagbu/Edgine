@@ -940,22 +940,23 @@ if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_TESTS" = false ]; then
     #      且提示一条不存在的 `cargo install --locked lockbud`). 实测安装步骤 (国内镜像):
     #        RUSTUP_DIST_SERVER=https://rsproxy.cn rustup toolchain install nightly-2026-02-07 \
     #            --component rust-src,rustc-dev,llvm-tools-preview
-    #        git clone https://ghproxy.net/https://github.com/BurtonQin/lockbud.git
+    #        git clone https://ghproxy.net/https://github.com/CodeSentryAI/lockbud.git
     #        cargo +nightly-2026-02-07 install --path lockbud
-    #   ③ 上游要求项目用与 lockbud **同版本**的 nightly 编译; 本仓钉 nightly-2026-10-02, 装出的
-    #      lockbud 内建 1.95.0-nightly (2026-02-06) 无法在仓库工具链下加载, 用 2026-02-07 编译
-    #      本树实测失败 (kernel 5 处 E0658 + sha2 0.11 codegen LLVM error) ⇒ 已装也不可执行,
-    #      ci/audit.sh full 记 skip 并点名 (P-56), 不再让「已装」被读成「跑过」.
+    #      两个仓要分清: BurtonQin/lockbud 是 0.1.0 (rust-toolchain 锁 nightly-2023-04-11);
+    #      本机装的 0.2.0 对应 CodeSentryAI/lockbud, 其 rust-toolchain.toml 即 2026-02-07.
+    #   ③ 上游要求 wrapper 与 rustc **同版本**: 内建 1.95.0-nightly (2026-02-06) 只在
+    #      nightly-2026-02-07 下可加载, 仓库工具链 nightly-2026-10-02 会 dlopen 失败.
+    #      H-1 乙 (2026-10-30) 起 ci/audit.sh 步骤 3 改用 2026-02-07 只取读数 (仓库工具链
+    #      仍是编译正确性唯一判据); 本树在旧工具链下还需 -Zcrate-attr 特性门 + --release +
+    #      -k deadlock, 实测细节见 ci/audit.sh 步骤 3 注. 缺该工具链时 full 记 skip 并点名.
     #   ④ 本项**不计入** TESTING_TOTAL: 它既非系统包也非 crates.io 包, 安装器无从修复; 计入会让
     #      「缺失 N 项」与下方可安装清单相差 1. 状态只作播报, 可执行性由 ci/audit.sh 的腿裁定.
-    print_check "lockbud (数据竞争/死锁静态分析)"
-    REQ_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    print_check "lockbud (死锁静态分析)"
     if has_cmd cargo-lockbud && has_cmd lockbud; then
-        if timeout 5 rustup run "$(sed -n 's/^channel *= *"\([^"]*\)"/\1/p' "$REQ_ROOT/rust-toolchain.toml")" \
-            lockbud --version &>/dev/null; then
+        if timeout 5 rustup run nightly-2026-02-07 lockbud --version &>/dev/null; then
             print_ok
         else
-            print_info "已装但与仓库工具链不匹配 (上游要求同版本 nightly), ci/audit.sh full 会记 skip 而非假绿"
+            print_info "已装但取证工具链 nightly-2026-02-07 缺失或 wrapper 无法加载 (H-1 乙), ci/audit.sh full 会记 skip 而非假绿"
         fi
     else
         print_recommended_missing

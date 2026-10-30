@@ -1040,7 +1040,11 @@ fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
 
 /// P-56 结构锁 (甲＋甲＋丙): 两条不承重的统计腿必须不存在, 剩余 full-only 步骤必须连续编号,
 /// 头部自述不得再把它们写回覆盖清单; Lockbud 腿须保留「缺失 / 已装但工具链不匹配 / 可跑」
-/// 三态, 且调用形态必须带 `--` 分界、`--exit-code-on-bug` 与 `-l kernel`.
+/// 三态, 且调用形态必须带 `--` 分界、`--exit-code-on-bug` 与全量本仓 crate 白名单.
+///
+/// H-1 乙 (2026-10-30) 追加: 腿绑 `nightly-2026-02-07` (wrapper 内建 rustc 同版本) 只取读数;
+/// 该绑定 + `-k deadlock` + `--release` + 专用冷 target-dir 均为实测必需 (见 ci/audit.sh 注),
+/// 白名单必须列全 P-71 拆出的四个 crate (只写 `kernel` 会退化成只扫 glue 的假绿).
 ///
 /// 病灶: ① 「3 SAFETY 注释覆盖率统计」用 `grep -c "unsafe {"` 对 `grep -c "// SAFETY:"`
 /// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 audit_safety_coverage.py (1722/1722) 同名不同尺,
@@ -1098,29 +1102,54 @@ fn test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states() {
         "头部仍把已删除的 SAFETY 统计腿写进 full 覆盖清单 (自述与结构脱节)"
     );
 
-    // P-56 丙: Lockbud 三态与调用形态 (2026-10-23 按国内镜像真装一次后的实测口径).
+    // P-56 丙 + H-1 乙: Lockbud 三态与调用形态 (2026-10-30 实测口径).
     assert!(
-        sh.contains("rustup run \"$REPO_TOOLCHAIN\" lockbud --version"),
-        "Lockbud 腿缺少「能否在仓库工具链下加载」的判据 —— 已装但版本不匹配时会直接真跑, \
-         把 full 永久染红 (上游要求项目与 lockbud 同版本 nightly, 见 P-56 丙)"
+        sh.contains("rustup run \"$LOCKBUD_TOOLCHAIN\" lockbud --version"),
+        "Lockbud 腿缺少「能否在取证工具链下加载」的判据 —— 已装但版本不匹配时会直接真跑, \
+         把 full 永久染红 (上游要求项目与 lockbud 同版本 nightly, 见 P-56 丙 / H-1 乙)"
     );
     assert!(
-        sh.contains("工具与仓库工具链不匹配"),
+        sh.contains("工具与取证工具链不匹配"),
         "Lockbud 的「已装但不可执行」态消失 —— 它必须 skip 并点名实测原因, \
          不能混进「工具缺失」或伪装成「真跑失败」"
     );
     assert!(
-        sh.contains("cargo lockbud --exit-code-on-bug -l kernel -- --manifest-path"),
-        "Lockbud 调用形态回退 (缺 --exit-code-on-bug / -l kernel / `--` 分界) —— \
-         派发器会把 `--manifest-path` 等误当 lockbud flags 并静默丢弃, 扫不到 kernel (P-56 ③)"
+        sh.contains("LOCKBUD_TOOLCHAIN=\"nightly-2026-02-07\""),
+        "Lockbud 取证工具链名丢失 —— wrapper 内建 rustc 1.95.0-nightly (2026-02-06), \
+         只有 nightly-2026-02-07 能加载 (H-1 乙); 换工具链前先重跑 wrapper 加载探针"
+    );
+    assert!(
+        sh.contains("LOCKBUD_CRATES=\"kernel,kernel-privileged,kernel-functions,edgine-abi\""),
+        "Lockbud 白名单未列全 P-71 拆出的本仓 crate —— `-l` 按 crate 名精确匹配, \
+         只写 kernel 只扫 glue, 是零发现的假绿"
+    );
+    assert!(
+        sh.contains("cargo +\"$LOCKBUD_TOOLCHAIN\" lockbud -k deadlock --exit-code-on-bug -l \"$LOCKBUD_CRATES\" --"),
+        "Lockbud 调用形态回退 (缺 +工具链 / -k deadlock / --exit-code-on-bug / 白名单 / \
+         `--` 分界) —— 派发器会把 `--manifest-path` 等误当 lockbud flags 并静默丢弃 (P-56 ③)"
+    );
+    assert!(
+        sh.contains("--release --manifest-path ../kernel/Cargo.toml"),
+        "Lockbud 腿未显式走 release 档 —— 取证工具链下 sha2 0.11 的 debug codegen 会 \
+         `rustc-LLVM ERROR` 崩溃 (H-1 实测②)"
     );
     assert!(
         !sh.contains("cargo lockbud --manifest-path"),
         "旧的 Lockbud 调用形态残留 (无 `--` 分界) —— cargo 退化为在 src/rust 裸跑 cargo build"
     );
     assert!(
-        sh.contains("REPO_TOOLCHAIN=\"$(sed -n"),
-        "Lockbud 腿未从 rust-toolchain.toml 派生本仓工具链名 —— 硬编码通道名会随升级漂移"
+        sh.contains("rm -rf \"$LOCKBUD_TARGET_DIR\"") && sh.contains("Detecting deadlock"),
+        "Lockbud 腿缺少「冷缓存 + 分析到位」判据 —— lockbud 只在编译期分析, 复用旧产物时 \
+         cargo 不重编却会回放上一轮 wrapper 日志 (实测 0.08s / 零 Compiling 仍有 4 条 \
+         Detecting deadlock); 必须清空专用 target-dir, 并把分析条数与 crate 数对账 (H-1 ④)"
+    );
+    assert!(
+        sh.contains("LOCKBUD_BUILT=")
+            && sh
+                .contains("^   Compiling (kernel|kernel-privileged|kernel-functions|edgine-abi) v")
+            && sh.contains("本轮实编 ${LOCKBUD_BUILT}/${LOCKBUD_EXPECTED}"),
+        "Lockbud 腿的假绿守卫回退成只数回放日志 —— 必须同时要求「本轮实编 crate 数」达标, \
+         否则复用旧产物时 cargo 回放的 Detecting deadlock 会让守卫失效 (H-1 ④)"
     );
 
     let req = read(REQUIREMENTS_SH);
