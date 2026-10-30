@@ -65,6 +65,13 @@ E2E_CURRENT_ROUND="${E2E_CURRENT_ROUND:-1}"
 A64_E2E_HOST_PORT="${A64_E2E_HOST_PORT:-8081}"
 A64_E2E_READY_TIMEOUT="${A64_E2E_READY_TIMEOUT:-60}"
 
+# --- P-62 甲 feature 运行维参数 (仅 ARCH=all 执行) ---
+# 四个 feature 只喂 cfg! (caps.rs / kaslr.rs), 编译维与默认构建同形 ⇒ 以
+# KERNEL_FEATURES=<feat> 真构建 + 真启动, 断言启动日志能力行恰好只翻转该位.
+FEATURE_CAPS=(smp preempt kaslr freg)
+# 能力行在配置表早期打印, 15s 足够覆盖冷启动抖动; 与整机 boot 的 25s 区分开.
+FEATURE_BOOT_TIMEOUT="${FEATURE_BOOT_TIMEOUT:-15}"
+
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
 err()  { echo -e "${RED}\u2717 $1${NC}"; }
 warn() { echo -e "${YELLOW}! $1${NC}"; }
@@ -189,6 +196,53 @@ verify_image_arch() {
         return 1
     fi
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# P-62 甲: feature 运行维 (仅 ARCH=all).
+#
+# 病灶: smp / preempt / kaslr / freg 只被 caps.rs 与 kaslr.rs 的 cfg! 读取,
+# 不门控任何代码 ⇒ 编译维与默认构建同形, 真实运行路径从未进过任何门禁.
+# 本维对每个 feature 做一次真构建 + 真启动, 断言启动日志能力行**恰好**只翻转
+# 该位 (kpti 在 x86_64 release 恒 on, 作为对照位一并钉死). 构建开关 ↔ 输出
+# 任一位断链即红, 防「feature 转发失效但镜像照样能启动」的静默退化.
+#
+# 仅 ARCH=all 执行: 每次切换需 cargo 重建 (~15s) + 启动 (~15s), 逐架构快查
+# 入口 (make ci-boot) 不重复跑; full 档由 ci/audit.sh 步骤 4 以 all 调用.
+# 参数: $1=feature 名; 返回: 0 = 构建 + 启动 + 能力行断言全部通过.
+# ---------------------------------------------------------------------------
+feature_caps_boot() {
+    local feat="$1"
+    local log="$LOG_DIR/qemu_feature_caps_${feat}.log"
+    local expect
+    case "$feat" in
+        smp)     expect="smp=on preempt=off kaslr=off kpti=on freg=off" ;;
+        preempt) expect="smp=off preempt=on kaslr=off kpti=on freg=off" ;;
+        kaslr)   expect="smp=off preempt=off kaslr=on kpti=on freg=off" ;;
+        freg)    expect="smp=off preempt=off kaslr=off kpti=on freg=on" ;;
+        *) err "未知 feature: $feat"; return 1 ;;
+    esac
+
+    info "[x86_64] P-62: KERNEL_FEATURES=${feat} 构建..."
+    if ! make ARCH=x86_64 KERNEL_FEATURES="$feat" all 2>&1 | tail -3; then
+        err "[x86_64] P-62 ${feat}: 构建失败"
+        return 1
+    fi
+    verify_image_arch "x86_64" other/build/x86_64/kernel.flat || return 1
+
+    rm -f "$log"
+    boot_and_check "x86_64" "$log" "$FEATURE_BOOT_TIMEOUT" "capabilities" \
+        -m 512 -smp 2 -kernel other/build/x86_64/kernel.flat || return 1
+
+    local line
+    line=$(grep -aoE "smp=(on|off) preempt=(on|off) kaslr=(on|off) kpti=(on|off) freg=(on|off)" \
+        "$log" | head -1 || true)
+    if [ "$line" = "$expect" ]; then
+        ok "[x86_64] P-62 ${feat}: 能力行符合预期 (${line})"
+        return 0
+    fi
+    err "[x86_64] P-62 ${feat}: 能力行不符 — 期望 '${expect}', 实测 '${line:-无}'"
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -505,6 +559,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         # APS-05 (DECISION-084): -smp 2 使次核上线路径与双核并发 EL0 进入门禁.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
             -m 512 -smp 2 -kernel other/build/x86_64/kernel.flat; then
+            # P-62 甲 负控制: 默认构建 (KERNEL_FEATURES 空) 的能力行必须四 feature
+            # 全 off; 若上一轮 feature 镜像未被复原/戳记失效, 这里会先于功能断言
+            # 转红. kpti 在 x86_64 release 恒 on, 一并钉死防止误读为 feature 位.
+            CAPS_LINE=$(grep -aoE "smp=(on|off) preempt=(on|off) kaslr=(on|off) kpti=(on|off) freg=(on|off)" "$X64_LOG" | head -1 || true)
+            if [ "$CAPS_LINE" = "smp=off preempt=off kaslr=off kpti=on freg=off" ]; then
+                ok "[x86_64] P-62 默认能力行通过 (smp/preempt/kaslr/freg 全 off)"
+            else
+                err "[x86_64] P-62 默认能力行不符 — 期望 'smp=off preempt=off kaslr=off kpti=on freg=off', 实测 '${CAPS_LINE:-无}'"
+                RESULT=1
+            fi
             # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
             if grep -q "e1000: 初始化完成" "$X64_LOG"; then
                 ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
@@ -591,6 +655,31 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         else
             [ "$FAIL_OK" = "0" ] && RESULT=1
         fi
+    fi
+fi
+
+# P-62 甲: feature 运行维 —— 只在 all (full 档) 跑; 结束后复原默认构建,
+# 避免把 feature 镜像留给后续步骤或下一次运行.
+if [ "$ARCH" = "all" ]; then
+    info "=== P-62 feature 运行维 (x86_64) ==="
+    FEATURE_FAILED=0
+    for FEAT in "${FEATURE_CAPS[@]}"; do
+        feature_caps_boot "$FEAT" || FEATURE_FAILED=$((FEATURE_FAILED + 1))
+    done
+    # 复原默认构建 (KERNEL_FEATURES 空 ⇒ 内容戳记失配触发重建). 放在失败判定
+    # 之外, 保证即便某条 feature 腿失败, 退出时 other/build/x86_64 仍是默认镜像.
+    info "[x86_64] P-62: 复原默认构建 (KERNEL_FEATURES 空)..."
+    if make ARCH=x86_64 all 2>&1 | tail -3; then
+        ok "[x86_64] P-62: 默认构建已复原"
+    else
+        err "[x86_64] P-62: 默认构建复原失败"
+        RESULT=1
+    fi
+    if [ "$FEATURE_FAILED" -eq 0 ]; then
+        ok "[x86_64] P-62 feature 运行维: ${#FEATURE_CAPS[@]}/${#FEATURE_CAPS[@]} 通过"
+    else
+        err "[x86_64] P-62 feature 运行维: ${FEATURE_FAILED}/${#FEATURE_CAPS[@]} 失败"
+        RESULT=1
     fi
 fi
 
@@ -713,6 +802,9 @@ fi
 echo ""
 echo "============================================"
 echo "QEMU 真实启动测试: ${PASSED}/${TESTED} 通过 (门禁模式: FAIL_OK=${FAIL_OK})"
+if [ "$ARCH" = "all" ]; then
+    echo "  P-62 feature 运行维: $(( ${#FEATURE_CAPS[@]} - FEATURE_FAILED ))/${#FEATURE_CAPS[@]} 通过"
+fi
 echo "  日志: other/build/log/qemu_boot_*.log"
 echo "============================================"
 exit $RESULT

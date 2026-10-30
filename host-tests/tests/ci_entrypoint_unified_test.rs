@@ -768,6 +768,64 @@ fn test_p61_repr_c_is_tree_level_discovery() {
     }
 }
 
+/// P-62 结构锁: feature 运行维必须真构建 + 真启动 + 断能力行, 且构建系统在
+/// `KERNEL_FEATURES` 变化时会使内核静态库失效.
+///
+/// 病灶 (P-62 描述): `smp` / `preempt` / `kaslr` / `freg` 只被 `cfg!` 读取,
+/// 编译维与默认构建同形, 真实运行路径从未进过任何门禁. P-62 甲 在 full 档为
+/// 每个 feature 做一次 `KERNEL_FEATURES=<feat>` 构建 + 启动, 断言启动日志能力
+/// 行恰好翻转该位; 同时修复 Makefile 的陈旧库静默复用 (特征切换不改源文件
+/// mtime, 旧形态实测直接输出「无需做任何事」).
+///
+/// 判据:
+/// ① 脚本含 feature 清单、逐位期望能力行、默认构建全 off 断言与复原步骤;
+/// ② 运行维只在 `ARCH=all` 执行 (逐架构快查不重复付构建成本);
+/// ③ Makefile 两处 RUST_LIB 规则 + kernel.bin 重链规则都挂特征内容戳记
+///    (feature 变化强制 cargo 重建; cargo 命中缓存时 .a 可能带旧 mtime, 需戳记强制重链);
+/// ④ AGENTS §2.3 门槛 5 点名 P-62 feature 运行维.
+#[test]
+fn test_p62_feature_caps_runtime_dimension_is_wired() {
+    let sh = read("../scripts/qemu_boot_test.sh");
+    for needle in [
+        "FEATURE_CAPS=(smp preempt kaslr freg)",
+        "feature_caps_boot()",
+        "KERNEL_FEATURES=\"$feat\" all",
+        "smp=on preempt=off kaslr=off kpti=on freg=off",
+        "smp=off preempt=on kaslr=off kpti=on freg=off",
+        "smp=off preempt=off kaslr=on kpti=on freg=off",
+        "smp=off preempt=off kaslr=off kpti=on freg=on",
+        "复原默认构建",
+        "P-62 feature 运行维",
+    ] {
+        assert!(
+            sh.contains(needle),
+            "qemu_boot_test.sh 缺 P-62 要素 {needle} —— 运行维退化为文档宣称"
+        );
+    }
+    assert!(
+        sh.contains("if [ \"$ARCH\" = \"all\" ]; then\n    info \"=== P-62 feature 运行维"),
+        "P-62 运行维必须只在 ARCH=all 执行 (逐架构快查不重复构建)"
+    );
+
+    let mk = read("../Makefile");
+    assert!(
+        mk.contains("KERNEL_FEATURES_STAMP") && mk.contains("KERNEL_FEATURES_CHANGED"),
+        "Makefile 缺 KERNEL_FEATURES 内容戳记 —— 特征切换会静默复用陈旧 .a/镜像"
+    );
+    let stamp_edge = "$(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))";
+    assert_eq!(
+        mk.matches(stamp_edge).count(),
+        3,
+        "两处 RUST_LIB 规则 (x86_64 / aarch64) 与 kernel.bin 重链规则都必须挂特征戳记前置"
+    );
+
+    let agents = read(AGENTS_MD);
+    assert!(
+        agents.contains("P-62 feature 运行维"),
+        "AGENTS §2.3 门槛 5 未点名 P-62 feature 运行维"
+    );
+}
+
 /// P-47 结构锁: Lockbud 腿的「工具缺失」与「发现问题」两态必须分离, 且未执行台账
 /// 必须在两个档位出口都播报.
 ///

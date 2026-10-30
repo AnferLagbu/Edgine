@@ -75,7 +75,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 2. clippy 0 warning (`cargo clippy --release -- -D warnings`) + `cargo fmt --check` 0 漂移（kernel / host-tests / src/rust / src/user 四 crate，见 §3）
 3. 核心审计全部通过（见 §2.2；判据 = 本地 `bash ci/audit.sh full` 全绿。**档位必写**：脚本缺省档是 `quick`，而 `quick` 在步骤 2c 后即退出，不含 2d（内核 release 维 compile-only：测试维 + feature 维）、步骤 3（Lockbud）、步骤 4（QEMU），故裸命令 `bash ci/audit.sh` 不构成验收依据；`make -f Makefile.ci ci-audit` 亦调 `full`，与本条同源。远程仅 Gitee、无流水线配置，`.github/workflows/*` 从不触发，故不再作为验收依据）
 4. host-tests 全部通过
-5. QEMU 集成测试通过（如改动 boot/架构相关）
+5. QEMU 集成测试通过（如改动 boot/架构相关；full 档 `qemu_boot_test.sh all` 另含 **P-62 feature 运行维**：`smp` / `preempt` / `kaslr` / `freg` 各自以 `KERNEL_FEATURES` 真构建 + 真启动并断言启动日志 capabilities 行恰好翻转该位，默认构建四 feature 全 off，跑完复原默认构建）
 6. host 侧内核单元测试 0 failed（`make test-kernel-host`，等价 `cd src/kernel && cargo test --features host-test --lib`）
 
 ## 3. 工具链

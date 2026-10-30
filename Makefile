@@ -85,6 +85,14 @@ BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc
 # 避免为一次性取证改动构建主链路. 空值时 `--features` 不出现 (make if 展开).
 KERNEL_FEATURES ?=
 
+# P-62 甲: feature 值切换必须使 RUST_LIB 失效. RUST_LIB 规则只以源文件为前置,
+# 特征切换不改任何源文件 mtime ⇒ 曾经静默复用上一次的库与镜像 (实测: 默认构建
+# 后 `make KERNEL_FEATURES=smp all` 直接输出「无需做任何事」). 以内容戳记补这条
+# 边: 值变化时重写戳记, 戳记新于 .a 即触发 cargo 重建; 值不变则不挂前置, 增量
+# 构建行为不变. 戳记按架构落 ARCH_BUILD_DIR, `make clean` 一并清除.
+KERNEL_FEATURES_STAMP := $(ARCH_BUILD_DIR)/.kernel_features
+KERNEL_FEATURES_CHANGED := $(shell mkdir -p $(ARCH_BUILD_DIR); printf '%s' '$(KERNEL_FEATURES)' | cmp -s - $(KERNEL_FEATURES_STAMP) 2>/dev/null || { printf '%s' '$(KERNEL_FEATURES)' > $(KERNEL_FEATURES_STAMP); echo 1; })
+
 # ============================================================================
 # 网络子系统已迁移至 smoltcp (纯 Rust)
 # Network stack: smoltcp (Rust)
@@ -210,7 +218,10 @@ endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
 # 改脚本必须重链 —— 否则旧镜像与新布局静默共存 (ld 对失配模式不报错).
-$(ARCH_BUILD_DIR)/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB) $(LDSCRIPT)
+# 末尾 $(if ...) = P-62 甲 的第二条边: cargo 命中 feature 缓存时会把 .a 硬链成
+# 旧 mtime, make 因此认为 kernel.bin 尚新而跳过重链 ⇒ 镜像滞留默认构建.
+# 戳记是本轮解析期新写入的文件, 必然新于 kernel.bin, 用它强制重链.
+$(ARCH_BUILD_DIR)/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB) $(LDSCRIPT) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
 	@mkdir -p $(ARCH_BUILD_DIR)
 	@echo "[LINK] Linking kernel..."
 	$(LD) $(LDFLAGS) --allow-multiple-definition -o $@ --whole-archive $(RUST_LIB) --no-whole-archive $(KERNEL_OBJS)
@@ -245,14 +256,15 @@ $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
-$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
+# 末尾 $(if ...) = P-62 甲 的 feature 戳记: 仅当 KERNEL_FEATURES 值变化时才挂前置.
+$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null)
+$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif
