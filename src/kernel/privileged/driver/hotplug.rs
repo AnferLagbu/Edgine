@@ -12,7 +12,7 @@
 //!     → 扫描所有已知热插拔槽位
 //!     → 生成 HotplugEvent
 //!     → 分发给 HotplugListener 链表
-//!       → UNKFS hotplug listener (磁盘插入/移除)
+//!       → EGFS hotplug listener (磁盘插入/移除)
 //!       → Storage listener (重新注册 BlockDevice)
 //!       → 未来: 用户态通知 (/dev/hotplug)
 //! ```
@@ -80,7 +80,7 @@ pub enum HotplugEvent {
 
 /// 热插拔事件监听器 trait。
 ///
-/// 各子系统（如 UNKFS、存储管理器）实现此 trait 并注册到 `HotplugManager`。
+/// 各子系统（如 EGFS、存储管理器）实现此 trait 并注册到 `HotplugManager`。
 pub trait HotplugListener: Send + Sync {
     /// 设备插入通知。
     /// 在事件分发给所有监听器后, 由第一个返回 true 的监听器"认领"该设备。

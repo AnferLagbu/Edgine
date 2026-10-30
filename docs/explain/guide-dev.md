@@ -38,7 +38,7 @@ TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub
 
 ### 常见子系统归属示例
 
-8 个常见子系统。进程管理（机制：上下文切换/页表切换 privileged；策略：CFS/MLFQ 调度 functions）/ 内存管理（机制：物理页分配/页表映射 privileged；策略：VMA 合并/页面回收 functions）/ 中断处理（机制：IDT/中断控制器 privileged；策略：路由/分发 functions）/ 文件系统（机制：inode 操作表 privileged；策略：VFS 后端/RamFS/UNKFS functions）/ 设备驱动（机制：iomem/ioport 代理 privileged；策略：设备行为 functions）/ 网络协议栈（机制：smoltcp 接口 privileged；策略：TCP 状态机/DHCP functions）/ 同步原语（机制：SpinLock/Mutex privileged；策略：锁顺序/Lockdep functions）/ 凭据安全（机制：creds/pwm 校验 privileged；策略：会话/授权 functions）。
+8 个常见子系统。进程管理（机制：上下文切换/页表切换 privileged；策略：CFS/MLFQ 调度 functions）/ 内存管理（机制：物理页分配/页表映射 privileged；策略：VMA 合并/页面回收 functions）/ 中断处理（机制：IDT/中断控制器 privileged；策略：路由/分发 functions）/ 文件系统（机制：inode 操作表 privileged；策略：VFS 后端/RamFS/EGFS functions）/ 设备驱动（机制：iomem/ioport 代理 privileged；策略：设备行为 functions）/ 网络协议栈（机制：smoltcp 接口 privileged；策略：TCP 状态机/DHCP functions）/ 同步原语（机制：SpinLock/Mutex privileged；策略：锁顺序/Lockdep functions）/ 凭据安全（机制：creds/pwm 校验 privileged；策略：会话/授权 functions）。
 
 ## 工作原理
 

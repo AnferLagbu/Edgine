@@ -1,7 +1,7 @@
-//! I-04: UNKFS 18 文件强耦合 — trait 抽象静态契约测试
+//! I-04: EGFS 18 文件强耦合 — trait 抽象静态契约测试
 //!
 //! 验证 maintenance-2026-06-11.md I-04 验收:
-//!   - 各 UNKFS 子系统有独立 trait 定义, 供 mock 注入
+//!   - 各 EGFS 子系统有独立 trait 定义, 供 mock 注入
 //!   - 至少存在 `Checksum` trait (本次样板) + 至少一处实现
 //!
 //! 本轮最小化 I-04 修复: 只为最独立的 checksum 子系统引入 trait.
@@ -18,8 +18,8 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 #[test]
-fn test_unkfs_checksum_trait_exists() {
-    let path = repo_root().join("src/kernel/functions/fs/unkfs/checksum.rs");
+fn test_egfs_checksum_trait_exists() {
+    let path = repo_root().join("src/kernel/functions/fs/egfs/checksum.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -34,28 +34,28 @@ fn test_unkfs_checksum_trait_exists() {
 }
 
 #[test]
-fn test_unkfs_checksum_trait_impl_for_hvchecksum() {
-    let path = repo_root().join("src/kernel/functions/fs/unkfs/checksum.rs");
+fn test_egfs_checksum_trait_impl_for_hvchecksum() {
+    let path = repo_root().join("src/kernel/functions/fs/egfs/checksum.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
-    // 必须为现有 UnkfsChecksum 提供 trait 实现
+    // 必须为现有 EgfsChecksum 提供 trait 实现
     assert!(
-        src.contains("impl Checksum for UnkfsChecksum"),
-        "必须 `impl Checksum for UnkfsChecksum` (I-04)."
+        src.contains("impl Checksum for EgfsChecksum"),
+        "必须 `impl Checksum for EgfsChecksum` (I-04)."
     );
 }
 
 #[test]
-fn test_unkfs_no_cyclic_sibling_use() {
+fn test_egfs_no_cyclic_sibling_use() {
     // I-04 根因: 18 文件强耦合. 验收应避免出现环状依赖:
     //   A → B → A
     // 简单检查: 没有文件既 use A 又被 A use (本地小组件如 bp 类型不算, 跳过)
     // 简化为: 允许 use 兄弟模块 (单向), 不允许出现 A → B → A 环
     //
-    // 由于 UNKFS 18 文件关系复杂, 静态检查环代价大, 此处只做基础结构性检查:
+    // 由于 EGFS 18 文件关系复杂, 静态检查环代价大, 此处只做基础结构性检查:
     // 顶层 mod.rs 必须列出全部 18 子模块, 且不允许有 #[cfg(...)] 隐藏
-    let path = repo_root().join("src/kernel/functions/fs/unkfs/mod.rs");
+    let path = repo_root().join("src/kernel/functions/fs/egfs/mod.rs");
     let src =
         fs::read_to_string(&path).unwrap_or_else(|e| panic!("无法读取 {}: {}", path.display(), e));
 
@@ -68,8 +68,8 @@ fn test_unkfs_no_cyclic_sibling_use() {
         "dedup",
         "dmu",
         "dva",
-        // P-64 第十六批: `pub mod unkfs;` 因 `module_inception` 改为
-        // `#[path = "unkfs.rs"] pub mod entry;` (文件名不变, 模块名避开父模块同名).
+        // P-64 第十六批: `pub mod egfs;` 因 `module_inception` 改为
+        // `#[path = "egfs.rs"] pub mod entry;` (文件名不变, 模块名避开父模块同名).
         "entry",
         "metaslab",
         "raidz",

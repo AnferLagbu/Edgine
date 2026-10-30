@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-//! `UNKFS` ZIL Persistence Layer (WAL 磁盘持久化)
+//! `EGFS` ZIL Persistence Layer (WAL 磁盘持久化)
 //!
 //! 增强现有内存 ZIL:
 //! 1. 每个记录附带 CRC32 校验和
@@ -30,7 +30,7 @@
 //! ```
 
 use super::spa::HV_POOL_BLOCK_SIZE;
-use super::zil::{UnkfsZil, UnkfsZilRecord};
+use super::zil::{EgfsZil, EgfsZilRecord};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +44,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 /// - `try_deserialize_record` 的 Err (CRC/UnknownRecordType/BufferTooShort) 在
 ///   block CRC 通过后不可达, 保留为防御性解析校验 + 单元测试直接验证对象.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnkfsZilPersistError {
+pub enum EgfsZilPersistError {
     /// 缓冲区长度不足, 不可能通过外部 `assert!(buf.len() >= 256)` 触发
     BufferTooShort {
         /// 所需的最小字节数
@@ -65,7 +65,7 @@ pub enum UnkfsZilPersistError {
     InvalidBlock,
 }
 
-impl UnkfsZilPersistError {
+impl EgfsZilPersistError {
     /// 返回错误的静态字符串标识 (供日志/诊断使用)
     #[must_use]
     pub fn as_static_str(&self) -> &'static str {
@@ -270,7 +270,7 @@ fn crc32_checksum(data: &[u8]) -> u32 {
     !crc
 }
 
-fn serialize_record(record: &UnkfsZilRecord, buf: &mut [u8]) {
+fn serialize_record(record: &EgfsZilRecord, buf: &mut [u8]) {
     debug_assert!(
         buf.len() >= ZIL_RECORD_PAYLOAD,
         "serialize_record buffer too small: {} < {}",
@@ -295,24 +295,24 @@ fn serialize_record(record: &UnkfsZilRecord, buf: &mut [u8]) {
     buf[payload_end..payload_end + 4].copy_from_slice(&rec_crc.to_le_bytes());
 }
 
-fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistError> {
+fn try_deserialize_record(buf: &[u8]) -> Result<EgfsZilRecord, EgfsZilPersistError> {
     let actual_size = 173 + 32 + 4;
     if buf.len() < actual_size {
-        return Err(UnkfsZilPersistError::BufferTooShort {
+        return Err(EgfsZilPersistError::BufferTooShort {
             need: actual_size,
             got: buf.len(),
         });
     }
     let rec_crc =
         u32::from_le_bytes(buf[actual_size - 4..actual_size].try_into().map_err(|_| {
-            UnkfsZilPersistError::BufferTooShort {
+            EgfsZilPersistError::BufferTooShort {
                 need: 4,
                 got: actual_size - 4,
             }
         })?);
     let computed = crc32_checksum(&buf[..actual_size - 4]);
     if rec_crc != computed {
-        return Err(UnkfsZilPersistError::CrcMismatch {
+        return Err(EgfsZilPersistError::CrcMismatch {
             expected: rec_crc,
             computed,
         });
@@ -322,32 +322,32 @@ fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistE
     let txg = u64::from_le_bytes(
         buf[1..9]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let obj_id = u64::from_le_bytes(
         buf[9..17]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let parent_obj = u64::from_le_bytes(
         buf[17..25]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let offset = u64::from_le_bytes(
         buf[25..33]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
     let size = u32::from_le_bytes(
         buf[33..37]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 4, got: 4 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 4, got: 4 })?,
     );
     let seq = u64::from_le_bytes(
         buf[37..45]
             .try_into()
-            .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+            .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
     );
 
     let mut name = [0u8; 128];
@@ -359,28 +359,28 @@ fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistE
         *val = u64::from_le_bytes(
             buf[off..off + 8]
                 .try_into()
-                .map_err(|_| UnkfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
+                .map_err(|_| EgfsZilPersistError::BufferTooShort { need: 8, got: 8 })?,
         );
     }
 
     let rec_type_enum = match rec_type {
-        1 => super::zil::UnkfsZilRecordType::Create,
-        2 => super::zil::UnkfsZilRecordType::Remove,
-        3 => super::zil::UnkfsZilRecordType::Link,
-        4 => super::zil::UnkfsZilRecordType::Rename,
-        5 => super::zil::UnkfsZilRecordType::Write,
-        6 => super::zil::UnkfsZilRecordType::Truncate,
-        7 => super::zil::UnkfsZilRecordType::SetAttr,
-        8 => super::zil::UnkfsZilRecordType::Acl,
-        9 => super::zil::UnkfsZilRecordType::CreateAcl,
-        10 => super::zil::UnkfsZilRecordType::Mkdir,
-        11 => super::zil::UnkfsZilRecordType::Symlink,
-        12 => super::zil::UnkfsZilRecordType::DedupRef,
-        13 => super::zil::UnkfsZilRecordType::DedupUnref,
-        other => return Err(UnkfsZilPersistError::UnknownRecordType(other)),
+        1 => super::zil::EgfsZilRecordType::Create,
+        2 => super::zil::EgfsZilRecordType::Remove,
+        3 => super::zil::EgfsZilRecordType::Link,
+        4 => super::zil::EgfsZilRecordType::Rename,
+        5 => super::zil::EgfsZilRecordType::Write,
+        6 => super::zil::EgfsZilRecordType::Truncate,
+        7 => super::zil::EgfsZilRecordType::SetAttr,
+        8 => super::zil::EgfsZilRecordType::Acl,
+        9 => super::zil::EgfsZilRecordType::CreateAcl,
+        10 => super::zil::EgfsZilRecordType::Mkdir,
+        11 => super::zil::EgfsZilRecordType::Symlink,
+        12 => super::zil::EgfsZilRecordType::DedupRef,
+        13 => super::zil::EgfsZilRecordType::DedupUnref,
+        other => return Err(EgfsZilPersistError::UnknownRecordType(other)),
     };
 
-    Ok(UnkfsZilRecord {
+    Ok(EgfsZilRecord {
         rec_type: rec_type_enum,
         txg,
         obj_id,
@@ -394,14 +394,14 @@ fn try_deserialize_record(buf: &[u8]) -> Result<UnkfsZilRecord, UnkfsZilPersistE
 }
 
 /// ZIL 持久化状态 — 记录是否已发生过落盘写入
-pub struct UnkfsZilPersist {
+pub struct EgfsZilPersist {
     /// 是否已写入过 ZIL block (`Release` 语义置位)
     pub zil_blocks_written: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsZilPersist 全部字段 (AtomicBool) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsZilPersist 全部字段 (AtomicBool) 自动 Send + Sync。
 
-impl UnkfsZilPersist {
+impl EgfsZilPersist {
     /// 构造初始状态 (尚未写入)
     #[must_use]
     pub const fn new() -> Self {
@@ -411,7 +411,7 @@ impl UnkfsZilPersist {
     }
 
     /// 将 ZIL 记录序列化为单个磁盘 block (空 ZIL 返回 `None`)
-    pub fn serialize_zil_to_block(zil: &UnkfsZil, txg: u64) -> Option<Vec<u8>> {
+    pub fn serialize_zil_to_block(zil: &EgfsZil, txg: u64) -> Option<Vec<u8>> {
         let records = zil.records.lock();
         if records.is_empty() {
             return None;
@@ -455,7 +455,7 @@ impl UnkfsZilPersist {
     }
 
     /// 从磁盘 block 回放 ZIL 记录 (块校验失败时返回空 vec, 按 `seq` 升序)
-    pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<UnkfsZilRecord> {
+    pub fn deserialize_zil_from_block(block: &[u8]) -> Vec<EgfsZilRecord> {
         let mut records = Vec::new();
 
         if block.len() < ZIL_BLOCK_SIZE {
@@ -533,8 +533,8 @@ impl UnkfsZilPersist {
     }
 }
 
-impl Default for UnkfsZilPersist {
-    /// 委托 [`UnkfsZilPersist::new`] 构造初始状态.
+impl Default for EgfsZilPersist {
+    /// 委托 [`EgfsZilPersist::new`] 构造初始状态.
     fn default() -> Self {
         Self::new()
     }
@@ -561,8 +561,8 @@ mod tests {
 
     #[test]
     fn test_serialize_roundtrip() {
-        let rec = UnkfsZilRecord {
-            rec_type: super::super::zil::UnkfsZilRecordType::Write,
+        let rec = EgfsZilRecord {
+            rec_type: super::super::zil::EgfsZilRecordType::Write,
             txg: 42,
             obj_id: 100,
             parent_obj: 0,
@@ -588,8 +588,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_corrupted_data() {
-        let rec = UnkfsZilRecord {
-            rec_type: super::super::zil::UnkfsZilRecordType::Create,
+        let rec = EgfsZilRecord {
+            rec_type: super::super::zil::EgfsZilRecordType::Create,
             txg: 1,
             obj_id: 0,
             parent_obj: 0,
@@ -606,6 +606,6 @@ mod tests {
         buf[10] ^= 0xFF; // corrupt
         // P0-I-15 修复: 损坏 record 必须返回 CrcMismatch 而非 None
         let err = try_deserialize_record(&buf).expect_err("P0-I-15: corrupt must fail");
-        assert!(matches!(err, UnkfsZilPersistError::CrcMismatch { .. }));
+        assert!(matches!(err, EgfsZilPersistError::CrcMismatch { .. }));
     }
 }

@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsBlockPointer;
-use crate::functions::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
+use crate::functions::fs::egfs::bp::EgfsBlockPointer;
+use crate::functions::fs::egfs::spa::HV_POOL_BLOCK_SIZE;
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -20,7 +20,7 @@ pub const HV_DMU_MAX_NAME: usize = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// DMU 对象类型编码 (对应 ZFS dnode 的对象类型).
-pub enum UnkfsObjType {
+pub enum EgfsObjType {
     /// 未定义/无效类型.
     None = 0,
     /// 普通文件.
@@ -43,7 +43,7 @@ pub enum UnkfsObjType {
     Symlink = 9,
 }
 
-impl UnkfsObjType {
+impl EgfsObjType {
     /// 由原始类型值解析对象类型; 未知值归为 `None`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
@@ -65,11 +65,11 @@ impl UnkfsObjType {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 /// 一个 DMU 对象的元数据与根块指针 (对应 ZFS dnode 的物理形态).
-pub struct UnkfsDmuObject {
+pub struct EgfsDmuObject {
     /// 对象编号.
     pub obj_id: u64,
     /// 对象类型.
-    pub obj_type: UnkfsObjType,
+    pub obj_type: EgfsObjType,
     /// 数据块大小 (字节).
     pub block_size: u32,
     /// 已分配的数据块数.
@@ -77,7 +77,7 @@ pub struct UnkfsDmuObject {
     /// 逻辑大小 (字节).
     pub size: u64,
     /// 指向数据块树的根块指针.
-    pub bp: UnkfsBlockPointer,
+    pub bp: EgfsBlockPointer,
     /// 最近访问时间 (tick).
     pub atime: u64,
     /// 最近修改时间 (tick).
@@ -108,17 +108,17 @@ pub struct UnkfsDmuObject {
     pub used: bool,
 }
 
-impl UnkfsDmuObject {
+impl EgfsDmuObject {
     /// 构造普通文件对象, 默认权限 0644、链接数 1.
     #[must_use]
     pub fn new_file(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: UnkfsObjType::File,
+            obj_type: EgfsObjType::File,
             block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
-            bp: UnkfsBlockPointer::null(),
+            bp: EgfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -141,11 +141,11 @@ impl UnkfsDmuObject {
     pub fn new_dir(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: UnkfsObjType::Dir,
+            obj_type: EgfsObjType::Dir,
             block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
-            bp: UnkfsBlockPointer::null(),
+            bp: EgfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -168,11 +168,11 @@ impl UnkfsDmuObject {
     pub fn new_zap(obj_id: u64) -> Self {
         Self {
             obj_id,
-            obj_type: UnkfsObjType::Zap,
+            obj_type: EgfsObjType::Zap,
             block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
-            bp: UnkfsBlockPointer::null(),
+            bp: EgfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -195,11 +195,11 @@ impl UnkfsDmuObject {
     pub fn new_symlink(obj_id: u64, owner_pwm: u64) -> Self {
         Self {
             obj_id,
-            obj_type: UnkfsObjType::Symlink,
+            obj_type: EgfsObjType::Symlink,
             block_size: crate::functions::intcast::low_u32_from_u64(HV_POOL_BLOCK_SIZE),
             nblocks: 0,
             size: 0,
-            bp: UnkfsBlockPointer::null(),
+            bp: EgfsBlockPointer::null(),
             atime: 0,
             mtime: 0,
             ctime: 0,
@@ -220,22 +220,22 @@ impl UnkfsDmuObject {
     /// 是否为普通文件.
     #[must_use]
     pub fn is_file(&self) -> bool {
-        self.obj_type == UnkfsObjType::File
+        self.obj_type == EgfsObjType::File
     }
     /// 是否为目录.
     #[must_use]
     pub fn is_dir(&self) -> bool {
-        self.obj_type == UnkfsObjType::Dir
+        self.obj_type == EgfsObjType::Dir
     }
     /// 是否为 ZAP 或微 ZAP 对象.
     #[must_use]
     pub fn is_zap(&self) -> bool {
-        self.obj_type == UnkfsObjType::Zap || self.obj_type == UnkfsObjType::ZapMicro
+        self.obj_type == EgfsObjType::Zap || self.obj_type == EgfsObjType::ZapMicro
     }
     /// 是否为快照对象.
     #[must_use]
     pub fn is_snapshot(&self) -> bool {
-        self.obj_type == UnkfsObjType::Snapshot
+        self.obj_type == EgfsObjType::Snapshot
     }
 
     /// 标记对象为脏并记录写入的事务组号.
@@ -245,7 +245,7 @@ impl UnkfsDmuObject {
     }
 
     /// 写时复制替换根块指针, 同时记录新事务组号并置脏.
-    pub fn cow_bp(&mut self, new_bp: UnkfsBlockPointer, txg: u64) {
+    pub fn cow_bp(&mut self, new_bp: EgfsBlockPointer, txg: u64) {
         self.bp = new_bp;
         self.birth_txg = txg;
         self.dirty = true;
@@ -253,20 +253,20 @@ impl UnkfsDmuObject {
 }
 
 /// DMU 对象集: 持有全部对象并负责编号分配与生命周期管理.
-pub struct UnkfsObjSet {
+pub struct EgfsObjSet {
     /// 对象表 (受锁保护).
-    pub objects: Mutex<Vec<UnkfsDmuObject>>,
+    pub objects: Mutex<Vec<EgfsDmuObject>>,
     /// 下一个可分配的对象编号.
     pub next_obj_id: AtomicU64,
     /// 根目录对象编号.
     pub root_obj: u64,
-    /// 是否已完成 [`UnkfsObjSet::init`] 初始化.
+    /// 是否已完成 [`EgfsObjSet::init`] 初始化.
     pub initialized: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsObjSet 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsObjSet 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
 
-impl UnkfsObjSet {
+impl EgfsObjSet {
     /// 构造空对象集, 根对象编号取 [`HV_DMU_OBJ_ROOT`].
     #[must_use]
     pub fn new() -> Self {
@@ -282,10 +282,10 @@ impl UnkfsObjSet {
     pub fn init(&self, owner_pwm: u64) {
         let mut objs = self.objects.lock();
         objs.clear();
-        let mut root = UnkfsDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_pwm);
+        let mut root = EgfsDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_pwm);
         root.birth_txg = 1;
         objs.push(root);
-        let zap = UnkfsDmuObject::new_zap(HV_DMU_OBJ_META);
+        let zap = EgfsDmuObject::new_zap(HV_DMU_OBJ_META);
         objs.push(zap);
         self.next_obj_id
             .store(HV_DMU_OBJ_ROOT + 2, Ordering::Release);
@@ -293,13 +293,13 @@ impl UnkfsObjSet {
     }
 
     /// 按类型分配新对象编号并插入对象表; 不支持的类型返回 `None`.
-    pub fn alloc_obj(&self, obj_type: UnkfsObjType, owner_pwm: u64) -> Option<u64> {
+    pub fn alloc_obj(&self, obj_type: EgfsObjType, owner_pwm: u64) -> Option<u64> {
         let obj_id = self.next_obj_id.fetch_add(1, Ordering::AcqRel);
         let obj = match obj_type {
-            UnkfsObjType::File => UnkfsDmuObject::new_file(obj_id, owner_pwm),
-            UnkfsObjType::Dir => UnkfsDmuObject::new_dir(obj_id, owner_pwm),
-            UnkfsObjType::Zap | UnkfsObjType::ZapMicro => UnkfsDmuObject::new_zap(obj_id),
-            UnkfsObjType::Symlink => UnkfsDmuObject::new_symlink(obj_id, owner_pwm),
+            EgfsObjType::File => EgfsDmuObject::new_file(obj_id, owner_pwm),
+            EgfsObjType::Dir => EgfsDmuObject::new_dir(obj_id, owner_pwm),
+            EgfsObjType::Zap | EgfsObjType::ZapMicro => EgfsDmuObject::new_zap(obj_id),
+            EgfsObjType::Symlink => EgfsDmuObject::new_symlink(obj_id, owner_pwm),
             _ => return None,
         };
         self.objects.lock().push(obj);
@@ -322,18 +322,18 @@ impl UnkfsObjSet {
     }
 
     /// 按编号取对象副本; 不存在或已释放返回 `None`.
-    pub fn get_obj(&self, obj_id: u64) -> Option<UnkfsDmuObject> {
+    pub fn get_obj(&self, obj_id: u64) -> Option<EgfsDmuObject> {
         let objs = self.objects.lock();
         objs.iter().find(|o| o.obj_id == obj_id && o.used).copied()
     }
 
-    /// 按编号取对象副本 (语义同 [`UnkfsObjSet::get_obj`], 保留可变访问命名).
-    pub fn get_obj_mut(&self, obj_id: u64) -> Option<UnkfsDmuObject> {
+    /// 按编号取对象副本 (语义同 [`EgfsObjSet::get_obj`], 保留可变访问命名).
+    pub fn get_obj_mut(&self, obj_id: u64) -> Option<EgfsDmuObject> {
         self.get_obj(obj_id)
     }
 
     /// 用给定对象覆盖同编号的现有对象; 对象不存在返回 false.
-    pub fn update_obj(&self, obj: &UnkfsDmuObject) -> bool {
+    pub fn update_obj(&self, obj: &EgfsDmuObject) -> bool {
         let mut objs = self.objects.lock();
         objs.iter_mut()
             .find(|o| o.obj_id == obj.obj_id)
@@ -344,7 +344,7 @@ impl UnkfsObjSet {
     }
 
     /// 取根目录对象副本.
-    pub fn get_root(&self) -> Option<UnkfsDmuObject> {
+    pub fn get_root(&self) -> Option<EgfsDmuObject> {
         self.get_obj(self.root_obj)
     }
 
@@ -354,8 +354,8 @@ impl UnkfsObjSet {
     }
 }
 
-impl Default for UnkfsObjSet {
-    /// 委托 [`UnkfsObjSet::new`] 构造空对象集.
+impl Default for EgfsObjSet {
+    /// 委托 [`EgfsObjSet::new`] 构造空对象集.
     fn default() -> Self {
         Self::new()
     }
@@ -371,17 +371,17 @@ mod tests {
     /// 新建 File 对象应带上默认类型与零大小.
     #[test]
     fn test_dmu_object_default() {
-        let obj = UnkfsDmuObject::new_file(1, 0);
+        let obj = EgfsDmuObject::new_file(1, 0);
         assert_eq!(obj.obj_id, 1, "obj_id mismatch");
-        assert_eq!(obj.obj_type, UnkfsObjType::File, "obj_type should be File");
+        assert_eq!(obj.obj_type, EgfsObjType::File, "obj_type should be File");
         assert_eq!(obj.size, 0, "new object size should be 0");
     }
 
     /// cow_bp 应更新 birth_txg.
     #[test]
     fn test_dmu_object_cow() {
-        let mut obj = UnkfsDmuObject::new_file(2, 0);
-        let new_bp = UnkfsBlockPointer::null();
+        let mut obj = EgfsDmuObject::new_file(2, 0);
+        let new_bp = EgfsBlockPointer::null();
         obj.cow_bp(new_bp, 5);
         assert_eq!(obj.birth_txg, 5, "birth txg should be 5");
     }
@@ -389,7 +389,7 @@ mod tests {
     /// 新建 Dir 对象应报告为目录类型.
     #[test]
     fn test_dmu_object_dir_type() {
-        let obj = UnkfsDmuObject::new_dir(3, 0);
+        let obj = EgfsDmuObject::new_dir(3, 0);
         assert!(obj.is_dir(), "Dir should report as dir");
     }
 
@@ -398,9 +398,9 @@ mod tests {
     /// alloc_obj 应返回有效 id 且可被 get_obj 取回.
     #[test]
     fn test_dmu_objset_alloc() {
-        let os = UnkfsObjSet::new();
+        let os = EgfsObjSet::new();
         os.init(0);
-        let Some(id) = os.alloc_obj(UnkfsObjType::File, 0) else {
+        let Some(id) = os.alloc_obj(EgfsObjType::File, 0) else {
             panic!("alloc_obj should succeed");
         };
         assert!(id > 0, "allocated obj_id should be > 0");
@@ -413,9 +413,9 @@ mod tests {
     /// alloc_obj 的 Dir 类型应被正确记录.
     #[test]
     fn test_dmu_objset_dir() {
-        let os = UnkfsObjSet::new();
+        let os = EgfsObjSet::new();
         os.init(0);
-        let Some(obj_id) = os.alloc_obj(UnkfsObjType::Dir, 0) else {
+        let Some(obj_id) = os.alloc_obj(EgfsObjType::Dir, 0) else {
             panic!("alloc_obj Dir should succeed");
         };
         let Some(o) = os.get_obj(obj_id) else {
@@ -428,9 +428,9 @@ mod tests {
     /// free_obj 后对象不应再被 get_obj 取回.
     #[test]
     fn test_dmu_objset_free() {
-        let os = UnkfsObjSet::new();
+        let os = EgfsObjSet::new();
         os.init(0);
-        let Some(obj_id) = os.alloc_obj(UnkfsObjType::File, 0) else {
+        let Some(obj_id) = os.alloc_obj(EgfsObjType::File, 0) else {
             panic!("alloc_obj should succeed");
         };
         let _count_before = os.obj_count();
@@ -444,9 +444,9 @@ mod tests {
     /// cow_bp 后旧 birth_txg 应被新值覆盖.
     #[test]
     fn test_dmu_cow_preserves_old() {
-        let mut obj = UnkfsDmuObject::new_file(1, 0);
+        let mut obj = EgfsDmuObject::new_file(1, 0);
         let old_bp = {
-            let mut bp = UnkfsBlockPointer::null();
+            let mut bp = EgfsBlockPointer::null();
             bp.set_birth(10);
             bp
         };

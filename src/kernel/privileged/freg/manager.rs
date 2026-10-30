@@ -59,7 +59,7 @@ const PANIC_DOMAIN_MAP: [PanicDomainMapping; 6] = [
         domain_id: 2,
     },
     PanicDomainMapping {
-        prefix: b"UNKFS",
+        prefix: b"EGFS",
         domain_id: 2,
     },
     PanicDomainMapping {

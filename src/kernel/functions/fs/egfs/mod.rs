@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-//! `UNKFS` (Hypervisor File System) — functions 层完整实现
+//! `EGFS` (Edgine File System) — functions 层完整实现
 //!
 //! 从 privileged 层迁移而来 (E6-6 阶段 2).
 //! 所有业务逻辑在此; ARC 缓存经 `Arc<[u8]>` 共享句柄访问, privileged 侧无残留适配层.
@@ -22,9 +22,13 @@ pub mod dedup;
 pub mod dmu;
 /// 数据虚拟地址 (vdev + 偏移 + 长度) 的表示与编解码.
 pub mod dva;
-/// 模块入口: 文件系统实例的挂载与统一访问 (文件名沿用 `unkfs.rs`, 模块名取 `entry` 以避免
+/// 文件描述符、打开模式与文件数据读写.
+pub mod egfs_data;
+/// inode 元数据: 属性与数据块引用.
+pub mod egfs_inode;
+/// 模块入口: 文件系统实例的挂载与统一访问 (文件名沿用 `egfs.rs`, 模块名取 `entry` 以避免
 /// 模块名与父模块同名).
-#[path = "unkfs.rs"]
+#[path = "egfs.rs"]
 pub mod entry;
 /// 分配空间单元 (metaslab): 空闲管理与统计.
 pub mod metaslab;
@@ -36,10 +40,6 @@ pub mod snapshot;
 pub mod spa;
 /// 事务组 (TXG): 写事务聚合与同步状态机.
 pub mod txg;
-/// 文件描述符、打开模式与文件数据读写.
-pub mod unkfs_data;
-/// inode 元数据: 属性与数据块引用.
-pub mod unkfs_inode;
 /// 虚拟设备 (vdev): 底层设备状态与扇区读写.
 pub mod vdev;
 /// ZFS 属性处理器 (ZAP): 键值属性存储.

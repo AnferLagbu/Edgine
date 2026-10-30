@@ -18,7 +18,7 @@ pub const HV_ARC_META_SIZE: usize = 16384;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// ARC 缓冲区状态 (MRU/MFU 链表与幽灵链表归属).
-pub enum UnkfsArcState {
+pub enum EgfsArcState {
     /// 匿名/尚未归类.
     Anon = 0,
     /// 位于最近使用 (MRU) 链表.
@@ -36,7 +36,7 @@ pub enum UnkfsArcState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// ARC 缓冲区数据类型.
-pub enum UnkfsArcBufType {
+pub enum EgfsArcBufType {
     /// 数据块.
     Data = 0,
     /// 元数据块.
@@ -45,7 +45,7 @@ pub enum UnkfsArcBufType {
 
 #[derive(Debug, Clone, Copy)]
 /// ARC 缓存键: 由 vdev、偏移与出生事务组唯一确定一个块.
-pub struct UnkfsArcKey {
+pub struct EgfsArcKey {
     /// 所属 vdev 编号.
     pub vdev_id: u16,
     /// 块在 vdev 内的字节偏移.
@@ -54,7 +54,7 @@ pub struct UnkfsArcKey {
     pub birth_txg: u64,
 }
 
-impl UnkfsArcKey {
+impl EgfsArcKey {
     /// 以 vdev 编号、偏移与出生事务组构造缓存键.
     #[must_use]
     pub fn new(vdev_id: u16, offset: u64, birth_txg: u64) -> Self {
@@ -80,17 +80,17 @@ impl UnkfsArcKey {
 }
 
 /// 一个已缓存的块: 键、只读数据句柄与淘汰状态.
-pub struct UnkfsArcBuf {
+pub struct EgfsArcBuf {
     /// 缓存键.
-    pub key: UnkfsArcKey,
+    pub key: EgfsArcKey,
     /// 块数据的共享只读句柄.
     pub data: Arc<[u8]>,
     /// 数据字节数.
     pub size: usize,
     /// 缓冲区数据类型.
-    pub buf_type: UnkfsArcBufType,
+    pub buf_type: EgfsArcBufType,
     /// 当前所处的链表状态.
-    pub state: UnkfsArcState,
+    pub state: EgfsArcState,
     /// 引用计数.
     pub ref_count: AtomicU32,
     /// 累计访问次数 (MFU 晋升判据).
@@ -103,18 +103,18 @@ pub struct UnkfsArcBuf {
     pub compressed: bool,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsArcBuf 全部字段自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsArcBuf 全部字段自动 Send + Sync。
 
-impl UnkfsArcBuf {
+impl EgfsArcBuf {
     /// 以键、数据与类型构造缓冲区 (状态 Anon, 引用计数 1).
     #[must_use]
-    pub fn new(key: UnkfsArcKey, data: &[u8], buf_type: UnkfsArcBufType) -> Self {
+    pub fn new(key: EgfsArcKey, data: &[u8], buf_type: EgfsArcBufType) -> Self {
         Self {
             key,
             data: Arc::from(data),
             size: data.len(),
             buf_type,
-            state: UnkfsArcState::Anon,
+            state: EgfsArcState::Anon,
             ref_count: AtomicU32::new(1),
             access_count: 1,
             dirty: false,
@@ -144,7 +144,7 @@ impl UnkfsArcBuf {
 }
 
 /// ARC 命中与容量统计计数器集合.
-pub struct UnkfsArcStats {
+pub struct EgfsArcStats {
     /// 命中总数.
     pub hits: AtomicU64,
     /// 未命中总数.
@@ -173,7 +173,7 @@ pub struct UnkfsArcStats {
     pub meta_size: AtomicU64,
 }
 
-impl UnkfsArcStats {
+impl EgfsArcStats {
     /// 构造全部计数为 0 的统计集合.
     #[must_use]
     pub fn new() -> Self {
@@ -195,8 +195,8 @@ impl UnkfsArcStats {
     }
 }
 
-impl Default for UnkfsArcStats {
-    /// 委托 [`UnkfsArcStats::new`] 构造全部计数为 0 的统计集合.
+impl Default for EgfsArcStats {
+    /// 委托 [`EgfsArcStats::new`] 构造全部计数为 0 的统计集合.
     fn default() -> Self {
         Self::new()
     }
@@ -204,33 +204,33 @@ impl Default for UnkfsArcStats {
 
 const HV_ARC_HASH_BUCKETS: usize = 256;
 
-struct UnkfsArcInner {
+struct EgfsArcInner {
     mru: VecDeque<usize>,
     mfu: VecDeque<usize>,
-    ghost_mru: VecDeque<UnkfsArcKey>,
-    ghost_mfu: VecDeque<UnkfsArcKey>,
-    buffers: Vec<Option<UnkfsArcBuf>>,
+    ghost_mru: VecDeque<EgfsArcKey>,
+    ghost_mfu: VecDeque<EgfsArcKey>,
+    buffers: Vec<Option<EgfsArcBuf>>,
     hash_table: Vec<Vec<usize>>,
     max_size: usize,
     p: usize,
 }
 
 /// 自适应替换缓存 (ARC): MRU/MFU 双链表加幽灵链表的块缓存.
-pub struct UnkfsArc {
-    inner: Mutex<UnkfsArcInner>,
-    stats: UnkfsArcStats,
+pub struct EgfsArc {
+    inner: Mutex<EgfsArcInner>,
+    stats: EgfsArcStats,
     initialized: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsArc 全部字段 (Mutex<T>, AtomicBool, UnkfsArcStats)
+// SAFETY (Framekernel P2.2.2): EgfsArc 全部字段 (Mutex<T>, AtomicBool, EgfsArcStats)
 // 都自动实现 Send + Sync。
 
-impl UnkfsArc {
+impl EgfsArc {
     /// 构造空 ARC, 容量取 [`HV_ARC_DEFAULT_SIZE`].
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(UnkfsArcInner {
+            inner: Mutex::new(EgfsArcInner {
                 mru: VecDeque::new(),
                 mfu: VecDeque::new(),
                 ghost_mru: VecDeque::new(),
@@ -240,7 +240,7 @@ impl UnkfsArc {
                 max_size: HV_ARC_DEFAULT_SIZE,
                 p: 0,
             }),
-            stats: UnkfsArcStats::new(),
+            stats: EgfsArcStats::new(),
             initialized: AtomicBool::new(false),
         }
     }
@@ -267,7 +267,7 @@ impl UnkfsArc {
     }
 
     /// 按键查缓存; 命中返回数据共享句柄并更新命中/访问计数, 未命中返回 `None`.
-    pub fn lookup(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
+    pub fn lookup(&self, key: &EgfsArcKey) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
         let bucket_idx =
             crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
@@ -282,14 +282,14 @@ impl UnkfsArc {
                 && buf.key.birth_txg == key.birth_txg
             {
                 self.stats.hits.fetch_add(1, Ordering::Relaxed);
-                if buf.state == UnkfsArcState::Mru {
+                if buf.state == EgfsArcState::Mru {
                     self.stats.mru_hits.fetch_add(1, Ordering::Relaxed);
-                } else if buf.state == UnkfsArcState::Mfu {
+                } else if buf.state == EgfsArcState::Mfu {
                     self.stats.mfu_hits.fetch_add(1, Ordering::Relaxed);
                 }
                 if let Some(ref mut buf) = inner.buffers[idx] {
                     buf.access_count += 1;
-                    if buf.state == UnkfsArcState::Mru {
+                    if buf.state == EgfsArcState::Mru {
                         promote_to_mfu = true;
                     }
                     // ARC 共享句柄: 持有期间缓冲区不会被淘汰回收.
@@ -303,7 +303,7 @@ impl UnkfsArc {
             if promote_to_mfu {
                 inner.mru.retain(|&i| i != idx);
                 if let Some(ref mut buf) = inner.buffers[idx] {
-                    buf.state = UnkfsArcState::Mfu;
+                    buf.state = EgfsArcState::Mfu;
                 }
                 inner.mfu.push_back(idx);
             }
@@ -340,22 +340,22 @@ impl UnkfsArc {
     ///
     /// 返回 `Arc<[u8]>`: 持有期间该缓冲区不会被淘汰回收, 无需配对 release。
     /// 返回长度为缓存条目的实际长度, 调用方按 `data.len()` 自行裁剪范围。
-    pub fn lookup_slice(&self, key: &UnkfsArcKey) -> Option<Arc<[u8]>> {
+    pub fn lookup_slice(&self, key: &EgfsArcKey) -> Option<Arc<[u8]>> {
         self.lookup(key)
     }
 
     /// 插入或替换一个块 (必要时先淘汰), 返回新缓冲区的数据句柄.
     pub fn insert(
         &self,
-        key: UnkfsArcKey,
+        key: EgfsArcKey,
         data: &[u8],
-        buf_type: UnkfsArcBufType,
+        buf_type: EgfsArcBufType,
     ) -> Option<Arc<[u8]>> {
         let mut inner = self.inner.lock();
         self.remove_key(&mut inner, &key);
         self.evict_if_needed(&mut inner, data.len());
-        let mut buf = UnkfsArcBuf::new(key, data, buf_type);
-        buf.state = UnkfsArcState::Mru;
+        let mut buf = EgfsArcBuf::new(key, data, buf_type);
+        buf.state = EgfsArcState::Mru;
         let slot_idx = inner.buffers.iter().position(core::option::Option::is_none);
         let idx = if let Some(i) = slot_idx {
             inner.buffers[i] = Some(buf);
@@ -371,7 +371,7 @@ impl UnkfsArc {
         self.stats
             .size
             .fetch_add(data.len() as u64, Ordering::Relaxed);
-        if buf_type == UnkfsArcBufType::Data {
+        if buf_type == EgfsArcBufType::Data {
             self.stats
                 .data_size
                 .fetch_add(data.len() as u64, Ordering::Relaxed);
@@ -386,7 +386,7 @@ impl UnkfsArc {
         inner.buffers[idx].as_ref().map(|b| Arc::clone(&b.data))
     }
 
-    fn remove_key(&self, inner: &mut UnkfsArcInner, key: &UnkfsArcKey) {
+    fn remove_key(&self, inner: &mut EgfsArcInner, key: &EgfsArcKey) {
         let bucket_idx =
             crate::functions::intcast::usize_from_u64(key.hash()) % HV_ARC_HASH_BUCKETS;
         let mut found: Option<usize> = None;
@@ -410,7 +410,7 @@ impl UnkfsArc {
         }
     }
 
-    fn evict_if_needed(&self, inner: &mut UnkfsArcInner, _incoming_size: usize) {
+    fn evict_if_needed(&self, inner: &mut EgfsArcInner, _incoming_size: usize) {
         while inner.mru.len() + inner.mfu.len() + 1 > inner.max_size {
             if inner.mru.len() > inner.p {
                 if let Some(idx) = inner.mru.pop_front()
@@ -453,7 +453,7 @@ impl UnkfsArc {
     }
 
     /// 按键递减对应缓冲区的引用计数; 键不存在时无操作.
-    pub fn release(&self, key: &UnkfsArcKey) {
+    pub fn release(&self, key: &EgfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
             slot.as_mut().filter(|buf| {
@@ -467,7 +467,7 @@ impl UnkfsArc {
     }
 
     /// 按键把对应缓冲区标记为脏; 键不存在时无操作.
-    pub fn mark_dirty(&self, key: &UnkfsArcKey) {
+    pub fn mark_dirty(&self, key: &EgfsArcKey) {
         let mut inner = self.inner.lock();
         if let Some(buf) = inner.buffers.iter_mut().find_map(|slot| {
             slot.as_mut().filter(|buf| {
@@ -504,7 +504,7 @@ impl UnkfsArc {
         )
     }
 
-    /// 是否已完成 [`UnkfsArc::init`] 初始化.
+    /// 是否已完成 [`EgfsArc::init`] 初始化.
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
@@ -553,8 +553,8 @@ impl UnkfsArc {
     }
 }
 
-impl Default for UnkfsArc {
-    /// 委托 [`UnkfsArc::new`] 构造空 ARC.
+impl Default for EgfsArc {
+    /// 委托 [`EgfsArc::new`] 构造空 ARC.
     fn default() -> Self {
         Self::new()
     }
@@ -570,7 +570,7 @@ mod tests {
     /// init 后应报告已初始化.
     #[test]
     fn test_arc_init() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(128);
         assert!(arc.is_initialized(), "arc should be initialized");
     }
@@ -578,20 +578,20 @@ mod tests {
     /// 空缓存查找应返回 None.
     #[test]
     fn test_arc_lookup_miss() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(128);
-        let key = UnkfsArcKey::new(0, 0, 0);
+        let key = EgfsArcKey::new(0, 0, 0);
         assert!(arc.lookup(&key).is_none(), "empty arc should return None");
     }
 
     /// 插入后应能经 safe 切片接口查回同一数据.
     #[test]
     fn test_arc_insert_lookup() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(128);
-        let key = UnkfsArcKey::new(0, 4096, 1);
+        let key = EgfsArcKey::new(0, 4096, 1);
         let data: [u8; 16] = [0xAA; 16];
-        let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
+        let _ = arc.insert(key, &data, EgfsArcBufType::Data);
         let Some(found) = arc.lookup_slice(&key) else {
             panic!("should find inserted entry");
         };
@@ -601,16 +601,16 @@ mod tests {
     /// 驱逐不得使已持有的共享句柄失效 (P1 回归).
     #[test]
     fn test_arc_slice_survives_eviction() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(1);
-        let key = UnkfsArcKey::new(0, 0, 1);
-        let _ = arc.insert(key, &[0xAAu8; 64], UnkfsArcBufType::Data);
+        let key = EgfsArcKey::new(0, 0, 1);
+        let _ = arc.insert(key, &[0xAAu8; 64], EgfsArcBufType::Data);
         let held = arc.lookup_slice(&key).expect("should find entry");
         // 插入新条目触发驱逐; 已持有的 Arc 句柄必须仍然有效.
         let _ = arc.insert(
-            UnkfsArcKey::new(0, 4096, 1),
+            EgfsArcKey::new(0, 4096, 1),
             &[0xBBu8; 64],
-            UnkfsArcBufType::Data,
+            EgfsArcBufType::Data,
         );
         assert_eq!(held[0], 0xAA, "held slice must survive eviction");
     }
@@ -618,12 +618,12 @@ mod tests {
     /// 多次插入后缓存应产生统计活动.
     #[test]
     fn test_arc_eviction() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(8192);
         for i in 0..5u64 {
-            let key = UnkfsArcKey::new(0, i * 4096, 1);
+            let key = EgfsArcKey::new(0, i * 4096, 1);
             let data: [u8; 64] = [i as u8; 64];
-            let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
+            let _ = arc.insert(key, &data, EgfsArcBufType::Data);
         }
         let (hits, misses, size, _evicts) = arc.get_stats();
         assert!(
@@ -635,11 +635,11 @@ mod tests {
     /// mark_dirty 后 flush_dirty 应统计到脏条目.
     #[test]
     fn test_arc_dirty_tracking() {
-        let arc = UnkfsArc::new();
+        let arc = EgfsArc::new();
         arc.init(256);
-        let key = UnkfsArcKey::new(0, 0, 1);
+        let key = EgfsArcKey::new(0, 0, 1);
         let data: [u8; 32] = [0xBB; 32];
-        let _ = arc.insert(key, &data, UnkfsArcBufType::Data);
+        let _ = arc.insert(key, &data, EgfsArcBufType::Data);
 
         arc.mark_dirty(&key);
         let dirty_count = arc.flush_dirty();

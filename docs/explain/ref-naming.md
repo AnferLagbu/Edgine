@@ -26,12 +26,12 @@ edgine 内核 100% Rust（privileged unsafe + functions safe），但 ABI 层面
 |---|---|---|
 | 内核 | Edgine | Edge + Engine，软硬件边界的引擎 |
 | 符号前缀 | EG | 内核私有扩展符号前缀（原 `QX`） |
-| 文件系统 | UNKFS | unknown FS |
+| 文件系统 | EGFS | Edgine File System |
 | 驱动框架 | EGDF | Edgine Driver Framework |
 | 安全子系统 | SGEG | Security Guarantee Edgine |
 | 容错子系统 | FREG | Fault Recovery Edgine |
 
-重命名映射（旧名 → 新名）：`QueenX → Edgine` / `QX → EG` / `NestFS → UNKFS` / `Chitin → EGDF` / `Credo → SGEG` / `Barrier → FREG`。除子系统外，通用内存屏障（Barrier）原语一并归入 `FREG`。
+重命名映射（旧名 → 新名）：`QueenX → Edgine` / `QX → EG` / `NestFS → UNKFS → EGFS` / `Chitin → EGDF` / `Credo → SGEG` / `Barrier → FREG`。除子系统外，通用内存屏障（Barrier）原语一并归入 `FREG`。
 
 框内核双层目录命名：`framework → privileged`（TCB 子树）/ `services → functions`（去特权子树）。`framework`/`services` 属框内核架构术语（源自 Asterinas 框架论文），非本项目自有目录名；本项目改用描述性命名区分两个子树，避免与架构概念混同。内部嵌套模块 `driver/framework → driver/infra` 同步改名。架构术语本身（`OS Framework`/`OS Services`）与外部标准术语（UEFI `BootServices`/`RuntimeServices`、smoltcp `Differential Services`）保留不动。
 
@@ -139,7 +139,7 @@ edgine = Asterinas 的 Rust 内核哲学 + 直接 Linux ABI + 中性命名保留
 
 ### D 任务优先序
 
-Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 UNKFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
+Phase D 任务优先序（直接 ABI 路径）。D1 网络栈收尾（已完成）/ D2 EGFS e2e 测试（已完成）/ D3.5 eash 增强（已完成）/ D6 eash 测试（已完成）/ 实现 240+ Linux syscall（核心任务）/ 提供 glibc 运行时（关键）。
 
 核心路径：实现 Linux syscall → 提供 glibc → Linux 二进制直接运行。
 

@@ -2,7 +2,7 @@
 //! 快照 (snapshot) 系统调用处理器
 //!
 //! 提供 snapshot_create/snapshot_destroy/snapshot_rollback/snapshot_clone 系统调用的实现。
-//! 调用 UNKFS 层的快照方法。
+//! 调用 EGFS 层的快照方法。
 
 use crate::functions::syscall::types::Errno;
 
@@ -17,7 +17,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
 
     // 通过 privileged 层获取快照名称
     let name = crate::functions::fs::api::snapshot_get_name(name_ptr);
-    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_create(&name);
+    let result = crate::functions::fs::egfs::entry::get_egfs().snapshot_create(&name);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -31,7 +31,7 @@ pub fn snapshot_create_syscall(name_ptr: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层销毁失败时以对应的 `Errno` 返回.
 pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_destroy(snap_id);
+    let result = crate::functions::fs::egfs::entry::get_egfs().snapshot_destroy(snap_id);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -45,7 +45,7 @@ pub fn snapshot_destroy_syscall(snap_id: u64) -> Result<usize, Errno> {
 /// # Errors
 /// 当快照不存在或底层回滚失败时以对应的 `Errno` 返回.
 pub fn snapshot_rollback_syscall(snap_id: u64) -> Result<usize, Errno> {
-    let result = crate::functions::fs::unkfs::entry::get_unkfs().snapshot_rollback(snap_id);
+    let result = crate::functions::fs::egfs::entry::get_egfs().snapshot_rollback(snap_id);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))
@@ -65,7 +65,7 @@ pub fn snapshot_clone_syscall(snap_id: u64, name_ptr: u64) -> Result<usize, Errn
 
     // 通过 privileged 层获取克隆名称
     let name = crate::functions::fs::api::snapshot_get_name(name_ptr);
-    let result = crate::functions::fs::unkfs::entry::get_unkfs().clone_create(snap_id, &name);
+    let result = crate::functions::fs::egfs::entry::get_egfs().clone_create(snap_id, &name);
 
     if result >= 0 {
         Ok(crate::functions::intcast::usize_from_i32(result))

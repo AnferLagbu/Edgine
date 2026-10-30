@@ -231,15 +231,15 @@ fn tmpfs_has_native_inode() {
 }
 
 #[test]
-fn unkfs_has_native_inode() {
-    let src = read_file("functions/fs/unkfs/unkfs_inode.rs");
+fn egfs_has_native_inode() {
+    let src = read_file("functions/fs/egfs/egfs_inode.rs");
     assert!(
-        src.contains("pub struct UnkfsInode"),
-        "UNKFS 必须有原生 UnkfsInode"
+        src.contains("pub struct EgfsInode"),
+        "EGFS 必须有原生 EgfsInode"
     );
     assert!(
-        src.contains("impl Inode for UnkfsInode"),
-        "UnkfsInode 必须 impl Inode"
+        src.contains("impl Inode for EgfsInode"),
+        "EgfsInode 必须 impl Inode"
     );
 }
 

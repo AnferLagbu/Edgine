@@ -1,12 +1,12 @@
 #![deny(unsafe_code)]
-//! Unkfs RAID-Z 冗余编码与数据重建 — 纯策略实现。
+//! Egfs RAID-Z 冗余编码与数据重建 — 纯策略实现。
 //!
 //! 提供 GF(2^8) 有限域运算、条带校验生成、故障列数据重建与校验校验,
 //! 支撑 Single / RAID-Z1 / RAID-Z2 / RAID-Z3 / Mirror 五种冗余级别.
 
 #![deny(missing_docs)]
 
-use crate::functions::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
+use crate::functions::fs::egfs::spa::HV_POOL_BLOCK_SIZE;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -15,10 +15,10 @@ pub const HV_RAIDZ_MIN_COLS: usize = 2;
 /// RAID-Z 条带允许的最大列数。
 pub const HV_RAIDZ_MAX_COLS: usize = 16;
 
-/// Unkfs 条带的冗余级别。
+/// Egfs 条带的冗余级别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum UnkfsRaidzLevel {
+pub enum EgfsRaidzLevel {
     /// 单副本: 无校验列, 无容错能力。
     Single = 0,
     /// RAID-Z1: 单校验列, 容忍一列故障。
@@ -31,7 +31,7 @@ pub enum UnkfsRaidzLevel {
     Mirror = 4,
 }
 
-impl UnkfsRaidzLevel {
+impl EgfsRaidzLevel {
     /// 返回该冗余级别的校验列数量。
     #[must_use]
     pub fn parity_cols(self) -> usize {
@@ -55,10 +55,10 @@ impl UnkfsRaidzLevel {
     }
 }
 
-/// Unkfs RAID-Z 条带映射 — 描述一条条带的布局与其中各列的数据。
-pub struct UnkfsRaidzMap {
+/// Egfs RAID-Z 条带映射 — 描述一条条带的布局与其中各列的数据。
+pub struct EgfsRaidzMap {
     /// 条带的冗余级别。
-    pub level: UnkfsRaidzLevel,
+    pub level: EgfsRaidzLevel,
     /// 条带总列数 (数据列 + 校验列)。
     pub ncols: usize,
     /// 校验列数量。
@@ -66,11 +66,11 @@ pub struct UnkfsRaidzMap {
     /// 块大小位移 (2 的幂), 用于确定块内偏移单位。
     pub ashift: u8,
     /// 条带中的各列。
-    pub cols: Vec<UnkfsRaidzCol>,
+    pub cols: Vec<EgfsRaidzCol>,
 }
 
-/// Unkfs RAID-Z 条带中的单列 — 承载该列的数据与其承载位置。
-pub struct UnkfsRaidzCol {
+/// Egfs RAID-Z 条带中的单列 — 承载该列的数据与其承载位置。
+pub struct EgfsRaidzCol {
     /// 列在条带中的序号。
     pub col_id: usize,
     /// 该列对应的设备索引。
@@ -190,10 +190,10 @@ fn gf_invert_matrix(mat: &mut [Vec<u8>], n: usize) -> bool {
     true
 }
 
-impl UnkfsRaidzMap {
+impl EgfsRaidzMap {
     /// 按冗余级别构造条带映射; 列数会夹取到 [MIN, MAX] 区间。
     #[must_use]
-    pub fn new(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> Self {
+    pub fn new(level: EgfsRaidzLevel, ncols: usize, ashift: u8) -> Self {
         let nparity = level.parity_cols();
         Self {
             level,
@@ -408,32 +408,32 @@ impl UnkfsRaidzMap {
     }
 }
 
-/// Unkfs RAID-Z 引擎 — 条带创建与块级校验的对外入口。
-pub struct UnkfsRaidzEngine;
+/// Egfs RAID-Z 引擎 — 条带创建与块级校验的对外入口。
+pub struct EgfsRaidzEngine;
 
-impl UnkfsRaidzEngine {
+impl EgfsRaidzEngine {
     /// 按冗余级别创建一条条带映射。
     #[must_use]
-    pub fn create_stripe(level: UnkfsRaidzLevel, ncols: usize, ashift: u8) -> UnkfsRaidzMap {
-        UnkfsRaidzMap::new(level, ncols, ashift)
+    pub fn create_stripe(level: EgfsRaidzLevel, ncols: usize, ashift: u8) -> EgfsRaidzMap {
+        EgfsRaidzMap::new(level, ncols, ashift)
     }
 
     /// 校验一个块的校验列, 返回清理完成或损坏的诊断结果。
     #[must_use]
-    pub fn scrub_block(map: &UnkfsRaidzMap, parity_data: &[Vec<u8>]) -> UnkfsScrubResult {
+    pub fn scrub_block(map: &EgfsRaidzMap, parity_data: &[Vec<u8>]) -> EgfsScrubResult {
         if map.verify_parity(parity_data) {
-            UnkfsScrubResult::Clean
+            EgfsScrubResult::Clean
         } else {
-            UnkfsScrubResult::Corrupted {
+            EgfsScrubResult::Corrupted {
                 failed_cols: vec![0],
             }
         }
     }
 }
 
-/// Unkfs 块级校验 (scrub) 的结果。
+/// Egfs 块级校验 (scrub) 的结果。
 #[derive(Debug, Clone)]
-pub enum UnkfsScrubResult {
+pub enum EgfsScrubResult {
     /// 校验一致, 无损坏。
     Clean,
     /// 检测到损坏, 记录疑似故障列。

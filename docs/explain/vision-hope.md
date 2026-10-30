@@ -4,7 +4,7 @@
 
 ## 核心定位
 
-Edgine 是一个从零开发的自研操作系统内核，采用 framekernel 架构，命名体系为 Edgine 内核（Edge + Engine，软硬件边界的引擎）/ UNKFS 文件系统 / Edgine 发行版。
+Edgine 是一个从零开发的自研操作系统内核，采用 framekernel 架构，命名体系为 Edgine 内核（Edge + Engine，软硬件边界的引擎）/ EGFS 文件系统 / Edgine 发行版。
 
 项目的核心定位是 **专注内核深度**，不在用户态层投入精力与资源。
 
@@ -12,7 +12,7 @@ Edgine 是一个从零开发的自研操作系统内核，采用 framekernel 架
 
 长期目标是与 OpenHarmony **标准系统（standard）层的用户态空间**相结合，而**不是自建完整的 GNU/Linux 用户态**。路径判定只有一条：OH 的上层生态（应用框架、软总线、ArkUI、HUKS 安全子系统等）只存在于 standard 系统（用户态 musl + OH 组件，内核位为 Linux），因此 "OpenHarmony 兼容" 的实质是 **Linux 内核 ABI 的兼容度**——Edgine 仅需在 syscall 层做到足够 Linux，OH 用户态即可无感承载。这样 Edgine 可以避开用户态开发的巨大工作量，专心内核；同时获得生态环境的曝光度。small/mini 系统的 "替换 LiteOS" 形态不取：其应用直接静态链接内核 API、不存在独立用户态兼容面，且官方替换通道要求进基金会治理，与项目的独立姿态冲突。
 
-最终呈现完整的技术栈：Edgine（内核/发行版）+ UNKFS（文件系统）+ OpenHarmony（外部生态）三方协同。形成一个完整的自研操作系统栈，既保持技术独立性又获得生态入口。
+最终呈现完整的技术栈：Edgine（内核/发行版）+ EGFS（文件系统）+ OpenHarmony（外部生态）三方协同。形成一个完整的自研操作系统栈，既保持技术独立性又获得生态入口。
 
 ## 许可合规结论
 
@@ -36,13 +36,13 @@ Edgine 使用 OpenHarmony 用户态**无需任何授权**，依据分三层：
 
 **务实复用（ref-naming.md §4.2）** — 不重复造轮子，根据需求务实的借用既有生态，仅自研核心 TCB 与差异化部分。
 
-**技术栈分工** — Edgine（内核/发行版）承载 UNKFS（文件系统）并对外分发，OpenHarmony 是外部生态。生态系统中每个角色都有明确分工，内核不必全包全揽。
+**技术栈分工** — Edgine（内核/发行版）承载 EGFS（文件系统）并对外分发，OpenHarmony 是外部生态。生态系统中每个角色都有明确分工，内核不必全包全揽。
 
 ## 项目姿态愿景
 
 Edgine 若成功与 OpenHarmony 上层结合，其项目姿态应**先将重心放在嵌入式与 IoT 场景**，而**以通用操作系统内核的姿态面向微计算场景**。具体含义：
 
-- **场景重心**：嵌入式设备 / IoT 终端 / 工业控制 / 智能家居 / 边缘计算节点。这些场景计算资源有限但对实时性、可靠性、安全性要求高，与 Edgine framekernel 的安全模型 + UNKFS 持久化 + FREG故障恢复高度契合。
+- **场景重心**：嵌入式设备 / IoT 终端 / 工业控制 / 智能家居 / 边缘计算节点。这些场景计算资源有限但对实时性、可靠性、安全性要求高，与 Edgine framekernel 的安全模型 + EGFS 持久化 + FREG故障恢复高度契合。
 - **姿态定位**：通用操作系统内核，而非嵌入式专用 RTOS。通用内核姿态意味着保留完整的 POSIX/Linux ABI 兼容能力、虚拟内存、进程隔离、文件系统等所有通用能力，仅在资源受限时裁剪或优化；不因嵌入式场景而牺牲内核的通用性。
 - **微计算聚焦**：微计算（micro-computing）是嵌入式与 IoT 的本质特征 — 算力低、内存小（MB 级）、存储小（MB-GB 级）、网络间歇性强。Edgine 内核应针对这些约束做轻量化优化（小内存 footprint、低功耗 idle、低带宽容忍），但不放弃通用内核能力。
 - **与 OpenHarmony 的契合**：OpenHarmony 本身面向的就是 IoT 与嵌入式设备，其标准系统的上层（ArkUI、软总线、HUKS 等）全部由用户态自供，内核暴露面很薄——图形起步只需 framebuffer/ramfb 映射 + evdev 输入 + 共享缓冲原语（KMS 语义可推迟，3D 加速依赖厂商闭源 DDK、明确非兼容目标）；真正的内核补课集中在 IPC 与事件基础设施（binder / netlink / uevent）。Edgine 承载 OH standard 用户态后，可同时获得 framekernel 安全模型与 OpenHarmony 生态入口。

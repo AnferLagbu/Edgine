@@ -7,7 +7,7 @@
 #![deny(missing_docs)]
 
 use super::api::ptr_to_str;
-use super::backend_trait::{current_fs_backend, unkfs_fs};
+use super::backend_trait::{current_fs_backend, egfs_fs};
 use super::vfs_manager::VFS_MANAGER;
 use super::vfs_types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
 use crate::functions::fs::devfs::DEVFS_DATA;
@@ -36,10 +36,10 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
                 } // 显式 drop ramfs 释放锁
             }
         }
-        FsType::Unkfs => {
-            // UNKFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
-            // 未注册 (functions::fs::init 之前) 时静默跳过, 挂载在下方 unkfs_fs() 处 fail-closed
-            if let Some(fs) = unkfs_fs() {
+        FsType::Egfs => {
+            // EGFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
+            // 未注册 (functions::fs::init 之前) 时静默跳过, 挂载在下方 egfs_fs() 处 fail-closed
+            if let Some(fs) = egfs_fs() {
                 let _ = fs.fs_init();
             }
         }
@@ -65,9 +65,9 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
     // 带 trait object 挂载: 各类型经注册表/全局实例解析 FileSystem trait object
     let fs: &'static dyn FileSystem = match fs_type {
         FsType::RamFs => ramfs_fs(),
-        FsType::Unkfs => match unkfs_fs() {
+        FsType::Egfs => match egfs_fs() {
             Some(fs) => fs,
-            // fail-closed: functions::fs::init 注册前 UNKFS 不可挂载
+            // fail-closed: functions::fs::init 注册前 EGFS 不可挂载
             None => return KernelError::NotInitialized.as_i32(),
         },
         FsType::DevFs => &DEVFS_DATA,
@@ -81,7 +81,7 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
     VFS_MANAGER.mount_with_fs(path, fs_name, fs).as_i32()
 }
 
-// I-22: 15 个 `unkfs_*_internal` 函数无调用方, 已随 P3-I-18 迁移至 `vfs_sync` (FileSystem
+// I-22: 15 个 `egfs_*_internal` 函数无调用方, 已随 P3-I-18 迁移至 `vfs_sync` (FileSystem
 // trait fs_sync 分发) 后彻底废弃. 旧路径仅 C-FFI 兼容, 无 FFI 调用方, 移除以减小 TCB
 // 面积 (约 150 行, 含 unsafe).
 //
@@ -142,7 +142,7 @@ pub extern "C" fn vfs_umount(path: *const u8, flags: i32) -> i32 {
 /// 遍历所有挂载点并同步各文件系统, 返回 0 或最近一次负 errno
 pub fn vfs_sync() -> i32 {
     // P3-I-18: 遍历所有挂载点, 通过 FileSystem trait 的 fs_sync 分发.
-    // 替换原 unkfs_sync_internal() 单 FS 写死的实现.
+    // 替换原 egfs_sync_internal() 单 FS 写死的实现.
     let mounts = VFS_MANAGER.mounts.lock();
     let mut last_err: i32 = 0;
     let mut synced: u32 = 0;
@@ -153,7 +153,7 @@ pub fn vfs_sync() -> i32 {
         }
         if let Some(fs) = m.get_fs() {
             // SAFETY: 见本函数旧实现, fs_sync 不引用 raw pointer, 是
-            // 内部纯粹计算 (UNKFS 走 txg commit). 互斥由 VFS_MANAGER 维护.
+            // 内部纯粹计算 (EGFS 走 txg commit). 互斥由 VFS_MANAGER 维护.
             match fs.fs_sync() {
                 Ok(()) => {
                     synced += 1;
@@ -174,4 +174,4 @@ pub fn vfs_sync() -> i32 {
 
 // `vfs_format_internal` 已删除 (同族 C-FFI 残壳, 见上方注释块): 格式化能力
 // 的唯一入口是 `FileSystem::fs_format` trait 分发 (DECISION-K 项 6), 本函数的
-// unkfs / ramfs 分支在 trait 侧已有等价实装.
+// egfs / ramfs 分支在 trait 侧已有等价实装.

@@ -29,7 +29,7 @@ pub const HV_VDEV_ASIZE_DEFAULT: u64 = 32 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// vdev 生命周期与健康状态.
-pub enum UnkfsVdevState {
+pub enum EgfsVdevState {
     /// 未知状态.
     Unknown = 0,
     /// 已关闭.
@@ -48,7 +48,7 @@ pub enum UnkfsVdevState {
     Healthy = 7,
 }
 
-impl UnkfsVdevState {
+impl EgfsVdevState {
     /// 由编码值还原状态, 未知值归一为 `Unknown`.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
@@ -67,7 +67,7 @@ impl UnkfsVdevState {
 
 #[derive(Debug, Clone)]
 /// vdev 配置: 标识、类型、路径、扇区位移与子成员数.
-pub struct UnkfsVdevConfig {
+pub struct EgfsVdevConfig {
     /// vdev 编号 (单盘时对应驱动器号).
     pub vdev_id: u16,
     /// vdev 类型 (`HV_VDEV_TYPE_*`).
@@ -92,7 +92,7 @@ pub struct UnkfsVdevConfig {
     pub partition_start: u32,
 }
 
-impl UnkfsVdevConfig {
+impl EgfsVdevConfig {
     /// 构造单盘 vdev 配置, 初始容量取默认值、扇区数待探测.
     #[must_use]
     pub fn new_disk(vdev_id: u16, path: &str, ashift: u8) -> Self {
@@ -117,11 +117,11 @@ impl UnkfsVdevConfig {
 }
 
 /// vdev 运行时实例: 配置、健康状态、子成员关系与读写计数.
-pub struct UnkfsVdev {
+pub struct EgfsVdev {
     /// 静态配置.
-    pub config: UnkfsVdevConfig,
+    pub config: EgfsVdevConfig,
     /// 当前状态.
-    pub state: UnkfsVdevState,
+    pub state: EgfsVdevState,
     /// 父 vdev 编号.
     pub parent_id: Option<u16>,
     /// 子 vdev 编号列表.
@@ -140,16 +140,16 @@ pub struct UnkfsVdev {
     pub total_writes: u64,
 }
 
-// SAFETY: UnkfsVdev contains only Copy/primitive types and Mutex-protected fields.
-// SAFETY (Framekernel P2.2.2): UnkfsVdev 全部字段 (Mutex<T>, Atomic*, [T; N]) 自动 Send + Sync。
+// SAFETY: EgfsVdev contains only Copy/primitive types and Mutex-protected fields.
+// SAFETY (Framekernel P2.2.2): EgfsVdev 全部字段 (Mutex<T>, Atomic*, [T; N]) 自动 Send + Sync。
 
-impl UnkfsVdev {
+impl EgfsVdev {
     /// 以配置构造 vdev, 初始状态为已关闭.
     #[must_use]
-    pub fn new(config: UnkfsVdevConfig) -> Self {
+    pub fn new(config: EgfsVdevConfig) -> Self {
         Self {
             config,
-            state: UnkfsVdevState::Closed,
+            state: EgfsVdevState::Closed,
             parent_id: None,
             child_ids: Vec::new(),
             ms_count: 0,
@@ -200,16 +200,13 @@ impl UnkfsVdev {
     /// 是否处于健康状态.
     #[must_use]
     pub fn is_healthy(&self) -> bool {
-        self.state == UnkfsVdevState::Healthy
+        self.state == EgfsVdevState::Healthy
     }
 
     /// 是否可读写 (健康或降级).
     #[must_use]
     pub fn is_available(&self) -> bool {
-        matches!(
-            self.state,
-            UnkfsVdevState::Healthy | UnkfsVdevState::Degraded
-        )
+        matches!(self.state, EgfsVdevState::Healthy | EgfsVdevState::Degraded)
     }
 
     /// 打开 vdev: 单盘探测到设备则置健康并回填容量/扇区数, 否则置无法打开.
@@ -219,7 +216,7 @@ impl UnkfsVdev {
                 self.config.vdev_id,
             ));
             if present {
-                self.state = UnkfsVdevState::Healthy;
+                self.state = EgfsVdevState::Healthy;
                 if self.config.asize == 0 {
                     self.config.asize = Self::probe_disk_size(
                         crate::functions::intcast::low_u8_from_u16(self.config.vdev_id),
@@ -229,7 +226,7 @@ impl UnkfsVdev {
                     self.config.sector_count = self.config.asize / 512;
                 }
             } else {
-                self.state = UnkfsVdevState::CantOpen;
+                self.state = EgfsVdevState::CantOpen;
             }
         }
     }

@@ -3,7 +3,7 @@
 //!
 //! VFS Manager + Inode trait 抽象, functions 侧原生 FS 模块: ramfs/tmpfs/overlayfs
 //! /procfs/devfs/sysfs/systree/cgroupfs/configfs/devpts/anonymous 等, 以及
-//! virtiofs/ext2/exfat/unkfs 共 15 个. Plan B 契约实现在 functions::fs::inode.
+//! virtiofs/ext2/exfat/egfs 共 15 个. Plan B 契约实现在 functions::fs::inode.
 //! 0 unsafe, 全部块设备/页缓存底层走 privileged.
 //!
 //! 历史: 2026-06 之前 v2.5 状态评估已过时, 当前已远超当时范围. 详细
@@ -24,6 +24,7 @@ pub mod devfs;
 pub mod devpts;
 /// 目录与定位操作策略 — lseek / getdents
 pub mod dir_ops;
+pub mod egfs;
 pub mod exfat;
 pub mod ext2;
 /// 文件句柄系统 (name_to_handle_at / open_by_handle_at)
@@ -65,7 +66,6 @@ pub mod sysfs;
 pub mod systree;
 /// tmpfs 临时文件系统 (基于 ramfs 的内存文件系统)
 pub mod tmpfs;
-pub mod unkfs;
 /// VFS 管理器 (挂载表 + FD 表 + 路径解析)
 pub mod vfs_manager;
 /// VFS 挂载/生命周期/同步/格式化 (原 privileged/fs/vfs/mount.rs 下沉)
@@ -83,7 +83,7 @@ pub mod xattr;
 // T-05: VFS 后端决策策略
 // ============================================================================
 
-// 注: `FsBackend` / `register_fs_backend` / `register_unkfs_fs` / `Inode` /
+// 注: `FsBackend` / `register_fs_backend` / `register_egfs_fs` / `Inode` /
 // `FileSystem` / `KernelError` 由文件尾部顶层扁平 re-export 引入作用域, 此处
 // 不再重复 `use`, 避免重名冲突 (E0252).
 use crate::functions::fs::api as vfs_api;
@@ -185,16 +185,16 @@ static VFS_OPS_IMPL: FunctionsVfsOps = FunctionsVfsOps;
 /// 注册内容 (DECISION-K 项 6 注册点前置):
 /// - `FsBackend` 挂载决策策略 (`register_fs_backend`)
 /// - VFS poll 策略 (`register_default_vfs_poll_policy`)
-/// - UNKFS `FileSystem` 实例 (`register_unkfs_fs`) + 热插拔监听器
-///   (`unkfs_hotplug_register`, `HOTPLUG_MANAGER` 为自足 static, 时序仅要求
+/// - EGFS `FileSystem` 实例 (`register_egfs_fs`) + 热插拔监听器
+///   (`egfs_hotplug_register`, `HOTPLUG_MANAGER` 为自足 static, 时序仅要求
 ///   早于首个热插拔中断事件 — `kernel_init` 早期注册满足)
 /// - `VfsOps` 契约实现 (`register_vfs_ops`, 阶段 4b: privileged 消费点回呼入口)
 pub fn init() {
     static POLICY: FunctionsFsBackend = FunctionsFsBackend;
     let _ = register_fs_backend(&POLICY);
     let _ = crate::functions::fs::vfs_poll_policy::register_default_vfs_poll_policy();
-    let _ = register_unkfs_fs(crate::functions::fs::unkfs::entry::get_unkfs());
-    crate::functions::fs::unkfs::entry::unkfs_hotplug_register();
+    let _ = register_egfs_fs(crate::functions::fs::egfs::entry::get_egfs());
+    crate::functions::fs::egfs::entry::egfs_hotplug_register();
     let _ = crate::privileged::fs::register_vfs_ops(&VFS_OPS_IMPL);
 }
 
@@ -232,8 +232,8 @@ pub use inotify::{
 };
 // T-05: 后端决策策略 re-export
 pub use backend_trait::{
-    FallbackFsBackend, FsBackend, current_fs_backend, register_fs_backend, register_unkfs_fs,
-    unkfs_fs,
+    FallbackFsBackend, FsBackend, current_fs_backend, egfs_fs, register_egfs_fs,
+    register_fs_backend,
 };
 
 /// 全局 FS 单例 / 进程-调度器态测试互斥锁

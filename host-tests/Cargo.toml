@@ -28,7 +28,7 @@ path = "src/bin/framekernel_bench.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # B08-12 (DECISION-052 路线 C): 直接引用内核 functions 真实源码 (host-test feature),
-# 消除 host-tests/src/ 下 7 处平行实现 (unkfs/dma_stream/buddy/capability/checksum/sha256/framekernel_bench).
+# 消除 host-tests/src/ 下 7 处平行实现 (egfs/dma_stream/buddy/capability/checksum/sha256/framekernel_bench).
 # host-tests 为根 crate, 其 dev profile (panic=unwind) 覆盖 edgine 依赖的 panic 策略.
 edgine = { path = "../src/rust", features = ["host-test"] }
 # sockopt ABI 常量单源 (与内核/userlib 共用, plan socket-option-constants-unification 方案 A).

@@ -24,7 +24,7 @@ from collections import defaultdict
 from pathlib import Path
 
 # 扫描范围 (2026-09-13 用户裁决扩展): privileged + functions 双子树.
-# 扩展背景: 第二十六批 unkfs/dedup.rs ABBA 死锁位于 functions 子树, 原单根
+# 扩展背景: 第二十六批 egfs/dedup.rs ABBA 死锁位于 functions 子树, 原单根
 # 扫描对 functions 锁使用不可见 (fail-closed 原则: 不可检查 = 漏检).
 BASES = [
     Path('src/kernel/privileged'),

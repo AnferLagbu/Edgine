@@ -16,7 +16,7 @@
 //! 删除 → refcount-- → refcount=0 时真正释放
 //! ```
 
-use super::bp::UnkfsBlockPointer;
+use super::bp::EgfsBlockPointer;
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -44,7 +44,7 @@ pub enum CasOp {
 
 /// 内容寻址索引 (哈希 → 块指针 + 引用计数).
 pub struct CasIndex {
-    hash_to_dva: Mutex<BTreeMap<[u8; 32], Vec<UnkfsBlockPointer>>>,
+    hash_to_dva: Mutex<BTreeMap<[u8; 32], Vec<EgfsBlockPointer>>>,
     ref_counts: Mutex<BTreeMap<[u8; 32], u64>>,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -65,7 +65,7 @@ impl CasIndex {
     }
 
     /// 按内容哈希查找已有块指针, 命中/未命中分别累加对应计数.
-    pub fn lookup(&self, hash: &CasHash) -> Option<UnkfsBlockPointer> {
+    pub fn lookup(&self, hash: &CasHash) -> Option<EgfsBlockPointer> {
         let index = self.hash_to_dva.lock();
         if let Some(dvas) = index.get(hash)
             && let Some(bp) = dvas.first()
@@ -78,7 +78,7 @@ impl CasIndex {
     }
 
     /// 插入哈希 → 块指针映射并递增引用计数.
-    pub fn insert(&self, hash: CasHash, bp: UnkfsBlockPointer) {
+    pub fn insert(&self, hash: CasHash, bp: EgfsBlockPointer) {
         let mut index = self.hash_to_dva.lock();
         index.entry(hash).or_default().push(bp);
         let mut refs = self.ref_counts.lock();
@@ -100,7 +100,7 @@ impl CasIndex {
         // 锁序统一: hash_to_dva → ref_counts (与 insert/invalidate 一致).
         // 回归背景 (第二十六批预存问题修复): 此前清零分支先持 ref_counts 再取
         // hash_to_dva, 与 insert 的持锁顺序相反, 并发交错即 ABBA 死锁
-        // (host-tests unkfs_stress_test 两测试线程互等复现).
+        // (host-tests egfs_stress_test 两测试线程互等复现).
         let mut index = self.hash_to_dva.lock();
         let mut refs = self.ref_counts.lock();
         if let Some(count) = refs.get_mut(hash) {
@@ -167,12 +167,12 @@ pub fn cas_init() {
 
 /// 在全局索引中按内容哈希查找块指针.
 #[must_use]
-pub fn cas_lookup(hash: &CasHash) -> Option<UnkfsBlockPointer> {
+pub fn cas_lookup(hash: &CasHash) -> Option<EgfsBlockPointer> {
     get_cas().lookup(hash)
 }
 
 /// 向全局索引插入哈希 → 块指针映射.
-pub fn cas_insert(hash: CasHash, bp: UnkfsBlockPointer) {
+pub fn cas_insert(hash: CasHash, bp: EgfsBlockPointer) {
     get_cas().insert(hash, bp);
 }
 
@@ -209,7 +209,7 @@ pub fn cas_stats() -> (u64, u64, u64) {
 /// 计算数据块的 SHA256 内容哈希.
 #[must_use]
 pub fn sha256(data: &[u8]) -> CasHash {
-    let ck = super::checksum::UnkfsChecksum::compute(super::bp::UnkfsCksumType::SHA256, data);
+    let ck = super::checksum::EgfsChecksum::compute(super::bp::EgfsCksumType::SHA256, data);
     let mut hash = [0u8; 32];
     hash[0..8].copy_from_slice(&ck.value[0].to_be_bytes());
     hash[8..16].copy_from_slice(&ck.value[1].to_be_bytes());
@@ -226,13 +226,13 @@ pub fn sha256_matches(data: &[u8], expected: &CasHash) -> bool {
 
 /// CAS 感知写入: 计算 SHA256, 检查去重索引, 引用已有块或分配新块
 #[must_use]
-pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::UnkfsBlockPointer> {
+pub fn cas_aware_write(data: &[u8], txg: u64, obj_id: u64) -> Option<super::bp::EgfsBlockPointer> {
     let hash = sha256(data);
     let cas = get_cas();
 
     if let Some(existing) = cas.lookup(&hash) {
         cas.ref_inc(&hash);
-        let _ = crate::functions::fs::unkfs::zil::UnkfsZilRecord::new_dedup_ref(
+        let _ = crate::functions::fs::egfs::zil::EgfsZilRecord::new_dedup_ref(
             txg,
             [
                 u64::from_be_bytes(hash[0..8].try_into().unwrap_or([0u8; 8])),

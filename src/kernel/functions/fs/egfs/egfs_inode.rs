@@ -1,19 +1,19 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
-use super::unkfs_data::{UnkfsData, get_unkfs};
+use super::egfs_data::{EgfsData, get_egfs};
 use crate::functions::fs::inode::Inode;
 use crate::functions::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
 
-/// `UNKFS` 文件 Inode — 直接持有 fd 编号
-pub struct UnkfsInode {
+/// `EGFS` 文件 Inode — 直接持有 fd 编号
+pub struct EgfsInode {
     fd: u32,
     mount_idx: u32,
     rel_path: alloc::string::String,
 }
 
-impl UnkfsInode {
-    /// 由 fd、挂载索引与相对路径构造 UNKFS inode。
+impl EgfsInode {
+    /// 由 fd、挂载索引与相对路径构造 EGFS inode。
     #[must_use]
     pub fn new(fd: u32, mount_idx: u32, rel_path: &str) -> Self {
         Self {
@@ -24,10 +24,10 @@ impl UnkfsInode {
     }
 }
 
-impl Inode for UnkfsInode {
+impl Inode for EgfsInode {
     fn read(&self, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
-        let unkfs = get_unkfs();
-        let result = unkfs.read(
+        let egfs = get_egfs();
+        let result = egfs.read(
             self.fd,
             buf,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
@@ -40,8 +40,8 @@ impl Inode for UnkfsInode {
     }
 
     fn write(&self, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
-        let unkfs = get_unkfs();
-        let result = unkfs.write(
+        let egfs = get_egfs();
+        let result = egfs.write(
             self.fd,
             buf,
             crate::functions::intcast::low_u32_from_usize(buf.len()),
@@ -54,9 +54,8 @@ impl Inode for UnkfsInode {
     }
 
     fn stat(&self, pwm: u64) -> KernelResult<VfsStat> {
-        let unkfs = get_unkfs();
-        unkfs
-            .stat(&self.rel_path, pwm)
+        let egfs = get_egfs();
+        egfs.stat(&self.rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
                 Ok(VfsStat {
                     node_id: crate::functions::intcast::low_u32_from_u64(obj.obj_id),
@@ -97,10 +96,10 @@ impl Inode for UnkfsInode {
         false
     }
 
-    // B06-08: 显式覆盖 chmod/chown (委托给底层 UnkfsData, 底层支持路径级权限修改)
+    // B06-08: 显式覆盖 chmod/chown (委托给底层 EgfsData, 底层支持路径级权限修改)
     fn chmod(&self, mode: u16, pwm: u64) -> KernelResult<()> {
-        let unkfs = get_unkfs();
-        if unkfs.chmod(&self.rel_path, mode, pwm) == 0 {
+        let egfs = get_egfs();
+        if egfs.chmod(&self.rel_path, mode, pwm) == 0 {
             Ok(())
         } else {
             Err(KernelError::PermissionDenied)
@@ -108,18 +107,18 @@ impl Inode for UnkfsInode {
     }
 
     fn chown(&self, owner_pwm: u64, group_pwm: u64, pwm: u64) -> KernelResult<()> {
-        let unkfs = get_unkfs();
-        if unkfs.chown_ext(&self.rel_path, owner_pwm, group_pwm, pwm) == 0 {
+        let egfs = get_egfs();
+        if egfs.chown_ext(&self.rel_path, owner_pwm, group_pwm, pwm) == 0 {
             Ok(())
         } else {
             Err(KernelError::PermissionDenied)
         }
     }
 
-    // B06-08 同源: 委托底层 UnkfsData (按路径定位 DMU 对象并落盘)
+    // B06-08 同源: 委托底层 EgfsData (按路径定位 DMU 对象并落盘)
     fn set_times(&self, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
-        let unkfs = get_unkfs();
-        unkfs.set_times(&self.rel_path, atime, mtime, pwm)
+        let egfs = get_egfs();
+        egfs.set_times(&self.rel_path, atime, mtime, pwm)
     }
 
     fn node_id(&self) -> u32 {
@@ -135,9 +134,9 @@ impl Inode for UnkfsInode {
 // E6-4: FileSystem trait 实现
 // ============================================================================
 
-impl crate::functions::fs::FileSystem for UnkfsData {
+impl crate::functions::fs::FileSystem for EgfsData {
     fn name(&self) -> &'static str {
-        "unkfs"
+        "egfs"
     }
 
     fn fs_init(&self) -> crate::functions::fs::KernelResult<()> {
@@ -178,7 +177,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
     ) -> crate::functions::fs::KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>>
     {
         match self.open(rel_path, flags, pwm) {
-            Ok(fd) => Ok(alloc::sync::Arc::new(UnkfsInode::new(
+            Ok(fd) => Ok(alloc::sync::Arc::new(EgfsInode::new(
                 fd.cast_unsigned(),
                 0,
                 rel_path,
@@ -264,7 +263,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
             })
     }
 
-    // POSIX utimensat 通路: 委托 UnkfsData::set_times (按路径定位 DMU 对象)
+    // POSIX utimensat 通路: 委托 EgfsData::set_times (按路径定位 DMU 对象)
     fn fs_utimensat(
         &self,
         rel_path: &str,
@@ -421,7 +420,7 @@ impl crate::functions::fs::FileSystem for UnkfsData {
         inode_id: u32,
         mount_idx: u32,
     ) -> Option<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>> {
-        Some(alloc::sync::Arc::new(UnkfsInode::new(
+        Some(alloc::sync::Arc::new(EgfsInode::new(
             inode_id, mount_idx, "",
         )))
     }

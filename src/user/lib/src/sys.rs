@@ -429,7 +429,7 @@ pub fn disk_info(id: u32, info: &mut UserDiskInfo) -> i32 {
     }
 }
 pub fn disk_format(id: u32) -> i32 {
-    unsafe { sys2(SYS_SGEG_DISK_FORMAT, id as u64, c"unkfs".as_ptr() as u64) as i32 }
+    unsafe { sys2(SYS_SGEG_DISK_FORMAT, id as u64, c"egfs".as_ptr() as u64) as i32 }
 }
 pub fn disk_partition(id: u32, sectors: u64) -> i64 {
     unsafe { sys2(SYS_SGEG_DISK_PARTITION, id as u64, sectors) }

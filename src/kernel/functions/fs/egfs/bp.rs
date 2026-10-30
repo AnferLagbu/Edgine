@@ -8,7 +8,7 @@ pub const HV_BP_CHECKSUM_SIZE: usize = 32;
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
 /// 数据虚拟地址 (DVA): 定位一个块在某个 vdev 上的位置与长度.
-pub struct UnkfsDva {
+pub struct EgfsDva {
     /// 在 vdev 内的字节偏移.
     pub offset: u64,
     /// 分配的实际字节数 (压缩/校验后的物理长度).
@@ -21,7 +21,7 @@ pub struct UnkfsDva {
     pub pad: [u8; 1],
 }
 
-impl UnkfsDva {
+impl EgfsDva {
     /// 序列化后的固定字节数.
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
@@ -87,7 +87,7 @@ impl UnkfsDva {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// 块的压缩算法类型.
-pub enum UnkfsCompType {
+pub enum EgfsCompType {
     /// 不压缩.
     Off = 0,
     /// LZ4 快速压缩.
@@ -102,7 +102,7 @@ pub enum UnkfsCompType {
     Zle = 5,
 }
 
-impl UnkfsCompType {
+impl EgfsCompType {
     /// 由原始类型值解析压缩算法; 未知值按不压缩处理.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
@@ -120,7 +120,7 @@ impl UnkfsCompType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// 块的校验和算法类型.
-pub enum UnkfsCksumType {
+pub enum EgfsCksumType {
     /// 不校验.
     Off = 0,
     /// Fletcher-2 校验.
@@ -133,7 +133,7 @@ pub enum UnkfsCksumType {
     EdonR = 4,
 }
 
-impl UnkfsCksumType {
+impl EgfsCksumType {
     /// 由原始类型值解析校验算法; 未知值按不校验处理.
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
@@ -150,16 +150,16 @@ impl UnkfsCksumType {
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
 /// 块指针的属性区: 尺寸、层级、压缩/校验类型与加密标志.
-pub struct UnkfsBpProp {
+pub struct EgfsBpProp {
     /// 逻辑数据字节数.
     pub logical_size: u32,
     /// 落盘后的物理字节数.
     pub physical_size: u32,
     /// 块树层级; 0 表示数据块, 大于 0 表示元数据块.
     pub level: u8,
-    /// 压缩算法编码 (见 `UnkfsCompType`).
+    /// 压缩算法编码 (见 `EgfsCompType`).
     pub comp_type: u8,
-    /// 校验算法编码 (见 `UnkfsCksumType`).
+    /// 校验算法编码 (见 `EgfsCksumType`).
     pub cksum_type: u8,
     /// 非零表示块已加密.
     pub encrypted: u8,
@@ -169,7 +169,7 @@ pub struct UnkfsBpProp {
     pub pad: [u8; 3],
 }
 
-impl UnkfsBpProp {
+impl EgfsBpProp {
     /// 序列化后的固定字节数.
     pub const BYTES: usize = core::mem::size_of::<Self>();
 
@@ -180,8 +180,8 @@ impl UnkfsBpProp {
             logical_size: 0,
             physical_size: 0,
             level: 0,
-            comp_type: UnkfsCompType::Off as u8,
-            cksum_type: UnkfsCksumType::Fletcher4 as u8,
+            comp_type: EgfsCompType::Off as u8,
+            cksum_type: EgfsCksumType::Fletcher4 as u8,
             encrypted: 0,
             byteorder: 0,
             pad: [0; 3],
@@ -190,23 +190,23 @@ impl UnkfsBpProp {
 
     /// 把压缩算法编码解析为枚举.
     #[must_use]
-    pub fn comp_type(self) -> UnkfsCompType {
-        UnkfsCompType::from_u8(self.comp_type)
+    pub fn comp_type(self) -> EgfsCompType {
+        EgfsCompType::from_u8(self.comp_type)
     }
 
     /// 把校验算法编码解析为枚举.
     #[must_use]
-    pub fn cksum_type(self) -> UnkfsCksumType {
-        UnkfsCksumType::from_u8(self.cksum_type)
+    pub fn cksum_type(self) -> EgfsCksumType {
+        EgfsCksumType::from_u8(self.cksum_type)
     }
 
     /// 设置压缩算法编码.
-    pub fn set_comp_type(&mut self, v: UnkfsCompType) {
+    pub fn set_comp_type(&mut self, v: EgfsCompType) {
         self.comp_type = v as u8;
     }
 
     /// 设置校验算法编码.
-    pub fn set_cksum_type(&mut self, v: UnkfsCksumType) {
+    pub fn set_cksum_type(&mut self, v: EgfsCksumType) {
         self.cksum_type = v as u8;
     }
 
@@ -243,11 +243,11 @@ impl UnkfsBpProp {
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
 /// 块指针: 最多两份 DVA、属性区、校验和与出生事务组.
-pub struct UnkfsBlockPointer {
+pub struct EgfsBlockPointer {
     /// 数据虚拟地址槽位 (互为镜像副本).
-    pub dva: [UnkfsDva; HV_DVA_MAX],
+    pub dva: [EgfsDva; HV_DVA_MAX],
     /// 块属性 (尺寸、层级、压缩与校验类型).
-    pub prop: UnkfsBpProp,
+    pub prop: EgfsBpProp,
     /// 块内容的 4×64 位校验和.
     pub checksum: [u64; 4],
     /// 块写入时的事务组编号.
@@ -258,13 +258,13 @@ pub struct UnkfsBlockPointer {
     pub pad: [u64; 2],
 }
 
-impl UnkfsBlockPointer {
+impl EgfsBlockPointer {
     /// 构造全零的空块指针.
     #[must_use]
     pub const fn null() -> Self {
         Self {
-            dva: [UnkfsDva::null(); HV_DVA_MAX],
-            prop: UnkfsBpProp::default(),
+            dva: [EgfsDva::null(); HV_DVA_MAX],
+            prop: EgfsBpProp::default(),
             checksum: [0; 4],
             birth_txg: 0,
             fill: 0,
@@ -298,7 +298,7 @@ impl UnkfsBlockPointer {
 
     /// 取指定槽位的非空 DVA; 槽位越界或为空时返回 `None`.
     #[must_use]
-    pub fn get_dva(&self, idx: usize) -> Option<&UnkfsDva> {
+    pub fn get_dva(&self, idx: usize) -> Option<&EgfsDva> {
         if idx < HV_DVA_MAX && !self.dva[idx].is_null() {
             Some(&self.dva[idx])
         } else {
@@ -307,7 +307,7 @@ impl UnkfsBlockPointer {
     }
 
     /// 写入指定槽位的 DVA; 槽位越界时忽略.
-    pub fn set_dva(&mut self, idx: usize, dva: UnkfsDva) {
+    pub fn set_dva(&mut self, idx: usize, dva: EgfsDva) {
         if idx < HV_DVA_MAX {
             self.dva[idx] = dva;
         }
@@ -349,11 +349,11 @@ impl UnkfsBlockPointer {
         let mut bp = Self::null();
         let mut off = 0usize;
         for slot in &mut bp.dva {
-            *slot = UnkfsDva::from_bytes(&bytes[off..off + UnkfsDva::BYTES])?;
-            off += UnkfsDva::BYTES;
+            *slot = EgfsDva::from_bytes(&bytes[off..off + EgfsDva::BYTES])?;
+            off += EgfsDva::BYTES;
         }
-        bp.prop = UnkfsBpProp::from_bytes(&bytes[off..off + UnkfsBpProp::BYTES])?;
-        off += UnkfsBpProp::BYTES;
+        bp.prop = EgfsBpProp::from_bytes(&bytes[off..off + EgfsBpProp::BYTES])?;
+        off += EgfsBpProp::BYTES;
         // checksum, birth_txg, fill, pad 直接从字节切片读取
         for i in 0..4 {
             bp.checksum[i] =
@@ -378,7 +378,7 @@ mod tests {
     /// 空块指针应为 null, 且无有效 DVA.
     #[test]
     fn test_bp_null() {
-        let bp = UnkfsBlockPointer::null();
+        let bp = EgfsBlockPointer::null();
         assert!(bp.is_null(), "null bp should be null");
         assert!(bp.get_dva(0).is_none(), "null bp dva should be None");
     }
@@ -386,8 +386,8 @@ mod tests {
     /// set_dva / get_dva 往返应保持一致.
     #[test]
     fn test_bp_dva_set_get() {
-        let mut bp = UnkfsBlockPointer::null();
-        let dva = UnkfsDva::new(0, 4096, 8192);
+        let mut bp = EgfsBlockPointer::null();
+        let dva = EgfsDva::new(0, 4096, 8192);
         bp.set_dva(0, dva);
         let Some(got) = bp.get_dva(0) else {
             panic!("dva not set");
@@ -400,7 +400,7 @@ mod tests {
     /// set_birth 应写入 birth_txg.
     #[test]
     fn test_bp_birth_txg() {
-        let mut bp = UnkfsBlockPointer::null();
+        let mut bp = EgfsBlockPointer::null();
         bp.set_birth(42);
         assert_eq!(bp.birth_txg, 42, "birth txg mismatch");
     }

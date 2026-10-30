@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsBlockPointer;
-use crate::functions::fs::unkfs::dataset::UnkfsDataset;
+use crate::functions::fs::egfs::bp::EgfsBlockPointer;
+use crate::functions::fs::egfs::dataset::EgfsDataset;
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -10,18 +10,18 @@ use core::sync::atomic::{AtomicU64, Ordering};
 pub const HV_SNAP_MAX: usize = 64;
 
 /// 快照管理器 (快照表 + 单调递增的 ID 分配器)
-pub struct UnkfsSnapshotManager {
+pub struct EgfsSnapshotManager {
     /// 全部已登记快照
-    pub snapshots: Mutex<Vec<UnkfsSnapshot>>,
+    pub snapshots: Mutex<Vec<EgfsSnapshot>>,
     /// 下一个可用的快照 ID
     pub next_snap_id: AtomicU64,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsSnapshotManager 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsSnapshotManager 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
 
 /// 快照记录 (ID / 归属数据集 / 根块指针 / 出生事务组)
 #[derive(Debug, Clone)]
-pub struct UnkfsSnapshot {
+pub struct EgfsSnapshot {
     /// 快照唯一标识
     pub snap_id: u64,
     /// 所属数据集标识
@@ -29,7 +29,7 @@ pub struct UnkfsSnapshot {
     /// 快照名称 (NUL 结尾, 最长 127 字节)
     pub name: [u8; 128],
     /// 快照时数据集根块指针
-    pub root_bp: UnkfsBlockPointer,
+    pub root_bp: EgfsBlockPointer,
     /// 创建快照时的事务组号
     pub birth_txg: u64,
     /// 快照时数据集已用空间
@@ -42,10 +42,10 @@ pub struct UnkfsSnapshot {
     pub origin_snap: Option<u64>,
 }
 
-impl UnkfsSnapshot {
+impl EgfsSnapshot {
     /// 构造快照记录 (名称超长截断, 引用计数初始为 1)
     #[must_use]
-    pub fn new(snap_id: u64, ds_id: u64, name: &str, root_bp: UnkfsBlockPointer, txg: u64) -> Self {
+    pub fn new(snap_id: u64, ds_id: u64, name: &str, root_bp: EgfsBlockPointer, txg: u64) -> Self {
         let mut n = [0u8; 128];
         let b = name.as_bytes();
         let len = b.len().min(127);
@@ -71,7 +71,7 @@ impl UnkfsSnapshot {
     }
 }
 
-impl UnkfsSnapshotManager {
+impl EgfsSnapshotManager {
     /// 构造空快照管理器 (ID 从 1 开始分配)
     #[must_use]
     pub fn new() -> Self {
@@ -82,10 +82,10 @@ impl UnkfsSnapshotManager {
     }
 
     /// 为数据集创建快照并返回新快照 ID
-    pub fn create_snapshot(&self, ds: &UnkfsDataset, name: &str, txg: u64) -> u64 {
+    pub fn create_snapshot(&self, ds: &EgfsDataset, name: &str, txg: u64) -> u64 {
         let snap_id = self.next_snap_id.fetch_add(1, Ordering::AcqRel);
         let root_bp = *ds.root_bp.lock();
-        let mut snap = UnkfsSnapshot::new(snap_id, ds.ds_id, name, root_bp, txg);
+        let mut snap = EgfsSnapshot::new(snap_id, ds.ds_id, name, root_bp, txg);
         snap.used_space = ds.get_used();
         self.snapshots.lock().push(snap);
         snap_id
@@ -115,11 +115,11 @@ impl UnkfsSnapshotManager {
         ds_id: u64,
         name: &str,
         txg: u64,
-    ) -> Option<UnkfsDataset> {
+    ) -> Option<EgfsDataset> {
         let mut snaps = self.snapshots.lock();
         let snap = snaps.iter_mut().find(|s| s.snap_id == snap_id)?;
         let root_bp = snap.root_bp;
-        let mut ds = UnkfsDataset::new(ds_id, name, 0);
+        let mut ds = EgfsDataset::new(ds_id, name, 0);
         *ds.root_bp.lock() = root_bp;
         ds.birth_txg.store(txg, Ordering::Release);
         ds.is_snapshot = false;
@@ -130,7 +130,7 @@ impl UnkfsSnapshotManager {
     }
 
     /// 按 ID 读取快照副本
-    pub fn get_snapshot(&self, snap_id: u64) -> Option<UnkfsSnapshot> {
+    pub fn get_snapshot(&self, snap_id: u64) -> Option<EgfsSnapshot> {
         self.snapshots
             .lock()
             .iter()
@@ -139,7 +139,7 @@ impl UnkfsSnapshotManager {
     }
 
     /// 列出指定数据集的全部快照副本
-    pub fn list_snapshots(&self, ds_id: u64) -> Vec<UnkfsSnapshot> {
+    pub fn list_snapshots(&self, ds_id: u64) -> Vec<EgfsSnapshot> {
         self.snapshots
             .lock()
             .iter()
@@ -149,7 +149,7 @@ impl UnkfsSnapshotManager {
     }
 
     /// 将数据集回滚到指定快照; 快照不存在或归属不符时返回 `false`
-    pub fn rollback(&self, snap_id: u64, ds: &UnkfsDataset) -> bool {
+    pub fn rollback(&self, snap_id: u64, ds: &EgfsDataset) -> bool {
         let snaps = self.snapshots.lock();
         let Some(snap) = snaps.iter().find(|s| s.snap_id == snap_id) else {
             return false;
@@ -168,8 +168,8 @@ impl UnkfsSnapshotManager {
     }
 }
 
-impl Default for UnkfsSnapshotManager {
-    /// 委托 [`UnkfsSnapshotManager::new`] 构造空快照管理器.
+impl Default for EgfsSnapshotManager {
+    /// 委托 [`EgfsSnapshotManager::new`] 构造空快照管理器.
     fn default() -> Self {
         Self::new()
     }
@@ -186,14 +186,14 @@ mod tests {
     /// 构造快照后应能读回名称.
     #[test]
     fn test_snapshot_create() {
-        let snap = UnkfsSnapshot::new(1, 10, "test-snap", UnkfsBlockPointer::null(), 5);
+        let snap = EgfsSnapshot::new(1, 10, "test-snap", EgfsBlockPointer::null(), 5);
         assert_eq!(snap.get_name(), "test-snap", "snapshot name mismatch");
     }
 
     /// 新建快照管理器应无任何快照.
     #[test]
     fn test_snapshot_manager() {
-        let mgr = UnkfsSnapshotManager::new();
+        let mgr = EgfsSnapshotManager::new();
         assert_eq!(
             mgr.snapshot_count(),
             0,

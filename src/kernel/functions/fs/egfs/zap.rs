@@ -1,5 +1,5 @@
 #![deny(unsafe_code)]
-//! UNKFS ZAP 键值存储 — 属性名到字节值的哈希表
+//! EGFS ZAP 键值存储 — 属性名到字节值的哈希表
 //!
 //! 提供 `ZFS` ZAP (ZFS Attribute Processor) 的语义子集: 定长条目槽位 +
 //! 名字哈希加速查找, 支持插入 / 覆盖 / 查询 / 删除与容量上限.
@@ -17,7 +17,7 @@ pub const HV_ZAP_MAX_ENTRIES: usize = 256;
 
 /// 单个 ZAP 条目: 定长名字与值槽位 + 预计算的名字哈希
 #[derive(Debug, Clone)]
-pub struct UnkfsZapEntry {
+pub struct EgfsZapEntry {
     /// 条目名 (定长字节数组, 未使用部分为 0)
     pub name: [u8; HV_ZAP_MAX_NAME],
     /// 条目值 (定长字节数组)
@@ -30,7 +30,7 @@ pub struct UnkfsZapEntry {
     pub used: bool,
 }
 
-impl UnkfsZapEntry {
+impl EgfsZapEntry {
     /// 由名字与字节值构造条目 (超出定长槽位的部分截断)
     #[must_use]
     pub fn new(name: &str, value: &[u8]) -> Self {
@@ -92,19 +92,19 @@ impl UnkfsZapEntry {
 }
 
 /// ZAP 键值表: 受锁保护的条目集合, 带容量上限与表类型
-pub struct UnkfsZap {
+pub struct EgfsZap {
     /// 受自旋锁保护的条目列表
-    pub entries: Mutex<Vec<UnkfsZapEntry>>,
+    pub entries: Mutex<Vec<EgfsZapEntry>>,
     /// 条目容量上限
     pub capacity: usize,
     /// 表类型 (micro / normal / leaf)
-    pub zap_type: UnkfsZapType,
+    pub zap_type: EgfsZapType,
 }
 
 /// ZAP 表类型 (决定容量与槽位布局策略)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum UnkfsZapType {
+pub enum EgfsZapType {
     /// 微表: 小容量 (≤64 条目)
     Micro = 0,
     /// 普通表
@@ -113,16 +113,16 @@ pub enum UnkfsZapType {
     Leaf = 2,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsZap 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsZap 全部字段 (Mutex<T>, AtomicU64) 自动 Send + Sync。
 
-impl UnkfsZap {
+impl EgfsZap {
     /// 创建默认容量 (`HV_ZAP_MAX_ENTRIES`) 的 micro 表
     #[must_use]
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
             capacity: HV_ZAP_MAX_ENTRIES,
-            zap_type: UnkfsZapType::Micro,
+            zap_type: EgfsZapType::Micro,
         }
     }
 
@@ -133,9 +133,9 @@ impl UnkfsZap {
             entries: Mutex::new(Vec::new()),
             capacity,
             zap_type: if capacity <= 64 {
-                UnkfsZapType::Micro
+                EgfsZapType::Micro
             } else {
-                UnkfsZapType::Normal
+                EgfsZapType::Normal
             },
         }
     }
@@ -146,7 +146,7 @@ impl UnkfsZap {
         if entries.len() >= self.capacity {
             return false;
         }
-        let hash = UnkfsZapEntry::hash_name(name);
+        let hash = EgfsZapEntry::hash_name(name);
         if let Some(existing) = entries
             .iter_mut()
             .find(|e| e.used && e.hash == hash && e.get_name() == name)
@@ -156,7 +156,7 @@ impl UnkfsZap {
             existing.value_len = crate::functions::intcast::low_u16_from_usize(vlen);
             return true;
         }
-        entries.push(UnkfsZapEntry::new(name, value));
+        entries.push(EgfsZapEntry::new(name, value));
         true
     }
 
@@ -168,7 +168,7 @@ impl UnkfsZap {
     /// 按名查询条目值 (不存在返回 `None`)
     pub fn lookup(&self, name: &str) -> Option<Vec<u8>> {
         let entries = self.entries.lock();
-        let hash = UnkfsZapEntry::hash_name(name);
+        let hash = EgfsZapEntry::hash_name(name);
         for entry in entries.iter() {
             if entry.used && entry.hash == hash && entry.get_name() == name {
                 return Some(entry.get_value().to_vec());
@@ -180,7 +180,7 @@ impl UnkfsZap {
     /// 按名查询 `u64` 值 (不存在返回 `None`)
     pub fn lookup_u64(&self, name: &str) -> Option<u64> {
         let entries = self.entries.lock();
-        let hash = UnkfsZapEntry::hash_name(name);
+        let hash = EgfsZapEntry::hash_name(name);
         for entry in entries.iter() {
             if entry.used && entry.hash == hash && entry.get_name() == name {
                 return Some(entry.get_value_u64());
@@ -192,7 +192,7 @@ impl UnkfsZap {
     /// 删除指定名字的条目 (不存在返回 false)
     pub fn remove(&self, name: &str) -> bool {
         let mut entries = self.entries.lock();
-        let hash = UnkfsZapEntry::hash_name(name);
+        let hash = EgfsZapEntry::hash_name(name);
         let idx = entries
             .iter()
             .position(|e| e.used && e.hash == hash && e.get_name() == name);
@@ -205,7 +205,7 @@ impl UnkfsZap {
     /// 判断指定名字的条目是否存在
     pub fn contains(&self, name: &str) -> bool {
         let entries = self.entries.lock();
-        let hash = UnkfsZapEntry::hash_name(name);
+        let hash = EgfsZapEntry::hash_name(name);
         entries
             .iter()
             .any(|e| e.used && e.hash == hash && e.get_name() == name)
@@ -247,8 +247,8 @@ impl UnkfsZap {
     }
 }
 
-impl Default for UnkfsZap {
-    /// 委托 [`UnkfsZap::new`] 创建默认容量的 micro 表.
+impl Default for EgfsZap {
+    /// 委托 [`EgfsZap::new`] 创建默认容量的 micro 表.
     fn default() -> Self {
         Self::new()
     }
@@ -264,7 +264,7 @@ mod tests {
     /// 插入后应能按名查回同一值.
     #[test]
     fn test_zap_insert_lookup() {
-        let zap = UnkfsZap::new();
+        let zap = EgfsZap::new();
         zap.insert_u64("key1", 42);
         let Some(val) = zap.lookup_u64("key1") else {
             panic!("key1 not found");
@@ -275,7 +275,7 @@ mod tests {
     /// 重复插入同名键应覆盖旧值.
     #[test]
     fn test_zap_overwrite() {
-        let zap = UnkfsZap::new();
+        let zap = EgfsZap::new();
         zap.insert_u64("key1", 10);
         zap.insert_u64("key1", 99);
         let Some(val) = zap.lookup_u64("key1") else {
@@ -287,7 +287,7 @@ mod tests {
     /// 查询不存在的键应返回 None.
     #[test]
     fn test_zap_nonexistent() {
-        let zap = UnkfsZap::new();
+        let zap = EgfsZap::new();
         assert!(
             zap.lookup_u64("no_such_key").is_none(),
             "nonexistent should be None"
@@ -299,7 +299,7 @@ mod tests {
     /// remove 后键应不可查, 删除前应可查.
     #[test]
     fn test_zap_remove() {
-        let zap = UnkfsZap::new();
+        let zap = EgfsZap::new();
         zap.insert_u64("rm_me", 7);
         assert!(
             zap.lookup_u64("rm_me").is_some(),
@@ -315,7 +315,7 @@ mod tests {
     /// 大批量键插入后应全部可查回.
     #[test]
     fn test_zap_large_namespace() {
-        let zap = UnkfsZap::with_capacity(64);
+        let zap = EgfsZap::with_capacity(64);
         for i in 0..30u64 {
             let key = alloc::format!("key_{i}");
             zap.insert_u64(&key, i * 100);
@@ -334,7 +334,7 @@ mod tests {
     /// contains 与 clear 语义应一致.
     #[test]
     fn test_zap_contains_clear() {
-        let zap = UnkfsZap::new();
+        let zap = EgfsZap::new();
         zap.insert_u64("test", 42);
         assert!(zap.contains("test"), "should contain test");
         assert!(!zap.contains("other"), "should not contain other");

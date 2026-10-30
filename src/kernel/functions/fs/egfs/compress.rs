@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsCompType;
+use crate::functions::fs::egfs::bp::EgfsCompType;
 use alloc::vec::Vec;
 
 /// 压缩生效的最小数据长度 (短于此值不压缩)。
@@ -8,16 +8,16 @@ pub const HV_COMP_MIN_SIZE: usize = 64;
 
 /// 按指定算法压缩数据; 数据短于 `HV_COMP_MIN_SIZE` 或算法为 `Off` 时返回 `None`。
 #[must_use]
-pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
+pub fn compress(data: &[u8], comp_type: EgfsCompType) -> Option<Vec<u8>> {
     if data.len() < HV_COMP_MIN_SIZE {
         return None;
     }
     match comp_type {
-        UnkfsCompType::Off => None,
-        UnkfsCompType::LZ4 => compress_lz4(data),
-        UnkfsCompType::Zstd => compress_zstd_fallback(data),
-        UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => compress_rle(data),
-        UnkfsCompType::Zle => compress_zle(data),
+        EgfsCompType::Off => None,
+        EgfsCompType::LZ4 => compress_lz4(data),
+        EgfsCompType::Zstd => compress_zstd_fallback(data),
+        EgfsCompType::Gzip1 | EgfsCompType::Gzip9 => compress_rle(data),
+        EgfsCompType::Zle => compress_zle(data),
     }
 }
 
@@ -26,14 +26,14 @@ pub fn compress(data: &[u8], comp_type: UnkfsCompType) -> Option<Vec<u8>> {
 pub fn decompress(
     compressed: &[u8],
     expected_size: usize,
-    comp_type: UnkfsCompType,
+    comp_type: EgfsCompType,
 ) -> Option<Vec<u8>> {
     match comp_type {
-        UnkfsCompType::Off => None,
-        UnkfsCompType::LZ4 => decompress_lz4(compressed, expected_size),
-        UnkfsCompType::Zstd => decompress_zstd_fallback(compressed, expected_size),
-        UnkfsCompType::Gzip1 | UnkfsCompType::Gzip9 => decompress_rle(compressed, expected_size),
-        UnkfsCompType::Zle => decompress_zle(compressed, expected_size),
+        EgfsCompType::Off => None,
+        EgfsCompType::LZ4 => decompress_lz4(compressed, expected_size),
+        EgfsCompType::Zstd => decompress_zstd_fallback(compressed, expected_size),
+        EgfsCompType::Gzip1 | EgfsCompType::Gzip9 => decompress_rle(compressed, expected_size),
+        EgfsCompType::Zle => decompress_zle(compressed, expected_size),
     }
 }
 
@@ -341,8 +341,8 @@ mod tests {
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 4) as u8;
         }
-        if let Some(c) = compress(&data, UnkfsCompType::LZ4) {
-            let Some(d) = decompress(&c, data.len(), UnkfsCompType::LZ4) else {
+        if let Some(c) = compress(&data, EgfsCompType::LZ4) {
+            let Some(d) = decompress(&c, data.len(), EgfsCompType::LZ4) else {
                 panic!("decompress returned None");
             };
             assert_eq!(d.len(), data.len(), "decompressed length mismatch");
@@ -350,15 +350,15 @@ mod tests {
         }
     }
 
-    /// UnkfsCompType::Off 表示不压缩, compress() 按设计返回 None; 这里验证 Gzip1(RLE) 往返.
+    /// EgfsCompType::Off 表示不压缩, compress() 按设计返回 None; 这里验证 Gzip1(RLE) 往返.
     #[test]
     fn test_compress_off() {
         let mut data = [0u8; 256];
         for (i, b) in data.iter_mut().enumerate() {
             *b = (i % 4) as u8;
         }
-        if let Some(c) = compress(&data, UnkfsCompType::Gzip1) {
-            if let Some(d) = decompress(&c, data.len(), UnkfsCompType::Gzip1) {
+        if let Some(c) = compress(&data, EgfsCompType::Gzip1) {
+            if let Some(d) = decompress(&c, data.len(), EgfsCompType::Gzip1) {
                 assert_eq!(d.len(), data.len(), "RLE decompressed length mismatch");
                 assert_eq!(d.as_slice(), data, "RLE roundtrip data mismatch");
             }

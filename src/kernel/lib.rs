@@ -786,7 +786,7 @@ fn boot_core_subsystems_init() {
     crate::functions::debug::ebpf::init();
 
     // 9. VFS
-    // functions::fs::init() — FsBackend 策略 + VFS poll 策略 + UNKFS
+    // functions::fs::init() — FsBackend 策略 + VFS poll 策略 + EGFS
     // FileSystem/热插拔监听器注册 (DECISION-K 项 6 注册点前置)。预存欠账:
     // 此前 functions::fs::init() 无调用者, make_ramfs_inode 钩子 (第二十三批)
     // 恒命中 FallbackFsBackend Err(NotInitialized), ramfs open/create 路径
@@ -907,41 +907,41 @@ fn boot_deferred_init() {
     crate::klog_boot_info!("Deferred subsystems initialized");
 }
 
-/// UNKFS/根文件系统挂载 → aarch64 tick 开跑 → 跨核 TLB 失效探针.
+/// EGFS/根文件系统挂载 → aarch64 tick 开跑 → 跨核 TLB 失效探针.
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 fn boot_rootfs_and_probes() {
-    // UNKFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
+    // EGFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
     // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
     #[cfg(all(
         not(any(feature = "kernel_test", feature = "host-test")),
         target_arch = "x86_64"
     ))]
     {
-        let unkfs = crate::functions::fs::unkfs::entry::get_unkfs();
+        let egfs = crate::functions::fs::egfs::entry::get_egfs();
         // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
-        unkfs.init();
+        egfs.init();
 
-        if unkfs.is_disk_mode() {
-            crate::functions::fs::unkfs::entry::get_unkfs()
+        if egfs.is_disk_mode() {
+            crate::functions::fs::egfs::entry::get_egfs()
                 .spa
                 .disk_present
                 .store(true, core::sync::atomic::Ordering::Release);
-            let r = crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"unkfs".as_ptr());
+            let r = crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"egfs".as_ptr());
             if r == 0 {
-                let n_drives = crate::functions::fs::unkfs::entry::get_unkfs()
+                let n_drives = crate::functions::fs::egfs::entry::get_egfs()
                     .drives_discovered
                     .lock()
                     .len() as u64;
                 if n_drives > 1 {
-                    crate::klog_boot_info!("Root filesystem: UNKFS ({} drives)", n_drives);
+                    crate::klog_boot_info!("Root filesystem: EGFS ({} drives)", n_drives);
                 } else {
-                    crate::klog_boot_info!("Root filesystem: UNKFS (disk)");
+                    crate::klog_boot_info!("Root filesystem: EGFS (disk)");
                 }
             } else {
-                crate::klog_boot_info!("UNKFS mount failed");
+                crate::klog_boot_info!("EGFS mount failed");
             }
         } else {
-            crate::klog_boot_info!("UNKFS: running in memory mode (no disk)");
+            crate::klog_boot_info!("EGFS: running in memory mode (no disk)");
         }
     }
 

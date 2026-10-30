@@ -327,7 +327,7 @@ pub fn vfs_pread_inode(
     pwm: u64,
 ) -> i32 {
     // P3-I-19: 走 FileSystem trait 分发. 旧实现直接访问 RAMFS_DATA,
-    // 非 RamFS (UNKFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
+    // 非 RamFS (EGFS/DevFS 等) 挂载 mmap 时无法工作. 现按 mount_idx
     // 派发, 无挂载则返回 -1 (EIO). mmap prewarm 由 page_fault 传入
     // vma.mount_idx (mmap 时已解析).
     let Some(mount_idx) = mount_idx else {

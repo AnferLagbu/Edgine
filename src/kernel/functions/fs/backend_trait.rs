@@ -129,30 +129,30 @@ pub fn current_fs_backend() -> &'static dyn FsBackend {
 }
 
 // ============================================================================
-// UNKFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
+// EGFS FileSystem 注册表 (DECISION-K 项 6: 注入归零)
 // ============================================================================
 
-/// 全局 UNKFS `FileSystem` 注册表 — `functions::fs::init` 注册 `UnkfsData` 实例
-static UNKFS_FS: crate::privileged::sync::OnceLock<&'static dyn FileSystem> =
+/// 全局 EGFS `FileSystem` 注册表 — `functions::fs::init` 注册 `EgfsData` 实例
+static EGFS_FS: crate::privileged::sync::OnceLock<&'static dyn FileSystem> =
     crate::privileged::sync::OnceLock::new();
 
-/// 注册 UNKFS `FileSystem` 实例 (由 `functions::fs::init` 调用)
+/// 注册 EGFS `FileSystem` 实例 (由 `functions::fs::init` 调用)
 ///
-/// privileged 挂载/格式化路径经 `unkfs_fs()` 消费 trait object,
-/// 不再反向依赖 functions 具象 `UnkfsData`.
+/// privileged 挂载/格式化路径经 `egfs_fs()` 消费 trait object,
+/// 不再反向依赖 functions 具象 `EgfsData`.
 /// # Errors
 /// 已被注册过时返回 Err。
-pub fn register_unkfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {
-    match UNKFS_FS.set(fs) {
+pub fn register_egfs_fs(fs: &'static dyn FileSystem) -> Result<(), &'static dyn FileSystem> {
+    match EGFS_FS.set(fs) {
         Ok(()) => Ok(()),
         Err(existing) => Err(existing),
     }
 }
 
-/// 获取注册的 UNKFS `FileSystem` (未注册时返回 None — fail-closed)
+/// 获取注册的 EGFS `FileSystem` (未注册时返回 None — fail-closed)
 #[inline]
-pub fn unkfs_fs() -> Option<&'static dyn FileSystem> {
-    match UNKFS_FS.get() {
+pub fn egfs_fs() -> Option<&'static dyn FileSystem> {
+    match EGFS_FS.get() {
         Some(&fs) => Some(fs),
         None => None,
     }
@@ -185,12 +185,12 @@ mod tests {
     }
 
     #[test]
-    fn test_unkfs_fs_registered() {
+    fn test_egfs_fs_registered() {
         crate::functions::fs::init();
-        let Some(fs) = unkfs_fs() else {
-            panic!("unkfs_fs() 未注册 — functions::fs::init 未生效");
+        let Some(fs) = egfs_fs() else {
+            panic!("egfs_fs() 未注册 — functions::fs::init 未生效");
         };
-        assert_eq!(fs.name(), "unkfs", "unkfs name mismatch");
+        assert_eq!(fs.name(), "egfs", "egfs name mismatch");
         // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
         // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
     }

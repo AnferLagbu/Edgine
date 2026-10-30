@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsBlockPointer;
-use crate::functions::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
+use crate::functions::fs::egfs::bp::EgfsBlockPointer;
+use crate::functions::fs::egfs::spa::HV_POOL_BLOCK_SIZE;
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,7 +14,7 @@ pub const HV_ZIL_BLOCK_SIZE: usize = crate::functions::intcast::usize_from_u64(H
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// ZIL (意图日志) 记录类型: 覆盖创建/删除/链接/重命名/写入/截断等操作.
-pub enum UnkfsZilRecordType {
+pub enum EgfsZilRecordType {
     /// 创建文件.
     Create = 1,
     /// 删除文件.
@@ -45,9 +45,9 @@ pub enum UnkfsZilRecordType {
 
 #[derive(Debug, Clone)]
 /// 一条 ZIL 记录: 操作类型、事务组号、对象标识与载荷.
-pub struct UnkfsZilRecord {
+pub struct EgfsZilRecord {
     /// 记录类型.
-    pub rec_type: UnkfsZilRecordType,
+    pub rec_type: EgfsZilRecordType,
     /// 所属事务组号.
     pub txg: u64,
     /// 目标对象编号.
@@ -66,12 +66,12 @@ pub struct UnkfsZilRecord {
     pub seq: u64,
 }
 
-impl UnkfsZilRecord {
+impl EgfsZilRecord {
     /// 构造一条写入记录.
     #[must_use]
     pub fn new_write(txg: u64, obj_id: u64, offset: u64, size: u32) -> Self {
         Self {
-            rec_type: UnkfsZilRecordType::Write,
+            rec_type: EgfsZilRecordType::Write,
             txg,
             obj_id,
             parent_obj: 0,
@@ -91,7 +91,7 @@ impl UnkfsZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: UnkfsZilRecordType::Create,
+            rec_type: EgfsZilRecordType::Create,
             txg,
             obj_id: 0,
             parent_obj,
@@ -111,7 +111,7 @@ impl UnkfsZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: UnkfsZilRecordType::Remove,
+            rec_type: EgfsZilRecordType::Remove,
             txg,
             obj_id: 0,
             parent_obj,
@@ -131,7 +131,7 @@ impl UnkfsZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: UnkfsZilRecordType::Mkdir,
+            rec_type: EgfsZilRecordType::Mkdir,
             txg,
             obj_id: 0,
             parent_obj,
@@ -147,7 +147,7 @@ impl UnkfsZilRecord {
     #[must_use]
     pub fn new_setattr(txg: u64, obj_id: u64) -> Self {
         Self {
-            rec_type: UnkfsZilRecordType::SetAttr,
+            rec_type: EgfsZilRecordType::SetAttr,
             txg,
             obj_id,
             parent_obj: 0,
@@ -167,7 +167,7 @@ impl UnkfsZilRecord {
         let len = b.len().min(127);
         n[..len].copy_from_slice(&b[..len]);
         Self {
-            rec_type: UnkfsZilRecordType::Link,
+            rec_type: EgfsZilRecordType::Link,
             txg,
             obj_id,
             parent_obj,
@@ -190,7 +190,7 @@ impl UnkfsZilRecord {
         let len2 = b2.len().min(63);
         n[64..64 + len2].copy_from_slice(&b2[..len2]);
         Self {
-            rec_type: UnkfsZilRecordType::Rename,
+            rec_type: EgfsZilRecordType::Rename,
             txg,
             obj_id: 0,
             parent_obj,
@@ -213,7 +213,7 @@ impl UnkfsZilRecord {
         let len2 = b2.len().min(63);
         n[64..64 + len2].copy_from_slice(&b2[..len2]);
         Self {
-            rec_type: UnkfsZilRecordType::Symlink,
+            rec_type: EgfsZilRecordType::Symlink,
             txg,
             obj_id: 0,
             parent_obj,
@@ -229,7 +229,7 @@ impl UnkfsZilRecord {
     #[must_use]
     pub fn new_dedup_ref(txg: u64, hash: [u64; 4], obj_id: u64) -> Self {
         Self {
-            rec_type: UnkfsZilRecordType::DedupRef,
+            rec_type: EgfsZilRecordType::DedupRef,
             txg,
             obj_id,
             parent_obj: 0,
@@ -245,7 +245,7 @@ impl UnkfsZilRecord {
     #[must_use]
     pub fn new_dedup_unref(txg: u64, hash: [u64; 4]) -> Self {
         Self {
-            rec_type: UnkfsZilRecordType::DedupUnref,
+            rec_type: EgfsZilRecordType::DedupUnref,
             txg,
             obj_id: 0,
             parent_obj: 0,
@@ -259,15 +259,15 @@ impl UnkfsZilRecord {
 }
 
 /// ZIL 意图日志: 暂存未提交记录并在事务组提交时批量落盘.
-pub struct UnkfsZil {
+pub struct EgfsZil {
     /// 未提交记录表.
-    pub records: Mutex<Vec<UnkfsZilRecord>>,
+    pub records: Mutex<Vec<EgfsZilRecord>>,
     /// 已提交的最大序号.
     pub committed_seq: AtomicU64,
     /// 当前已分配的最大序号.
     pub current_seq: AtomicU64,
     /// 日志块指针.
-    pub log_bp: Mutex<UnkfsBlockPointer>,
+    pub log_bp: Mutex<EgfsBlockPointer>,
     /// 正在同步的事务组号.
     pub itxg: AtomicU64,
     /// 同步进行中标记 (防止并发同步).
@@ -278,9 +278,9 @@ pub struct UnkfsZil {
     pub enabled: AtomicBool,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsZil 全部字段 (Mutex<T>, Atomic*) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsZil 全部字段 (Mutex<T>, Atomic*) 自动 Send + Sync。
 
-impl UnkfsZil {
+impl EgfsZil {
     /// 创建空日志实例 (默认启用).
     #[must_use]
     pub fn new() -> Self {
@@ -288,7 +288,7 @@ impl UnkfsZil {
             records: Mutex::new(Vec::new()),
             committed_seq: AtomicU64::new(0),
             current_seq: AtomicU64::new(0),
-            log_bp: Mutex::new(UnkfsBlockPointer::null()),
+            log_bp: Mutex::new(EgfsBlockPointer::null()),
             itxg: AtomicU64::new(0),
             syncing: AtomicBool::new(false),
             replaying: AtomicBool::new(false),
@@ -305,7 +305,7 @@ impl UnkfsZil {
     }
 
     /// 追加一条记录并分配序号 (日志关闭时直接丢弃).
-    pub fn add_record(&self, record: UnkfsZilRecord) {
+    pub fn add_record(&self, record: EgfsZilRecord) {
         if !self.enabled.load(Ordering::Acquire) {
             return;
         }
@@ -344,7 +344,7 @@ impl UnkfsZil {
     }
 
     /// 取记录快照并按序号升序返回, 供崩溃恢复重放 (已在重放中则返回空表).
-    pub fn replay(&self) -> Vec<UnkfsZilRecord> {
+    pub fn replay(&self) -> Vec<EgfsZilRecord> {
         if self
             .replaying
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -372,8 +372,8 @@ impl UnkfsZil {
     }
 }
 
-impl Default for UnkfsZil {
-    /// 委托 [`UnkfsZil::new`] 创建默认启用的空日志实例.
+impl Default for EgfsZil {
+    /// 委托 [`EgfsZil::new`] 创建默认启用的空日志实例.
     fn default() -> Self {
         Self::new()
     }
@@ -387,7 +387,7 @@ mod tests {
     /// 创建记录应带上正确的事务号与父对象.
     #[test]
     fn test_zil_record_create() {
-        let rec = UnkfsZilRecord::new_create(1, 0, "test_file");
+        let rec = EgfsZilRecord::new_create(1, 0, "test_file");
         assert_eq!(rec.txg, 1, "txg mismatch");
         assert_eq!(rec.obj_id, 0, "obj_id should be 0");
     }
@@ -395,7 +395,7 @@ mod tests {
     /// 写记录应带上正确的事务号与对象号.
     #[test]
     fn test_zil_record_write() {
-        let rec = UnkfsZilRecord::new_write(2, 10, 0, 1024);
+        let rec = EgfsZilRecord::new_write(2, 10, 0, 1024);
         assert_eq!(rec.txg, 2, "txg mismatch");
         assert_eq!(rec.obj_id, 10, "obj_id mismatch");
     }
@@ -403,9 +403,9 @@ mod tests {
     /// add_record + sync 后提交序号应推进.
     #[test]
     fn test_zil_add_and_sync() {
-        let zil = UnkfsZil::new();
+        let zil = EgfsZil::new();
         zil.init();
-        zil.add_record(UnkfsZilRecord::new_write(1, 5, 0, 512));
+        zil.add_record(EgfsZilRecord::new_write(1, 5, 0, 512));
         zil.sync(1);
         assert!(
             zil.committed_seq.load(Ordering::SeqCst) >= 1,

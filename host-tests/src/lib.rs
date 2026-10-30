@@ -12,7 +12,7 @@
 //! - `dma_stream`  — DMA 状态机 (改引内核 dma_buf)
 //!
 //! ## B08-12/B08-14 迁移 (2026-09-06)
-//! 原平行实现 unkfs/(19 文件) + unkfs_mock/ 虚拟内核树已删除 — host-tests 经
+//! 原平行实现 (19 文件) + mock 虚拟内核树已删除 — host-tests 经
 //! `edgine = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
 //! 真实源码 (functions/privileged host-test 暴露面). 详见 docs/plan/
 //! 详见 eliminate-parallel-implementations.md.

@@ -1255,41 +1255,41 @@ src/kernel/functions/fs/handle.rs::vfs_readdir_safe
 src/kernel/functions/fs/handle.rs::vfs_seek_safe
 src/kernel/functions/fs/inotify.rs::inotify_fd_readable
 src/kernel/functions/fs/inotify.rs::inotify_stats
-src/kernel/functions/fs/unkfs/arc.rs::is_referenced
-src/kernel/functions/fs/unkfs/bp.rs::is_data
-src/kernel/functions/fs/unkfs/bp.rs::is_encrypted
-src/kernel/functions/fs/unkfs/bp.rs::is_gang
-src/kernel/functions/fs/unkfs/bp.rs::is_metadata
-src/kernel/functions/fs/unkfs/bp.rs::set_encrypted
-src/kernel/functions/fs/unkfs/bp.rs::with_gang
-src/kernel/functions/fs/unkfs/dataset.rs::list_entries
-src/kernel/functions/fs/unkfs/dedup.rs::cas_aware_free
-src/kernel/functions/fs/unkfs/dedup.rs::cas_aware_write
-src/kernel/functions/fs/unkfs/dedup.rs::cas_init
-src/kernel/functions/fs/unkfs/dedup.rs::cas_insert
-src/kernel/functions/fs/unkfs/dedup.rs::cas_is_known
-src/kernel/functions/fs/unkfs/dedup.rs::cas_lookup
-src/kernel/functions/fs/unkfs/dedup.rs::cas_ref_count
-src/kernel/functions/fs/unkfs/dedup.rs::cas_ref_inc
-src/kernel/functions/fs/unkfs/dedup.rs::cas_stats
-src/kernel/functions/fs/unkfs/dedup.rs::sha256_matches
-src/kernel/functions/fs/unkfs/dmu.rs::is_zap
-src/kernel/functions/fs/unkfs/metaslab.rs::fragmentation
-src/kernel/functions/fs/unkfs/raidz.rs::create_stripe
-src/kernel/functions/fs/unkfs/raidz.rs::generate_parity
-src/kernel/functions/fs/unkfs/raidz.rs::reconstruct_data
-src/kernel/functions/fs/unkfs/raidz.rs::scrub_block
-src/kernel/functions/fs/unkfs/spa.rs::is_disk_present
-src/kernel/functions/fs/unkfs/spa.rs::is_formatted
-src/kernel/functions/fs/unkfs/spa.rs::sync_uberblock
-src/kernel/functions/fs/unkfs/txg.rs::add_free_to_open
-src/kernel/functions/fs/unkfs/txg.rs::add_io_to_open
-src/kernel/functions/fs/unkfs/txg.rs::drain_free
-src/kernel/functions/fs/unkfs/txg.rs::drain_io
-src/kernel/functions/fs/unkfs/txg.rs::get_open_txg_mut
-src/kernel/functions/fs/unkfs/zil.rs::new_dedup_unref
-src/kernel/functions/fs/unkfs/zil.rs::new_setattr
-src/kernel/functions/fs/unkfs/zil_persist.rs::as_static_str
+src/kernel/functions/fs/egfs/arc.rs::is_referenced
+src/kernel/functions/fs/egfs/bp.rs::is_data
+src/kernel/functions/fs/egfs/bp.rs::is_encrypted
+src/kernel/functions/fs/egfs/bp.rs::is_gang
+src/kernel/functions/fs/egfs/bp.rs::is_metadata
+src/kernel/functions/fs/egfs/bp.rs::set_encrypted
+src/kernel/functions/fs/egfs/bp.rs::with_gang
+src/kernel/functions/fs/egfs/dataset.rs::list_entries
+src/kernel/functions/fs/egfs/dedup.rs::cas_aware_free
+src/kernel/functions/fs/egfs/dedup.rs::cas_aware_write
+src/kernel/functions/fs/egfs/dedup.rs::cas_init
+src/kernel/functions/fs/egfs/dedup.rs::cas_insert
+src/kernel/functions/fs/egfs/dedup.rs::cas_is_known
+src/kernel/functions/fs/egfs/dedup.rs::cas_lookup
+src/kernel/functions/fs/egfs/dedup.rs::cas_ref_count
+src/kernel/functions/fs/egfs/dedup.rs::cas_ref_inc
+src/kernel/functions/fs/egfs/dedup.rs::cas_stats
+src/kernel/functions/fs/egfs/dedup.rs::sha256_matches
+src/kernel/functions/fs/egfs/dmu.rs::is_zap
+src/kernel/functions/fs/egfs/metaslab.rs::fragmentation
+src/kernel/functions/fs/egfs/raidz.rs::create_stripe
+src/kernel/functions/fs/egfs/raidz.rs::generate_parity
+src/kernel/functions/fs/egfs/raidz.rs::reconstruct_data
+src/kernel/functions/fs/egfs/raidz.rs::scrub_block
+src/kernel/functions/fs/egfs/spa.rs::is_disk_present
+src/kernel/functions/fs/egfs/spa.rs::is_formatted
+src/kernel/functions/fs/egfs/spa.rs::sync_uberblock
+src/kernel/functions/fs/egfs/txg.rs::add_free_to_open
+src/kernel/functions/fs/egfs/txg.rs::add_io_to_open
+src/kernel/functions/fs/egfs/txg.rs::drain_free
+src/kernel/functions/fs/egfs/txg.rs::drain_io
+src/kernel/functions/fs/egfs/txg.rs::get_open_txg_mut
+src/kernel/functions/fs/egfs/zil.rs::new_dedup_unref
+src/kernel/functions/fs/egfs/zil.rs::new_setattr
+src/kernel/functions/fs/egfs/zil_persist.rs::as_static_str
 src/kernel/functions/fs/ramfs.rs::is_read_only
 src/kernel/functions/fs/sysfs.rs::has_node
 src/kernel/functions/fs/sysfs.rs::mount_sysfs
@@ -1792,7 +1792,7 @@ src/kernel/privileged/proc/scheduler.rs::add_rt_task
 **B-12.4 functions 侧接线**
 
 - **storage**（[functions/driver/storage/mod.rs](../../src/kernel/functions/driver/storage/mod.rs)）：注册 `storage_reenum_hook`（L631）重扫描控制器，重插经 `install_controller(..., slot_hint, ...)` **复用槽位**；新增 `drives_for_location(location) -> Vec<u8>`（位置 → 已注册块设备，x86_64 实装 + aarch64 恒空 stub）；移除路径 `remove_stale_controllers`（L409）经 `egdf_unregister_block` 墓碑化。
-- **UNKFS**（[functions/fs/unkfs/unkfs.rs](../../src/kernel/functions/fs/unkfs/unkfs.rs)）：`on_device_added` 仅认领 `DeviceAdded`，逐 `drives_for_location(location)` 调 `hotplug_add_disk`；`on_device_removed` 处理 `DeviceRemoved | SurpriseRemoval` 调 `hotplug_remove_disk`（**原 `location.slot` 直用为语义错位，本批修正**）。
+- **UNKFS**（[functions/fs/unkfs/unkfs.rs](../../src/kernel/functions/fs/egfs/unkfs.rs)）：`on_device_added` 仅认领 `DeviceAdded`，逐 `drives_for_location(location)` 调 `hotplug_add_disk`；`on_device_removed` 处理 `DeviceRemoved | SurpriseRemoval` 调 `hotplug_remove_disk`（**原 `location.slot` 直用为语义错位，本批修正**）。
 - **USB**（[functions/driver/usb/mod.rs](../../src/kernel/functions/driver/usb/mod.rs)）：`static USB_CONTROLLERS: Mutex<Vec<&'static mut XhciController>>`；`usb_init` 改为 `Box::leak` 自持控制器 + `egdf_register("xhci", EGDFProto::Bus, ...)` + `register_aux_poll(usb_port_poll)`；`usb_port_poll` 扫描 PORTSC 变化位（`CSC|PEC|OCC|RC`）→ `ack_port_change`（读-改-写屏蔽 RW1CS 位，`PORTSC_RWS`，参照 Linux `xhci_port_state_to_neutral`，[usb/xhci.rs](../../src/kernel/functions/driver/usb/xhci.rs#L625)）→ **先释放 USB 锁再 `dispatch`**（避免持锁跨界）。
 
 **B-12.5 测试**

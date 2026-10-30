@@ -4,7 +4,7 @@
 //!
 //! 每个 metaslab 负责一个 vdev 上的一段连续空间, 通过位图跟踪块的空闲状态,
 //! 并以权重 (`weight`) 为上层选择分配目标提供依据。
-use crate::functions::fs::unkfs::spa::HV_POOL_BLOCK_SIZE;
+use crate::functions::fs::egfs::spa::HV_POOL_BLOCK_SIZE;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -18,7 +18,7 @@ pub const HV_MS_SHIFT: u8 = 14;
 /// metaslab 的运行状态.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum UnkfsMsState {
+pub enum EgfsMsState {
     /// 尚未初始化.
     Uninit = 0,
     /// 可正常分配.
@@ -28,7 +28,7 @@ pub enum UnkfsMsState {
 }
 
 /// 元数据块分配器: 管理 `[start, start + size)` 区间内的块位图与统计量.
-pub struct UnkfsMetaslab {
+pub struct EgfsMetaslab {
     /// metaslab 编号.
     pub id: u32,
     /// 所属 vdev 编号.
@@ -38,7 +38,7 @@ pub struct UnkfsMetaslab {
     /// 区间总大小 (字节).
     pub size: u64,
     /// 当前状态.
-    pub state: UnkfsMsState,
+    pub state: EgfsMsState,
     /// 累计已分配字节数.
     pub allocated: AtomicU64,
     /// 累计已释放字节数.
@@ -59,11 +59,11 @@ pub struct UnkfsMetaslab {
     pub condensing: bool,
 }
 
-// SAFETY: UnkfsMetaslab uses Mutex for bitmap and plain Copy types for other fields.
-// SAFETY (Framekernel P2.2.2): UnkfsMetaslab 全部字段 (Mutex<T>, [T; N]) 自动 Send + Sync。
+// SAFETY: EgfsMetaslab uses Mutex for bitmap and plain Copy types for other fields.
+// SAFETY (Framekernel P2.2.2): EgfsMetaslab 全部字段 (Mutex<T>, [T; N]) 自动 Send + Sync。
 
-impl UnkfsMetaslab {
-    /// 构造一个处于 [`UnkfsMsState::Active`] 状态的 metaslab, 位图全部标记为空闲.
+impl EgfsMetaslab {
+    /// 构造一个处于 [`EgfsMsState::Active`] 状态的 metaslab, 位图全部标记为空闲.
     #[must_use]
     pub fn new(id: u32, vdev_id: u16, start: u64, size: u64) -> Self {
         let nblocks = crate::functions::intcast::low_u32_from_u64(size / HV_MS_BLOCK_SIZE);
@@ -76,7 +76,7 @@ impl UnkfsMetaslab {
             vdev_id,
             start,
             size,
-            state: UnkfsMsState::Active,
+            state: EgfsMsState::Active,
             allocated: AtomicU64::new(0),
             freed: AtomicU64::new(0),
             space: AtomicU64::new(size),
@@ -183,7 +183,7 @@ impl UnkfsMetaslab {
 
     /// 判断当前是否可接受分配 (状态为 Active 且仍有空闲空间).
     pub fn is_available(&self) -> bool {
-        self.state == UnkfsMsState::Active && self.free_space.load(Ordering::Relaxed) > 0
+        self.state == EgfsMsState::Active && self.free_space.load(Ordering::Relaxed) > 0
     }
 
     /// 返回空闲空间占比 (0-100 的百分比), 数值越大空间越充裕.
@@ -195,13 +195,13 @@ impl UnkfsMetaslab {
         crate::functions::intcast::low_u8_from_u64((free * 100) / self.size)
     }
 
-    /// 依据空闲空间刷新状态: 无空闲空间置为 [`UnkfsMsState::Full`], 否则置为 [`UnkfsMsState::Active`].
+    /// 依据空闲空间刷新状态: 无空闲空间置为 [`EgfsMsState::Full`], 否则置为 [`EgfsMsState::Active`].
     pub fn sync(&mut self) {
         let free = self.free_space.load(Ordering::Relaxed);
         if free == 0 {
-            self.state = UnkfsMsState::Full;
+            self.state = EgfsMsState::Full;
         } else {
-            self.state = UnkfsMsState::Active;
+            self.state = EgfsMsState::Active;
         }
     }
 }

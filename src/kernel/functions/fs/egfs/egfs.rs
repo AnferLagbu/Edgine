@@ -1,19 +1,19 @@
 #![deny(unsafe_code)]
-//! `UNKFS` (Hypervisor File System) — 模块入口
+//! `EGFS` (Edgine File System) — 模块入口
 //!
 //! 热插拔监听 + 公共类型重导出.
 
 use crate::privileged::driver::hotplug::{HotplugEvent, HotplugListener};
 use alloc::boxed::Box;
 
-// 公共类型重导出 (必须在 HotplugListener 之前, 因为热插拔代码使用 get_unkfs)
-pub use super::unkfs_data::*;
-pub use super::unkfs_inode::*;
+// 公共类型重导出 (必须在 HotplugListener 之前, 因为热插拔代码使用 get_egfs)
+pub use super::egfs_data::*;
+pub use super::egfs_inode::*;
 
-/// `UNKFS` 热插拔监听器 — 将块设备热插拔事件转发到 `UNKFS`
-struct UnkfsHotplugListener;
+/// `EGFS` 热插拔监听器 — 将块设备热插拔事件转发到 `EGFS`
+struct EgfsHotplugListener;
 
-impl HotplugListener for UnkfsHotplugListener {
+impl HotplugListener for EgfsHotplugListener {
     fn on_device_added(&self, event: &HotplugEvent) -> bool {
         let HotplugEvent::DeviceAdded { location } = event else {
             return false;
@@ -25,12 +25,12 @@ impl HotplugListener for UnkfsHotplugListener {
         for drive in drives {
             crate::slog_info!(
                 FS,
-                "[UNKFS] HOTPLUG: device added at bus={}/{} -> drive={}",
+                "[EGFS] HOTPLUG: device added at bus={}/{} -> drive={}",
                 location.bus,
                 location.device,
                 drive
             );
-            claimed |= get_unkfs().hotplug_add_disk(drive);
+            claimed |= get_egfs().hotplug_add_disk(drive);
         }
         claimed
     }
@@ -43,14 +43,14 @@ impl HotplugListener for UnkfsHotplugListener {
         };
         let drives = crate::functions::driver::storage::drives_for_location(*location);
         for drive in drives {
-            crate::slog_info!(FS, "[UNKFS] HOTPLUG: device removed -> drive={}", drive);
-            get_unkfs().hotplug_remove_disk(drive);
+            crate::slog_info!(FS, "[EGFS] HOTPLUG: device removed -> drive={}", drive);
+            get_egfs().hotplug_remove_disk(drive);
         }
     }
 }
 
-/// 注册 `UNKFS` 热插拔监听器到全局热插拔管理器
-pub fn unkfs_hotplug_register() {
+/// 注册 `EGFS` 热插拔监听器到全局热插拔管理器
+pub fn egfs_hotplug_register() {
     use crate::privileged::driver::hotplug::HOTPLUG_MANAGER;
-    HOTPLUG_MANAGER.register_listener(Box::new(UnkfsHotplugListener));
+    HOTPLUG_MANAGER.register_listener(Box::new(EgfsHotplugListener));
 }

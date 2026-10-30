@@ -37,7 +37,7 @@
       4
     ],
     [
-      "src/kernel/functions/fs/unkfs/unkfs.rs",
+      "src/kernel/functions/fs/egfs/egfs.rs",
       "HOTPLUG_MANAGER",
       2
     ],

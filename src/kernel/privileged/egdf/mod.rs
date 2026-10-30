@@ -6,7 +6,7 @@
 //!
 //! ## 调用方契约
 //! - `driver::infra::Driver` —— 驱动实现者
-//! - `fs::unkfs` —— 通过 `proto_block` 读块设备
+//! - `fs::egfs` —— 通过 `proto_block` 读块设备
 //! - `fs::ramfs/devfs` —— 通过 `egdf_register_driver` 暴露设备节点
 //! - `net::e1000/virtio` —— 通过 `proto_net` 注册网卡
 //! - `proc::session` —— 通过 `user_driver` 暴露用户态驱动接口
@@ -42,7 +42,7 @@
 //!
 //! egdf_register_block_dev("ata0", None, None, &mut block_dev)
 //!   ├── 创建 EGDFDevice + block_dev trait 引用
-//!   ├── UNKFS 通过 egdf_blk_read/write → BlockDevice::blk_read/write
+//!   ├── EGFS 通过 egdf_blk_read/write → BlockDevice::blk_read/write
 //!   └── 0 unsafe
 //!
 //! egdf_blk_read(drive_idx, sector, buf)
@@ -519,7 +519,7 @@ pub fn egdf_unregister(id: u32) -> Option<*mut u8> {
 ///
 /// `drive` 是设备在 `EGDF_DEVICES` 中的索引。热插拔移除时**不物理删除**
 /// 条目, 而是将其标记为 `DeviceState::Removed` 并释放 `block_dev` 引用:
-/// 物理删除会使后续设备的索引整体前移, 导致已下发到上层 (如 UNKFS vdev
+/// 物理删除会使后续设备的索引整体前移, 导致已下发到上层 (如 EGFS vdev
 /// 映射) 的 `drive` 句柄指向错误设备。墓碑保持索引稳定, 后续 I/O 因状态
 /// 非 `Ready` 而安全失败 (`egdf_blk_read/write` 返回 `Busy`)。
 ///

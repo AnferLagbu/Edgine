@@ -11,7 +11,7 @@
 //! ## 说明
 //!
 //! - Inode trait 定义于 `super::inode`, 本文件引用之.
-//! - 各文件系统 (ramfs/unkfs/ext2/exfat/...) 在本模块树内实现本 trait.
+//! - 各文件系统 (ramfs/egfs/ext2/exfat/...) 在本模块树内实现本 trait.
 
 #![deny(missing_docs)]
 
@@ -118,8 +118,8 @@ impl VfsSeekWhence {
 pub enum FsType {
     /// 内存文件系统
     RamFs,
-    /// UNKFS 文件系统
-    Unkfs,
+    /// EGFS 文件系统
+    Egfs,
     /// 设备文件系统
     DevFs,
     /// ext2 文件系统
@@ -140,7 +140,7 @@ impl FsType {
     pub fn from_name(name: &str) -> Self {
         match name {
             "ramfs" => Self::RamFs,
-            "unkfs" => Self::Unkfs,
+            "egfs" => Self::Egfs,
             "devfs" => Self::DevFs,
             "ext2" => Self::Ext2,
             "exfat" => Self::ExFat,
@@ -155,7 +155,7 @@ impl FsType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RamFs => "ramfs",
-            Self::Unkfs => "unkfs",
+            Self::Egfs => "egfs",
             Self::DevFs => "devfs",
             Self::Ext2 => "ext2",
             Self::ExFat => "exfat",
@@ -279,10 +279,10 @@ impl VfsDirEntry {
 // 新增文件系统只需实现本 trait, 无需修改 privileged.
 //
 // 设计原则:
-// - 统一 RamFS (node_id) / UNKFS (fd) 的差异: open 返回 FsOpenResult,
+// - 统一 RamFS (node_id) / EGFS (fd) 的差异: open 返回 FsOpenResult,
 //   内部不透明 handle 由各 FS 自行解释
 // - 所有方法接收 `&self` (非 `&mut self`), 内部可变性由各 FS 自行管理
-//   (RamFS 用内部 Mutex, UNKFS 用内部原子操作)
+//   (RamFS 用内部 Mutex, EGFS 用内部原子操作)
 // - pwm 参数由 VFS 层传入, FS 实现负责权限检查
 //
 // L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 NotSupported)
@@ -292,7 +292,7 @@ impl VfsDirEntry {
 /// `fs_open` 返回结果
 #[derive(Debug, Clone, Copy)]
 pub struct FsOpenResult {
-    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `UNKFS` 填 fd)
+    /// FS 内部不透明 handle (`RamFS` 填 `node_id`, `EGFS` 填 fd)
     pub handle: u32,
     /// 文件初始偏移
     pub offset: u64,
@@ -308,7 +308,7 @@ pub struct FsOpenResult {
 /// L4 重构: 核心方法必须实现, 扩展方法提供默认实现 (返回 `NotSupported`).
 /// 实现者可以选择性地 override 扩展方法, 减少实现负担.
 pub trait FileSystem: Send + Sync {
-    /// 文件系统名称 (如 "ramfs", "unkfs")
+    /// 文件系统名称 (如 "ramfs", "egfs")
     fn name(&self) -> &'static str;
 
     // ---- 生命周期 ----
@@ -539,9 +539,9 @@ pub trait FileSystem: Send + Sync {
     fn fs_removexattr(&self, _rel_path: &str, _name: &str, _pwm: u64) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
-    /// 格式化底层介质 (UNKFS 磁盘模式使用).
+    /// 格式化底层介质 (EGFS 磁盘模式使用).
     ///
-    /// 封装原 privileged fsformat 路径对 UNKFS 内部字段 (`drives_discovered`/
+    /// 封装原 privileged fsformat 路径对 EGFS 内部字段 (`drives_discovered`/
     /// `disk_drive/partition_start`) 的直接访问, 归位 functions 策略
     /// (DECISION-K 项 6: 注入归零).
     ///
@@ -757,14 +757,14 @@ mod tests {
     #[test]
     fn fstype_from_name() {
         assert_eq!(FsType::from_name("ramfs"), FsType::RamFs, "ramfs");
-        assert_eq!(FsType::from_name("unkfs"), FsType::Unkfs, "unkfs");
+        assert_eq!(FsType::from_name("egfs"), FsType::Egfs, "egfs");
         assert_eq!(FsType::from_name("ext4"), FsType::Unknown, "未知名称");
     }
 
     #[test]
     fn fstype_as_str() {
         assert_eq!(FsType::RamFs.as_str(), "ramfs", "RamFs 回写");
-        assert_eq!(FsType::Unkfs.as_str(), "unkfs", "Unkfs 回写");
+        assert_eq!(FsType::Egfs.as_str(), "egfs", "Egfs 回写");
         assert_eq!(FsType::Unknown.as_str(), "unknown", "Unknown 回写");
     }
 

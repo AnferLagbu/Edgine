@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsBlockPointer;
-use crate::functions::fs::unkfs::dmu::{UnkfsObjSet, UnkfsObjType};
-use crate::functions::fs::unkfs::zap::UnkfsZap;
+use crate::functions::fs::egfs::bp::EgfsBlockPointer;
+use crate::functions::fs::egfs::dmu::{EgfsObjSet, EgfsObjType};
+use crate::functions::fs::egfs::zap::EgfsZap;
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -16,7 +16,7 @@ pub const HV_DS_MAX_DATASETS: usize = 16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// 数据集生命周期状态.
-pub enum UnkfsDsState {
+pub enum EgfsDsState {
     /// 未初始化.
     Uninit = 0,
     /// 正在创建.
@@ -33,7 +33,7 @@ pub enum UnkfsDsState {
 
 #[derive(Debug, Clone)]
 /// 数据集属性: 记录大小、压缩/校验策略、配额与属主等.
-pub struct UnkfsDsProps {
+pub struct EgfsDsProps {
     /// 记录大小 (字节).
     pub record_size: u32,
     /// 压缩算法编码.
@@ -58,7 +58,7 @@ pub struct UnkfsDsProps {
     pub ref_reservation: u64,
 }
 
-impl Default for UnkfsDsProps {
+impl Default for EgfsDsProps {
     /// 返回 ZFS 风格默认属性: 128 KiB 记录、Fletcher4 校验、开启 atime.
     fn default() -> Self {
         Self {
@@ -78,21 +78,21 @@ impl Default for UnkfsDsProps {
 }
 
 /// 一个数据集 (文件系统实例): 对象集、目录 ZAP 与快照链.
-pub struct UnkfsDataset {
+pub struct EgfsDataset {
     /// 数据集编号.
     pub ds_id: u64,
     /// 数据集名 (NUL 填充的定长字节数组).
     pub name: [u8; HV_DS_MAX_NAME],
-    /// 生命周期状态 (`UnkfsDsState` 编码).
+    /// 生命周期状态 (`EgfsDsState` 编码).
     pub state: AtomicU8,
     /// 数据集属性.
-    pub props: UnkfsDsProps,
+    pub props: EgfsDsProps,
     /// 本数据集的对象集.
-    pub objset: UnkfsObjSet,
+    pub objset: EgfsObjSet,
     /// 根目录项 ZAP (名字 → 对象编号).
-    pub dir_zap: UnkfsZap,
+    pub dir_zap: EgfsZap,
     /// 扩展属性 ZAP.
-    pub xattr_zap: UnkfsZap,
+    pub xattr_zap: EgfsZap,
     /// 父数据集编号.
     pub parent_id: Option<u64>,
     /// 子数据集编号列表.
@@ -104,7 +104,7 @@ pub struct UnkfsDataset {
     /// 出生事务组号.
     pub birth_txg: AtomicU64,
     /// 根块指针 (受锁保护).
-    pub root_bp: Mutex<UnkfsBlockPointer>,
+    pub root_bp: Mutex<EgfsBlockPointer>,
     /// 是否为快照.
     pub is_snapshot: bool,
     /// 快照对应的源数据集编号.
@@ -121,10 +121,10 @@ pub struct UnkfsDataset {
     pub mounted: AtomicBool,
 }
 
-// SAFETY: UnkfsDataset uses AtomicBool for mounted; other fields are plain
-// SAFETY (Framekernel P2.2.2): UnkfsDataset 全部字段自动 Send + Sync。
+// SAFETY: EgfsDataset uses AtomicBool for mounted; other fields are plain
+// SAFETY (Framekernel P2.2.2): EgfsDataset 全部字段自动 Send + Sync。
 
-impl UnkfsDataset {
+impl EgfsDataset {
     /// 以编号、名称与属主创建数据集, 初始状态 Creating、可写.
     #[must_use]
     pub fn new(ds_id: u64, name: &str, owner_pwm: u64) -> Self {
@@ -132,24 +132,24 @@ impl UnkfsDataset {
         let b = name.as_bytes();
         let len = b.len().min(HV_DS_MAX_NAME - 1);
         n[..len].copy_from_slice(&b[..len]);
-        let props = UnkfsDsProps {
+        let props = EgfsDsProps {
             owner_pwm,
-            ..UnkfsDsProps::default()
+            ..EgfsDsProps::default()
         };
         Self {
             ds_id,
             name: n,
-            state: AtomicU8::new(UnkfsDsState::Creating as u8),
+            state: AtomicU8::new(EgfsDsState::Creating as u8),
             props,
-            objset: UnkfsObjSet::new(),
-            dir_zap: UnkfsZap::new(),
-            xattr_zap: UnkfsZap::new(),
+            objset: EgfsObjSet::new(),
+            dir_zap: EgfsZap::new(),
+            xattr_zap: EgfsZap::new(),
             parent_id: None,
             child_ids: Vec::new(),
             used_space: AtomicU64::new(0),
             ref_count: AtomicU64::new(1),
             birth_txg: AtomicU64::new(0),
-            root_bp: Mutex::new(UnkfsBlockPointer::null()),
+            root_bp: Mutex::new(EgfsBlockPointer::null()),
             is_snapshot: false,
             snapshot_origin: None,
             prev_snap: None,
@@ -174,18 +174,18 @@ impl UnkfsDataset {
     pub fn init(&self, owner_pwm: u64) {
         self.objset.init(owner_pwm);
         self.state
-            .store(UnkfsDsState::Active as u8, Ordering::Release);
+            .store(EgfsDsState::Active as u8, Ordering::Release);
         self.mounted.store(true, Ordering::Release);
     }
 
     /// 是否处于 Active 状态.
     pub fn is_active(&self) -> bool {
-        self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
+        self.state.load(Ordering::Acquire) == EgfsDsState::Active as u8
     }
 
     /// 是否可写 (写权限位为真且状态为 Active).
     pub fn is_writeable(&self) -> bool {
-        self.writeable && self.state.load(Ordering::Acquire) == UnkfsDsState::Active as u8
+        self.writeable && self.state.load(Ordering::Acquire) == EgfsDsState::Active as u8
     }
 
     /// 在根目录创建普通文件并返回对象编号; 不可写或分配失败返回 `None`.
@@ -193,7 +193,7 @@ impl UnkfsDataset {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(UnkfsObjType::File, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(EgfsObjType::File, owner_pwm)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }
@@ -203,7 +203,7 @@ impl UnkfsDataset {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(UnkfsObjType::Dir, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(EgfsObjType::Dir, owner_pwm)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }
@@ -268,7 +268,7 @@ mod tests {
     /// 新建数据集应为 Creating 状态, init 后转为 Active 且可写.
     #[test]
     fn test_dataset_create() {
-        let ds = UnkfsDataset::new(1, "test-ds", 0);
+        let ds = EgfsDataset::new(1, "test-ds", 0);
         assert_eq!(ds.get_name(), "test-ds", "dataset name mismatch");
         assert!(
             !ds.is_active(),
@@ -282,7 +282,7 @@ mod tests {
     /// init 后应能读取已用空间.
     #[test]
     fn test_dataset_init() {
-        let ds = UnkfsDataset::new(2, "init-ds", 0);
+        let ds = EgfsDataset::new(2, "init-ds", 0);
         ds.init(0);
         let _used = ds.get_used();
     }

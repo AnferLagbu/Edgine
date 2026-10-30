@@ -1,6 +1,6 @@
 // UT-07 (2026-09-25): rcu / kmalloc_slab / zil_persist 注册副本已删 —
 // 其纯逻辑断言分别以 privileged/sync/rcu.rs, privileged/mm/kmalloc_slab.rs,
-// functions/fs/unkfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
+// functions/fs/egfs/zil_persist.rs 的 #[cfg(test)] 为唯一归属.
 // 分册 9 项 2 (B09-21): privileged/mm/kmalloc_slab.rs 属全仓零引用孤岛,
 // 已整体删除, 其 1 个源侧用例随之核销 (注册副本已于 UT-07 期间先行删除).
 // UT-07 (2026-09-25): page_fault / mmap 注册副本已删 — 其纯逻辑断言分别以

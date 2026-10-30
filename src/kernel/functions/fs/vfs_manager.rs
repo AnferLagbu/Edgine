@@ -627,7 +627,7 @@ mod tests {
     fn test_vfs_resolve_mount() {
         let mgr = VfsManager::new();
         let _ = mgr.mount("/", "ramfs");
-        let _ = mgr.mount("/home", "unkfs");
+        let _ = mgr.mount("/home", "egfs");
 
         let root = mgr.resolve_mount("/");
         assert!(root.is_some(), "should resolve /");
@@ -637,7 +637,7 @@ mod tests {
         let home = mgr.resolve_mount("/home/user/file.txt");
         assert!(home.is_some(), "should resolve /home/user/file.txt");
         let (_, home_fs) = home.unwrap();
-        assert_eq!(home_fs, FsType::Unkfs, "/home should be Unkfs");
+        assert_eq!(home_fs, FsType::Egfs, "/home should be Egfs");
 
         let rel = mgr.get_relative_path("/home/user/file.txt", home.unwrap().0);
         assert_eq!(rel, "user/file.txt", "relative path mismatch");

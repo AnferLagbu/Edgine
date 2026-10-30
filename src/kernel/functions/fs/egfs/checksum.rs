@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-use crate::functions::fs::unkfs::bp::UnkfsCksumType;
+use crate::functions::fs::egfs::bp::EgfsCksumType;
 
 /// ZFS On-Disk 校验和类型 ID: Fletcher-2.
 pub const HV_CKSUM_FLETCHER2: usize = 1;
@@ -18,24 +18,24 @@ pub const HV_CKSUM_SHA256: usize = 3;
 /// 校验和算法抽象 — 使 spa/dedup 等调用方依赖抽象而非具体类型 (I-04).
 pub trait Checksum: Send + Sync {
     /// 给定算法类型与数据, 计算校验和
-    fn compute(&self, kind: UnkfsCksumType, data: &[u8]) -> [u64; 4];
+    fn compute(&self, kind: EgfsCksumType, data: &[u8]) -> [u64; 4];
     /// 验证 `expected` 与 `data` 在同一算法下结果是否一致
-    fn verify(&self, kind: UnkfsCksumType, data: &[u8], expected: &[u64; 4]) -> bool;
+    fn verify(&self, kind: EgfsCksumType, data: &[u8], expected: &[u64; 4]) -> bool;
 }
 
 /// 校验和结果载体: 算法类型 + 四字校验值.
 #[derive(Debug, Clone, Copy)]
-pub struct UnkfsChecksum {
+pub struct EgfsChecksum {
     /// 使用的校验和算法类型
-    pub kind: UnkfsCksumType,
+    pub kind: EgfsCksumType,
     /// 校验值 (四字, 具体布局依算法而定)
     pub value: [u64; 4],
 }
 
-impl UnkfsChecksum {
+impl EgfsChecksum {
     /// 构造指定算法类型的零值校验和.
     #[must_use]
-    pub fn new(kind: UnkfsCksumType) -> Self {
+    pub fn new(kind: EgfsCksumType) -> Self {
         Self {
             kind,
             value: [0; 4],
@@ -44,14 +44,14 @@ impl UnkfsChecksum {
 
     /// 按算法类型对 `data` 计算校验和.
     #[must_use]
-    pub fn compute(kind: UnkfsCksumType, data: &[u8]) -> Self {
+    pub fn compute(kind: EgfsCksumType, data: &[u8]) -> Self {
         let mut ck = Self::new(kind);
         match kind {
-            UnkfsCksumType::Off => {}
-            UnkfsCksumType::Fletcher2 => ck.fletcher2(data),
+            EgfsCksumType::Off => {}
+            EgfsCksumType::Fletcher2 => ck.fletcher2(data),
             // EdonR 简化回落 Fletcher4
-            UnkfsCksumType::Fletcher4 | UnkfsCksumType::EdonR => ck.fletcher4(data),
-            UnkfsCksumType::SHA256 => ck.sha256(data),
+            EgfsCksumType::Fletcher4 | EgfsCksumType::EdonR => ck.fletcher4(data),
+            EgfsCksumType::SHA256 => ck.sha256(data),
         }
         ck
     }
@@ -130,13 +130,13 @@ impl UnkfsChecksum {
     }
 }
 
-// I-04: 为 UnkfsChecksum 实现 Checksum trait, 使其成为 trait object / 泛型可注入.
-impl Checksum for UnkfsChecksum {
-    fn compute(&self, kind: UnkfsCksumType, data: &[u8]) -> [u64; 4] {
+// I-04: 为 EgfsChecksum 实现 Checksum trait, 使其成为 trait object / 泛型可注入.
+impl Checksum for EgfsChecksum {
+    fn compute(&self, kind: EgfsCksumType, data: &[u8]) -> [u64; 4] {
         Self::compute(kind, data).value
     }
 
-    fn verify(&self, kind: UnkfsCksumType, data: &[u8], expected: &[u64; 4]) -> bool {
+    fn verify(&self, kind: EgfsCksumType, data: &[u8], expected: &[u64; 4]) -> bool {
         let computed = Self::compute(kind, data);
         &computed.value == expected
     }
@@ -144,7 +144,7 @@ impl Checksum for UnkfsChecksum {
 
 // DECISION-080: 校验和纯逻辑断言以本文件源侧 #[cfg(test)] 为唯一归属.
 // E-06 (2026-09-07): 原 host-tests/src/checksum.rs 去重载体用例合入本套件 —
-// 同被测对象 (functions::fs::unkfs::checksum::UnkfsChecksum) 的双端共享用例统一收口.
+// 同被测对象 (functions::fs::egfs::checksum::EgfsChecksum) 的双端共享用例统一收口.
 // 覆盖 Fletcher2/4 全族、verify 往返/损坏检测、Off/EdonR/SHA256 变体与边界长度.
 #[cfg(test)]
 mod tests {
@@ -157,8 +157,8 @@ mod tests {
     #[test]
     fn test_checksum_fletcher4_basic() {
         let data = b"hello world test data for checksum verification";
-        let ck_a = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
-        let ck_b = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck_a = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
+        let ck_b = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert_eq!(
             ck_a.value, ck_b.value,
             "same data should produce same checksum"
@@ -168,15 +168,15 @@ mod tests {
     /// 不同数据应产生不同校验和.
     #[test]
     fn test_checksum_different_data() {
-        let ck_a = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"hello");
-        let ck_b = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"world");
+        let ck_a = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"hello");
+        let ck_b = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"world");
         assert_ne!(ck_a.value, ck_b.value, "different data should differ");
     }
 
     /// 空输入的 Fletcher2 校验和应全零.
     #[test]
     fn test_checksum_fletcher2_empty() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, b"");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, b"");
         assert!(ck.value[0] == 0 && ck.value[1] == 0, "empty fletcher2 zero");
     }
 
@@ -184,15 +184,15 @@ mod tests {
     #[test]
     fn test_checksum_fletcher2_deterministic() {
         let data = b"hello world";
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, data);
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, data);
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::Fletcher2, data);
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::Fletcher2, data);
         assert_eq!(ck1.value, ck2.value, "fletcher2 deterministic");
     }
 
     /// 空输入的 Fletcher4 校验和应全零.
     #[test]
     fn test_checksum_fletcher4_empty() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"");
         assert!(
             ck.value[0] == 0 && ck.value[1] == 0 && ck.value[2] == 0 && ck.value[3] == 0,
             "empty fletcher4 zero"
@@ -203,8 +203,8 @@ mod tests {
     #[test]
     fn test_checksum_fletcher4_deterministic() {
         let data = b"test data for fletcher4";
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert_eq!(ck1.value, ck2.value, "fletcher4 deterministic");
     }
 
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn test_checksum_verify_roundtrip_fletcher2() {
         let data = b"some test data for verification";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, data);
         assert!(ck.verify(data), "fletcher2 verifies");
     }
 
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_checksum_verify_roundtrip_fletcher4() {
         let data = b"some test data for verification";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert!(ck.verify(data), "fletcher4 verifies");
     }
 
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn test_checksum_verify_detects_corruption() {
         let data = b"original data";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         let corrupted = b"corrupted data";
         assert!(!ck.verify(corrupted), "corruption detected");
     }
@@ -238,7 +238,7 @@ mod tests {
     /// Off 算法恒返回全零校验和.
     #[test]
     fn test_checksum_off_always_zero() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Off, b"any data");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Off, b"any data");
         assert_eq!(ck.value, [0u64; 4], "Off checksum zero");
     }
 
@@ -246,8 +246,8 @@ mod tests {
     #[test]
     fn test_checksum_edonr_uses_fletcher4() {
         let data = b"test data";
-        let ck_edonr = UnkfsChecksum::compute(UnkfsCksumType::EdonR, data);
-        let ck_f4 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck_edonr = EgfsChecksum::compute(EgfsCksumType::EdonR, data);
+        let ck_f4 = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert_eq!(ck_edonr.value, ck_f4.value, "EdonR == Fletcher4");
     }
 
@@ -256,14 +256,14 @@ mod tests {
     /// Fletcher2 单字节输入应产生非零校验和.
     #[test]
     fn test_checksum_fletcher2_single_byte() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, b"A");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, b"A");
         assert_ne!(ck.value[0], 0, "single byte fletcher2 non-zero");
     }
 
     /// Fletcher4 单字节输入应产生非零校验和.
     #[test]
     fn test_checksum_fletcher4_single_byte() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"A");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"A");
         assert_ne!(ck.value[0], 0, "single byte fletcher4 non-zero");
     }
 
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_checksum_fletcher2_odd_length() {
         let data = b"hello";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, data);
         assert!(ck.verify(data), "odd-length fletcher2 verifies");
     }
 
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_checksum_fletcher4_odd_length() {
         let data = b"odd data length test";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert!(ck.verify(data), "odd-length fletcher4 verifies");
     }
 
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn test_checksum_fletcher2_exact_8_bytes() {
         let data = b"12345678";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, data);
         assert!(ck.verify(data), "8-byte fletcher2 verifies");
     }
 
@@ -295,7 +295,7 @@ mod tests {
     #[test]
     fn test_checksum_fletcher4_exact_8_bytes() {
         let data = b"abcdefgh";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         assert!(ck.verify(data), "8-byte fletcher4 verifies");
     }
 
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn test_checksum_fletcher2_large_data() {
         let data: Vec<u8> = (0..4096u32).map(|i| (i % 256) as u8).collect();
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, &data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher2, &data);
         assert!(ck.verify(&data), "large fletcher2 verifies");
     }
 
@@ -311,23 +311,23 @@ mod tests {
     #[test]
     fn test_checksum_fletcher4_large_data() {
         let data: Vec<u8> = (0..8192u32).map(|i| (i % 256) as u8).collect();
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, &data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, &data);
         assert!(ck.verify(&data), "large fletcher4 verifies");
     }
 
     /// Fletcher2 不同长度输入应产生不同校验和.
     #[test]
     fn test_checksum_fletcher2_different_lengths() {
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, b"hello");
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher2, b"hello world");
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::Fletcher2, b"hello");
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::Fletcher2, b"hello world");
         assert_ne!(ck1.value, ck2.value, "different lengths differ");
     }
 
     /// Fletcher4 不同长度输入应产生不同校验和.
     #[test]
     fn test_checksum_fletcher4_different_lengths() {
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"hello");
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, b"hello world");
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"hello");
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::Fletcher4, b"hello world");
         assert_ne!(ck1.value, ck2.value, "different lengths differ");
     }
 
@@ -335,7 +335,7 @@ mod tests {
     #[test]
     fn test_checksum_verify_single_bit_flip() {
         let data = b"some test data for verification";
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, data);
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, data);
         let mut corrupted: Vec<u8> = Vec::new();
         corrupted.extend_from_slice(data);
         corrupted[5] ^= 0x01;
@@ -345,7 +345,7 @@ mod tests {
     /// Off 算法对任意数据均验证通过.
     #[test]
     fn test_checksum_off_verify_always_true() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Off, b"any data");
+        let ck = EgfsChecksum::compute(EgfsCksumType::Off, b"any data");
         assert!(ck.verify(b"different data"), "Off verifies any data");
     }
 
@@ -355,15 +355,15 @@ mod tests {
     #[test]
     fn test_checksum_sha256_short_data() {
         let data = b"ab";
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::SHA256, data);
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::SHA256, data);
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::SHA256, data);
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::SHA256, data);
         assert_eq!(ck1.value, ck2.value, "SHA256 short deterministic");
     }
 
     /// SHA256('abc') 应匹配 FIPS 180-4 标准向量.
     #[test]
     fn test_checksum_sha256_known_vector() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::SHA256, b"abc");
+        let ck = EgfsChecksum::compute(EgfsCksumType::SHA256, b"abc");
         let expected: [u64; 4] = [
             0xba7816bf8f01cfea,
             0x414140de5dae2223,
@@ -376,7 +376,7 @@ mod tests {
     /// SHA256('') 应匹配 FIPS 180-4 标准向量.
     #[test]
     fn test_checksum_sha256_empty() {
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::SHA256, b"");
+        let ck = EgfsChecksum::compute(EgfsCksumType::SHA256, b"");
         let expected: [u64; 4] = [
             0xe3b0c44298fc1c14,
             0x9afbf4c8996fb924,
@@ -391,8 +391,8 @@ mod tests {
     fn test_checksum_sha256_long_data() {
         let data =
             b"sha256 via checksum module - this is a longer string that spans multiple blocks";
-        let ck1 = UnkfsChecksum::compute(UnkfsCksumType::SHA256, data);
-        let ck2 = UnkfsChecksum::compute(UnkfsCksumType::SHA256, data);
+        let ck1 = EgfsChecksum::compute(EgfsCksumType::SHA256, data);
+        let ck2 = EgfsChecksum::compute(EgfsCksumType::SHA256, data);
         assert_eq!(ck1.value, ck2.value, "SHA256 long deterministic");
     }
 }

@@ -24,7 +24,7 @@
 
 | 段 | 含义 | 示例 |
 |----|------|------|
-| `<scope>` | 子系统或模块缩写 | `vfs` / `net` / `mm` / `driver` / `proc` / `signal` / `audit` / `klog` / `elf` / `unkfs` |
+| `<scope>` | 子系统或模块缩写 | `vfs` / `net` / `mm` / `driver` / `proc` / `signal` / `audit` / `klog` / `elf` / `egfs` |
 | `<feature>` | 功能点 | `close_atomic` / `socket_wait_queue` / `iomem_alias` / `e1000_eeprom` |
 | `<kind>` | 测试类型 (可选) | `test` (静态契约) / `e2e` (端到端) / `persist` (持久化) / `stress` (压力) |
 
@@ -34,8 +34,8 @@
 - `driver_display_test.rs` — 显示器驱动
 - `driver_e1000_eeprom_test.rs` — e1000 EEPROM 读取
 - `mm_iomem_alias_test.rs` — IoMem 别名检测
-- `unkfs_stress_test.rs` — UNKFS 压力
-- `unkfs_persist_test.rs` — UNKFS 持久化往返
+- `egfs_stress_test.rs` — EGFS 压力
+- `egfs_persist_test.rs` — EGFS 持久化往返
 - `audit_comment_language_test.rs` — 注释语言审计契约
 
 **禁用**:
@@ -128,11 +128,11 @@ criterion_main!(benches);
 | `mmap_pwm_test.rs` | Vma.file_pwm 桥接 | B2.1 |
 | `i43_block_bridge_test.rs` | 块设备单一桥接入口 | I-43 |
 | `td21_early_vfs_eacces_test.rs` | early VFS EACCES | TD-21 |
-| `unkfs_test.rs` | UNKFS 综合集成 | I-05 |
-| `unkfs_e2e_test.rs` | UNKFS 端到端 (host 端) | I-05 |
-| `unkfs_persist_test.rs` | UNKFS 持久化往返 | I-05 |
-| `unkfs_stress_test.rs` | UNKFS 压力 (CAS/ZAP/ZIL) | I-05 |
-| `unkfs_trait_abstract_test.rs` | UNKFS 18 文件强耦合 trait 化 | I-04 |
+| `egfs_test.rs` | EGFS 综合集成 | I-05 |
+| `egfs_e2e_test.rs` | EGFS 端到端 (host 端) | I-05 |
+| `egfs_persist_test.rs` | EGFS 持久化往返 | I-05 |
+| `egfs_stress_test.rs` | EGFS 压力 (CAS/ZAP/ZIL) | I-05 |
+| `egfs_trait_abstract_test.rs` | EGFS 18 文件强耦合 trait 化 | I-04 |
 | `memory_pressure_extraction_test.rs` | Memory Pressure 策略提取 | P1-I-01 D9 |
 | `fd_table_extraction_test.rs` | FdTable 策略提取 | P1-I-01 |
 | `fd_allocator_unified_test.rs` | 统一 FdAllocator (含 I-51 UDS/smoltcp 不重叠验收, 已合入) | TD-02 |
@@ -256,12 +256,12 @@ criterion_main!(benches);
 |------|------|------|
 | 集成测试 | 70 文件 (从 73 - 3) | ~11,200 |
 | 单元测试模块 | 5 | ~800 |
-| 公共库代码 | unkfs + unkfs_mock + framekernel_bench | ~6,000 |
+| 公共库代码 | egfs + egfs_mock + framekernel_bench | ~6,000 |
 | 性能基准 | 1 bin (待迁 benches/) | - |
 
 **对比规范化前**:
 - 73 → 70 文件 (-3 重复/退役)
-- 4 无后缀 → 0 无后缀 (重命名 driver_/mm_/unkfs_ scope)
+- 4 无后缀 → 0 无后缀 (重命名 driver_/mm_/egfs_ scope)
 - 新增 README.md 索引
 - 5 文件补 SPDX + 追踪号
 

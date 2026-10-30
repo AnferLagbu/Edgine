@@ -1,13 +1,13 @@
-//! unkfs: 压力集成测试
+//! egfs: 压力集成测试
 //!
-//! 验证 UNKFS 高频路径 (CAS 去重表 / ZAP 哈希表 / ZIL 事务日志) 在
+//! 验证 EGFS 高频路径 (CAS 去重表 / ZAP 哈希表 / ZIL 事务日志) 在
 //! 100~256 次循环下的正确性与性能特征. 集成测试视角, 不依赖真实硬件.
 //!
 //! 追踪: I-05
 //! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## 与单元测试的分工
-//! - 单元测试 (`src/unkfs/*`) 验证各模块基本行为
+//! - 单元测试 (`src/egfs/*`) 验证各模块基本行为
 //! - 本文件验证整体压力下的稳定性
 //!
 //! ## 与性能基准的分工
@@ -15,11 +15,11 @@
 //! - 本文件验证 `assert!(rc >= 1)` 等业务正确性约束
 //!
 //! ## B08-14 迁移 (2026-09-06)
-//! 改引内核 `functions::fs::unkfs` 真实实现 (host-test feature 暴露), 消除
+//! 改引内核 `functions::fs::egfs` 真实实现 (host-test feature 暴露), 消除
 //! 平行实现依赖. API 与测试版同构 (get_cas/sha256/CasIndex/CasHash/
-//! UnkfsBlockPointer/UnkfsZap/UnkfsZil), 仅 import 路径变化.
+//! EgfsBlockPointer/EgfsZap/EgfsZil), 仅 import 路径变化.
 
-use edgine::kernel::functions::fs::unkfs::{bp, dedup, zap, zil};
+use edgine::kernel::functions::fs::egfs::{bp, dedup, zap, zil};
 
 #[test]
 fn stress_cas_insert_lookup_100() {
@@ -27,7 +27,7 @@ fn stress_cas_insert_lookup_100() {
     for i in 0..100u64 {
         let data = i.to_le_bytes();
         let hash = dedup::sha256(&data);
-        let mut bp = bp::UnkfsBlockPointer::null();
+        let mut bp = bp::EgfsBlockPointer::null();
         bp.set_birth(i);
         cas.insert(hash, bp);
         let found = cas.lookup(&hash);
@@ -44,7 +44,7 @@ fn stress_cas_dedup_50_ref_inc_dec() {
     let cas = dedup::get_cas();
     let data = b"hello-world-identical-block";
     let hash = dedup::sha256(data);
-    let bp = bp::UnkfsBlockPointer::null();
+    let bp = bp::EgfsBlockPointer::null();
     cas.insert(hash, bp);
     for _ in 0..50 {
         cas.ref_inc(&hash);
@@ -72,7 +72,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
             let hash = dedup::sha256(format!("abba-dec-{}", i).as_bytes());
-            let mut bp = bp::UnkfsBlockPointer::null();
+            let mut bp = bp::EgfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
             assert_eq!(cas.ref_count(&hash), 1, "abba-dec-{} count", i);
@@ -84,7 +84,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
         let cas = dedup::get_cas();
         for i in 0..200u64 {
             let hash = dedup::sha256(format!("abba-ins-{}", i).as_bytes());
-            let mut bp = bp::UnkfsBlockPointer::null();
+            let mut bp = bp::EgfsBlockPointer::null();
             bp.set_birth(i);
             cas.insert(hash, bp);
             assert!(cas.lookup(&hash).is_some(), "abba-ins-{} lookup", i);
@@ -96,7 +96,7 @@ fn stress_cas_concurrent_insert_refdec_no_abba() {
 
 #[test]
 fn stress_zap_hash_collision_256() {
-    let z = zap::UnkfsZap::with_capacity(256);
+    let z = zap::EgfsZap::with_capacity(256);
     for i in 0..256 {
         let name = format!("entry_{:04}", i);
         let value = (i * 9973) ^ 0xDEADBEEF;
@@ -119,7 +119,7 @@ fn stress_zap_hash_collision_256() {
 
 #[test]
 fn stress_zap_clear_reuse_10_rounds() {
-    let z = zap::UnkfsZap::new();
+    let z = zap::EgfsZap::new();
     for round in 0..10 {
         for i in 0..50 {
             z.insert_u64(&format!("k{}", i), i as u64);
@@ -147,10 +147,10 @@ fn stress_sha256_deterministic_100() {
 
 #[test]
 fn stress_zil_roundtrip_100_records() {
-    let zil = zil::UnkfsZil::new();
+    let zil = zil::EgfsZil::new();
     let names: [&str; 5] = ["alpha", "beta", "gamma", "delta", "epsilon"];
     for i in 0..100u64 {
-        let mut rec = zil::UnkfsZilRecord::new_create(i, 0, names[(i % 5) as usize]);
+        let mut rec = zil::EgfsZilRecord::new_create(i, 0, names[(i % 5) as usize]);
         rec.seq = i + 1;
         zil.records.lock().push(rec);
     }

@@ -14,7 +14,7 @@
 //!
 //! ## 背景
 //!
-//! 历史 7 个独立 fd 分配器 (VFS/UNKFS/UDS/smoltcp/EVENTFD/SIGNALFD/INOTIFY) 分散在 privileged 与 functions, 同一进程内可能拿到相同 fd 编号, 进程级 `read/write` 无法可靠分发.
+//! 历史 7 个独立 fd 分配器 (VFS/EGFS/UDS/smoltcp/EVENTFD/SIGNALFD/INOTIFY) 分散在 privileged 与 functions, 同一进程内可能拿到相同 fd 编号, 进程级 `read/write` 无法可靠分发.
 //! 2026-06-12 I-51 修复了 UDS 重叠; 2026-06-12 TD-01 修复了 EFD/SFD/INOTIFY 重叠. 本模块在基址层修复之上, 提供**单一入口**与**集中基址规划**.
 //!
 //! ## 范围
@@ -35,7 +35,7 @@
 //!
 //! **不包含** (这些是内部抽象, 不暴露给用户态, 不存在重叠问题):
 //! - `VfsManager::alloc_fd()` — VFS 内部 slot 索引
-//! - `Unkfs::alloc_fd()` — UNKFS 内部 slot 索引
+//! - `Egfs::alloc_fd()` — EGFS 内部 slot 索引
 //!
 //! **方案 C (2026-10 socket P3)**: per-process `FdTable` 的 [0, 64) 段已纳入本规划
 //! (`FdPlan::VFS`, 仅作重叠不变量校验对象, 分配仍由 FdTable 自管), Smoltcp 段基址

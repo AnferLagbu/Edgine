@@ -1,4 +1,4 @@
-//! 磁盘准备: 分区表创建、FAT16/UNKFS 格式化、引导器安装
+//! 磁盘准备: 分区表创建、FAT16/EGFS 格式化、引导器安装
 //!
 //! 任意步骤失败即中止，避免在半初始化的磁盘上继续操作。
 
@@ -11,7 +11,7 @@ pub fn execute(disk_id: u32, sectors: u64) -> i32 {
     println("");
 
     // 2a. 分区表
-    print("  Creating partition table (FAT16 boot + UNKFS)...");
+    print("  Creating partition table (FAT16 boot + EGFS)...");
     let r = sys::disk_partition(disk_id, sectors);
     if r != 0 {
         print(" FAILED (error ");
@@ -34,8 +34,8 @@ pub fn execute(disk_id: u32, sectors: u64) -> i32 {
     }
     println(" [OK]");
 
-    // 2c. UNKFS 系统分区
-    print("  Formatting system partition (UNKFS)...");
+    // 2c. EGFS 系统分区
+    print("  Formatting system partition (EGFS)...");
     let r = sys::disk_format(disk_id);
     if r != 0 {
         print(" FAILED (error ");

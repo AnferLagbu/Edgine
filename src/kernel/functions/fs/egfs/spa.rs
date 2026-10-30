@@ -1,14 +1,12 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 use crate::functions::fs::KernelError;
-use crate::functions::fs::unkfs::arc::UnkfsArc;
-use crate::functions::fs::unkfs::bp::{
-    HV_DVA_MAX, UnkfsBlockPointer, UnkfsCksumType, UnkfsCompType,
-};
-use crate::functions::fs::unkfs::checksum::UnkfsChecksum;
-use crate::functions::fs::unkfs::dva::UnkfsDva;
-use crate::functions::fs::unkfs::metaslab::UnkfsMetaslab;
-use crate::functions::fs::unkfs::vdev::{UnkfsVdev, UnkfsVdevConfig, UnkfsVdevState};
+use crate::functions::fs::egfs::arc::EgfsArc;
+use crate::functions::fs::egfs::bp::{EgfsBlockPointer, EgfsCksumType, EgfsCompType, HV_DVA_MAX};
+use crate::functions::fs::egfs::checksum::EgfsChecksum;
+use crate::functions::fs::egfs::dva::EgfsDva;
+use crate::functions::fs::egfs::metaslab::EgfsMetaslab;
+use crate::functions::fs::egfs::vdev::{EgfsVdev, EgfsVdevConfig, EgfsVdevState};
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use crate::privileged::driver::block;
 use alloc::vec::Vec;
@@ -35,7 +33,7 @@ pub const HV_POOL_METASLAB_SIZE: u64 = 1 << HV_POOL_METASLAB_SHIFT;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// 池的生命周期状态.
-pub enum UnkfsPoolState {
+pub enum EgfsPoolState {
     /// 池尚未初始化.
     Uninit = 0,
     /// 池已导入并正常服务.
@@ -53,11 +51,11 @@ pub enum UnkfsPoolState {
 #[derive(Debug, Clone, Copy, zerocopy::IntoBytes, zerocopy::Immutable)]
 #[repr(C)]
 /// 池的根元数据块, 记录最近一次成功事务组的位置与校验信息.
-pub struct UnkfsUberblock {
+pub struct EgfsUberblock {
     /// 该 uberblock 对应的事务组编号.
     pub txg: u64,
     /// 指向对象集根块树的块指针.
-    pub root_bp: UnkfsBlockPointer,
+    pub root_bp: EgfsBlockPointer,
     /// 写入该 uberblock 的时间戳 (秒).
     pub timestamp: u64,
     /// 根数据集对象号.
@@ -76,13 +74,13 @@ pub struct UnkfsUberblock {
     pub pad: [u8; 2],
 }
 
-impl UnkfsUberblock {
+impl EgfsUberblock {
     /// 构造全零的无效 uberblock (magic 为 0).
     #[must_use]
     pub const fn null() -> Self {
         Self {
             txg: 0,
-            root_bp: UnkfsBlockPointer::null(),
+            root_bp: EgfsBlockPointer::null(),
             timestamp: 0,
             root_dataset_obj: 0,
             pool_guid: 0,
@@ -103,7 +101,7 @@ impl UnkfsUberblock {
     /// 以 Fletcher4 重算校验和并写回 (计算前先把校验和字段清零).
     pub fn compute_checksum(&mut self) {
         self.checksum = [0; 4];
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, self.as_bytes());
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, self.as_bytes());
         self.checksum = ck.value;
     }
 
@@ -113,7 +111,7 @@ impl UnkfsUberblock {
         let mut copy = *self;
         let saved = copy.checksum;
         copy.checksum = [0; 4];
-        let ck = UnkfsChecksum::compute(UnkfsCksumType::Fletcher4, copy.as_bytes());
+        let ck = EgfsChecksum::compute(EgfsCksumType::Fletcher4, copy.as_bytes());
         ck.value == saved
     }
 
@@ -133,8 +131,8 @@ impl UnkfsUberblock {
         let mut off = 0usize;
         let txg = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
         off += 8;
-        let root_bp = UnkfsBlockPointer::from_bytes(&bytes[off..off + UnkfsBlockPointer::BYTES])?;
-        off += UnkfsBlockPointer::BYTES;
+        let root_bp = EgfsBlockPointer::from_bytes(&bytes[off..off + EgfsBlockPointer::BYTES])?;
+        off += EgfsBlockPointer::BYTES;
         let timestamp = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
         off += 8;
         let root_dataset_obj = u64::from_le_bytes(bytes[off..off + 8].try_into().ok()?);
@@ -166,11 +164,11 @@ impl UnkfsUberblock {
     }
 }
 
-// 编译期断言: UnkfsUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
-const _: () = assert!(core::mem::size_of::<UnkfsUberblock>() <= 512);
+// 编译期断言: EgfsUberblock 必须装入 512 字节的 uberblock 区 (UBERBLOCK_MAX_SIZE).
+const _: () = assert!(core::mem::size_of::<EgfsUberblock>() <= 512);
 
 /// 池的静态配置: 名称、GUID、块尺寸与只读标志.
-pub struct UnkfsSpaConfig {
+pub struct EgfsSpaConfig {
     /// 池名, NUL 结尾.
     pub name: [u8; HV_POOL_MAX_NAME],
     /// 池的唯一标识; 0 表示尚未生成.
@@ -185,7 +183,7 @@ pub struct UnkfsSpaConfig {
     pub readonly: bool,
 }
 
-impl UnkfsSpaConfig {
+impl EgfsSpaConfig {
     /// 由名称构造默认配置 (ashift=12, 4 KiB 块, 最多 8 个 vdev).
     #[must_use]
     pub fn new(name: &str) -> Self {
@@ -205,19 +203,19 @@ impl UnkfsSpaConfig {
 }
 
 /// 存储池抽象 (SPA), 聚合配置、vdev、metaslab、ARC 与事务组状态.
-pub struct UnkfsSpa {
+pub struct EgfsSpa {
     /// 池配置, 由自旋锁保护.
-    pub config: Mutex<UnkfsSpaConfig>,
-    /// 池状态 (`UnkfsPoolState` 的 u8 编码).
+    pub config: Mutex<EgfsSpaConfig>,
+    /// 池状态 (`EgfsPoolState` 的 u8 编码).
     pub state: AtomicU8,
     /// 当前生效的根元数据块.
-    pub uberblock: Mutex<UnkfsUberblock>,
+    pub uberblock: Mutex<EgfsUberblock>,
     /// 已加入的虚拟设备列表.
-    pub vdevs: Mutex<Vec<UnkfsVdev>>,
+    pub vdevs: Mutex<Vec<EgfsVdev>>,
     /// 全部 metaslab 分配单元.
-    pub metaslabs: Mutex<Vec<UnkfsMetaslab>>,
+    pub metaslabs: Mutex<Vec<EgfsMetaslab>>,
     /// 该池的读缓存.
-    pub arc: UnkfsArc,
+    pub arc: EgfsArc,
     /// 当前事务组编号.
     pub txg_current: AtomicU64,
     /// 是否正在同步事务组.
@@ -246,19 +244,19 @@ pub struct UnkfsSpa {
     pub partition_start: AtomicU32,
 }
 
-// SAFETY (Framekernel P2.2.2): UnkfsSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
+// SAFETY (Framekernel P2.2.2): EgfsSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
 
-impl UnkfsSpa {
+impl EgfsSpa {
     /// 构造未初始化的空池: 状态 Uninit, 计数与时间戳归零.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            config: Mutex::new(UnkfsSpaConfig::new("")),
-            state: AtomicU8::new(UnkfsPoolState::Uninit as u8),
-            uberblock: Mutex::new(UnkfsUberblock::null()),
+            config: Mutex::new(EgfsSpaConfig::new("")),
+            state: AtomicU8::new(EgfsPoolState::Uninit as u8),
+            uberblock: Mutex::new(EgfsUberblock::null()),
             vdevs: Mutex::new(Vec::new()),
             metaslabs: Mutex::new(Vec::new()),
-            arc: UnkfsArc::new(),
+            arc: EgfsArc::new(),
             txg_current: AtomicU64::new(0),
             txg_syncing: AtomicBool::new(false),
             alloc_count: AtomicU64::new(0),
@@ -314,14 +312,14 @@ impl UnkfsSpa {
     pub fn init(&self, name: &str) {
         {
             let mut cfg = self.config.lock();
-            let mut new_cfg = UnkfsSpaConfig::new(name);
+            let mut new_cfg = EgfsSpaConfig::new(name);
             new_cfg.guid = Self::generate_guid();
             *cfg = new_cfg;
         }
         self.arc.init(256);
         self.txg_current.store(1, Ordering::Release);
         self.state
-            .store(UnkfsPoolState::Active as u8, Ordering::Release);
+            .store(EgfsPoolState::Active as u8, Ordering::Release);
         self.initialized.store(true, Ordering::Release);
         {
             let mut ub = self.uberblock.lock();
@@ -333,14 +331,14 @@ impl UnkfsSpa {
     }
 
     /// 加入 vdev 并按容量切分 metaslab; 超过 `max_vdevs` 时返回 `false`.
-    pub fn add_vdev(&self, config: UnkfsVdevConfig) -> bool {
+    pub fn add_vdev(&self, config: EgfsVdevConfig) -> bool {
         let mut vdevs = self.vdevs.lock();
         let max_vdevs = self.config.lock().max_vdevs;
         if vdevs.len() >= max_vdevs as usize {
             return false;
         }
-        let mut vdev = UnkfsVdev::new(config);
-        vdev.state = UnkfsVdevState::Healthy;
+        let mut vdev = EgfsVdev::new(config);
+        vdev.state = EgfsVdevState::Healthy;
         let vdev_id = vdev.config.vdev_id;
         let asize = vdev.config.asize;
         vdevs.push(vdev);
@@ -356,7 +354,7 @@ impl UnkfsSpa {
                 } else {
                     asize - ms_start + HV_VDEV_LABEL_SIZE
                 };
-                let ms = UnkfsMetaslab::new(
+                let ms = EgfsMetaslab::new(
                     crate::functions::intcast::low_u32_from_usize(ms_list.len()),
                     vdev_id,
                     ms_start,
@@ -372,10 +370,10 @@ impl UnkfsSpa {
     pub fn allocate(
         &self,
         size: u64,
-        kind: UnkfsCksumType,
-        comp: UnkfsCompType,
+        kind: EgfsCksumType,
+        comp: EgfsCompType,
         txg: u64,
-    ) -> Option<UnkfsBlockPointer> {
+    ) -> Option<EgfsBlockPointer> {
         let rounded = size.div_ceil(HV_POOL_BLOCK_SIZE) * HV_POOL_BLOCK_SIZE;
         let mut ms_list = self.metaslabs.lock();
         let mut best_vdev_id: u16 = 0;
@@ -397,12 +395,12 @@ impl UnkfsSpa {
         let ms_idx = best_ms_idx?;
         let offset = ms_list[ms_idx].alloc(rounded)?;
         drop(ms_list);
-        let dva = UnkfsDva::new(
+        let dva = EgfsDva::new(
             best_vdev_id,
             offset,
             crate::functions::intcast::low_u32_from_u64(rounded),
         );
-        let mut bp = UnkfsBlockPointer::null();
+        let mut bp = EgfsBlockPointer::null();
         bp.set_dva(0, dva);
         bp.prop.set_cksum_type(kind);
         bp.prop.set_comp_type(comp);
@@ -414,7 +412,7 @@ impl UnkfsSpa {
     }
 
     /// 按块指针中的 DVA 把空间归还给对应的 metaslab.
-    pub fn free(&self, bp: &UnkfsBlockPointer, _txg: u64) {
+    pub fn free(&self, bp: &EgfsBlockPointer, _txg: u64) {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut ms_list = self.metaslabs.lock();
@@ -433,7 +431,7 @@ impl UnkfsSpa {
     }
 
     /// 按块指针把数据块读入 `buf`; 成功返回 0, 全部 DVA 失败返回 -1.
-    pub fn read_bp(&self, bp: &UnkfsBlockPointer, buf: &mut [u8]) -> i32 {
+    pub fn read_bp(&self, bp: &EgfsBlockPointer, buf: &mut [u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut vdevs = self.vdevs.lock();
@@ -452,7 +450,7 @@ impl UnkfsSpa {
     }
 
     /// 按块指针写入数据块; 成功返回 0, 否则返回底层错误码.
-    pub fn write_bp(&self, bp: &UnkfsBlockPointer, buf: &[u8]) -> i32 {
+    pub fn write_bp(&self, bp: &EgfsBlockPointer, buf: &[u8]) -> i32 {
         for i in 0..HV_DVA_MAX {
             if let Some(dva) = bp.get_dva(i) {
                 let mut vdevs = self.vdevs.lock();
@@ -492,14 +490,14 @@ impl UnkfsSpa {
     }
 
     /// 从最新槽位向前扫描, 返回首个 magic 与校验和均有效的 uberblock.
-    pub fn read_uberblock_from_disk(&self) -> Option<UnkfsUberblock> {
+    pub fn read_uberblock_from_disk(&self) -> Option<EgfsUberblock> {
         for i in (0..crate::functions::intcast::low_u32_from_usize(HV_UBERBLOCK_COUNT)).rev() {
             let sector = HV_UBERBLOCK_SECTOR + i;
             let mut sector_buf = [0u8; 512];
             if self.read_sector(sector, &mut sector_buf) != 0 {
                 continue;
             }
-            let Some(ub) = UnkfsUberblock::from_bytes_unaligned(&sector_buf) else {
+            let Some(ub) = EgfsUberblock::from_bytes_unaligned(&sector_buf) else {
                 continue;
             };
             if ub.is_valid() && ub.verify_checksum() {
@@ -551,8 +549,8 @@ impl UnkfsSpa {
     }
 }
 
-impl Default for UnkfsSpa {
-    /// 委托 [`UnkfsSpa::new`] 构造未初始化的空池.
+impl Default for EgfsSpa {
+    /// 委托 [`EgfsSpa::new`] 构造未初始化的空池.
     fn default() -> Self {
         Self::new()
     }
@@ -568,7 +566,7 @@ mod tests {
     /// 池名写入应以 NUL 截断并保留前缀.
     #[test]
     fn test_spa_config_name() {
-        let cfg = UnkfsSpaConfig::new("test-pool");
+        let cfg = EgfsSpaConfig::new("test-pool");
         let name = core::str::from_utf8(&cfg.name)
             .unwrap_or("")
             .trim_end_matches('\0');
@@ -578,16 +576,16 @@ mod tests {
     /// 空 uberblock magic 为 0, 应判定无效.
     #[test]
     fn test_spa_uberblock_null() {
-        let ub = UnkfsUberblock::null();
+        let ub = EgfsUberblock::null();
         assert!(!ub.is_valid(), "null uberblock should be invalid");
     }
 
     /// 计算校验和后应立即通过自校验.
     #[test]
     fn test_spa_uberblock_checksum() {
-        let mut ub = UnkfsUberblock {
+        let mut ub = EgfsUberblock {
             txg: 1,
-            root_bp: UnkfsBlockPointer::null(),
+            root_bp: EgfsBlockPointer::null(),
             timestamp: 100,
             root_dataset_obj: 0,
             pool_guid: 0xABCD,
@@ -604,7 +602,7 @@ mod tests {
     /// magic 被篡改后应判定无效.
     #[test]
     fn test_spa_uberblock_invalid_magic() {
-        let mut ub = UnkfsUberblock::null();
+        let mut ub = EgfsUberblock::null();
         ub.magic = 0xDEADBEEF;
         assert!(!ub.is_valid(), "wrong magic should be invalid");
     }

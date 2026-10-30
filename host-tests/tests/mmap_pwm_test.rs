@@ -10,7 +10,7 @@
 //! - insert_vma: 合并判断含 file_pwm (不同 pwm 不合并)
 //!
 //! ## 与单元测试的分工
-//! - host-tests/src/unkfs/* 验证 unkfs 数据结构
+//! - host-tests/src/egfs/* 验证 egfs 数据结构
 //! - 本文件验证 mmap/pwm 桥接的模型语义
 
 /// 简化的 VmaType (对应 edgine VmaType::FileBacked/Anonymous)

@@ -220,7 +220,7 @@ ALLOWED_ENGLISH_TERMS = frozenset({
     "subnet", "Subnet", "prefix", "Prefix", "cidr", "CIDR",
     "smoltcp_impl", "smoltcp_iface",
     "fs", "FS", "filesystem", "Filesystem", "file_system",
-    "ramfs", "RamFs", "devfs", "DevFs", "procfs", "ProcFs", "unkfs", "Unkfs",
+    "ramfs", "RamFs", "devfs", "DevFs", "procfs", "ProcFs", "egfs", "Egfs",
     "spa", "SPA", "dmu", "DMU", "zap", "ZAP", "zil", "ZIL", "arc", "ARC",
     "txg", "TXG", "raid", "RAID", "raidz", "RAIDZ", "dedup", "Dedup",
     "checksum", "Checksum",

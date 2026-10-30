@@ -226,7 +226,7 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
 /// 丙批审查 B1 门槛: 凡真实落盘时间戳的 `set_times` 必须含属主/特权判据.
 ///
 /// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳), 与
-/// unkfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
+/// egfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
 /// 且会把判据与写回拆成两次路径解析 (TOCTOU) — 故一致性由本测试面收口:
 /// 扫描 privileged/functions 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
 /// (`save_inode`/`update_obj`) 者, 必须同体出现 `pwm_get_privilege_level` 与
@@ -268,6 +268,6 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
     }
     assert!(
         checked.len() >= 2,
-        "B1 门槛应至少覆盖 ext2 与 unkfs 两条落盘路径, 实得 {checked:?}",
+        "B1 门槛应至少覆盖 ext2 与 egfs 两条落盘路径, 实得 {checked:?}",
     );
 }

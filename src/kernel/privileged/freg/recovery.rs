@@ -10,7 +10,7 @@
 //! ## 使用
 //!
 //! ```text
-//! UNKFS init:  recovery_domain_register("unkfs", 2, &[]);
+//! EGFS init:  recovery_domain_register("egfs", 2, &[]);
 //! Net init:   recovery_domain_register("net",  5, &[]);
 //! ```
 //!
@@ -30,8 +30,8 @@ use crate::privileged::sync::IrqSpinLock;
 /// 恢复域标识符 (u64 别名)。
 pub type DomainId = u64;
 
-/// UNKFS 文件系统恢复域 ID
-pub const DOMAIN_ID_UNKFS: DomainId = 2;
+/// EGFS 文件系统恢复域 ID
+pub const DOMAIN_ID_EGFS: DomainId = 2;
 /// 网络栈恢复域 ID
 pub const DOMAIN_ID_NET: DomainId = 5;
 

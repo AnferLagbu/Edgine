@@ -185,7 +185,7 @@ fn usb_port_poll() {
     // 变化位集合 (RW1CS: 写 1 应答)
     const CHANGE_BITS: u32 = PORTSC_CSC | PORTSC_PEC | PORTSC_OCC | PORTSC_RC;
 
-    // 先收集事件并在锁内应答, 释放锁后再分发 (分发会进入 storage/UNKFS 等
+    // 先收集事件并在锁内应答, 释放锁后再分发 (分发会进入 storage/EGFS 等
     // 子系统并获取其锁, 不在持 USB 锁时跨界)。
     let mut events = Vec::new();
     {

@@ -70,7 +70,7 @@ pub mod klog;
 /// 进程管理 — 调度 / 进程表 / ELF 加载
 pub mod proc;
 
-/// 文件系统 — VFS + ramfs + UNKFS + devfs + procfs
+/// 文件系统 — VFS + ramfs + EGFS + devfs + procfs
 pub mod fs;
 
 /// 网络栈 — smoltcp + 驱动适配

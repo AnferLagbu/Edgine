@@ -13,7 +13,7 @@ use userlib::{println, read_line};
 const MOUNT_POINT: &[u8] = b"/mnt\0";
 
 fn mount_target() -> bool {
-    let r = fs_mount(b"none\0", MOUNT_POINT, b"unkfs\0", b"defaults\0");
+    let r = fs_mount(b"none\0", MOUNT_POINT, b"egfs\0", b"defaults\0");
     r == 0
 }
 
@@ -65,7 +65,7 @@ pub fn run() {
     println("");
     println("Mounting target filesystem...");
     if !mount_target() {
-        println("  [ERROR] Failed to mount UNKFS to /mnt");
+        println("  [ERROR] Failed to mount EGFS to /mnt");
         println("Installation failed: Unable to access target disk.");
         println("Tip: Disk was partitioned but filesystem may be corrupt.");
         println("     Re-run the installer to re-format the disk.");

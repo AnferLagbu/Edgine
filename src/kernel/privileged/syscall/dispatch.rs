@@ -1003,9 +1003,9 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     let total_sectors = crate::privileged::driver::hdd_total_sectors(
         crate::privileged::glue::low_u8_from_u32(disk_id),
     );
-    let unkfs_start = BOOT_PART_SECTORS;
-    let unkfs_sectors = if total_sectors > u64::from(unkfs_start) + 1 {
-        total_sectors - u64::from(unkfs_start)
+    let egfs_start = BOOT_PART_SECTORS;
+    let egfs_sectors = if total_sectors > u64::from(egfs_start) + 1 {
+        total_sectors - u64::from(egfs_start)
     } else {
         0xFFFF_FFFF_u64
     };
@@ -1013,15 +1013,15 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     write_le32(&mut mbr, 450, 0x06FE_FFFF);
     write_le32(&mut mbr, 454, 64u32);
     write_le32(&mut mbr, 458, BOOT_PART_SECTORS - 64);
-    write_le32(&mut mbr, 462, unkfs_start);
+    write_le32(&mut mbr, 462, egfs_start);
     write_le32(&mut mbr, 466, 0x83FE_FFFF);
-    write_le32(&mut mbr, 470, unkfs_start);
-    let unkfs_len = if unkfs_sectors > 0xFFFF_FFFF {
+    write_le32(&mut mbr, 470, egfs_start);
+    let egfs_len = if egfs_sectors > 0xFFFF_FFFF {
         0xFFFF_FFFF_u32
     } else {
-        crate::privileged::glue::low_u32_from_u64(unkfs_sectors)
+        crate::privileged::glue::low_u32_from_u64(egfs_sectors)
     };
-    write_le32(&mut mbr, 474, unkfs_len);
+    write_le32(&mut mbr, 474, egfs_len);
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
     if crate::privileged::driver::hdd_write_sector(

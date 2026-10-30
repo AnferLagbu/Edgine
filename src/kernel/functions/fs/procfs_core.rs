@@ -206,9 +206,9 @@ impl ProcfsData {
         if name == "fs/dcache" {
             return Self::read_dcache(buf);
         }
-        // /proc/fs/unkfs
-        if name == "fs/unkfs" {
-            return Self::read_unkfs(buf);
+        // /proc/fs/egfs
+        if name == "fs/egfs" {
+            return Self::read_egfs(buf);
         }
         // /proc/mounts
         if name == "mounts" {
@@ -587,13 +587,13 @@ impl ProcfsData {
         crate::functions::intcast::low_i32_from_usize(pos)
     }
 
-    /// 读取 `/proc/fs/unkfs` (UNKFS 池统计)
-    fn read_unkfs(buf: &mut [u8]) -> i32 {
+    /// 读取 `/proc/fs/egfs` (EGFS 池统计)
+    fn read_egfs(buf: &mut [u8]) -> i32 {
         let mut pos = 0usize;
 
-        // 获取 UNKFS 池统计
-        let unkfs = crate::functions::fs::unkfs::entry::get_unkfs();
-        let (allocs, frees, reads, writes) = unkfs.get_stats();
+        // 获取 EGFS 池统计
+        let egfs = crate::functions::fs::egfs::entry::get_egfs();
+        let (allocs, frees, reads, writes) = egfs.get_stats();
 
         Self::write_str(buf, &mut pos, "allocs: ");
         Self::write_str(buf, &mut pos, &alloc::format!("{allocs}\n"));

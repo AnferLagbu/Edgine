@@ -5,7 +5,7 @@
 //! ## EGDF 统一架构
 //!
 //! EGDF 是唯一的设备驱动框架. 块设备通过 `proto_block::register_block_device`
-//! 注册到 EGDF, UNKFS 通过 `egdf_blk_read/write` 直接 I/O.
+//! 注册到 EGDF, EGFS 通过 `egdf_blk_read/write` 直接 I/O.
 //!
 //! `BlockDevice` trait 定义在 egdf (设备框架) 中, 本模块 re-export.
 //! `hdd_*` 函数提供向后兼容的 EGDF 代理.
@@ -16,10 +16,10 @@ use alloc::vec::Vec;
 
 pub use crate::privileged::egdf::BlockDevice;
 
-// ── UNKFS bridge (EGDF 代理) ──
+// ── EGFS bridge (EGDF 代理) ──
 //
 // 所有 hdd_* 函数现在委托给 EGDF 统一 I/O 路径。
-// 这确保 UNKFS 的所有块设备访问都经过 EGDF。
+// 这确保 EGFS 的所有块设备访问都经过 EGDF。
 
 /// 从指定块设备读取一个扇区到缓冲区, 返回 0 表示成功
 pub fn hdd_read_sector(drive: u8, sector: u64, buf: &mut [u8]) -> i32 {
