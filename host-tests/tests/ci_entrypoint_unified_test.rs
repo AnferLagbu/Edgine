@@ -1509,6 +1509,101 @@ fn test_p59_f8_is_enforced_by_rustc_missing_docs() {
     );
 }
 
+/// P-60 结构锁: OnceCell 扩四树、F8 射程写明, 两处「自述与实装不符」缺陷不许回退.
+///
+/// 病灶 (P-60 立案测绘, HEAD 实测):
+/// - `audit_once_cell.py` 自述「全项目统一 OnceCell 抽象」却只扫 `src/kernel/functions`;
+///   另三树 (host-tests / src/user / kani-harness) 零覆盖, 扩根实测 0 违规 / 871 文件.
+/// - `audit_safety_coverage.py` 注释称「过滤掉 arch/ 子目录」, 而 `discover_modules`
+///   从 privileged/mod.rs 发现 `pub mod arch`、`collect_rs_files` 递归归集 ⇒ 注释与实装相反.
+/// - `audit_c_naming.py` 读失败 (OSError / 非 UTF-8) 静默 continue ⇒ 扫描面静默缩小,
+///   与 P-46「静默消失」同族, 只是粒度到了单文件.
+/// - F8 射程从未写明: 编译器面只覆盖 `src/kernel` 三成员、语言面只覆盖 `privileged/`,
+///   而 host-tests / src/user 实测 154 处缺中文 doc (默认面) 不在任何门禁射程 ⇒ 须显式裁定.
+///
+/// 判据:
+/// ① once_cell 覆盖四树 + 循环由 BASES 驱动 + 根缺失 fail-closed;
+/// ② safety_coverage 不再声称过滤 arch, 且 arch 确在实装射程 (`pub mod arch` 在位);
+/// ③ c_naming 读失败进 read_errors 并影响退出码, 不再静默 continue;
+/// ④ AGENTS §2.2 写明 F8 射程与「不在射程」的三树.
+#[test]
+fn test_p60_scope_closure_and_silent_skips_fixed() {
+    let once_cell = read("../scripts/audit_once_cell.py");
+    let safety = read("../scripts/audit_safety_coverage.py");
+    let c_naming = read("../scripts/audit_c_naming.py");
+    let agents = read(AGENTS_MD);
+
+    // ① OnceCell 四树 + fail-closed.
+    for root in [
+        r#"PROJECT_ROOT / "src" / "kernel""#,
+        r#"PROJECT_ROOT / "host-tests""#,
+        r#"PROJECT_ROOT / "src" / "user""#,
+        r#"PROJECT_ROOT / "kani-harness""#,
+    ] {
+        assert!(
+            once_cell.contains(root),
+            "audit_once_cell.py 的 BASES 缺覆盖根 {root} —— 「全项目统一」对三树重新失明 (P-60 甲)"
+        );
+    }
+    assert!(
+        once_cell.contains("for b in BASES"),
+        "audit_once_cell.py 声明了 BASES 但扫描循环不遍历它 —— 加根不生效的静默形态"
+    );
+    assert!(
+        once_cell.contains("覆盖根缺失 (fail-closed, P-60 甲)"),
+        "audit_once_cell.py 缺「覆盖根缺失」fail-closed 出口 —— 根拼错会被读成扫描零违规"
+    );
+
+    // ② safety_coverage 注释与实装一致: 不再声称过滤 arch, 且 arch 确在扫描面.
+    assert!(
+        !safety.contains("过滤掉 arch/ 子目录"),
+        "audit_safety_coverage.py 又写「过滤掉 arch/」而代码从未实现该过滤 —— 自述与实装不符 (P-60 丙)"
+    );
+    assert!(
+        safety.contains("SAFETY 覆盖没有架构豁免"),
+        "audit_safety_coverage.py 未写明 arch 在射程 —— 读者会按旧注释把 arch 当成被豁免面"
+    );
+    let privileged_mod = read("../src/kernel/privileged/mod.rs");
+    assert!(
+        privileged_mod.contains("pub mod arch;"),
+        "privileged/mod.rs 不再声明 pub mod arch —— 「arch 在射程」的注释失去依据, 需重核"
+    );
+
+    // ③ c_naming 读失败不再静默.
+    assert!(
+        c_naming.contains("read_errors") && c_naming.contains("read_errors.append"),
+        "audit_c_naming.py 读失败又退回静默跳过 —— 扫描面缩小在日志与退出码上都不可见 (P-60 丙)"
+    );
+    assert!(
+        c_naming.contains("读取失败 (fail-closed, P-60 丙)")
+            && c_naming.contains("if issues or read_errors"),
+        "audit_c_naming.py 的读失败不进入退出码 —— 只打日志的 fail-closed 等于没接门禁"
+    );
+
+    // ④ AGENTS §2.2 的 F8 射程口径.
+    let sec_22_start = agents
+        .find("### 2.2 核心审计脚本（硬规则门槛）")
+        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.2 标题"));
+    let sec_22_end = agents[sec_22_start..]
+        .find("### 2.3 验证门槛")
+        .map(|i| sec_22_start + i)
+        .unwrap_or_else(|| panic!("AGENTS.md 找不到 §2.3 标题 (无法界定 §2.2)"));
+    let sec_22 = &agents[sec_22_start..sec_22_end];
+    for needle in [
+        "F8 射程口径",
+        "P-60 甲",
+        "rustc `missing_docs`",
+        "`audit_public_api_docs.py` 只判 `privileged/`",
+        "不在 F8 射程",
+        "`host-tests` / `src/user` / `kani-harness`",
+    ] {
+        assert!(
+            sec_22.contains(needle),
+            "AGENTS.md §2.2 缺 {needle} —— F8 射程仍只存在于脚本实装里, 文档宣称会再次大于实装"
+        );
+    }
+}
+
 /// P-67 结构锁: 债册腿必须自带 `missing_docs` 抑制的定点检查, 且在取数之前.
 ///
 /// 病灶 (P-59 债册腿设计时读源, 本轮首次补做负控制): 债册只看编译器读数, 而

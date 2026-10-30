@@ -72,9 +72,9 @@ def main():
 
     modules = discover_modules(BASE)
     files = collect_rs_files(BASE, modules)
-    # 过滤掉 arch/ 子目录 (架构特定, 与 SAFETY 主题无关)
-    # SAFETY 主题针对 privileged TCB 主线, 不针对每架构 asm
-    # 但保留 arch/*/mod.rs 以监控
+    # arch/ 亦在扫描内: discover_modules 从 privileged/mod.rs 发现 `pub mod arch`,
+    # collect_rs_files 递归归集其下全部 .rs —— SAFETY 覆盖没有架构豁免.
+    # (P-60 丙: 原注释声称过滤 arch 子树, 但代码从未实现该过滤, 自述与实装相反.)
     if not files:
         print('ERROR: 未发现任何 .rs 模块', file=sys.stderr)
         sys.exit(2)

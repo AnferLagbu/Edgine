@@ -262,14 +262,16 @@ else
     audit_leg_missing "block_registration" "$PROJECT_ROOT/scripts/audit_block_registration.py"
 fi
 
-# I-16: functions 层 OnceCell 抽象统一性 audit — 防 functions 绕过 OnceCell 用 spin::Once
+# I-16: OnceCell 抽象统一性 audit — 防绕过 OnceCell 直接用 spin::Once
+# (P-60 甲: 覆盖根为四树 src/kernel / host-tests / src/user / kani-harness,
+#  原实现只扫 src/kernel/functions ⇒ 「全项目统一」的宣称另三树失明)
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_once_cell.py" ]; then
     mark_leg "once_cell"
-    step "0.5e/6 functions OnceCell 单一抽象 (I-16)"
+    step "0.5e/6 OnceCell 单一抽象 (I-16)"
     if "$PROJECT_ROOT/scripts/audit_once_cell.py" 2>&1 | tail -8; then
-        ok "I-16: functions 统一通过 sync::once::OnceCell"
+        ok "I-16: 四树统一通过 sync::once::OnceCell"
     else
-        err "I-16: 有 functions 模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
+        err "I-16: 有模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
     fi
 else
     audit_leg_missing "once_cell" "$PROJECT_ROOT/scripts/audit_once_cell.py"

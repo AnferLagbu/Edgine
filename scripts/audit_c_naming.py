@@ -86,11 +86,15 @@ def main() -> int:
         return 1
 
     issues: list[str] = []
+    read_errors: list[str] = []
 
     for rs_file in sorted(p for b in BASES for p in b.rglob("*.rs")):
         try:
             content = rs_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as exc:
+            # P-60 丙: 原实现静默 continue ⇒ 读失败文件既不计数也不报错, 扫描面静默缩小.
+            # 现按 fail-closed 处理: 点名单文件并在退出码中体现.
+            read_errors.append(f"{rs_file.relative_to(PROJECT_ROOT)}: {exc}")
             continue
 
         rel = rs_file.relative_to(PROJECT_ROOT)
@@ -159,6 +163,15 @@ def main() -> int:
             print(f"  {issue}")
         if len(issues) > 50:
             print(f"  ... and {len(issues) - 50} more")
+
+    if read_errors:
+        print(f"error: {len(read_errors)} 个文件读取失败 (fail-closed, P-60 丙):", file=sys.stderr)
+        for read_err in read_errors[:20]:
+            print(f"  {read_err}", file=sys.stderr)
+        if len(read_errors) > 20:
+            print(f"  ... and {len(read_errors) - 20} more", file=sys.stderr)
+
+    if issues or read_errors:
         return 1
 
     print("I-07 audit PASSED: 0 C 风格命名残留")

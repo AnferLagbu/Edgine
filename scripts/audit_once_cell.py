@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-I-16 functions 层 OnceCell 抽象统一性 audit
+I-16 OnceCell 抽象统一性 audit (四树: src/kernel / host-tests / src/user / kani-harness)
 
 目标: 防止 functions 层绕过项目自研 `functions::sync::once::OnceCell`,
      直接使用第三方 `spin::Once` (即锁层与抽象都不一致).
@@ -11,11 +11,15 @@ I-16 functions 层 OnceCell 抽象统一性 audit
   - 全项目仅 1 种 OnceCell 实现 (除 privileged 自身实现外)
 
 规则:
-  - `use spin::Once;` / `use spin::{...Once...};` / `use spin::once::Once;` 不应在 functions/ 出现
-  - `spin::Once` 在其他位置出现也作为 warning 报告 (但 privileged boot 文档可豁免)
+  - `use spin::Once;` / `use spin::{...Once...};` / `use spin::once::Once;` 不应在任一覆盖树出现
+  - `spin::Once` 在注释中出现不计 (注释行跳过)
   - `functions::sync::once::Once` / `functions::sync::once::OnceCell` 是唯一允许的入口
 
-退出码: 0 = 通过, 1 = 有违规
+覆盖根 (P-60 甲): 「全项目统一」的宣称要求四树全扫 —— `src/kernel` / `host-tests` /
+`src/user` / `kani-harness`. 原实现只扫 `src/kernel/functions`, 另三树不在射程.
+逐根 fail-closed: 任一覆盖根缺失即报配置错误并返 1, 不接受「少扫一棵树读成零违规」.
+
+退出码: 0 = 通过, 1 = 有违规或覆盖根缺失
 """
 
 import re
@@ -23,7 +27,14 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-BASE = PROJECT_ROOT / "src" / "kernel" / "functions"
+# 覆盖根 (P-60 甲・四树): 本审计的宣称是「全项目统一 OnceCell 抽象」, 原实现只扫
+# functions/ ⇒ host-tests / src/user / kani-harness 三树不在射程, 「全项目」名不副实.
+BASES = [
+    PROJECT_ROOT / "src" / "kernel",
+    PROJECT_ROOT / "host-tests",
+    PROJECT_ROOT / "src" / "user",
+    PROJECT_ROOT / "kani-harness",
+]
 
 # B01-08 修复: 正则支持 `pub use spin::Once` / `use spin::OnceCell` / `use spin::once::Once`
 # 等形式. 原正则锚定 `^\s*use` 不匹配 `pub use`, `Once\b` 词边界不命中 `OnceCell`.
@@ -39,13 +50,14 @@ SPIN_ONCE_IN_CODE = re.compile(
 
 
 def main() -> int:
-    if not BASE.exists():
-        print(f"[ERR] functions/ 目录不存在: {BASE}")
+    missing = [str(b.relative_to(PROJECT_ROOT)) for b in BASES if not b.exists()]
+    if missing:
+        print(f"[ERR] 覆盖根缺失 (fail-closed, P-60 甲): {', '.join(missing)}")
         return 1
 
     violations = []
-    rs_files = list(BASE.rglob("*.rs"))
-    print(f"  扫描文件: {len(rs_files)} 个 .rs (functions/)")
+    rs_files = sorted(p for b in BASES for p in b.rglob("*.rs"))
+    print(f"  扫描文件: {len(rs_files)} 个 .rs (四树: src/kernel / host-tests / src/user / kani-harness)")
     print(f"  检查模式: use spin::Once / spin::Once 残留")
     print("  " + "-" * 60)
 
@@ -76,11 +88,11 @@ def main() -> int:
         if len(violations) > 20:
             print(f"    ... 另有 {len(violations) - 20} 处省略")
         print("  " + "-" * 60)
-        print("  ✗ functions 层不应绕过项目自研 OnceCell 抽象")
+        print("  ✗ 覆盖树内不应有绕过 OnceCell 抽象的 spin::Once 残留")
         print("  → 改用 `crate::functions::sync::once::{Once, OnceCell}`")
         return 1
     else:
-        print(f"  ✓ functions 层 0 处 spin::Once 残留")
+        print(f"  ✓ 四树 0 处 spin::Once 残留")
         print(f"  ✓ 全项目统一 OnceCell 抽象 (functions::sync::once)")
         return 0
 
