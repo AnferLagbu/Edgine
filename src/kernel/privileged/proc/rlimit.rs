@@ -305,3 +305,97 @@ pub fn check_memlock_exceeded(current_locked: u64, additional_bytes: u64) -> boo
 //   - setrlimit → functions::proc::sysinfo::setrlimit_syscall
 // 本文件仅保留机制字段 (RlimitTable) 与查询辅助函数.
 // ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `new()` 的默认值与模块文档一致: NOFILE/NPROC 取配置上限, STACK 8MB,
+    /// 其余 `RLIM_INFINITY`; 16 个条目全部可读, 越界 resource 返回 `None`.
+    #[test]
+    fn new_defaults_match_documented_values() {
+        let table = RlimitTable::new();
+        let nofile = table.get(RLIMIT_NOFILE).expect("NOFILE 在表内");
+        assert_eq!(
+            (nofile.cur, nofile.max),
+            (MAX_OPEN_FILES as u64, RLIM_INFINITY)
+        );
+        let nproc = table.get(RLIMIT_NPROC).expect("NPROC 在表内");
+        assert_eq!(
+            (nproc.cur, nproc.max),
+            (MAX_PROCESSES as u64, RLIM_INFINITY)
+        );
+        let stack = table.get(RLIMIT_STACK).expect("STACK 在表内");
+        assert_eq!((stack.cur, stack.max), (8 * 1024 * 1024, RLIM_INFINITY));
+        let cpu = table.get(RLIMIT_CPU).expect("CPU 在表内");
+        assert_eq!((cpu.cur, cpu.max), (RLIM_INFINITY, RLIM_INFINITY));
+        for resource in 0..RLIMIT_NLIMITS {
+            assert!(table.get(resource).is_some(), "条目 {resource} 应可读");
+        }
+        assert!(table.get(RLIMIT_NLIMITS).is_none());
+        assert!(table.get(usize::MAX).is_none());
+    }
+
+    /// `set` 第一道闸: resource 越界 → `EINVAL`, 即使 cur/max 本身合法.
+    #[test]
+    fn set_rejects_out_of_range_resource() {
+        let mut table = RlimitTable::new();
+        assert_eq!(table.set(RLIMIT_NLIMITS, 1, 1, true), Err(Errno::Einval));
+        assert_eq!(table.set(usize::MAX, 1, 1, true), Err(Errno::Einval));
+    }
+
+    /// `set` 第二道闸: cur > max → `EINVAL`, 与特权位无关, 且拒绝后条目不改写.
+    #[test]
+    fn set_rejects_cur_above_max() {
+        let mut table = RlimitTable::new();
+        for is_privileged in [false, true] {
+            assert_eq!(
+                table.set(RLIMIT_CPU, 2, 1, is_privileged),
+                Err(Errno::Einval),
+                "is_privileged={is_privileged} 时 cur>max 仍应拒绝"
+            );
+        }
+        let cpu = table.get(RLIMIT_CPU).expect("CPU 在表内");
+        assert_eq!((cpu.cur, cpu.max), (RLIM_INFINITY, RLIM_INFINITY));
+    }
+
+    /// `set` 第三道闸: 提高 hard limit 仅特权进程可行; 降低 hard limit 不受特权位约束.
+    #[test]
+    fn set_raising_hard_limit_requires_privilege() {
+        let mut table = RlimitTable::new();
+        // 默认 hard limit 为 RLIM_INFINITY, 先合法降到 200 (降低不需要特权).
+        assert_eq!(table.set(RLIMIT_NPROC, 100, 200, false), Ok(()));
+
+        // 非特权提 hard limit → EPERM, 条目保持原值.
+        assert_eq!(table.set(RLIMIT_NPROC, 100, 300, false), Err(Errno::Eperm));
+        let nproc = table.get(RLIMIT_NPROC).expect("NPROC 在表内");
+        assert_eq!((nproc.cur, nproc.max), (100, 200));
+
+        // 非特权继续降低 hard limit 合法.
+        assert_eq!(table.set(RLIMIT_NPROC, 50, 100, false), Ok(()));
+        let nproc = table.get(RLIMIT_NPROC).expect("NPROC 在表内");
+        assert_eq!((nproc.cur, nproc.max), (50, 100));
+
+        // 特权提 hard limit 合法.
+        assert_eq!(table.set(RLIMIT_NPROC, 50, 300, true), Ok(()));
+        let nproc = table.get(RLIMIT_NPROC).expect("NPROC 在表内");
+        assert_eq!((nproc.cur, nproc.max), (50, 300));
+    }
+
+    /// `set` 成功路径写回 cur/max; `Default` 与 `new()` 同形态.
+    #[test]
+    fn set_updates_table_and_default_matches_new() {
+        let mut table = RlimitTable::new();
+        assert_eq!(table.set(RLIMIT_NOFILE, 10, 20, true), Ok(()));
+        let nofile = table.get(RLIMIT_NOFILE).expect("NOFILE 在表内");
+        assert_eq!((nofile.cur, nofile.max), (10, 20));
+
+        let default_nofile = RlimitTable::default()
+            .get(RLIMIT_NOFILE)
+            .expect("NOFILE 在表内");
+        assert_eq!(
+            (default_nofile.cur, default_nofile.max),
+            (MAX_OPEN_FILES as u64, RLIM_INFINITY)
+        );
+    }
+}
