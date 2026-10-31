@@ -987,7 +987,7 @@ impl VirtualMemoryManager {
         // 仅用户空间项 (0..255); 内核项由内核自身/KPTI 入口依赖面装配, 本函数不动.
         //
         // 帧持有计数处理 (现由 PMM 计数面承载, 原 COW_REFS 已删除, 契约见
-        // docs/plan/cr3-lifetime-ownership.md §8.1 文档的计数规则):
+        // docs/plan/archive/cr3-lifetime-ownership.md §8.1 文档的计数规则):
         // fork 时 clone_user_page_table_cow_inner 对每个被共享的物理页 frame_inc,
         // 每个 USER leaf 持有其帧一份引用。拆除整表即逐 leaf frame_dec, 归零才
         // defer_free。若子进程立即 exit 且未触发 COW fault, 该帧就此归还而不泄漏。
@@ -1082,7 +1082,7 @@ impl VirtualMemoryManager {
 
         Self::release_lock(guard);
 
-        // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
+        // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收 (`Process::drop` 未运行),
         // 而非"帧入链但代未追平". 本行 `deferred_in_call=0` 则说明走到了但无可延迟帧.
         crate::klog_info!(
@@ -1267,7 +1267,7 @@ impl VirtualMemoryManager {
     ///
     /// 第二个返回值供调用方判定"本次叶子写入是否为替换": 拆分把既有巨页条目换成下一级
     /// 表指针, 属**替换** (远程核可能缓存旧巨页条目 ⇒ 必须远程失效). 该事实不能从叶子
-    /// 存在位隐式推得, 故由本函数显式回报 (见 docs/plan/tlb-shootdown-epoch.md S-9).
+    /// 存在位隐式推得, 故由本函数显式回报 (见 docs/plan/archive/tlb-shootdown-epoch.md S-9).
     unsafe fn get_or_create_table_entry(
         entry: *mut PageTableEntry,
         create: bool,
@@ -1832,7 +1832,7 @@ impl VirtualMemoryManager {
     ///
     /// 仅用于"目标 VA 此前不存在翻译"的**纯新建**映射: x86 不缓存"不存在"的翻译,
     /// 远程核不可能持有该 VA 的陈旧条目, 远程失效无对象 (若一律登记, 每次新建映射都会
-    /// 向全部在线核发一轮 IPI —— 过度失效, 见 docs/plan/tlb-shootdown-epoch.md S-9).
+    /// 向全部在线核发一轮 IPI —— 过度失效, 见 docs/plan/archive/tlb-shootdown-epoch.md S-9).
     fn flush_tlb_local(addr: u64) {
         crate::arch!(tlb_flush_page(crate::privileged::glue::usize_from_u64(
             addr
@@ -1922,7 +1922,7 @@ pub fn get_current_pml4() -> u64 {
 /// - 定向 IPI 未送达 ⇒ 同上 ⇒ FAIL;
 /// - `tlb_flush_all` 退化为空操作 ⇒ 远程核报告陈旧字节 (帧 A = `0xAA`) ⇒ FAIL.
 ///
-/// 见 `docs/plan/tlb-shootdown-epoch.md` §5 注入 3 / 注入 4.
+/// 见 `docs/plan/archive/tlb-shootdown-epoch.md` §5 注入 3 / 注入 4.
 ///
 /// **不设 GLOBAL 位**: `tlb_flush_all` 的实现是重载 CR3, 而重载 CR3 **不失效
 /// GLOBAL 页** —— 探测页一旦带 GLOBAL 位, 远程核会跨 flush 保留陈旧翻译,

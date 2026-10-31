@@ -10,7 +10,7 @@ audit_tlb_receive_order.py — TLB 失效接收侧三段次序防线 (S-14)
 次序不可颠倒: 若先 flush 后读代, 则读到的是 flush **之后**新发布的代, 会把本次
 flush 未覆盖的批次误判为"已追平" (假追平), 导致延迟释放的帧被提前归还 → UAF.
 该缺陷是**结构性次序问题**, 在运行期不可观测 (需构造特定交错), 故以静态
-fail-closed 审计确定性覆盖 (见 docs/plan/tlb-shootdown-epoch.md §5 注入 2).
+fail-closed 审计确定性覆盖 (见 docs/plan/archive/tlb-shootdown-epoch.md §5 注入 2).
 
 fail-closed: 函数未找到 / 出现多次 / 任一语句缺失 / 次序错 ⇒ 一律判违规.
 用法: python3 scripts/audit_tlb_receive_order.py

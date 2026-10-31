@@ -767,7 +767,7 @@ pub struct PhysicalMemoryManager {
     ///
     /// 仅 `test` / `kernel_test` 配置编译, 生产二进制不含 (避免死代码, F9).
     /// 用途: 构造"COW 克隆中途分配失败"的确定性状态, 供回滚用例判别
-    /// (见 docs/plan/cr3-lifetime-ownership.md §5.2 注入 2).
+    /// (见 docs/plan/archive/cr3-lifetime-ownership.md §5.2 注入 2).
     #[cfg(any(test, feature = "kernel_test"))]
     alloc_fail_countdown: AtomicU32,
     // ---- Buddy 分配器 ----

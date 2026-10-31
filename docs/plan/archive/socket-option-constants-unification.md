@@ -22,7 +22,7 @@ Edgine 的 `setsockopt`/`getsockopt` 系统调用要求**用户态传入的 optn
 - **`SO_BROADCAST` 漂移**：userlib `32` 既非内核值，也非 x86_64 asm-generic 的 `6`；内核当前未实装 `SO_BROADCAST`（组播报文可发性由 D11/P6 组播工程连带评估）。
 - userlib 的 `8`/`32` 疑似取自非 x86 架构（alpha/mips 系 `SO_KEEPALIVE=8`）或历史笔误，与本项目主目标架构（x86_64）的 asm-generic 值域不符。
 
-P4 的 e2e 只覆盖了 `TCP_NODELAY`（两侧都 `=1`，恰好一致），未触达上述漂移，故该预存问题被 `// SIMPLIFIED` 注释就地标注而未修（见 [sys.rs](../../src/user/lib/src/sys.rs) D8/D8b 常量段注释）。
+P4 的 e2e 只覆盖了 `TCP_NODELAY`（两侧都 `=1`，恰好一致），未触达上述漂移，故该预存问题被 `// SIMPLIFIED` 注释就地标注而未修（见 [sys.rs](../../../src/user/lib/src/sys.rs) D8/D8b 常量段注释）。
 
 ---
 
@@ -69,5 +69,5 @@ P4 的 e2e 只覆盖了 `TCP_NODELAY`（两侧都 `=1`，恰好一致），未�
 ## 关联文档
 
 - [socket-layer-completion.md](./socket-layer-completion.md) — P4 D8 sockopt 精简集（本漂移的发现现场，`SO_KEEPALIVE` 内核侧已用 `9`）
-- [src/user/lib/src/sys.rs](../../src/user/lib/src/sys.rs) — 用户态 socket 常量（`SO_KEEPALIVE=8` / `SO_BROADCAST=32` 漂移点）
-- [src/kernel/privileged/net/init/sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs) — 内核 `setsockopt`/`getsockopt` 分派常量（asm-generic 值域）
+- [src/user/lib/src/sys.rs](../../../src/user/lib/src/sys.rs) — 用户态 socket 常量（`SO_KEEPALIVE=8` / `SO_BROADCAST=32` 漂移点）
+- [src/kernel/privileged/net/init/sm_fi.rs](../../../src/kernel/privileged/net/init/sm_fi.rs) — 内核 `setsockopt`/`getsockopt` 分派常量（asm-generic 值域）

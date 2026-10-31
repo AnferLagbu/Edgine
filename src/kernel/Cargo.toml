@@ -17,7 +17,7 @@ crate-type = ["staticlib", "rlib"]
 # 原 `test = false` (DECISION-021 处置 E0152 双 core lang item 冲突) 已移除:
 # 构建模式显式化后该冲突不再复现, 源文件 `#[cfg(test)]` 内联单元测试可直接由
 # `cargo test --features host-test --lib` 执行. 详见
-# docs/plan/kernel-unit-test-harness-unification.md.
+# docs/plan/archive/kernel-unit-test-harness-unification.md.
 
 [profile.dev]
 panic = "abort"
@@ -58,7 +58,7 @@ default = []
 # 未转发的 feature 在子 crate 里恒为关闭, 会让其 cfg 分支静默消失.
 # e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径) — 使用点在 functions.
 e1000-real-hw = ["kernel-functions/e1000-real-hw"]
-# S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— boot 完成后发一次
+# S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): 实机验证钩子 —— boot 完成后发一次
 # 真实 DNS 查询并 printk 结果 (仿 lockdep 诊断 feature 先例,
 # 经 KERNEL_FEATURES= 点亮, 日常构建不含).
 dns-selftest = ["kernel-privileged/dns-selftest"]

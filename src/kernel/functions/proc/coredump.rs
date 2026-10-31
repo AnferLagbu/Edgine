@@ -190,7 +190,7 @@ pub fn register_standard_coredump_sink() -> Result<(), AlreadyRegistered> {
 /// - `false`: core dump 失败 (`RLIMIT_CORE=0`, 非当前进程, 磁盘满等)
 fn do_coredump(pid: u32, sig: u8, frame_addr: u64) -> bool {
     // SIMPLIFIED: 仅支持"当前进程"转储 — privileged 未提供 pid→mm 映射边
-    //   (见 docs/plan/cr3-lifetime-ownership.md)。
+    //   (见 docs/plan/archive/cr3-lifetime-ownership.md)。
     //   影响面: 非当前进程的 Core 请求被拒绝 (修正 P0-17: 原实现误用当前 mm 枚举目标进程 VMA);
     //   何时需扩展: privileged 补全 pid→mm 映射边后, 改用目标进程 mm 枚举。
     if pid != process_get_current_pid() {

@@ -1,6 +1,6 @@
 //! P-31 aarch64 virtio-net TX 超时 — vring 布局与 MMIO 寄存器契约
 //!
-//! 追踪: docs/plan/aarch64-virtio-net-tx-rootcause.md
+//! 追踪: docs/plan/archive/aarch64-virtio-net-tx-rootcause.md
 //! SPDX-License-Identifier: MPL-2.0
 //!
 //! ## 背景

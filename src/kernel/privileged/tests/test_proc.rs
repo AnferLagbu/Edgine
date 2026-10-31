@@ -251,7 +251,7 @@ fn test_cr3_transfer_source_cleared() -> TestResult {
 ///
 /// 与 [clone.rs] 的共享登记同一入口 (`pmm.frame_inc`), 与 [process.rs]
 /// `Process::drop` 同一销毁判据 (`pmm.frame_dec` 归零才销毁). 覆盖
-/// `docs/plan/cr3-lifetime-ownership.md` §5.1 门槛 7 的共享用例 (G1).
+/// `docs/plan/archive/cr3-lifetime-ownership.md` §5.1 门槛 7 的共享用例 (G1).
 #[cfg(not(feature = "host-test"))]
 fn test_cr3_shared_owner_exit_keeps_table() -> TestResult {
     use crate::privileged::mm::PhysAddr;
@@ -379,7 +379,7 @@ fn test_cr3_transfer_source_cleared() -> TestResult {
     TestResult::Pass
 }
 
-/// COW 克隆中途分配失败的回归用例 —— `cr3-lifetime-ownership.md` §5.2 注入 2 的载体.
+/// COW 克隆中途分配失败的回归用例 —— `docs/plan/archive/cr3-lifetime-ownership.md` §5.2 注入 2 的载体.
 ///
 /// **判别力**:
 /// - 恢复 `sys_fork` 的 `.unwrap_or(parent_cr3)` 回退 (注入 2) 时, 克隆失败不再回滚

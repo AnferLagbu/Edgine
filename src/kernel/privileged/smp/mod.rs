@@ -257,7 +257,7 @@ pub fn tlb_gen_publish_and_shoot() -> u64 {
 // - 令 `flush_tlb_remote` 不置位 (不发 IPI) ⇒ 远程核永不报告 ⇒ 超时判 FAIL;
 // - 令定向 IPI 未送达 ⇒ 同上;
 // - 令 `tlb_flush_all` 退化为空操作 ⇒ 远程核报告陈旧字节 (帧 A 内容) ⇒ 判 FAIL.
-// 见 docs/plan/tlb-shootdown-epoch.md §5 注入 3.
+// 见 docs/plan/archive/tlb-shootdown-epoch.md §5 注入 3.
 
 /// 探针当前代: 0 = 未装备 (接收侧此时不触碰探测页).
 static TLB_PROBE_SEQ: AtomicU64 = AtomicU64::new(0);

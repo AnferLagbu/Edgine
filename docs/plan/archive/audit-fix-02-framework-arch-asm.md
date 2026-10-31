@@ -150,7 +150,7 @@
 
 - 卡点：`init_all()` 内部 `[DISPLAY] OK: 1024x768x32` 之后无后续日志（PCI 总线后续探测），处于内核启动早期（未进用户态，CPU 全程 KERNEL_PML4）。
 - 归因修正：与 KPTI / Ring3 **无关**。委托人原根因"KPTI 半实现 + init_all 内部某子系统探测阻塞"混淆了两独立问题。
-- 归属：独立工程 [x86-init-probe-project.md](../x86-init-probe-project.md)（X86IP-01~06 + DECISION-058），不在 KPTI 工程与本分册范围。
+- 归属：独立工程 [x86-init-probe-project.md](./x86-init-probe-project.md)（X86IP-01~06 + DECISION-058），不在 KPTI 工程与本分册范围。
 
 **Ring3 完整往返验证状态**：
 

@@ -83,8 +83,8 @@
 
 - **B08-12. host-tests 与内核解耦根治（H.3.6 P0-26）**
   - 描述：host-tests 与内核完全解耦（838 passed 不反映内核状态），根因是"纯算法与平台机制未分离"——内核 no_std/裸机，host 侧无法引用内核源码，只能重建平行实现。经用户决策（DECISION-052），采用**路线 C 彻底根治**：内核 crate 增加 `host-test` feature + framework std 桩，host-tests 直接引用内核 services 真实源码，消除全部 7 处平行实现。
-  - 方案：详见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md)（工程计划 A 宿主基建 / B framework std 桩 / C 迁移删除）；本条目作为该工程的承接登记。
-  - 状态：[X] (2026-09-06 阶段 3 宿主基建完成：工程计划 A（Cargo.toml host-test feature + lib.rs 顶层门控）+ B（services 全量 host 编译 0w0e）+ C 部分完成。详见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md)。**桥接决策（2026-09-06 用户确认"桩改名桥接"）**：host-tests path 依赖内核 crate 后，hvfs_mock 5 个 no_mangle 桩与内核真实 FFI 符号重名冲突，经桩 `#[export_name]` 改名 + 平行 hvfs `#[link_name]` 指回桥接（保留 mock 语义）；内核 `#[global_allocator]` 在 host-test 下经 cfg 门控禁用。**buddy 例外**：内核 pmm host 不可测，buddy 平行实现保留，标记问题待审查员决定 → **已定案：见工程计划 H（PMM Buddy 索引式链表重构，2026-09-06 用户授权架构决策，H-04 消除 buddy 平行实现）**。剩余：工程计划 C 的 hvfs 迁移（B08-14）+ framekernel_bench + 删除完成标准，随阶段 4/5 推进)
+  - 方案：详见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md)（工程计划 A 宿主基建 / B framework std 桩 / C 迁移删除）；本条目作为该工程的承接登记。
+  - 状态：[X] (2026-09-06 阶段 3 宿主基建完成：工程计划 A（Cargo.toml host-test feature + lib.rs 顶层门控）+ B（services 全量 host 编译 0w0e）+ C 部分完成。详见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md)。**桥接决策（2026-09-06 用户确认"桩改名桥接"）**：host-tests path 依赖内核 crate 后，hvfs_mock 5 个 no_mangle 桩与内核真实 FFI 符号重名冲突，经桩 `#[export_name]` 改名 + 平行 hvfs `#[link_name]` 指回桥接（保留 mock 语义）；内核 `#[global_allocator]` 在 host-test 下经 cfg 门控禁用。**buddy 例外**：内核 pmm host 不可测，buddy 平行实现保留，标记问题待审查员决定 → **已定案：见工程计划 H（PMM Buddy 索引式链表重构，2026-09-06 用户授权架构决策，H-04 消除 buddy 平行实现）**。剩余：工程计划 C 的 hvfs 迁移（B08-14）+ framekernel_bench + 删除完成标准，随阶段 4/5 推进)
   - 详情：根治完成前，本文档其余 host-tests 相关条目的"标注覆盖映射表"仍为过渡手段。
 
 - **B08-13. host-tests/src/hvfs/ 平行实装差异登记（H.3.7 P0-27）**
@@ -102,7 +102,7 @@
 - **B08-14. host-tests/src/hvfs/ 合并回内核源码引用（H.3.7 P0-27 实施）**
   - 描述：消除平行双源，使 host-tests 直接引用内核 `services/fs/hvfs` 真实实现。**完成标准 = `host-tests/src/hvfs/` 下全部 19 个平行实现文件删除**（双源彻底消除），测试用例（tests/ 226 处引用）保留并改指内核实现。**不能简单 diff 合并**（两套架构不同），须以内核版（含 trait 层）为基准逐步对齐。
   - 方案：
-    0. **前置依赖（阻塞项）**：内核 host 可编译基建（H.3.6 P0-26 根治，DECISION-052）——见 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md) 工程计划 A/B；内核 hvfs 经 `host-test` feature 暴露 host 可编译入口，否则平行实现无法被替代、删除无从谈起；
+    0. **前置依赖（阻塞项）**：内核 host 可编译基建（H.3.6 P0-26 根治，DECISION-052）——见 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 工程计划 A/B；内核 hvfs 经 `host-test` feature 暴露 host 可编译入口，否则平行实现无法被替代、删除无从谈起；
     1. **先统一 `HvDva` 布局**：以内核版字段序为准（`offset, asize, vdev_id, gang(u8), _pad[1]`），否则布局依赖测试（块指针序列化）无意义；
     2. **迁移不变量类测试**：checksum 自洽、raidz 恢复、snapshot 语义等不依赖布局的测试，改为调用内核 API（经 host 可编译入口）；
     3. **对齐命名与 API**：测试版 `mount_disk`/`format_disk` 改回 `mount_drive`/`format_drive`，补齐 `hotplug_*`/`chown_ext` 的测试覆盖或显式标注缺失；
@@ -169,7 +169,7 @@
   - 状态：[X] (2026-09-08 背景条目闭合：E-01 四维调研（kernel_test 25 模块/21 可共享、host-tests 7 平行实现、host 可编译性障碍、255 处门控语义）已作为 E 工程设计依据完整消费，E-03~E-06 实施均已落地验证)
 
 - **E-02. 前置依赖**
-  - 描述：同源双编译完全依赖 [eliminate-parallel-implementations.md](../eliminate-parallel-implementations.md) 工程计划 A/B/C（host-test feature + framework std 桩），当前全 `[]`。
+  - 描述：同源双编译完全依赖 [eliminate-parallel-implementations.md](./eliminate-parallel-implementations.md) 工程计划 A/B/C（host-test feature + framework std 桩），当前全 `[]`。
   - 方案：E 工程阶段 0 = 完成 B08-12（A 宿主编译基建 → B framework std 桩 → C 平行实现迁移删除），E 不重复造基建。
   - 状态：[X] (2026-09-08 背景条目闭合：前置依赖 B08-12（工程计划 A/B/C）已全部完成，E 工程在其上实施——host-test feature + framework std 桩就绪，E-03~E-06 双端编译执行验证通过)
 

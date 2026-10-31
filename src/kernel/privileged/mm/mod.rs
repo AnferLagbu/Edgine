@@ -190,7 +190,7 @@ pub use page_fault_policy::{
 
 // cow 模块的计数入口已收敛到 PMM 帧持有计数面 (`pmm::frame_inc` / `frame_dec` /
 // `frame_ref_count`), 原 `cow_inc_ref` / `cow_dec_ref` / `cow_init` / `cow_ref_count`
-// re-export 随 `COW_REFS` 一并删除 (见 docs/plan/cr3-lifetime-ownership.md §8.1)
+// re-export 随 `COW_REFS` 一并删除 (见 docs/plan/archive/cr3-lifetime-ownership.md §8.1)
 
 // uffd 公共接口 re-export — T1 G4 userfaultfd 机制 (functions 侧 ABI 层消费)
 pub use uffd::{

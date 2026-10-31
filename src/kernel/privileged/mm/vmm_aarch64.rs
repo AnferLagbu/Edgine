@@ -1403,7 +1403,7 @@ impl Aarch64Vmm {
 
         Self::release_lock(guard);
 
-        // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
+        // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): "销毁路径是否被走到" 是释放
         // 覆盖判别的第一分位 —— 整轮日志无本行 ⇒ 进程从未被回收, 而非"帧入链但代未追平".
         // 本行 `deferred_in_call=0` 则说明走到了但无可延迟帧.
         crate::klog_info!(

@@ -1,12 +1,12 @@
 # AP 参与用户态调度工程（次核调度闭环 + KPTI per-CPU 化）
 
-> 本文件是 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）与 [aarch64-tlb-shootdown-send.md](./archive/aarch64-tlb-shootdown-send.md)（DECISION-083）之后的后续独立工程。
+> 本文件是 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md)（DECISION-082）与 [aarch64-tlb-shootdown-send.md](./aarch64-tlb-shootdown-send.md)（DECISION-083）之后的后续独立工程。
 >
 > 目标：让**次核（AP）参与用户态调度** —— 使 ≥2 个可运行用户任务能在多核上并发处于 EL0；并把 aarch64 KPTI 入口/出口的每核活跃状态 per-CPU 化（KPTI-PCPU-01），使双核并发 EL0 不产生跨核污染。以 QEMU `-smp 2` 运行验证。
 >
 > 实现路径：**方案 C（相对完整）** —— 用户裁定。
 >
-> 关联裁定：DECISION-084（本文件）。关联登记：[unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md)。
+> 关联裁定：DECISION-084（本文件）。关联登记：[unresolved-issues-2026-08-09.md](../unresolved-issues-2026-08-09.md)。
 
 ## 1. 根因与性质
 
@@ -16,25 +16,25 @@
 
 **三处断链**（任一未通，任务必滞留 BSP）：
 
-1. **无调度身份**：`ap_main`/`ap_entry` 只调 `SCHEDULER.init_per_cpu_idle(idx)`（创建 idle 进程），但**不置** `PerCpuSched.current`。`Scheduler::schedule()`（[scheduler.rs:933](../../src/kernel/privileged/proc/scheduler.rs#L933)）仅在 `!prev_ctx_ptr.is_null()` 时 `context_switch`，而 `current == 0` ⇒ `prev_ptr` 为 `None` ⇒ **永不切换**（只更新 `current` 字段，仍在本核 boot 栈上继续跑）。
-2. **无投送路径（push）**：`cfs_enqueue`（[scheduler.rs:489](../../src/kernel/privileged/proc/scheduler.rs#L489)）只把任务入**当前核**队列；fork 后 `add_to_run_queue`（[scheduler.rs:1159](../../src/kernel/privileged/proc/scheduler.rs#L1159)，调用点 [proc_ops.rs:978](../../src/kernel/privileged/proc/proc_ops.rs#L978)、[clone.rs:316](../../src/kernel/functions/proc/clone.rs#L316)）亦只入本核。无任何代码把任务投送到空闲核。
-3. **无唤醒源**：AP 停在裸 `loop { halt() }`；`resched_cpu()`（[cpu_queue.rs:150](../../src/kernel/privileged/proc/cpu_queue.rs#L150)）**无生产调用者**；且 AP 的 per-CPU 定时器**从未装载**（aarch64 `timer::start_interval` 仅在 BSP 调用，[lib.rs:887](../../src/kernel/lib.rs#L887)）⇒ 空闲 AP 无周期性唤醒去调 `schedule()` 做 pull 平衡。
+1. **无调度身份**：`ap_main`/`ap_entry` 只调 `SCHEDULER.init_per_cpu_idle(idx)`（创建 idle 进程），但**不置** `PerCpuSched.current`。`Scheduler::schedule()`（[scheduler.rs:933](../../../src/kernel/privileged/proc/scheduler.rs#L933)）仅在 `!prev_ctx_ptr.is_null()` 时 `context_switch`，而 `current == 0` ⇒ `prev_ptr` 为 `None` ⇒ **永不切换**（只更新 `current` 字段，仍在本核 boot 栈上继续跑）。
+2. **无投送路径（push）**：`cfs_enqueue`（[scheduler.rs:489](../../../src/kernel/privileged/proc/scheduler.rs#L489)）只把任务入**当前核**队列；fork 后 `add_to_run_queue`（[scheduler.rs:1159](../../../src/kernel/privileged/proc/scheduler.rs#L1159)，调用点 [proc_ops.rs:978](../../../src/kernel/privileged/proc/proc_ops.rs#L978)、[clone.rs:316](../../../src/kernel/functions/proc/clone.rs#L316)）亦只入本核。无任何代码把任务投送到空闲核。
+3. **无唤醒源**：AP 停在裸 `loop { halt() }`；`resched_cpu()`（[cpu_queue.rs:150](../../../src/kernel/privileged/proc/cpu_queue.rs#L150)）**无生产调用者**；且 AP 的 per-CPU 定时器**从未装载**（aarch64 `timer::start_interval` 仅在 BSP 调用，[lib.rs:887](../../../src/kernel/lib.rs#L887)）⇒ 空闲 AP 无周期性唤醒去调 `schedule()` 做 pull 平衡。
 
-**性质判定**：**能力级缺口（跨架构）**。单核语义自洽；多核下只有 BSP 承载全部用户任务，AP 恒 idle。`load_balance()`（[scheduler.rs:1545](../../src/kernel/privileged/proc/scheduler.rs#L1545)）已存在，但其为**拉**（只从别的核偷到本核），且必须先有人在本核调 `schedule()` 触发。
+**性质判定**：**能力级缺口（跨架构）**。单核语义自洽；多核下只有 BSP 承载全部用户任务，AP 恒 idle。`load_balance()`（[scheduler.rs:1545](../../../src/kernel/privileged/proc/scheduler.rs#L1545)）已存在，但其为**拉**（只从别的核偷到本核），且必须先有人在本核调 `schedule()` 触发。
 
 ## 2. 实证结论（源码复核）
 
 | # | 命题 | 复核结论 |
 |---|---|---|
-| E1 | AP 入口双架构同构、均不调度用户任务 | **成立**。aarch64 [`ap_main`](../../src/kernel/privileged/arch/aarch64/smp_init.rs#L236-L301) 与 x86_64 [`ap_entry`](../../src/kernel/privileged/arch/x86_64/smp_init.rs#L297-L366) 均以 `interrupt_enable(); loop { arch!(halt()); }` 收尾 |
+| E1 | AP 入口双架构同构、均不调度用户任务 | **成立**。aarch64 [`ap_main`](../../../src/kernel/privileged/arch/aarch64/smp_init.rs#L236-L301) 与 x86_64 [`ap_entry`](../../../src/kernel/privileged/arch/x86_64/smp_init.rs#L297-L366) 均以 `interrupt_enable(); loop { arch!(halt()); }` 收尾 |
 | E2 | 「AP 不调度」非 aarch64 独有 | **成立**。断链 1/2/3 在双架构一致；`make test-smp` 的 `first user syscall` 断言由 **BSP** 满足，未证明 AP 参与调度 |
-| E3 | AP 无调度身份（断链 1 的直接证据） | **成立**。`schedule()` 的 `context_switch` 由 `!prev_ctx_ptr.is_null()` 门控（[scheduler.rs:933](../../src/kernel/privileged/proc/scheduler.rs#L933)）；`init_per_cpu_idle` 只创建 idle、不置 `current` ⇒ AP `current == 0` |
-| E4 | 任务入队只入当前核 | **成立**。`cfs_enqueue` 用 `per_cpu()`（[scheduler.rs:490](../../src/kernel/privileged/proc/scheduler.rs#L490)）；`add_to_run_queue` → `cfs_enqueue`（[scheduler.rs:1159-1163](../../src/kernel/privileged/proc/scheduler.rs#L1159-L1163)） |
-| E5 | resched IPI 接收侧双架构已就绪、发送侧无调用者 | **成立**。x86_64 [idt.rs:804-808](../../src/kernel/privileged/idt/idt.rs#L804-L808) / aarch64 [exception.rs:842-846](../../src/kernel/privileged/arch/aarch64/exception.rs#L842-L846) → `resched_ipi_handler` → `raise_softirq(Sched)` → `SCHEDULER.schedule()`；`resched_cpu` 仅其自身 FFI `cpq_resched_cpu` 为调用者（无生产调用） |
-| E6 | `load_balance` 是「拉」而非「推」 | **成立**。`load_balance` 从最忙核偷到 `this_cpu`（[scheduler.rs:1545-1597](../../src/kernel/privileged/proc/scheduler.rs#L1545-L1597)）；`select_cpu_for`（[scheduler.rs:1501](../../src/kernel/privileged/proc/scheduler.rs#L1501)）**优先返回 hint（当前核）**，不能用于「投送到空闲核」 |
-| E7 | AP 的 per-CPU 定时器未装载 | **成立**。aarch64 `timer::start_interval` 在 [lib.rs:887](../../src/kernel/lib.rs#L887) 仅对 BSP 调用；AP 的 `init_per_cpu` 只 `enable_timer_ppi`（使能 GIC PPI，不装载 CNTP） |
-| E8 | aarch64 上下文切换不依赖 `set_kernel_stack` | **成立**。aarch64 [`set_kernel_stack`](../../src/kernel/privileged/cpu/arch.rs#L92) 为空实现；`SP_EL1` 由 `context_switch` 从 ctx@96 `mov sp, x2` 直接装载（[context.rs:142-143](../../src/kernel/privileged/arch/aarch64/context.rs#L142-L143)）⇒ AP 从 boot 栈切进用户任务无需额外寄存器设置 |
-| E9 | aarch64 首次进 EL0 与内核续跑由 SPSR.M 分派 | **成立**。fork 子进程 ctx 的 SPSR.M=0 → `.Lctx_enter_el0`（[context.rs:186-188](../../src/kernel/privileged/arch/aarch64/context.rs#L186-L188)）经 trampoline 切表后 eret |
+| E3 | AP 无调度身份（断链 1 的直接证据） | **成立**。`schedule()` 的 `context_switch` 由 `!prev_ctx_ptr.is_null()` 门控（[scheduler.rs:933](../../../src/kernel/privileged/proc/scheduler.rs#L933)）；`init_per_cpu_idle` 只创建 idle、不置 `current` ⇒ AP `current == 0` |
+| E4 | 任务入队只入当前核 | **成立**。`cfs_enqueue` 用 `per_cpu()`（[scheduler.rs:490](../../../src/kernel/privileged/proc/scheduler.rs#L490)）；`add_to_run_queue` → `cfs_enqueue`（[scheduler.rs:1159-1163](../../../src/kernel/privileged/proc/scheduler.rs#L1159-L1163)） |
+| E5 | resched IPI 接收侧双架构已就绪、发送侧无调用者 | **成立**。x86_64 [idt.rs:804-808](../../../src/kernel/privileged/idt/idt.rs#L804-L808) / aarch64 [exception.rs:842-846](../../../src/kernel/privileged/arch/aarch64/exception.rs#L842-L846) → `resched_ipi_handler` → `raise_softirq(Sched)` → `SCHEDULER.schedule()`；`resched_cpu` 仅其自身 FFI `cpq_resched_cpu` 为调用者（无生产调用） |
+| E6 | `load_balance` 是「拉」而非「推」 | **成立**。`load_balance` 从最忙核偷到 `this_cpu`（[scheduler.rs:1545-1597](../../../src/kernel/privileged/proc/scheduler.rs#L1545-L1597)）；`select_cpu_for`（[scheduler.rs:1501](../../../src/kernel/privileged/proc/scheduler.rs#L1501)）**优先返回 hint（当前核）**，不能用于「投送到空闲核」 |
+| E7 | AP 的 per-CPU 定时器未装载 | **成立**。aarch64 `timer::start_interval` 在 [lib.rs:887](../../../src/kernel/lib.rs#L887) 仅对 BSP 调用；AP 的 `init_per_cpu` 只 `enable_timer_ppi`（使能 GIC PPI，不装载 CNTP） |
+| E8 | aarch64 上下文切换不依赖 `set_kernel_stack` | **成立**。aarch64 [`set_kernel_stack`](../../../src/kernel/privileged/cpu/arch.rs#L92) 为空实现；`SP_EL1` 由 `context_switch` 从 ctx@96 `mov sp, x2` 直接装载（[context.rs:142-143](../../../src/kernel/privileged/arch/aarch64/context.rs#L142-L143)）⇒ AP 从 boot 栈切进用户任务无需额外寄存器设置 |
+| E9 | aarch64 首次进 EL0 与内核续跑由 SPSR.M 分派 | **成立**。fork 子进程 ctx 的 SPSR.M=0 → `.Lctx_enter_el0`（[context.rs:186-188](../../../src/kernel/privileged/arch/aarch64/context.rs#L186-L188)）经 trampoline 切表后 eret |
 | E10 | KPTI-PCPU-01 缺陷（每核活跃值置单实例全局量） | **成立（P3 已修）**。原状：`KPTI_GLOBALS` 为单实例，`user_ttbr0`(@24)/`tramp_save0`(@40)/`tramp_save1`(@48) 属每核活跃值，被入口/出口汇编按固定偏移访问（`exception.rs`、`context.rs`）；双核并发 EL0 将跨核覆盖。修后：三者迁入按核数组 `KPTI_CPU_GLOBALS`（槽内偏移 0/8/16），槽基址经 `TPIDR_EL1` 按核绑定（见 APS-04 详情） |
 | E11 | 任务投送到 CPU1 的充分条件 | **成立**。需四者同时满足：目标核 CFS 成为入队对象 + `resched_cpu` 送 IPI + AP `current != 0` + AP 被唤醒；缺任一任务滞留 BSP |
 | E12 | 编号可用 | **成立**。现存最新裁定为 DECISION-083，本工程取 **DECISION-084** |
@@ -44,7 +44,7 @@
 - **描述**：让 AP 参与用户态调度涉及调度器核心路径；施工前需裁定实现路径、与既有登记工程的关系、以及 aarch64 KPTI 的处置。
 - **方案（用户裁定 + 本文件落实）**：
   1. **实现路径 = 方案 C（相对完整）**（用户裁定）：`AP 调度身份 + idle 调度循环 + push 投送 + 空闲核唤醒（IPI）+ per-CPU 定时器 pull 平衡 + KPTI-PCPU-01 + 双核并发 EL0 运行验证`。
-  2. **范围排除 = 不动 tick 链路统一（D6）与线程级调度统一（D1）**：二者已由 [multithreading-project.md](./multithreading-project.md)（K-04，D1=A / D6）登记为**待设计**的独立工程。本工程**不**改 `scheduler_tick()` FFI、**不**改 `SCHEDULER_EX`、**不**做线程维度统一 —— 以 fork 时 push + AP idle 循环 pull 达成 AP 参与调度，避免抢占该登记工程的设计空间（AGENTS §12.2）。（**后续更新**：D6 的 tick 部分已由独立修复工程 [ISSUE-RT-004](./unresolved-issues-2026-08-09.md) 接管并落地——`scheduler_tick()` 改为驱进程级 `SCHEDULER.tick()`；该改动**不属本工程范围**，亦不改变 D1 的线程维度统一待办。）
+  2. **范围排除 = 不动 tick 链路统一（D6）与线程级调度统一（D1）**：二者已由 [multithreading-project.md](../multithreading-project.md)（K-04，D1=A / D6）登记为**待设计**的独立工程。本工程**不**改 `scheduler_tick()` FFI、**不**改 `SCHEDULER_EX`、**不**做线程维度统一 —— 以 fork 时 push + AP idle 循环 pull 达成 AP 参与调度，避免抢占该登记工程的设计空间（AGENTS §12.2）。（**后续更新**：D6 的 tick 部分已由独立修复工程 [ISSUE-RT-004](../unresolved-issues-2026-08-09.md) 接管并落地——`scheduler_tick()` 改为驱进程级 `SCHEDULER.tick()`；该改动**不属本工程范围**，亦不改变 D1 的线程维度统一待办。）
   3. **KPTI-PCPU-01 并入本工程**（aarch64）：把 `user_ttbr0`/`tramp_save0`/`tramp_save1` 按核隔离（首选按核数组，对齐 `mm/copy_user.rs` 的 `PER_CPU_EXCEPTION_CTX[cpu]` 范式），因本工程使双核 EL0 成为现实，该缺陷必须先修。
   4. **验证强度**：满足 §2.3 六门槛；专项判据 = QEMU `-smp 2` 下可观测**两个用户任务分处 CPU 0 与 CPU 1 且均处于 EL0**（日志成对出现），且启动无回归。
 - **状态**：[X]
@@ -97,9 +97,9 @@
     - **`-a` 必要性（本轮修）**：日志含 NUL 字节（串口并发写）时 `grep` 默认将文件视为二进制、只输出 "Binary file ... matches" 而不输出匹配行，会使 `EL0_CPUS` 为空而误报；两分支 `grep` 均加 `-a` 强制按文本处理，不改变判据语义。
 - **APS-06. 文档同步 + 验证收口**
   - 描述：更新登记项与前提。
-  - 方案：订正 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md) §「后续专项登记」KPTI-PCPU-01（状态置结案并指向本工程）；在 [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 登记本工程；在 [progress-active-tasks.md](./progress-active-tasks.md) 关联。
+  - 方案：订正 [aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」KPTI-PCPU-01（状态置结案并指向本工程）；在 [unresolved-issues-2026-08-09.md](../unresolved-issues-2026-08-09.md) 登记本工程；在 [progress-active-tasks.md](../progress-active-tasks.md) 关联。
   - 状态：[X]
-  - 详情（施工结论）：① [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md) §「后续专项登记」的 KPTI-PCPU-01 已置结案，并注明由本工程（DECISION-084）落地；② [unresolved-issues-2026-08-09.md](./unresolved-issues-2026-08-09.md) 已追加本工程登记（DECISION-084）；③ 关联的进行中任务清单文件实际路径为 [docs/plan/progress-active-tasks.md](./progress-active-tasks.md)（与预期一致，非漂移），已在该文件 §现状的「本轮更新」中登记本工程。
+  - 详情（施工结论）：① [aarch64-smp-bringup.md](./aarch64-smp-bringup.md) §「后续专项登记」的 KPTI-PCPU-01 已置结案，并注明由本工程（DECISION-084）落地；② [unresolved-issues-2026-08-09.md](../unresolved-issues-2026-08-09.md) 已追加本工程登记（DECISION-084）；③ 关联的进行中任务清单文件实际路径为 [docs/plan/progress-active-tasks.md](../progress-active-tasks.md)（与预期一致，非漂移），已在该文件 §现状的「本轮更新」中登记本工程。
 
 ## 施工规划
 
@@ -132,9 +132,9 @@
 - 描述：APS-05 成对判据（`EL0 ... cpu=0` 与 `cpu=1` 成对）在 x86_64 `-smp 2` 下**偶发只观测到 `cpu=0`**（失败率约 1/2 ~ 1/10, 非确定性; aarch64 不复发）—— 即 P4/P5 收口后残留的 x86_64 侧偶发未成对。
 - 方案：恢复 `sys_fork` 为子进程调用 `user_proc_clone(parent_pid, child_pid)` 注册 `UserProc` 镜像记录, 并 fail-closed（注册失败回滚进程表条目）。**不采用**"扩大判据宽松度/掩盖偶发"的规避路径。
 - 状态：[X]
-- 详情（根因）：[proc_ops.rs](../../src/kernel/privileged/proc/proc_ops.rs) `sys_fork` 在 `PROCESS_TABLE.insert(...)` 后**未注册子进程的 `UserProc` 镜像**（该注册块在 commit `4557cd30` 重写 `sys_fork`、COW 崩溃临时改用共享页表时被附带删除）。`Scheduler::schedule` 的 per-CPU 装配块以 `USER_PROC_MANAGER.get(next)` 为门控, 未注册的子进程被投送到次核时 per-CPU 用户 CR3 滞留旧值、其"内核栈顶页"也不在其用户页表内; 用户态被硬件中断/异常打断时 CPU 按 `TSS.RSP0` 压 5 项 iretq 帧（先于任何软件切 CR3）即 `#PF`（cr2 = 内核栈顶-8）⇒ 子进程被内核终止、次核 EL0 观测缺失。
+- 详情（根因）：[proc_ops.rs](../../../src/kernel/privileged/proc/proc_ops.rs) `sys_fork` 在 `PROCESS_TABLE.insert(...)` 后**未注册子进程的 `UserProc` 镜像**（该注册块在 commit `4557cd30` 重写 `sys_fork`、COW 崩溃临时改用共享页表时被附带删除）。`Scheduler::schedule` 的 per-CPU 装配块以 `USER_PROC_MANAGER.get(next)` 为门控, 未注册的子进程被投送到次核时 per-CPU 用户 CR3 滞留旧值、其"内核栈顶页"也不在其用户页表内; 用户态被硬件中断/异常打断时 CPU 按 `TSS.RSP0` 压 5 项 iretq 帧（先于任何软件切 CR3）即 `#PF`（cr2 = 内核栈顶-8）⇒ 子进程被内核终止、次核 EL0 观测缺失。
 - 详情（证据）：失败日志 `migrate pid=6 -> cpu=1` 后立即 `[IDT] user exception: vec=14 err=0x2 rip=0x400030 cr2=0xFFFF800007E2FFF8`（= 子进程内核栈顶-8）→ `exit: pid=6 code=6`（被内核终止; 正常应为 code=0）。
-- 详情（回归测试）：[kpti_x86_user_table_test.rs](../../host-tests/tests/kpti_x86_user_table_test.rs) 新增 `test_sys_fork_registers_child_in_user_proc_manager` —— 静态断言 `sys_fork` 在进程表插入之后经 `user_proc_clone` 注册子进程, 且失败分支回滚进程表条目。
+- 详情（回归测试）：[kpti_x86_user_table_test.rs](../../../host-tests/tests/kpti_x86_user_table_test.rs) 新增 `test_sys_fork_registers_child_in_user_proc_manager` —— 静态断言 `sys_fork` 在进程表插入之后经 `user_proc_clone` 注册子进程, 且失败分支回滚进程表条目。
 - 详情（修后实测）：x86_64 **连续 20 轮 `FAIL_OK=0` 全部通过**（20/20）; 日志转为 `migrate pid=6 -> cpu=1` → `EL0 pid=6 cpu=1` → `exit: pid=6 code=0`（正常退出）。
 - 详情（门槛实测）：`./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2。
 
@@ -155,7 +155,7 @@
 ## 风险与回退
 
 - **AP 首次调度路径**：AP 的 `current == 0 → idle` 迁移必须保证 `prev_ptr` 有效（APS-01）；若 `adopt_cpu_idle` 失败须 fail-fast 不上线（不静默回退，避免跨核混叠）。
-- **x86_64 `get_current_cpu()` 返回 LAPIC ID 而 `sched_slot` 按 `cpu_index` 取模**（[scheduler.rs:200-203](../../src/kernel/privileged/proc/scheduler.rs#L200-L203)）：QEMU `-smp 2` 下 ID=0/1 恰好一致；非顺序 ID 硬件会错槽（**预存问题**，本工程不扩大、登记①）。
+- **x86_64 `get_current_cpu()` 返回 LAPIC ID 而 `sched_slot` 按 `cpu_index` 取模**（[scheduler.rs:200-203](../../../src/kernel/privileged/proc/scheduler.rs#L200-L203)）：QEMU `-smp 2` 下 ID=0/1 恰好一致；非顺序 ID 硬件会错槽（**预存问题**，本工程不扩大、登记①）。
 - **`halt` 与「schedule 后立即 halt」的唤醒窗口**：对齐既有 `idle_entry` 注释手法（`sti; hlt` 融合），避免丢唤醒。
 - **KPTI 汇编偏移改写**：本工程最大回归面（EL0 入口/出口）。回退 = 恢复单实例固定偏移访问。
 - **回退**：P2 可单独回退（`add_to_run_queue` 还原为仅本核入队）；P1 回退 = AP 恢复裸 `halt` 循环；P3 回退 = 恢复 `KPTI_GLOBALS` 单实例。P3 若独立保留，须与 P1 同步（否则偏移不一致）。
@@ -164,6 +164,6 @@
 
 - **① x86_64 `cpu_index` 与 LAPIC ID 语义不一致**（见上）：`sched_for` 在非顺序 LAPIC ID 硬件上错槽并回退 BSP 状态（表面可用、实则跨核混叠）。本工程不修，登记待独立处置。
 - **② 退出进程 `UserProc` 镜像记录无回收路径**（✅ 已修复）：`user_proc.rs::destroy_by_pid_no_kstack` 在生产路径无调用者 ⇒ 进程退出时 `USER_PROC_MANAGER` 镜像记录不被回收；P6 恢复 fork 注册后, 每次 fork 多一条不回收记录。属预存架构缺口（历史注册子进程时同样如此）。
-  - **修复**：在权威 `Process` 销毁唯一入口 [process.rs](../../src/kernel/privileged/proc/process.rs) 的 `remove_and_free` / `dec_ref_and_maybe_free`「引用归零即释放」分支、`Box::from_raw` **之前** 调 `USER_PROC_MANAGER.destroy_by_pid(pid)`（镜像须先于权威 `Process` 被移除, 见 INV-USER-PROC #2；镜像 `destroy` 经 `cr3` 翻译用户栈, 而 `Process::drop` 会销毁该页表）。全部 reap 路径（scheduler 周期僵尸回收 / exit 孤儿回收 / wait4 / fork 回滚）均经此收口, 故为单一权威回收点。`destroy` 内用户栈释放提前到页表销毁**之前**（否则 `cr3` 失效 ⇒ 静默漏释放）, 并以独立语句取句柄、与 `destroy` 的锁分离（避免 `if let` scrutinee guard 存活到 then 块造成同锁自锁死）；回收时释放内核栈（`keep_kstack=false`）。
-  - **回归测试**：[user_proc_reclaim_contract_test.rs](../../host-tests/tests/user_proc_reclaim_contract_test.rs)（静态契约 fail-closed）。
+  - **修复**：在权威 `Process` 销毁唯一入口 [process.rs](../../../src/kernel/privileged/proc/process.rs) 的 `remove_and_free` / `dec_ref_and_maybe_free`「引用归零即释放」分支、`Box::from_raw` **之前** 调 `USER_PROC_MANAGER.destroy_by_pid(pid)`（镜像须先于权威 `Process` 被移除, 见 INV-USER-PROC #2；镜像 `destroy` 经 `cr3` 翻译用户栈, 而 `Process::drop` 会销毁该页表）。全部 reap 路径（scheduler 周期僵尸回收 / exit 孤儿回收 / wait4 / fork 回滚）均经此收口, 故为单一权威回收点。`destroy` 内用户栈释放提前到页表销毁**之前**（否则 `cr3` 失效 ⇒ 静默漏释放）, 并以独立语句取句柄、与 `destroy` 的锁分离（避免 `if let` scrutinee guard 存活到 then 块造成同锁自锁死）；回收时释放内核栈（`keep_kstack=false`）。
+  - **回归测试**：[user_proc_reclaim_contract_test.rs](../../../host-tests/tests/user_proc_reclaim_contract_test.rs)（静态契约 fail-closed）。
   - **副产物**：接线新暴露 aarch64 VMM 页表遍历根表裸物理地址解引用预存缺陷, 一并修复（见 ISSUE-RT-007）。

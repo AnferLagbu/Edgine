@@ -311,7 +311,7 @@ fi
 
 # S-14: TLB 失效接收侧三段次序 audit — 防"先 flush 后读代"的假追平
 # (结构性次序问题, 运行期不可观测; 以静态 fail-closed 审计确定性覆盖,
-#  见 docs/plan/tlb-shootdown-epoch.md §5 注入 2)
+#  见 docs/plan/archive/tlb-shootdown-epoch.md §5 注入 2)
 if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_tlb_receive_order.py" ]; then
     mark_leg "tlb_receive_order"
     step "0.5h/6 TLB 失效接收侧三段次序 (S-14)"

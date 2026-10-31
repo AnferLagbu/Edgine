@@ -60,7 +60,7 @@ E2E_PCAP_DIR="${E2E_PCAP_DIR:-}"
 # E2E_REPEATS=1 单次跑.
 E2E_CURRENT_ROUND="${E2E_CURRENT_ROUND:-1}"
 
-# --- T1 aarch64 e2e 软观测参数 (net-feature-alignment.md 档位2) ---
+# --- T1 aarch64 e2e 软观测参数 (docs/plan/archive/net-feature-alignment.md 档位2) ---
 # 宿主端口与 x86 (8080) 隔离, 两 arch 串行跑不冲突.
 A64_E2E_HOST_PORT="${A64_E2E_HOST_PORT:-8081}"
 A64_E2E_READY_TIMEOUT="${A64_E2E_READY_TIMEOUT:-60}"
@@ -447,7 +447,7 @@ while True:
 }
 
 # ---------------------------------------------------------------------------
-# aarch64 virtio-net e2e 软观测 (T1, net-feature-alignment.md 档位2)
+# aarch64 virtio-net e2e 软观测 (T1, docs/plan/archive/net-feature-alignment.md 档位2)
 #
 # 门禁口径 = **软观测** (用户裁定): 失败只 warn + 数据行, 不进 RESULT,
 # 先拿 aarch64 数据面失真数据作为档位3 (soak) 与 P 系列立项的输入.
@@ -789,7 +789,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
 
-            # T1 (net-feature-alignment.md 档位2): virtio-net 数据面 e2e 软观测.
+            # T1 (docs/plan/archive/net-feature-alignment.md 档位2): virtio-net 数据面 e2e 软观测.
             # 只记 warn/数据行, 不改 RESULT —— x86 硬门禁原样, aarch64 不因
             # e2e 失败翻转 (用户裁定的软观测口径).
             a64_e2e_observe || true

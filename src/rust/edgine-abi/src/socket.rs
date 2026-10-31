@@ -34,7 +34,7 @@ pub const SO_ERROR: i32 = 4;
 ///
 /// 本内核当前"接受但忽略"（setsockopt 返 0 不产生行为; getsockopt 未实装,
 /// 返 `-ENOPROTOOPT`, 与 `SO_REUSEADDR` 先例一致）—— 裁定见 plan
-/// `socket-option-constants-unification.md`.
+/// `docs/plan/archive/socket-option-constants-unification.md`.
 pub const SO_BROADCAST: i32 = 6;
 /// `SO_KEEPALIVE`: TCP 保活开关（内核侧实装, 7200s 缺省间隔对齐 Linux
 /// `tcp_keepalive_time`）.

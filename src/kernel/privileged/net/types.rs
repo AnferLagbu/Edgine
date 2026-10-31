@@ -40,7 +40,7 @@ pub const FALLBACK_IPV4: [u8; 4] = [10, 0, 2, 15];
 pub const FALLBACK_PREFIX: u8 = 24;
 /// DHCP 失败时的 fallback 默认网关 IPv4 地址。
 pub const FALLBACK_GATEWAY: [u8; 4] = [10, 0, 2, 2];
-/// S2 DNS 接线 (net-feature-alignment.md): QEMU `-netdev user` (slirp) 内置
+/// S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): QEMU `-netdev user` (slirp) 内置
 /// nameserver 惯例地址. DHCP 租约未带 option 6 / static fallback 路径时作
 /// 唯一 server 候选 (I-46: 集中常量, 不散落硬编码).
 pub const FALLBACK_DNS: [u8; 4] = [10, 0, 2, 3];

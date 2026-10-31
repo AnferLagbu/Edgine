@@ -15,7 +15,7 @@
 //! 原平行实现 (19 文件) + mock 虚拟内核树已删除 — host-tests 经
 //! `edgine = { path = "../src/rust", features = ["host-test"] }` 直接引用内核
 //! 真实源码 (functions/privileged host-test 暴露面). 详见 docs/plan/
-//! 详见 eliminate-parallel-implementations.md.
+//! 详见 docs/plan/archive/eliminate-parallel-implementations.md.
 //!
 //! ## H-04 迁移 (2026-09-09)
 //! `buddy` 平行实现已删除 — buddy 测试移至集成测试 `tests/pmm_buddy_host_test.rs`,

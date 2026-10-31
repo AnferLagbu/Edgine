@@ -7,7 +7,7 @@
 
 ## 背景
 
-Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-032）完成 IPv4/IPv6 双栈抽象层改造，`sm_socket` / `sm_bind` / `sm_sendto` / `sm_recvfrom` 等 FFI 入口按 sockaddr 族分流可用。但 socket 层存在两处结构性欠账：
+Edgine 网络栈已通过 [ipv6-dual-stack.md](../ipv6-dual-stack.md)（DECISION-032）完成 IPv4/IPv6 双栈抽象层改造，`sm_socket` / `sm_bind` / `sm_sendto` / `sm_recvfrom` 等 FFI 入口按 sockaddr 族分流可用。但 socket 层存在两处结构性欠账：
 
 - **TCP 全链路不可用**：`bind` / `listen` / `accept` / `connect` 四个环节分别被"缺分支""硬编码 port=0""空壳返回""硬编码 local port=0"阻断，任何 TCP 客户端或服务端都无法建立连接。
 - **UDP 只覆盖简化子集**：SLAAC 场景下 UDP6 回显端到端已验证，但"已连接 UDP"语义缺失、`getpeername` 恒失败、`recvfrom` 系统调用丢弃对端出参、无临时端口分配、无组播。
@@ -41,13 +41,13 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - 描述：TCP 无法绑定本地端口，`bind` 恒失败，后续 `listen` 无从取得端口。
   - 方案：新增 `fd_type == 1` 分支（D3）。
   - 状态：[X]
-  - 详情：原 `match raw::fd_type(fd)` 仅 `2 =>`（UDP）分支调 `sock.bind(endpoint)`，TCP 落 `_ => -E_NOTSUPP`。注：smoltcp `tcp::Socket` **无** `bind`，故 TCP 的 bind 只能是 Edgine 侧登记（D3）。P2 已落地 TCP `1 =>` 分支（[sm_fi.rs:485-505](../../src/kernel/privileged/net/init/sm_fi.rs)），纯登记本地端点，供 D4/D5 复用。
+  - 详情：原 `match raw::fd_type(fd)` 仅 `2 =>`（UDP）分支调 `sock.bind(endpoint)`，TCP 落 `_ => -E_NOTSUPP`。注：smoltcp `tcp::Socket` **无** `bind`，故 TCP 的 bind 只能是 Edgine 侧登记（D3）。P2 已落地 TCP `1 =>` 分支（[sm_fi.rs:485-505](../../../src/kernel/privileged/net/init/sm_fi.rs)），纯登记本地端点，供 D4/D5 复用。
 
 - **G2: `sm_listen` 硬编码 `port = 0`**
   - 描述：`listen` 恒返回 `-E_ADDRINUSE`，监听器无法建立。
   - 方案：从端点表读取真实本地端口（D4）。
   - 状态：[X]
-  - 详情：原 [sm_fi.rs:409-415](../../src/kernel/privileged/net/init/sm_fi.rs) 硬编码 `IpListenEndpoint { addr: None, port: 0 }` 后调 `sock.listen(local)`；smoltcp `listen` 要求 `port != 0`（[tcp.rs:942](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），故恒 `Err`。P2 已落地：改由 D1 local 端点（缺省走 D2 临时端口并回写）构造监听端点（[sm_fi.rs:545-570](../../src/kernel/privileged/net/init/sm_fi.rs)）。
+  - 详情：原 [sm_fi.rs:409-415](../../../src/kernel/privileged/net/init/sm_fi.rs) 硬编码 `IpListenEndpoint { addr: None, port: 0 }` 后调 `sock.listen(local)`；smoltcp `listen` 要求 `port != 0`（[tcp.rs:942](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），故恒 `Err`。P2 已落地：改由 D1 local 端点（缺省走 D2 临时端口并回写）构造监听端点（[sm_fi.rs:545-570](../../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **G3: `sm_accept` 为空壳**
   - 描述：即使有连接到达也无法交付给用户态。
@@ -59,49 +59,49 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - 描述：用户态 `accept` 拿不到新连接的对端地址。
   - 方案：透传 `addr`/`addrlen` 到 `sm_accept` 并在其中回写（D6）。
   - 状态：[X]
-  - 详情：P3 已落地：`accept_syscall` 透传 `addr_ptr`/`addrlen_ptr` 至 `sm_accept`（[syscall.rs](../../src/kernel/privileged/net/syscall.rs)），`sm_accept_locked` 步骤 6 从已交接会话回写对端地址（沿用 getsockname/getpeername 直写约定，二者可为 NULL）；失败返回值按精确 errno 透传（G8 口径），不再统一压 `EBADF`。
+  - 详情：P3 已落地：`accept_syscall` 透传 `addr_ptr`/`addrlen_ptr` 至 `sm_accept`（[syscall.rs](../../../src/kernel/privileged/net/syscall.rs)），`sm_accept_locked` 步骤 6 从已交接会话回写对端地址（沿用 getsockname/getpeername 直写约定，二者可为 NULL）；失败返回值按精确 errno 透传（G8 口径），不再统一压 `EBADF`。
 
 - **G5: `sm_connect` 硬编码 local `port = 0`**
   - 描述：TCP 无法发起连接，`connect` 恒返回 `-E_CONNREFUSED`。
   - 方案：从端点表读取（或临时端口分配器分配）本地端口（D5）。
   - 状态：[X]
-  - 详情：原 [sm_fi.rs:496-503](../../src/kernel/privileged/net/init/sm_fi.rs) 硬编码 `IpListenEndpoint { addr: None, port: 0 }` 后调 `sock.connect(iface.context(), endpoint, local)`；smoltcp `connect` 要求 `local.port != 0`（[tcp.rs:1013](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），故恒 `Err`。P2 已落地：local 由 D1 端点表提供（缺省走 D2 分配并回写）（[sm_fi.rs:652-687](../../src/kernel/privileged/net/init/sm_fi.rs)）。
+  - 详情：原 [sm_fi.rs:496-503](../../../src/kernel/privileged/net/init/sm_fi.rs) 硬编码 `IpListenEndpoint { addr: None, port: 0 }` 后调 `sock.connect(iface.context(), endpoint, local)`；smoltcp `connect` 要求 `local.port != 0`（[tcp.rs:1013](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），故恒 `Err`。P2 已落地：local 由 D1 端点表提供（缺省走 D2 分配并回写）（[sm_fi.rs:652-687](../../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **G6: `shutdown` 等同 `close`**
   - 描述：无半关闭语义，`SHUT_WR` 无法只关发送侧。
   - 方案：新增 `sm_shutdown(fd, how)` 并透传 `how`（D7）。
   - 状态：[X]
-  - 详情：见 [syscall.rs:513-519](../../src/kernel/privileged/net/syscall.rs) —— `shutdown_syscall(fd, _how)` 忽略 `_how`，直接调 `sm_close`。
+  - 详情：见 [syscall.rs:513-519](../../../src/kernel/privileged/net/syscall.rs) —— `shutdown_syscall(fd, _how)` 忽略 `_how`，直接调 `sm_close`。
 
 - **G7: poll 就绪链路整条无消费者**
   - 描述：`sm_poll_sockets` 恒返回 `0`，且 `poll_syscall` 对 socket fd 恒报可读/可写，用户态 `poll` 拿不到真实就绪位。
   - 方案：新增 `sm_socket_poll(fd, events)` 按 `can_recv`/`can_send` 派生 revents，并在 `fs` 层 `poll_syscall` 经 FD 命名空间判定接线（D8b）。
   - 状态：[X]
-  - 详情：`sm_poll_sockets` 循环内仅 `let _sock = sockets.get_mut::<tcp::Socket>(handle);` 未查询状态（[sm_fi.rs:1145-1152](../../src/kernel/privileged/net/init/sm_fi.rs)）后恒 `0`（[sm_fi.rs:1153](../../src/kernel/privileged/net/init/sm_fi.rs)）；[file_ops.rs:107-115](../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall` 对 `POLLIN` 仅查 VFS handle、对 `POLLOUT` 恒置位，**不触达任何 socket 逻辑**。
+  - 详情：`sm_poll_sockets` 循环内仅 `let _sock = sockets.get_mut::<tcp::Socket>(handle);` 未查询状态（[sm_fi.rs:1145-1152](../../../src/kernel/privileged/net/init/sm_fi.rs)）后恒 `0`（[sm_fi.rs:1153](../../../src/kernel/privileged/net/init/sm_fi.rs)）；[file_ops.rs:107-115](../../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall` 对 `POLLIN` 仅查 VFS handle、对 `POLLOUT` 恒置位，**不触达任何 socket 逻辑**。
 
 - **G8: 错误映射粗化**
   - 描述：精确 errno 丢失，用户态无法区分"地址被占用""连接被拒""资源不足"。
   - 方案：按 `sm_*` 返回值透传（负值即 `-errno`）。
   - 状态：[X]
-  - 详情：原 `bind_syscall` 恒 `EINVAL`（[syscall.rs:295](../../src/kernel/privileged/net/syscall.rs)）、`listen_syscall` 恒 `EINVAL`（[syscall.rs:307](../../src/kernel/privileged/net/syscall.rs)）、`connect_syscall` 恒 `ECONNREFUSED`（[syscall.rs:358](../../src/kernel/privileged/net/syscall.rs)）、`recvfrom_syscall` 恒 `EAGAIN`（[syscall.rs:448](../../src/kernel/privileged/net/syscall.rs)）。P2 已落地端到端透传：`syscall.rs` 9 处（`bind`/`listen`/`accept`/`connect`/`sendto`/`recvfrom`/`setsockopt`/`getsockopt`/`shutdown`）统一改 `i64::from(rc)` —— `Errno::as_ret()`（[errno.rs:110](../../src/kernel/privileged/errno.rs)）与 sm_fi 的 `-E_XXX` 常量逐一吻合，无需映射表。
+  - 详情：原 `bind_syscall` 恒 `EINVAL`（[syscall.rs:295](../../../src/kernel/privileged/net/syscall.rs)）、`listen_syscall` 恒 `EINVAL`（[syscall.rs:307](../../../src/kernel/privileged/net/syscall.rs)）、`connect_syscall` 恒 `ECONNREFUSED`（[syscall.rs:358](../../../src/kernel/privileged/net/syscall.rs)）、`recvfrom_syscall` 恒 `EAGAIN`（[syscall.rs:448](../../../src/kernel/privileged/net/syscall.rs)）。P2 已落地端到端透传：`syscall.rs` 9 处（`bind`/`listen`/`accept`/`connect`/`sendto`/`recvfrom`/`setsockopt`/`getsockopt`/`shutdown`）统一改 `i64::from(rc)` —— `Errno::as_ret()`（[errno.rs:110](../../../src/kernel/privileged/errno.rs)）与 sm_fi 的 `-E_XXX` 常量逐一吻合，无需映射表。
 
 - **G9: sockopt 近空实现**
   - 描述：`TCP_NODELAY` / `SO_ERROR` / `SO_TYPE` 等常用选项不可用。
   - 方案：精简集实装（D8）。
   - 状态：[X]
-  - 详情：`sm_setsockopt` 仅 `level == 1 && optname == 16`（`SO_PASSCRED`）路由 UDS，其余返回 `0`（no-op，[sm_fi.rs:964-1004](../../src/kernel/privileged/net/init/sm_fi.rs)）；`sm_getsockopt` 恒 `0`（[sm_fi.rs:996-1003](../../src/kernel/privileged/net/init/sm_fi.rs)）。
+  - 详情：`sm_setsockopt` 仅 `level == 1 && optname == 16`（`SO_PASSCRED`）路由 UDS，其余返回 `0`（no-op，[sm_fi.rs:964-1004](../../../src/kernel/privileged/net/init/sm_fi.rs)）；`sm_getsockopt` 恒 `0`（[sm_fi.rs:996-1003](../../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **G10: FD 位图泄漏（accept 的实现前置）**
   - 描述：`sm_close` 未归还 FD 编号；accept 循环每接受一个连接即永久消耗一个 FD 位，`MAX_SM_FD`（256）次后 `alloc_fd` 失败。
   - 方案：`sm_close` 补调 `free_fd(FdSubsystem::Smoltcp, fd)`（D6 前置），并清 D1 local 槽位。
   - 状态：[X]
-  - 详情：见 [sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs) —— `sm_close` 完成 `sockets.remove` + 4 个缓冲 `k_free` + 清 handle/fd_type 后，原先**无** `free_fd`。全仓 `FdSubsystem::Smoltcp` 原先仅出现于分配点（[sm_fi.rs:292-294](../../src/kernel/privileged/net/init/sm_fi.rs)）；`free_fd` 见 [fd_alloc.rs:265](../../src/kernel/privileged/proc/fd_alloc.rs)。P1 已落地：`sm_close` 尾部在清 handle/fd_type 后补调 `free_fd(FdSubsystem::Smoltcp, fd)` 并清 D1 local 槽位，回归测试 `test_free_fd_allows_realloc` 覆盖"归还后可重分配"。
+  - 详情：见 [sm_fi.rs](../../../src/kernel/privileged/net/init/sm_fi.rs) —— `sm_close` 完成 `sockets.remove` + 4 个缓冲 `k_free` + 清 handle/fd_type 后，原先**无** `free_fd`。全仓 `FdSubsystem::Smoltcp` 原先仅出现于分配点（[sm_fi.rs:292-294](../../../src/kernel/privileged/net/init/sm_fi.rs)）；`free_fd` 见 [fd_alloc.rs:265](../../../src/kernel/privileged/proc/fd_alloc.rs)。P1 已落地：`sm_close` 尾部在清 handle/fd_type 后补调 `free_fd(FdSubsystem::Smoltcp, fd)` 并清 D1 local 槽位，回归测试 `test_free_fd_allows_realloc` 覆盖"归还后可重分配"。
 
 - **G11: 无阻塞语义（默认非阻塞 + `SOCK_NONBLOCK` 被拒）**
   - 描述：socket I/O 未就绪时一律返回 `-E_AGAIN`，无阻塞等待；且 `SOCK_NONBLOCK` 标志位被 `SockType::from_i32` 拒绝，`fcntl(F_SETFL)` 为空实现，用户态无法表达"阻塞 / 非阻塞"意图。
   - 方案：`socket_syscall` 剥离 `SOCK_NONBLOCK` 位 + per-slot 阻塞标志 + 等待队列睡眠（D10）。
   - 状态：[X]（P5a 剥 `SOCK_NONBLOCK`/`fcntl O_NONBLOCK` 桥 + per-slot 阻塞标志; P5b recv/send 家族真阻塞; P5c accept/connect 真阻塞——socket 默认阻塞语义已全链路闭合）
-  - 详情：`SockType::from_i32` 仅接受 `1`/`2`（[socket_types.rs:61-65](../../src/kernel/privileged/net/socket_types.rs)），`SOCK_NONBLOCK`（`0x800`）落 `None` → `EINVAL`（[syscall.rs:249](../../src/kernel/privileged/net/syscall.rs)）；`F_SETFL => Ok(0)` 空实现（[io.rs:331](../../src/kernel/functions/fs/io.rs)）。
+  - 详情：`SockType::from_i32` 仅接受 `1`/`2`（[socket_types.rs:61-65](../../../src/kernel/privileged/net/socket_types.rs)），`SOCK_NONBLOCK`（`0x800`）落 `None` → `EINVAL`（[syscall.rs:249](../../../src/kernel/privileged/net/syscall.rs)）；`F_SETFL => Ok(0)` 空实现（[io.rs:331](../../../src/kernel/functions/fs/io.rs)）。
 
 ### UDP 缺口
 
@@ -109,19 +109,19 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - 描述：UDP `send` 恒返回 `-E_NOTCONN`，无目的地址可复用。
   - 方案：`sm_connect` 增 UDP 分支登记对端，`sm_send` 走登记的 remote（D9）。
   - 状态：[X]
-  - 详情：见 [sm_fi.rs:542-546](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `-E_NOTCONN`，注释"UDP 无目的地址: 依赖 socket 已连接…简化处理"；而 `sm_connect` 仅接受 `fd_type == 1`（[sm_fi.rs:484-486](../../src/kernel/privileged/net/init/sm_fi.rs)）。
+  - 详情：见 [sm_fi.rs:542-546](../../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `-E_NOTCONN`，注释"UDP 无目的地址: 依赖 socket 已连接…简化处理"；而 `sm_connect` 仅接受 `fd_type == 1`（[sm_fi.rs:484-486](../../../src/kernel/privileged/net/init/sm_fi.rs)）。
 
 - **U2: `sm_getpeername` UDP 恒失败**
   - 描述：已连接的 UDP socket 也无法查询对端。
   - 方案：读端点表的 remote（D1/D9）。
   - 状态：[X]
-  - 详情：见 [sm_fi.rs:1111-1114](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `return -E_NOTCONN`，注释"remote 由 last_recv_meta 取, 但 Socket 没暴露"。
+  - 详情：见 [sm_fi.rs:1111-1114](../../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 分支直接 `return -E_NOTCONN`，注释"remote 由 last_recv_meta 取, 但 Socket 没暴露"。
 
 - **U3: `recvfrom` 系统调用丢弃对端出参**
   - 描述：UDP 用户态 `recvfrom` 拿不到发送方地址。
   - 方案：`recvfrom_syscall` 改调 `sm_recvfrom` 并透传 `src_ptr`/`src_len_ptr`（D9）。
   - 状态：[X]
-  - 详情：见 [syscall.rs:421-455](../../src/kernel/privileged/net/syscall.rs) —— 忽略 `_src_ptr`/`_src_len_ptr`，且实际调用 `sm_recv`（[syscall.rs:446](../../src/kernel/privileged/net/syscall.rs)）而非 `sm_recvfrom`。底层 `sm_recvfrom` 的 UDP 分支**已能**回写对端（[sm_fi.rs:699-709](../../src/kernel/privileged/net/init/sm_fi.rs)），故此为纯系统调用层缺口。
+  - 详情：见 [syscall.rs:421-455](../../../src/kernel/privileged/net/syscall.rs) —— 忽略 `_src_ptr`/`_src_len_ptr`，且实际调用 `sm_recv`（[syscall.rs:446](../../../src/kernel/privileged/net/syscall.rs)）而非 `sm_recvfrom`。底层 `sm_recvfrom` 的 UDP 分支**已能**回写对端（[sm_fi.rs:699-709](../../../src/kernel/privileged/net/init/sm_fi.rs)），故此为纯系统调用层缺口。
 
 - **U4: 无临时端口分配**
   - 描述：`bind(port = 0)` 无自动分配语义，无法作为客户端发起 UDP/TCP。
@@ -133,7 +133,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - 描述：无法加入/离开组播组。
   - 方案：`sm_setsockopt` 增 `IP_ADD_MEMBERSHIP` 等选项，调用 `Interface::join_multicast_group`（D11）。
   - 状态：[X]
-  - 详情：见 [multicast.rs:104](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)；错误类型 `MulticastError::{Unaddressable, GroupTableFull}`（[multicast.rs:14-18](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）。需 `Interface` 可变借用，与 `sm_*` 的 `NET_STATE` 锁路径耦合（`stack.iface` 与 `socket_set()` 为两个独立 static，无借用冲突）。已随 P6/D11（DECISION-097，commit `474295a6`）实装：`privileged/net/mcast.rs` 按 socket 引用计数登记表 + `sm_fi.rs` `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` 走 iface join/leave（失败回滚），`multicast` feature + `iface-max-multicast-group-count-8` 已开；集成验证载体 `scripts/qemu_mcast_test.sh`。
+  - 详情：见 [multicast.rs:104](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)；错误类型 `MulticastError::{Unaddressable, GroupTableFull}`（[multicast.rs:14-18](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）。需 `Interface` 可变借用，与 `sm_*` 的 `NET_STATE` 锁路径耦合（`stack.iface` 与 `socket_set()` 为两个独立 static，无借用冲突）。已随 P6/D11（DECISION-097，commit `474295a6`）实装：`privileged/net/mcast.rs` 按 socket 引用计数登记表 + `sm_fi.rs` `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` 走 iface join/leave（失败回滚），`multicast` feature + `iface-max-multicast-group-count-8` 已开；集成验证载体 `scripts/qemu_mcast_test.sh`。
 
 - **U6: 无 per-slot 端点表**
   - 描述：无 local/remote 端点记录，导致 U1/U2/G3/G5 缺公共地基。
@@ -145,7 +145,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   - 描述：IPv6 通配绑定会误报为 `0.0.0.0`。
   - 方案：按 socket 的族或端点表如实回填（D9）。
   - 状态：[X]
-  - 详情：见 [sm_fi.rs:1042-1057](../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 通配（`ep.addr == None`）时强制构造 `IpAddress::Ipv4(Ipv4Address::UNSPECIFIED)`。
+  - 详情：见 [sm_fi.rs:1042-1057](../../../src/kernel/privileged/net/init/sm_fi.rs) —— UDP 通配（`ep.addr == None`）时强制构造 `IpAddress::Ipv4(Ipv4Address::UNSPECIFIED)`。
 
 - **U8: sockopt no-op / `getsockopt` 恒 0**
   - 描述：与 TCP G9 同一实现路径，UDP 同样不可用。
@@ -166,11 +166,11 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 - **描述**：为每个 slot 记录 local/remote 端点，承载 TCP bind 端口、UDP 已连接对端、accept 交接所需的监听端点。
 - **方案**：
-  - `NetState` 增 `local_endpoints: Vec<Option<NetEndpoint>>` 与 `remote_endpoints: Vec<Option<NetEndpoint>>`（各 `TOTAL_SLOTS` 项），`empty()` 置 `Vec::new()`、`allocate()` 填 `None`（对齐既有 8 张数组的模式，见 [state.rs:81-114](../../src/kernel/privileged/net/init/state.rs)）。
-  - `raw.rs` 增 4 个 accessor：`socket_local_endpoint(fd) -> Option<NetEndpoint>` / `set_socket_local_endpoint(fd, ep)` / `socket_remote_endpoint(fd)` / `set_socket_remote_endpoint(fd, ep)`（对齐 [raw.rs:100-111](../../src/kernel/privileged/net/init/raw.rs) 的 handle accessor 形态：普通 `pub fn` + 内部 `unsafe` 块 + "调用方持 `NET_STATE` 锁"注释）。
+  - `NetState` 增 `local_endpoints: Vec<Option<NetEndpoint>>` 与 `remote_endpoints: Vec<Option<NetEndpoint>>`（各 `TOTAL_SLOTS` 项），`empty()` 置 `Vec::new()`、`allocate()` 填 `None`（对齐既有 8 张数组的模式，见 [state.rs:81-114](../../../src/kernel/privileged/net/init/state.rs)）。
+  - `raw.rs` 增 4 个 accessor：`socket_local_endpoint(fd) -> Option<NetEndpoint>` / `set_socket_local_endpoint(fd, ep)` / `socket_remote_endpoint(fd)` / `set_socket_remote_endpoint(fd, ep)`（对齐 [raw.rs:100-111](../../../src/kernel/privileged/net/init/raw.rs) 的 handle accessor 形态：普通 `pub fn` + 内部 `unsafe` 块 + "调用方持 `NET_STATE` 锁"注释）。
   - `sm_close` 清空两表对应槽位。
 - **状态**：[X]（P1 落地 `local_endpoints` + 2 local accessor; P4/D9 落地 `remote_endpoints` + 2 remote accessor（UDP 专属），两端点半均已实现并有消费者）
-- **详情**：`NetEndpoint` 定义于 [iface_trait.rs:1327](../../src/kernel/privileged/net/iface_trait.rs)，已属 privileged 类型（`Copy`），可直接入表，无跨界问题。P1 仅落地 `local_endpoints` 表 + 2 个 local accessor + `sm_bind` UDP 分支写入 + `sm_close` 清理 + 契约测试；`remote_endpoints` 与 2 个 remote accessor 在本期无 release 消费者（F9 死代码零容忍），推迟至 P4 随 D9（UDP 连接态/对端语义）一并落地 —— TCP 的 remote 端点由 smoltcp socket 自身持有（`tcp::Socket::remote_endpoint()`），**不**入 D1 remote 表，故该表定位为 **UDP 专属**。
+- **详情**：`NetEndpoint` 定义于 [iface_trait.rs:1327](../../../src/kernel/privileged/net/iface_trait.rs)，已属 privileged 类型（`Copy`），可直接入表，无跨界问题。P1 仅落地 `local_endpoints` 表 + 2 个 local accessor + `sm_bind` UDP 分支写入 + `sm_close` 清理 + 契约测试；`remote_endpoints` 与 2 个 remote accessor 在本期无 release 消费者（F9 死代码零容忍），推迟至 P4 随 D9（UDP 连接态/对端语义）一并落地 —— TCP 的 remote 端点由 smoltcp socket 自身持有（`tcp::Socket::remote_endpoint()`），**不**入 D1 remote 表，故该表定位为 **UDP 专属**。
 
 ### D2: 临时端口分配器（Edgine 侧，DECISION-085）
 
@@ -185,92 +185,92 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 ### D3: TCP `sm_bind`
 
 - **描述**：让 TCP 能登记本地端口。
-- **方案**：在 [sm_fi.rs:445](../../src/kernel/privileged/net/init/sm_fi.rs) 的 `match raw::fd_type(fd)` 增 `1 =>` 分支：
-  1. `parse_endpoint_trait`（[sm_fi.rs:217](../../src/kernel/privileged/net/init/sm_fi.rs)）解析 sockaddr → `NetEndpoint`；解析失败 → `-E_INVAL`。
+- **方案**：在 [sm_fi.rs:445](../../../src/kernel/privileged/net/init/sm_fi.rs) 的 `match raw::fd_type(fd)` 增 `1 =>` 分支：
+  1. `parse_endpoint_trait`（[sm_fi.rs:217](../../../src/kernel/privileged/net/init/sm_fi.rs)）解析 sockaddr → `NetEndpoint`；解析失败 → `-E_INVAL`。
   2. `port == 0` → 走 D2 分配。
-  3. 冲突检测：`local_endpoint_in_use`（[sm_fi.rs:379](../../src/kernel/privileged/net/init/sm_fi.rs)）扫 D1 local 表，同 `(族, port)` 已占用 → `-E_ADDRINUSE`。
+  3. 冲突检测：`local_endpoint_in_use`（[sm_fi.rs:379](../../../src/kernel/privileged/net/init/sm_fi.rs)）扫 D1 local 表，同 `(族, port)` 已占用 → `-E_ADDRINUSE`。
   4. `set_socket_local_endpoint(fd, Some(ep))`。
   - **不**调用 smoltcp `bind`（`tcp::Socket` 无此方法）。
-  - 同轮为 UDP 分支（`2 =>`，[sm_fi.rs:446-484](../../src/kernel/privileged/net/init/sm_fi.rs)）补写 D1 local。
+  - 同轮为 UDP 分支（`2 =>`，[sm_fi.rs:446-484](../../../src/kernel/privileged/net/init/sm_fi.rs)）补写 D1 local。
 - **状态**：[X]
-- **详情**：通配地址保持 smoltcp 侧 `None` 语义（[sm_fi.rs:460-467](../../src/kernel/privileged/net/init/sm_fi.rs) 注释说明原因），但 D1 表内**保留族**（存 `V4(0.0.0.0)` / `V6(::)`），供 U7 如实回填。P1 已前移落地其中的 UDP 半 —— 现有 `2 =>` 分支接线 D1（写 local 端点）+ D2（`port == 0` 走临时端口分配），行为变更为 UDP `bind(port = 0)` 由原先 smoltcp `bind()` 失败恒 `-E_ADDRINUSE` 改为成功分配。TCP 的 `1 =>` 分支已随 P2 落地（[sm_fi.rs:485-505](../../src/kernel/privileged/net/init/sm_fi.rs)）：纯登记本地端点（TCP 无 smoltcp `bind`），不触碰 socket 状态。
+- **详情**：通配地址保持 smoltcp 侧 `None` 语义（[sm_fi.rs:460-467](../../../src/kernel/privileged/net/init/sm_fi.rs) 注释说明原因），但 D1 表内**保留族**（存 `V4(0.0.0.0)` / `V6(::)`），供 U7 如实回填。P1 已前移落地其中的 UDP 半 —— 现有 `2 =>` 分支接线 D1（写 local 端点）+ D2（`port == 0` 走临时端口分配），行为变更为 UDP `bind(port = 0)` 由原先 smoltcp `bind()` 失败恒 `-E_ADDRINUSE` 改为成功分配。TCP 的 `1 =>` 分支已随 P2 落地（[sm_fi.rs:485-505](../../../src/kernel/privileged/net/init/sm_fi.rs)）：纯登记本地端点（TCP 无 smoltcp `bind`），不触碰 socket 状态。
 
 ### D4: TCP `sm_listen`
 
 - **描述**：按登记的本地端点建立监听。
 - **方案**：
   - 读 D1 local endpoint；缺省时走 D2 取端口并回写 D1。
-  - 构造 `IpListenEndpoint { addr: 通配 → None, port }`（`port != 0`）→ `sock.listen(local)`（[tcp.rs:942](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
+  - 构造 `IpListenEndpoint { addr: 通配 → None, port }`（`port != 0`）→ `sock.listen(local)`（[tcp.rs:942](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
   - `Ok(())` → `0`；`Err(_)` → `-E_INVAL`（**修正**原 `-E_ADDRINUSE`：smoltcp `listen` 失败源于 socket 状态非法或地址不可用，非地址占用）。
 - **状态**：[X]
-- **详情**：替换原 [sm_fi.rs:409-415](../../src/kernel/privileged/net/init/sm_fi.rs) 的硬编码（现由 `sm_listen_locked` 实装，[sm_fi.rs:545-570](../../src/kernel/privileged/net/init/sm_fi.rs)）。smoltcp 允许同端口多 socket 同时 listen（acceptor loop 模式），无需 backlog 语义。缺省端口分支复用 D2 并回写 D1 local（族取 `V4(UNSPECIFIED)`），`fd_type != 1` → `-E_NOTSUPP`。
+- **详情**：替换原 [sm_fi.rs:409-415](../../../src/kernel/privileged/net/init/sm_fi.rs) 的硬编码（现由 `sm_listen_locked` 实装，[sm_fi.rs:545-570](../../../src/kernel/privileged/net/init/sm_fi.rs)）。smoltcp 允许同端口多 socket 同时 listen（acceptor loop 模式），无需 backlog 语义。缺省端口分支复用 D2 并回写 D1 local（族取 `V4(UNSPECIFIED)`），`fd_type != 1` → `-E_NOTSUPP`。
 
 ### D5: TCP `sm_connect`
 
 - **描述**：让 TCP 能发起连接。
 - **方案**：
   - local 从 D1 取；缺省走 D2 分配端口并回写 D1。
-  - `sock.connect(iface.context(), endpoint, local)`（[tcp.rs:1013](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
+  - `sock.connect(iface.context(), endpoint, local)`（[tcp.rs:1013](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
   - 成功：`set_socket_local_endpoint`（**仅** local —— TCP remote 端点由 smoltcp socket 自身持有，见 D1 详情；D1 remote 表不适用 TCP）。
   - 错误映射：`ConnectError::Unaddressable → -E_INVAL`；其余 → `-E_CONNREFUSED`。
 - **状态**：[X]
-- **详情**：替换原 [sm_fi.rs:496-503](../../src/kernel/privileged/net/init/sm_fi.rs) 的硬编码（现由 `sm_connect_locked` 实装，[sm_fi.rs:652-687](../../src/kernel/privileged/net/init/sm_fi.rs)）。前置门控 `NET_CONFIGURED` 未置位 → `-E_NODEV`；`fd_type != 1` → `-E_NOTSUPP`；`parse_endpoint` 失败 → `-E_INVAL`。D1/D2 写入须在 `stack_mut()` 借用之前完成，避免 `&mut` 别名（见代码注释）。精确 `ECONNREFUSED` 需 smoltcp 内部错误状态，属排除项（见范围口径）。
+- **详情**：替换原 [sm_fi.rs:496-503](../../../src/kernel/privileged/net/init/sm_fi.rs) 的硬编码（现由 `sm_connect_locked` 实装，[sm_fi.rs:652-687](../../../src/kernel/privileged/net/init/sm_fi.rs)）。前置门控 `NET_CONFIGURED` 未置位 → `-E_NODEV`；`fd_type != 1` → `-E_NOTSUPP`；`parse_endpoint` 失败 → `-E_INVAL`。D1/D2 写入须在 `stack_mut()` 借用之前完成，避免 `&mut` 别名（见代码注释）。精确 `ECONNREFUSED` 需 smoltcp 内部错误状态，属排除项（见范围口径）。
 
 ### D6: TCP accept 先建后换交接（核心，DECISION-088）
 
 - **描述**：把 smoltcp 监听 socket 上到达的连接交接给一个新 fd，且新监听在交接前已就绪（消除监听槽空闲窗口）。
 - **方案**（算法步骤）：
-  1. **门控**：监听 socket 满足 `state() == Established && listen_endpoint().port != 0`（[tcp.rs:900](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:882](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），否则 `-E_AGAIN`；且活跃 socket 数 `< get_max_sockets()`（[sockets.rs:68](../../src/kernel/privileged/net/init/sockets.rs)），否则 `-E_NFILE`。
-  2. `alloc_fd(FdSubsystem::Smoltcp)`（[fd_alloc.rs:242](../../src/kernel/privileged/proc/fd_alloc.rs)）取新 fd `n`；失败 → `-E_NFILE`。
-  3. 槽 `n` 调 `raw::socket_open_stub(sockets, Tcp, n)`（[raw.rs:305](../../src/kernel/privileged/net/init/raw.rs)）建**新监听 socket**（新 handle + 新缓冲）；失败 → `free_fd` + `-E_NOMEM`。
+  1. **门控**：监听 socket 满足 `state() == Established && listen_endpoint().port != 0`（[tcp.rs:900](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:882](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)），否则 `-E_AGAIN`；且活跃 socket 数 `< get_max_sockets()`（[sockets.rs:68](../../../src/kernel/privileged/net/init/sockets.rs)），否则 `-E_NFILE`。
+  2. `alloc_fd(FdSubsystem::Smoltcp)`（[fd_alloc.rs:242](../../../src/kernel/privileged/proc/fd_alloc.rs)）取新 fd `n`；失败 → `-E_NFILE`。
+  3. 槽 `n` 调 `raw::socket_open_stub(sockets, Tcp, n)`（[raw.rs:305](../../../src/kernel/privileged/net/init/raw.rs)）建**新监听 socket**（新 handle + 新缓冲）；失败 → `free_fd` + `-E_NOMEM`。
   4. 对**新 socket** 调 `listen(local_l)`（`local_l` = 监听槽 L 的 D1 local）→ 新监听立即就位。
   5. **索引交换**（O(1) 指针/值交换，无内存拷贝）：槽 `n` ← 已连接会话（handle / tcp_rx_buf / tcp_tx_buf / local，`fd_type = 1`）；槽 `L` ← 新监听（handle / 缓冲 + `local = local_l`，`fd_type = 1`）。TCP remote 端点由 smoltcp socket 自身持有并随会话迁移，**不**经 D1 remote 表（见 D1 详情）。
-  6. 从已连接会话读 `remote_endpoint()`（[tcp.rs:894](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ `write_sockaddr`（[sm_fi.rs:140](../../src/kernel/privileged/net/init/sm_fi.rs)）回写到 `*addr` / `*addrlen`。
+  6. 从已连接会话读 `remote_endpoint()`（[tcp.rs:894](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ `write_sockaddr`（[sm_fi.rs:140](../../../src/kernel/privileged/net/init/sm_fi.rs)）回写到 `*addr` / `*addrlen`。
   7. 返回 `n`。
 - **状态**：[X]（P3 落地：`sm_accept_locked` 实现步骤 1–7 全流程，`accept_syscall` 透传 `addr_ptr`/`addrlen_ptr`；回归见 QEMU e2e `accept=3 echo=3 close=3` + accepted fd 去重为 1）
 - **前置**：G10（`sm_close` 补 `free_fd`），否则 accept 循环会在 256 次后耗尽 FD 位图。
-- **详情**：**唯一回滚点**为步骤 3–4 失败（释放新 fd + 新缓冲）；步骤 5 交换后无失败路径，故无回滚。原 DECISION-086「迁移 + 重臂」在步骤 3→4 间存在"监听槽短暂空闲"窗口，本算法以"先建后换"消除该窗口。全程持 `NET_STATE` 锁，无并发窗口。`accept_syscall`（[syscall.rs:311](../../src/kernel/privileged/net/syscall.rs)）须透传 `_addr_ptr` / `_addrlen_ptr`（当前忽略）。
+- **详情**：**唯一回滚点**为步骤 3–4 失败（释放新 fd + 新缓冲）；步骤 5 交换后无失败路径，故无回滚。原 DECISION-086「迁移 + 重臂」在步骤 3→4 间存在"监听槽短暂空闲"窗口，本算法以"先建后换"消除该窗口。全程持 `NET_STATE` 锁，无并发窗口。`accept_syscall`（[syscall.rs:311](../../../src/kernel/privileged/net/syscall.rs)）须透传 `_addr_ptr` / `_addrlen_ptr`（当前忽略）。
 - **SIMPLIFIED**：无 backlog 队列长度限制（`_backlog` 忽略），并发溢出由 `get_max_sockets()` 与 `-E_NFILE` 兜底；需扩展时引入 per-listener 待接受队列。
 
 ### D7: `shutdown` 半关闭
 
 - **描述**：区分 `SHUT_RD` / `SHUT_WR` / `SHUT_RDWR`。
 - **方案**：新增 `sm_shutdown(fd, how) -> i32`：
-  - `SHUT_WR(1)` / `SHUT_RDWR(2)` → `sock.close()`（[tcp.rs:1084](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)；smoltcp `close()` 关闭发送侧，接收侧仍可读，符合 `SHUT_WR` 语义）。
+  - `SHUT_WR(1)` / `SHUT_RDWR(2)` → `sock.close()`（[tcp.rs:1084](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)；smoltcp `close()` 关闭发送侧，接收侧仍可读，符合 `SHUT_WR` 语义）。
   - `SHUT_RD(0)` → no-op 返 `0`（SIMPLIFIED，无 smoltcp 直接对应物）。
-  - 同步 `shutdown_syscall`（[syscall.rs:513-519](../../src/kernel/privileged/net/syscall.rs)）透传 `how`。
+  - 同步 `shutdown_syscall`（[syscall.rs:513-519](../../../src/kernel/privileged/net/syscall.rs)）透传 `how`。
 - **状态**：[X]
-- **详情**：需同步在 [net_socket.rs](../../src/kernel/privileged/net_socket.rs) 增 safe 包装 + kernel_test 桩模块镜像同名桩（签名对齐）。
+- **详情**：需同步在 [net_socket.rs](../../../src/kernel/privileged/net_socket.rs) 增 safe 包装 + kernel_test 桩模块镜像同名桩（签名对齐）。
 
 ### D8: sockopt 精简集
 
 - **描述**：实装常用 socket 选项。
 - **方案**：
-  - `sm_setsockopt`（[sm_fi.rs:964](../../src/kernel/privileged/net/init/sm_fi.rs)）增：
-    - `TCP_NODELAY`（`level = 6`, `optname = 1`）→ `sock.set_nagle_enabled(val == 0)`（[tcp.rs:821](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
-    - `SO_KEEPALIVE`（`level = 1`, `optname = 9`）→ `sock.set_keep_alive(val != 0 ? Some(Duration::from_secs(7200)) : None)`（[tcp.rs:844](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
+  - `sm_setsockopt`（[sm_fi.rs:964](../../../src/kernel/privileged/net/init/sm_fi.rs)）增：
+    - `TCP_NODELAY`（`level = 6`, `optname = 1`）→ `sock.set_nagle_enabled(val == 0)`（[tcp.rs:821](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
+    - `SO_KEEPALIVE`（`level = 1`, `optname = 9`）→ `sock.set_keep_alive(val != 0 ? Some(Duration::from_secs(7200)) : None)`（[tcp.rs:844](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）。
     - `SO_REUSEADDR`(2) / `SO_REUSEPORT`(15) 等：接受但忽略，返 `0`。
-  - `sm_getsockopt`（[sm_fi.rs:996](../../src/kernel/privileged/net/init/sm_fi.rs)）增：
+  - `sm_getsockopt`（[sm_fi.rs:996](../../../src/kernel/privileged/net/init/sm_fi.rs)）增：
     - `SO_TYPE`（`level = 1`, `optname = 3`）→ `SOCK_STREAM(1)` / `SOCK_DGRAM(2)`。
     - `TCP_NODELAY`（`level = 6`, `optname = 1`）→ 当前 Nagle 使能状态（smoltcp 默认启用 → `0`）。
     - `SO_ERROR`（`level = 1`, `optname = 4`）→ 由 `state()` 近似派生。
 - **状态**：[X]
-- **详情**：`set_keep_alive` 签名取 `Option<Duration>`，`Duration` 当前未在 [sm_fi.rs:13-18](../../src/kernel/privileged/net/init/sm_fi.rs) 导入，须补 `use smoltcp::time::Duration;`。`SO_ERROR` 精确值需 smoltcp 内部错误状态，属排除项（仅近似）。
+- **详情**：`set_keep_alive` 签名取 `Option<Duration>`，`Duration` 当前未在 [sm_fi.rs:13-18](../../../src/kernel/privileged/net/init/sm_fi.rs) 导入，须补 `use smoltcp::time::Duration;`。`SO_ERROR` 精确值需 smoltcp 内部错误状态，属排除项（仅近似）。
 
 ### D8b: poll 就绪接线至 `fs` 层（DECISION-089）
 
 - **描述**：为 socket fd 提供真实 revents（可读/可写/挂断/错误），并接入内核 `poll` / `ppoll` 系统调用路径。
 - **方案**：
   1. 新增 privileged `sm_socket_poll(fd, events) -> i16`（返回 revents 位掩码）：
-     - TCP（`fd_type == 1`）：`events & POLLIN != 0` 且 `can_recv()`（[tcp.rs:1234](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLIN`；`events & POLLOUT != 0` 且 `can_send()`（[tcp.rs:1212](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLOUT`；`state() == Closed`（[tcp.rs:900](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLHUP | POLLERR`。
-     - UDP（`fd_type == 2`）：`can_recv()`（[udp.rs:268](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）/ `can_send()`（[udp.rs:262](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）同理。
+     - TCP（`fd_type == 1`）：`events & POLLIN != 0` 且 `can_recv()`（[tcp.rs:1234](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLIN`；`events & POLLOUT != 0` 且 `can_send()`（[tcp.rs:1212](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLOUT`；`state() == Closed`（[tcp.rs:900](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs)）→ 置 `POLLHUP | POLLERR`。
+     - UDP（`fd_type == 2`）：`can_recv()`（[udp.rs:268](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）/ `can_send()`（[udp.rs:262](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）同理。
      - `fd` 非法或 `fd_type == 0` → `POLLNVAL`。
-  2. [net_socket.rs](../../src/kernel/privileged/net_socket.rs) 增 safe 包装 + kernel_test 桩镜像。
-  3. [functions/net/socket.rs](../../src/kernel/functions/net/socket.rs)（路径乙）增 `poll_fd(fd, events) -> i16`。
-  4. [file_ops.rs](../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall`（[file_ops.rs:69](../../src/kernel/functions/fs/file_ops.rs)）与 `ppoll_syscall`（[file_ops.rs:136](../../src/kernel/functions/fs/file_ops.rs)）：对每个 `pfd` 先判 `subsystem_of(fd) == Some(FdSubsystem::Smoltcp)`（[fd_alloc.rs:282](../../src/kernel/privileged/proc/fd_alloc.rs)）→ 走 `net::socket::poll_fd` 取 revents；否则维持现 VFS 路径。
-  - 常量：`POLLIN = 1`（[file_ops.rs:20](../../src/kernel/functions/fs/file_ops.rs)）/ `POLLOUT = 4`（[file_ops.rs:21](../../src/kernel/functions/fs/file_ops.rs)）/ `POLLERR = 8` / `POLLHUP = 16` / `POLLNVAL = 32`（后三者需新增）。
+  2. [net_socket.rs](../../../src/kernel/privileged/net_socket.rs) 增 safe 包装 + kernel_test 桩镜像。
+  3. [functions/net/socket.rs](../../../src/kernel/functions/net/socket.rs)（路径乙）增 `poll_fd(fd, events) -> i16`。
+  4. [file_ops.rs](../../../src/kernel/functions/fs/file_ops.rs) 的 `poll_syscall`（[file_ops.rs:69](../../../src/kernel/functions/fs/file_ops.rs)）与 `ppoll_syscall`（[file_ops.rs:136](../../../src/kernel/functions/fs/file_ops.rs)）：对每个 `pfd` 先判 `subsystem_of(fd) == Some(FdSubsystem::Smoltcp)`（[fd_alloc.rs:282](../../../src/kernel/privileged/proc/fd_alloc.rs)）→ 走 `net::socket::poll_fd` 取 revents；否则维持现 VFS 路径。
+  - 常量：`POLLIN = 1`（[file_ops.rs:20](../../../src/kernel/functions/fs/file_ops.rs)）/ `POLLOUT = 4`（[file_ops.rs:21](../../../src/kernel/functions/fs/file_ops.rs)）/ `POLLERR = 8` / `POLLHUP = 16` / `POLLNVAL = 32`（后三者需新增）。
 - **状态**：[X]
-- **详情**：`sm_poll_sockets`（返回 `i32`，[sm_fi.rs:1138](../../src/kernel/privileged/net/init/sm_fi.rs)）**保留**恒返回 `0` 的契约，仅用于 `poll_network` 的唤醒路径（[init.rs:288](../../src/kernel/privileged/net/init.rs)）；不改其语义，避免影响自我唤醒链路。
+- **详情**：`sm_poll_sockets`（返回 `i32`，[sm_fi.rs:1138](../../../src/kernel/privileged/net/init/sm_fi.rs)）**保留**恒返回 `0` 的契约，仅用于 `poll_network` 的唤醒路径（[init.rs:288](../../../src/kernel/privileged/net/init.rs)）；不改其语义，避免影响自我唤醒链路。
 
 ### D9: UDP 连接态 + 对端语义
 
@@ -278,28 +278,28 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **方案**：
   - D1 的 `remote_endpoints` 表与 2 个 remote accessor 随本项落地（**UDP 专属**；TCP remote 端点由 smoltcp socket 自身持有，见 D1 详情）—— 此即 P1 将其推迟至本期的原因（F9：须有真实 release 消费者）。
   - `sm_connect` 增 UDP 分支：登记 remote 到 D1；若 local 为空则由 D2 分配本地端口并 `sock.bind(D1 local)`。
-  - `sm_send` UDP 分支（[sm_fi.rs:542-546](../../src/kernel/privileged/net/init/sm_fi.rs)）：D1 有 remote → `sock.send_slice(data, remote)`（[udp.rs:375](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）；否则维持 `-E_NOTCONN`。
-  - `sm_getpeername` UDP 分支（[sm_fi.rs:1111-1114](../../src/kernel/privileged/net/init/sm_fi.rs)）：读 D1 remote，无则 `-E_NOTCONN`。
-  - `recvfrom_syscall`（[syscall.rs:421](../../src/kernel/privileged/net/syscall.rs)）改调 `sm_recvfrom`（[sm_fi.rs:672](../../src/kernel/privileged/net/init/sm_fi.rs)）并透传 `_src_ptr` / `_src_len_ptr`。
-  - `sm_getsockname`（[sm_fi.rs:1020](../../src/kernel/privileged/net/init/sm_fi.rs)）：TCP 在 `local_endpoint()` 为 `None` 时回退 D1；UDP 通配按 D1 族如实回填（修正 U7）。
+  - `sm_send` UDP 分支（[sm_fi.rs:542-546](../../../src/kernel/privileged/net/init/sm_fi.rs)）：D1 有 remote → `sock.send_slice(data, remote)`（[udp.rs:375](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs)）；否则维持 `-E_NOTCONN`。
+  - `sm_getpeername` UDP 分支（[sm_fi.rs:1111-1114](../../../src/kernel/privileged/net/init/sm_fi.rs)）：读 D1 remote，无则 `-E_NOTCONN`。
+  - `recvfrom_syscall`（[syscall.rs:421](../../../src/kernel/privileged/net/syscall.rs)）改调 `sm_recvfrom`（[sm_fi.rs:672](../../../src/kernel/privileged/net/init/sm_fi.rs)）并透传 `_src_ptr` / `_src_len_ptr`。
+  - `sm_getsockname`（[sm_fi.rs:1020](../../../src/kernel/privileged/net/init/sm_fi.rs)）：TCP 在 `local_endpoint()` 为 `None` 时回退 D1；UDP 通配按 D1 族如实回填（修正 U7）。
 - **状态**：[X]
-- **详情**：`sm_recvfrom` 已能回写对端（[sm_fi.rs:699-709](../../src/kernel/privileged/net/init/sm_fi.rs)），故 U3 仅需改系统调用层调用点。functions 侧 `recvfrom_syscall` 已透传出参（[functions/net/syscall.rs:252](../../src/kernel/functions/net/syscall.rs)）。
+- **详情**：`sm_recvfrom` 已能回写对端（[sm_fi.rs:699-709](../../../src/kernel/privileged/net/init/sm_fi.rs)），故 U3 仅需改系统调用层调用点。functions 侧 `recvfrom_syscall` 已透传出参（[functions/net/syscall.rs:252](../../../src/kernel/functions/net/syscall.rs)）。
 
 ### D10: 阻塞睡眠（DECISION-090，实施取路径 B「相对完整」，机制细化见 DECISION-092）
 
 - **描述**：实现 POSIX 默认阻塞语义：I/O 未就绪时**真阻塞睡眠**（非忙轮询），由 poll 事件 / 信号（EINTR，P5d）唤醒；`SOCK_NONBLOCK` / `fcntl(F_SETFL)` 切换非阻塞；accept/connect 完成语义对齐 POSIX（A2）。
 - **调研结论（P5 前置调研坐实，修正原 D10 假设）**：
-  1. **真阻塞原语已存在**：`scheduler_block(BlockReason::WaitingForIo)` + `scheduler_schedule()`（`timer_sleep` 同款，[sleep.rs:221](../../src/kernel/privileged/timer/sleep.rs)）；事件唤醒 `scheduler_unblock(pid)`（[sched_ops.rs:40](../../src/kernel/privileged/proc/sched_ops.rs)）。futex（`ipc/types.rs`）、`epoll.rs:405`、`uffd.rs` 三处均为「**锁内收集 pid → 释放锁后逐个 unblock**」范式。
-  2. `wait_with_timeout`（[sleep.rs:302](../../src/kernel/privileged/timer/sleep.rs)）只 `scheduler_yield_ex` 让出自旋、任务保持 runnable，**非真阻塞**——原 D10 以其为睡眠原语与目标「睡眠而非忙轮询」矛盾，本路径**弃用**。
-  3. **表容量是潜伏 bug**：`SocketWaitQueueTable` 固定 16（[wait_queue.rs:130](../../src/kernel/privileged/net/wait_queue.rs)），`MAX_SM_FD=256`（`FdPlan::SMOLTCP.capacity`）；`poll_network` 已按 `0..MAX_SM_FD` 扫（[init.rs:268](../../src/kernel/privileged/net/init.rs)），故 slots 16..255 的 `try_wake` 恒 None，唤醒静默失效（非「将来才需要」）。
-  4. **唤醒模型缺 accept/connect 条件**：现仅 `can_recv`/`can_send`（[init.rs:276](../../src/kernel/privileged/net/init.rs)）；阻塞 accept 就绪=监听槽→`Established`、阻塞 connect 就绪=connector→`Established/Closed`，需给 `poll_network` 新增**状态迁移唤醒**。
-  5. **connect 现状「发起即返 0」**（`sock.connect()` Ok 即返，[sm_fi.rs:891](../../src/kernel/privileged/net/init/sm_fi.rs)），无 `EINPROGRESS`、不等握手——A2 须改造。
-  6. 信号可打断 Blocked 任务（`do_signal_send` 置 `Ready`，[signal.rs:231](../../src/kernel/privileged/proc/signal.rs)），但全仓无阻塞 syscall 返 `EINTR`——EINTR 为新开垦（P5d）。
+  1. **真阻塞原语已存在**：`scheduler_block(BlockReason::WaitingForIo)` + `scheduler_schedule()`（`timer_sleep` 同款，[sleep.rs:221](../../../src/kernel/privileged/timer/sleep.rs)）；事件唤醒 `scheduler_unblock(pid)`（[sched_ops.rs:40](../../../src/kernel/privileged/proc/sched_ops.rs)）。futex（`ipc/types.rs`）、`epoll.rs:405`、`uffd.rs` 三处均为「**锁内收集 pid → 释放锁后逐个 unblock**」范式。
+  2. `wait_with_timeout`（[sleep.rs:302](../../../src/kernel/privileged/timer/sleep.rs)）只 `scheduler_yield_ex` 让出自旋、任务保持 runnable，**非真阻塞**——原 D10 以其为睡眠原语与目标「睡眠而非忙轮询」矛盾，本路径**弃用**。
+  3. **表容量是潜伏 bug**：`SocketWaitQueueTable` 固定 16（[wait_queue.rs:130](../../../src/kernel/privileged/net/wait_queue.rs)），`MAX_SM_FD=256`（`FdPlan::SMOLTCP.capacity`）；`poll_network` 已按 `0..MAX_SM_FD` 扫（[init.rs:268](../../../src/kernel/privileged/net/init.rs)），故 slots 16..255 的 `try_wake` 恒 None，唤醒静默失效（非「将来才需要」）。
+  4. **唤醒模型缺 accept/connect 条件**：现仅 `can_recv`/`can_send`（[init.rs:276](../../../src/kernel/privileged/net/init.rs)）；阻塞 accept 就绪=监听槽→`Established`、阻塞 connect 就绪=connector→`Established/Closed`，需给 `poll_network` 新增**状态迁移唤醒**。
+  5. **connect 现状「发起即返 0」**（`sock.connect()` Ok 即返，[sm_fi.rs:891](../../../src/kernel/privileged/net/init/sm_fi.rs)），无 `EINPROGRESS`、不等握手——A2 须改造。
+  6. 信号可打断 Blocked 任务（`do_signal_send` 置 `Ready`，[signal.rs:231](../../../src/kernel/privileged/proc/signal.rs)），但全仓无阻塞 syscall 返 `EINTR`——EINTR 为新开垦（P5d）。
 - **方案（分 P5a-P5d 子轮，见分期）**：
-  1. **阻塞范式**（取代原「`mark_waiting`+`wait_with_timeout`」）：未就绪且阻塞 → 持 `NET_STATE` 下 `q.set_waiter(current_pid)`（仿 uffd `fault_pid`）→ 释放 `NET_STATE` → `scheduler_block(WaitingForIo)` + `scheduler_schedule()` →（被 poll/信号唤醒）→ 重抢 `NET_STATE` → 重查就绪，未就绪则循环。`recv`/`send`/`recvfrom`/`sendto`（[sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs)，现单函数内联持 `NET_STATE`）拆出 `_locked` 临界区以支持「释放锁→等→重抢→重试」。
+  1. **阻塞范式**（取代原「`mark_waiting`+`wait_with_timeout`」）：未就绪且阻塞 → 持 `NET_STATE` 下 `q.set_waiter(current_pid)`（仿 uffd `fault_pid`）→ 释放 `NET_STATE` → `scheduler_block(WaitingForIo)` + `scheduler_schedule()` →（被 poll/信号唤醒）→ 重抢 `NET_STATE` → 重查就绪，未就绪则循环。`recv`/`send`/`recvfrom`/`sendto`（[sm_fi.rs](../../../src/kernel/privileged/net/init/sm_fi.rs)，现单函数内联持 `NET_STATE`）拆出 `_locked` 临界区以支持「释放锁→等→重抢→重试」。
   2. **F8 锁序铁律**：唤醒侧（`poll_network` 等）持 `NET_STATE` 只**收集待唤醒 pid 列表**，**释放 `NET_STATE` 后**再 `scheduler_unblock(pid)`——杜绝 `NET_STATE → SCHEDULER` 嵌套锁。丢失唤醒约束：置 waiter pid 必须在持 `NET_STATE`（与 socket 状态读取同一临界区）内完成后才释放。
-  3. **表扩容**：`SocketWaitQueueTable` 16→`MAX_SM_FD`（`[const { SocketWaitQueue::new() }; MAX_SM_FD]`），`get()` 边界随之（slot ≥ `MAX_SM_FD`→`None`）；`SocketWaitQueue` 增 `waiter_pid`；同步 `table_lookup_bounded` 单测（[wait_queue.rs:200](../../src/kernel/privileged/net/wait_queue.rs)）与陈旧「=16」注释（`wait_queue.rs:128`/`168` + `save.rs:41`）。
-  4. **非阻塞开关**：`socket_syscall`（[syscall.rs:244](../../src/kernel/privileged/net/syscall.rs)）在 `SockType::from_i32` 前剥离 `SOCK_NONBLOCK`（`0x800`）并透传给 `sm_socket` 置 slot 阻塞标志；`fcntl` `F_GETFL`/`F_SETFL`（[io.rs:331](../../src/kernel/functions/fs/io.rs)，现 `F_SETFL => Ok(0)` 空实现）经新增 functions→privileged safe API 落 `O_NONBLOCK`。
+  3. **表扩容**：`SocketWaitQueueTable` 16→`MAX_SM_FD`（`[const { SocketWaitQueue::new() }; MAX_SM_FD]`），`get()` 边界随之（slot ≥ `MAX_SM_FD`→`None`）；`SocketWaitQueue` 增 `waiter_pid`；同步 `table_lookup_bounded` 单测（[wait_queue.rs:200](../../../src/kernel/privileged/net/wait_queue.rs)）与陈旧「=16」注释（`wait_queue.rs:128`/`168` + `save.rs:41`）。
+  4. **非阻塞开关**：`socket_syscall`（[syscall.rs:244](../../../src/kernel/privileged/net/syscall.rs)）在 `SockType::from_i32` 前剥离 `SOCK_NONBLOCK`（`0x800`）并透传给 `sm_socket` 置 slot 阻塞标志；`fcntl` `F_GETFL`/`F_SETFL`（[io.rs:331](../../../src/kernel/functions/fs/io.rs)，现 `F_SETFL => Ok(0)` 空实现）经新增 functions→privileged safe API 落 `O_NONBLOCK`。
   5. **per-slot 阻塞标志**：`NetState.blocking: Vec<bool>`（`allocate()` 默认 `true`=阻塞）+ `raw.rs` accessor。
 - **状态**：[X]（P5a–P5d 四子轮全部完成：P5a 表扩容 + 非阻塞桥、P5b recv/send 家族真阻塞、P5c accept/connect A2、P5d EINTR + 超时 + `MSG_DONTWAIT`）
 - **详情**：EINTR 与 `SO_RCVTIMEO`/`SO_SNDTIMEO` per-op 超时**移出 P5 首轮**，独立轮（P5d）推进——超时须给 D8 sockopt 再增两选项 + per-slot timeval 存储 + 「事件/超时/信号」三路竞态。connect 完成语义取 A2（对齐 POSIX：阻塞等 Established、非阻塞 `-EINPROGRESS`、状态→errno 映射），归 P5c。
@@ -307,19 +307,19 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 ### D11: 组播（DECISION-091 → DECISION-097）
 
 - **描述**：加入/离开 IPv4 与 IPv6 组播组，成员资格按 **socket 引用计数**（POSIX/Linux 语义）而非接口级开关。
-- **方案**：新增 `privileged/net/mcast.rs`（纯 safe 簿记：接口级组表快照 + 引用计数 + per-slot 成员位图），由 `NetState.mcast: McastRegistry` 承载（[state.rs:81](../../src/kernel/privileged/net/init/state.rs)），`raw.rs` 暴露 6 个持锁 accessor（[raw.rs:157-190](../../src/kernel/privileged/net/init/raw.rs)）；`sm_setsockopt`（[sm_fi.rs:2029](../../src/kernel/privileged/net/init/sm_fi.rs)）组播分支汇入编排入口 `mc_membership`（[sm_fi.rs:1960](../../src/kernel/privileged/net/init/sm_fi.rs)）：
+- **方案**：新增 `privileged/net/mcast.rs`（纯 safe 簿记：接口级组表快照 + 引用计数 + per-slot 成员位图），由 `NetState.mcast: McastRegistry` 承载（[state.rs:81](../../../src/kernel/privileged/net/init/state.rs)），`raw.rs` 暴露 6 个持锁 accessor（[raw.rs:157-190](../../../src/kernel/privileged/net/init/raw.rs)）；`sm_setsockopt`（[sm_fi.rs:2029](../../../src/kernel/privileged/net/init/sm_fi.rs)）组播分支汇入编排入口 `mc_membership`（[sm_fi.rs:1960](../../../src/kernel/privileged/net/init/sm_fi.rs)）：
   - `IP_ADD_MEMBERSHIP`（`level = IPPROTO_IP = 0`, `optname = 35`）/ `IP_DROP_MEMBERSHIP`（`optname = 36`）：解析 `struct ip_mreq`（8 字节：`imr_multiaddr` 网络序 + `imr_interface`）→ 仅当引用计数 0→1 才请求 `Interface::join_multicast_group`。
   - `IPV6_ADD_MEMBERSHIP`（`level = IPPROTO_IPV6 = 41`, `optname = 20`）/ `IPV6_DROP_MEMBERSHIP`（`optname = 21`）：解析 `struct ipv6_mreq`（20 字节），同上。
   - errno 映射（Linux 值域）：同 slot 重复加入 `-EADDRINUSE(98)`；非成员退组 `-EADDRNOTAVAIL(99)`；组表满 `-E_NOMEM(12)`；非组播地址 / `Unaddressable` `-E_INVAL(22)`；iface 缺席 `-E_NODEV(19)`；越界 slot `-E_BADF(9)`；`level` 与 `optname` 不成对 `-ENOPROTOOPT(92)`。
-  - `sm_close`（[sm_fi.rs:1735](../../src/kernel/privileged/net/init/sm_fi.rs)）逐位拆离该 slot 的全部成员资格，引用归零才请求 iface 拆组。
-  - `setsockopt_syscall`（[syscall.rs:467](../../src/kernel/privileged/net/syscall.rs)）copy-in 缓冲 16→20 字节以容纳 `struct ipv6_mreq`。
+  - `sm_close`（[sm_fi.rs:1735](../../../src/kernel/privileged/net/init/sm_fi.rs)）逐位拆离该 slot 的全部成员资格，引用归零才请求 iface 拆组。
+  - `setsockopt_syscall`（[syscall.rs:467](../../../src/kernel/privileged/net/syscall.rs)）copy-in 缓冲 16→20 字节以容纳 `struct ipv6_mreq`。
 - **状态**：[X]
 - **详情**：**订正 DECISION-091 的三处事实误判**（本轮源码调研逐条坐实）：
-  1. smoltcp 组播整模块（`iface/interface/multicast.rs`，含 `MulticastError` re-export 与 `join/leave_multicast_group`）**整体受 `multicast` feature 门控**。本仓原 feature 集未启用 → 该 API 在启用前根本不参与编译，DECISION-091 「经 `join_multicast_group` 实装」与 D11 「仅补组管理入口」的表述在彼时不成立。已启用 `multicast`（[Cargo.toml:67](../../src/kernel/Cargo.toml)）。
-  2. 启用后 smoltcp 会在 `update_ip_addrs` 路径为 IPv6 **自动 join solicited-node 组**（[multicast.rs:176](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)），与用户组播共用同一张 `LinearMap`；默认容量 4 会被 NDP 挤占 → 增配 `iface-max-multicast-group-count-8`，并令 `MC_MAX_GROUPS = 8` 与 `IFACE_MAX_MULTICAST_GROUP_COUNT` 单点对齐（编译期 `const assert` + host-test 双向断言锁定）。
+  1. smoltcp 组播整模块（`iface/interface/multicast.rs`，含 `MulticastError` re-export 与 `join/leave_multicast_group`）**整体受 `multicast` feature 门控**。本仓原 feature 集未启用 → 该 API 在启用前根本不参与编译，DECISION-091 「经 `join_multicast_group` 实装」与 D11 「仅补组管理入口」的表述在彼时不成立。已启用 `multicast`（[Cargo.toml:67](../../../src/kernel/Cargo.toml)）。
+  2. 启用后 smoltcp 会在 `update_ip_addrs` 路径为 IPv6 **自动 join solicited-node 组**（[multicast.rs:176](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)），与用户组播共用同一张 `LinearMap`；默认容量 4 会被 NDP 挤占 → 增配 `iface-max-multicast-group-count-8`，并令 `MC_MAX_GROUPS = 8` 与 `IFACE_MAX_MULTICAST_GROUP_COUNT` 单点对齐（编译期 `const assert` + host-test 双向断言锁定）。
   3. `Interface` 组表**不记录成员归属**：直接透传 setsockopt 会使任一 socket 退组即对整个接口拆组。补 per-socket 引用计数是本项主体，原方案未识别该缺口。
-  - 接收侧零改动：e1000 已置 `RCTL_MPE|BAM|UPE`（NIC 不过滤组播）；smoltcp IPv4 RX 放行条件含 `has_multicast_group`（[ipv4.rs:191](../../src/kernel/functions/net/smoltcp/src/iface/interface/ipv4.rs)）；`udp::Socket::accepts` 对组播 dst 豁免地址匹配（只看端口）→ `bind 0.0.0.0:port` 即可收；`has_multicast_group` 对 `Joining` 即返回 true，join 后无需等 IGMP 状态机收敛。
-  - 出向侧：`multicast_egress`（[multicast.rs:186](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）在下一次 `iface.poll` 对每个 `Joining` 组发 IGMPv2 Report（dst = 该组）、对 `Leaving` 发 Leave（dst = 224.0.0.2）。
+  - 接收侧零改动：e1000 已置 `RCTL_MPE|BAM|UPE`（NIC 不过滤组播）；smoltcp IPv4 RX 放行条件含 `has_multicast_group`（[ipv4.rs:191](../../../src/kernel/functions/net/smoltcp/src/iface/interface/ipv4.rs)）；`udp::Socket::accepts` 对组播 dst 豁免地址匹配（只看端口）→ `bind 0.0.0.0:port` 即可收；`has_multicast_group` 对 `Joining` 即返回 true，join 后无需等 IGMP 状态机收敛。
+  - 出向侧：`multicast_egress`（[multicast.rs:186](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs)）在下一次 `iface.poll` 对每个 `Joining` 组发 IGMPv2 Report（dst = 该组）、对 `Leaving` 发 Leave（dst = 224.0.0.2）。
   - 次序铁律（join 先簿记后 iface、iface 失败必 `mc_unjoin` 回滚；leave 先簿记、仅归零才 iface leave 且**不回滚**；close 先 `mc_addr_at` 后 `mc_force_leave`）由 host-tests 位置断言锁定。
 - **SIMPLIFIED**：`ip_mreq.imr_interface` / `ipv6mr_interface` 被忽略; 本内核单网络接口, 无法按网卡指定成员; 接入第二个网络接口时需按接口维度扩展组表。
 - **验证**：`mcast.rs` 内联单测 10 例（引用计数全分支）+ host-tests 接线契约 11 例（feature 前提 / 容量对齐 / ABI 常量内核-userlib 一致 / setsockopt 路由 / 次序铁律 / close 取址顺序 / copy-in 容量）+ QEMU 十条里程碑（`scripts/qemu_mcast_test.sh`：IPv4 JOIN/DUP/RX/DROP/NOENT + IPv6 JOIN6/LEVEL/DROP6 + 宿主观测 IGMP Report/Leave）。
@@ -392,18 +392,18 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 | 需要能力 | smoltcp 公开 API | 位置 |
 |---|---|---|
-| TCP 监听 | `tcp::Socket::listen` | [tcp.rs:942](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 发起连接 | `tcp::Socket::connect` | [tcp.rs:1013](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 关闭/中止 | `close` / `abort` | [tcp.rs:1084](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:1114](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 状态 | `state` / `is_active` / `is_open` / `is_listening` | [tcp.rs:900](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1138](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1159](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1122](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 收发 | `send_slice` / `recv_slice` | [tcp.rs:1295](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:1359](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 端点 | `local_endpoint` / `remote_endpoint` / `listen_endpoint` | [tcp.rs:888](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [894](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [882](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| TCP 可读可写 | `may_recv` / `may_send` / `can_recv` / `can_send` | [tcp.rs:1197](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1178](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1234](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1212](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| Nagle / 保活 / 超时 | `set_nagle_enabled` / `set_keep_alive` / `set_timeout` | [tcp.rs:821](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [844](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [798](../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
-| UDP 绑定/关闭 | `bind` / `close` | [udp.rs:217](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:239](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
-| UDP 收发 | `send_slice` / `recv_slice` | [udp.rs:375](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:408](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
-| UDP 端点/元数据 | `endpoint` / `UdpMetadata` | [udp.rs:181](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:16](../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
-| 组播（D11） | `join_multicast_group` / `leave_multicast_group` | [multicast.rs:104](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) |
+| TCP 监听 | `tcp::Socket::listen` | [tcp.rs:942](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 发起连接 | `tcp::Socket::connect` | [tcp.rs:1013](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 关闭/中止 | `close` / `abort` | [tcp.rs:1084](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:1114](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 状态 | `state` / `is_active` / `is_open` / `is_listening` | [tcp.rs:900](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1138](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1159](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1122](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 收发 | `send_slice` / `recv_slice` | [tcp.rs:1295](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [tcp.rs:1359](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 端点 | `local_endpoint` / `remote_endpoint` / `listen_endpoint` | [tcp.rs:888](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [894](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [882](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| TCP 可读可写 | `may_recv` / `may_send` / `can_recv` / `can_send` | [tcp.rs:1197](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1178](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1234](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [1212](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| Nagle / 保活 / 超时 | `set_nagle_enabled` / `set_keep_alive` / `set_timeout` | [tcp.rs:821](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [844](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) / [798](../../../src/kernel/functions/net/smoltcp/src/socket/tcp.rs) |
+| UDP 绑定/关闭 | `bind` / `close` | [udp.rs:217](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:239](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
+| UDP 收发 | `send_slice` / `recv_slice` | [udp.rs:375](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:408](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
+| UDP 端点/元数据 | `endpoint` / `UdpMetadata` | [udp.rs:181](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) / [udp.rs:16](../../../src/kernel/functions/net/smoltcp/src/socket/udp.rs) |
+| 组播（D11） | `join_multicast_group` / `leave_multicast_group` | [multicast.rs:104](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) / [multicast.rs:130](../../../src/kernel/functions/net/smoltcp/src/iface/interface/multicast.rs) |
 
 **唯三会破零修改门禁之处，均属排除项**：
 
@@ -440,10 +440,10 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - **F9 死代码零容忍**：D1/D2/D10/D11 引入的表、分配器与选项分支必须有真实使用路径；若某分期暂不落地，不得先加"预留"字段或函数。
 - **F1/F2 边界**：核心改动落 privileged（`sm_fi.rs` / `syscall.rs` / `raw.rs` / `state.rs` / `net_socket.rs` / `wait_queue.rs`）；functions 侧改动（`file_ops.rs` / `io.rs` / `socket.rs`）**不**引入 unsafe。
 - **F4 SAFETY 注释**：新增 `unsafe` 块（sockopt 指针解引用、`sm_socket_poll` 的 socket 访问、索引交换）须 100% 配 `// SAFETY:`。
-- **net_socket.rs 桩同步**：每个新增 `sm_*`（`sm_shutdown` / `sm_socket_poll`）须在 kernel_test 桩模块（[net_socket.rs:30](../../src/kernel/privileged/net_socket.rs)）镜像同名桩，签名对齐。
+- **net_socket.rs 桩同步**：每个新增 `sm_*`（`sm_shutdown` / `sm_socket_poll`）须在 kernel_test 桩模块（[net_socket.rs:30](../../../src/kernel/privileged/net_socket.rs)）镜像同名桩，签名对齐。
 - **smoltcp 零修改**：由 `audit_smoltcp_purity.py` 与 `SMOLTCP_LOCAL_SRC_HASH` 机器化保证；排除项（精确 `SO_ERROR` / `ECONNREFUSED`）若未来纳入须重新评估门禁。
-- **并行旁路一致性**：`functions/net/smoltcp_impl.rs` 的 `bind_fd` / `listen_fd` / `accept_fd` / `connect_fd`（[smoltcp_impl.rs:258-310](../../src/kernel/functions/net/smoltcp_impl.rs)）为另一条调用路径，本轮以 `sm_fi.rs` 为主线；两路径语义差异须在实施时核对，避免分裂。
-- **init.rs 陈旧注释**：`init.rs:677-686` 注释含过时数值（"MAX_SOCKETS=1024"），实际 `MAX_SOCKETS = 256`（[sockets.rs:17](../../src/kernel/privileged/net/init/sockets.rs)）、`TOTAL_SLOTS = 512`（[init.rs:686](../../src/kernel/privileged/net/init.rs)）；D1 落地时一并修正。
+- **并行旁路一致性**：`functions/net/smoltcp_impl.rs` 的 `bind_fd` / `listen_fd` / `accept_fd` / `connect_fd`（[smoltcp_impl.rs:258-310](../../../src/kernel/functions/net/smoltcp_impl.rs)）为另一条调用路径，本轮以 `sm_fi.rs` 为主线；两路径语义差异须在实施时核对，避免分裂。
+- **init.rs 陈旧注释**：`init.rs:677-686` 注释含过时数值（"MAX_SOCKETS=1024"），实际 `MAX_SOCKETS = 256`（[sockets.rs:17](../../../src/kernel/privileged/net/init/sockets.rs)）、`TOTAL_SLOTS = 512`（[init.rs:686](../../../src/kernel/privileged/net/init.rs)）；D1 落地时一并修正。
 
 ---
 
@@ -564,15 +564,15 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 - **描述**：P6 收尾复跑门槛#6（`scripts/qemu_boot_test.sh x86_64`）时出现非确定性失败：宿主 `recv` 5s 超时、guest `accept` 计数缺失。排查过程中先后提出三个假设（“x86_64 egress 无独立驱动源”“NIC 静默掉帧”“close 丢弃未发出数据”），前两个经对照实验证伪；同时 `sm_close` 存在一个与该抖动**正交**的真实 POSIX 语义缺口：`sock.close()` 与 `sockets.remove(handle)` 之间没有任何 egress 推进点，smoltcp 缓冲区里的尾包与 FIN 随 socket 销毁一并作废，对端只能等自己的超时才察觉连接消失。
 - **裁定**：
-  1. **close 三步序**：`sm_close` 改为 `close()` 发起 → `raw::smoltcp_net_stack_poll()` 排空 → `sockets.remove(handle)`（[sm_fi.rs:1768-1790](../../src/kernel/privileged/net/init/sm_fi.rs)）。排空点必须落在 `close()` **之后**而非之前——唯一能把 FIN 送上线的位置就是“socket 仍在集内且已置关闭态”的那一次 poll；置于 remove 之后则 socket 已销毁、无包可发。该调用在 `NET_STATE` 临界区内，与 tick 的 `poll_network` 同口径且不重入锁。
-  2. **不充当抖动解药**：单变量 A/B（1s 探针窗口下，有排空 4/4 通过 vs 无排空 8/8 通过）表明排空对抖动无贡献；抖动的触发变量是 `src/user/init` 组播探针的有界重试窗口（6s：2/13 通过；1s：12/12 通过），当时根因未定，已单独立项 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md)。**后续订正**：该根因已定论为 CFS 时基背离 + 运行队列记账泄漏（见 DECISION-099），探针窗口只是放大器。
-  3. **订正两条失实论断**（详见该 plan §1 D3/D4）：① “egress 无独立驱动源”——x86_64 每个 PIT tick（1000Hz，[timer/irq.rs:30-45](../../src/kernel/privileged/timer/irq.rs)）都调 `poll_network`，aarch64 同构；该误判源于一次被 `head -20` 截断的 grep，归因类搜索不得截断输出。② “NIC 静默掉帧”——在驱动发送口加计数后 25 轮（含全部失败轮）TX 失败恒为 0；`TxToken::consume` 丢弃返回值属实，但属可观测性缺口而非本次故障因。
+  1. **close 三步序**：`sm_close` 改为 `close()` 发起 → `raw::smoltcp_net_stack_poll()` 排空 → `sockets.remove(handle)`（[sm_fi.rs:1768-1790](../../../src/kernel/privileged/net/init/sm_fi.rs)）。排空点必须落在 `close()` **之后**而非之前——唯一能把 FIN 送上线的位置就是“socket 仍在集内且已置关闭态”的那一次 poll；置于 remove 之后则 socket 已销毁、无包可发。该调用在 `NET_STATE` 临界区内，与 tick 的 `poll_network` 同口径且不重入锁。
+  2. **不充当抖动解药**：单变量 A/B（1s 探针窗口下，有排空 4/4 通过 vs 无排空 8/8 通过）表明排空对抖动无贡献；抖动的触发变量是 `src/user/init` 组播探针的有界重试窗口（6s：2/13 通过；1s：12/12 通过），当时根因未定，已单独立项 [net-e2e-tcp-echo-flakiness.md](../net-e2e-tcp-echo-flakiness.md)。**后续订正**：该根因已定论为 CFS 时基背离 + 运行队列记账泄漏（见 DECISION-099），探针窗口只是放大器。
+  3. **订正两条失实论断**（详见该 plan §1 D3/D4）：① “egress 无独立驱动源”——x86_64 每个 PIT tick（1000Hz，[timer/irq.rs:30-45](../../../src/kernel/privileged/timer/irq.rs)）都调 `poll_network`，aarch64 同构；该误判源于一次被 `head -20` 截断的 grep，归因类搜索不得截断输出。② “NIC 静默掉帧”——在驱动发送口加计数后 25 轮（含全部失败轮）TX 失败恒为 0；`TxToken::consume` 丢弃返回值属实，但属可观测性缺口而非本次故障因。
 - **SIMPLIFIED**：① 排空只覆盖 close 路径，`send`/`sendto` 后不关闭的 egress 推进仍完全依赖 1ms tick 空转（`SmoltcpNetStack::poll_at()` 恒 `None`，未接 hrtimer，见新 plan §3 S-3）；② 一次 poll 未必能送完全部尾包（受 `max_burst_size` 与拥塞窗口限制），未做“排空至 socket 无待发数据”的循环——当前 e2e 载荷 15 字节，单轮足够。
-- **状态**：[X]（三步序落地 + 探针窗口 20 轮(1s) + 最终态 6/6 通过；抖动的 S-1–S-5 已由 DECISION-099 与 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) 收敛，仅 S-3（`poll_at`→hrtimer，用户裁定本轮不做）与新立的 S-6（构建产物架构污染）为 `[]`）
+- **状态**：[X]（三步序落地 + 探针窗口 20 轮(1s) + 最终态 6/6 通过；抖动的 S-1–S-5 已由 DECISION-099 与 [net-e2e-tcp-echo-flakiness.md](../net-e2e-tcp-echo-flakiness.md) 收敛，仅 S-3（`poll_at`→hrtimer，用户裁定本轮不做）与新立的 S-6（构建产物架构污染）为 `[]`）
 
 ### DECISION-099: e2e TCP 回显抖动根治 —— CFS 单时基模型（IC1-IC5）
 
-- **描述**：[net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) 登记的抖动（宿主 `recv` 5s 超时 / guest `accept` 计数缺失；修复前 `E2E_REPEATS=20` 基线 1/20 失败）经 `-object filter-dump` 抓包**证伪“slirp 入向丢帧”**后，插桩定位到 **CFS 调度器**而非网络栈：① 旧 `CfsRunQueue::enqueue` 只把树键钳到 `min_vruntime` 附近而**不回写** `Process::cfs_vruntime`，使“运行中的任务”与“树上的任务”分属两个时间域并可无界发散（实测 `curr vr=45 / floor=5152`），`cfs_should_preempt` 的 `saturating_sub` 把负差压成 0 ⇒ 恒不置 `need_reschedule` ⇒ 该核上的 Ready 任务饿死 4~10 s；② 并行计数器 `nr_running` 与红黑树背离（实测 `nr=108 / tree=0`），使 `is_empty()` 与抢占判据同时失真，树上的任务变成“隐形饥饿”。二者叠加即抖动 —— 属**时基与记账的模型缺陷**，调参（放宽超时 / 加大粒度 / 加特判唤醒）均无效。
+- **描述**：[net-e2e-tcp-echo-flakiness.md](../net-e2e-tcp-echo-flakiness.md) 登记的抖动（宿主 `recv` 5s 超时 / guest `accept` 计数缺失；修复前 `E2E_REPEATS=20` 基线 1/20 失败）经 `-object filter-dump` 抓包**证伪“slirp 入向丢帧”**后，插桩定位到 **CFS 调度器**而非网络栈：① 旧 `CfsRunQueue::enqueue` 只把树键钳到 `min_vruntime` 附近而**不回写** `Process::cfs_vruntime`，使“运行中的任务”与“树上的任务”分属两个时间域并可无界发散（实测 `curr vr=45 / floor=5152`），`cfs_should_preempt` 的 `saturating_sub` 把负差压成 0 ⇒ 恒不置 `need_reschedule` ⇒ 该核上的 Ready 任务饿死 4~10 s；② 并行计数器 `nr_running` 与红黑树背离（实测 `nr=108 / tree=0`），使 `is_empty()` 与抢占判据同时失真，树上的任务变成“隐形饥饿”。二者叠加即抖动 —— 属**时基与记账的模型缺陷**，调参（放宽超时 / 加大粒度 / 加特判唤醒）均无效。
 - **裁定**：重构为单时基模型，五条不变式从构造上封死历史上造成秒级饿死的背离路径：
   1. **IC1 单一时基**：`enqueue` 返回钳制后的落点（`placement()` = `vr.max(floor - CFS_MIN_GRANULARITY)`），调用方**必须**回写 `Process::cfs_vruntime`；scheduler 侧收敛为唯一投递入口 `cfs_enqueue_to`（新建 / 唤醒 / 迁入 / 抢占回落四条路全部经它），tick 对运行中的任务同样走 `placement` 兜底。
   2. **IC2 结构即真相**：删除 `nr_running`，`is_empty()`/`len()` 一律取自 `tree`；`total_weight` 依记账凭证精确加减，树内移动（`pick_next`/`requeue`）不动账。
@@ -580,7 +580,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
   4. **IC4 可运行集 = 树**：阻塞 / 不可重排即 `cfs_deactivate` 出队并撤账；`pick_next` 摘除的节点记账随迁到“上核运行”态；`load_balance` 迁移时记账随任务同步搬移，投递仍走 `cfs_enqueue_to`。
   5. **IC5 相对次序不被抹掉**：删除周期性整树折叠 `boost_all_vruntime`。
   6. **记账凭证**：`Process::cfs_on_rq`（语义同 Linux `on_rq`：处于可运行记账中，上核运行期间仍为 `true`），使 `enqueue`/`deactivate` 天然**幂等**，重复调用不二次加减权重；`unblock` 的 `need_enqueue` 判据取自状态 + 凭证，避免“已在树里再入一次”。
-  7. **锁序与抢占口径不变**：仍只允许 `cfs_rq → PROCESS_TABLE`；抢占判定改为**同域比较**（当前任务 vruntime vs 树最左键，见 [ref-lock-order.md](../explain/ref-lock-order.md)）。
+  7. **锁序与抢占口径不变**：仍只允许 `cfs_rq → PROCESS_TABLE`；抢占判定改为**同域比较**（当前任务 vruntime vs 树最左键，见 [ref-lock-order.md](../../explain/ref-lock-order.md)）。
 - **SIMPLIFIED**：① floor 只由**本核 tick** 推进，空闲核的 floor 可落后于全局——迁入任务由 `placement` 钳制吸收，容差上界即 `CFS_MIN_GRANULARITY`（8 tick，用户裁定），未做跨核时基同步；② `total_weight` 依赖调用方传入的 weight 与凭证，将来若引入运行时 nice 调整需同步加减路径（当前 nice 仅创建时设定）；③ 抢占切片用固定 `CFS_MIN_GRANULARITY`/`CFS_TARGET_LATENCY` 常量，未按负载自适应缩放。
 - **状态**：[X]（`cfs.rs` 单时基 API + `scheduler.rs` 七处调用点收敛 + `cfs.rs` 内联单测重写 + `host-tests/tests/cfs_single_time_base_test.rs` 五条不变式接线契约；抖动门禁 `E2E_REPEATS=20` 由 1/20 失败转 **20/20 通过**；验收期间另发现构建产物跨架构污染缺陷（曾伪装成本轮改动引入的确定性回归），登记为该 plan 的 S-6）
 
@@ -588,18 +588,18 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 
 ## 关联文档
 
-- [docs/explain/explain-framekernel.md](../explain/explain-framekernel.md) — framekernel 架构与 privileged/functions 边界
-- [docs/plan/ipv6-dual-stack.md](./ipv6-dual-stack.md) — IPv4/IPv6 双栈改造（DECISION-032），本计划的前置抽象层
-- [src/kernel/privileged/net/init/sm_fi.rs](../../src/kernel/privileged/net/init/sm_fi.rs) — FFI 实现层（TCP/UDP 缺口集中地）
-- [src/kernel/privileged/net/syscall.rs](../../src/kernel/privileged/net/syscall.rs) — 网络系统调用分发层
-- [src/kernel/privileged/net/init/state.rs](../../src/kernel/privileged/net/init/state.rs) — `NetState` 统一状态结构
-- [src/kernel/privileged/net/init/raw.rs](../../src/kernel/privileged/net/init/raw.rs) — 集中 static mut 访问与槽位 accessor
-- [src/kernel/privileged/net/wait_queue.rs](../../src/kernel/privileged/net/wait_queue.rs) — per-fd 等待队列
-- [src/kernel/privileged/net/mcast.rs](../../src/kernel/privileged/net/mcast.rs) — 组播成员引用计数簿记层（DECISION-097）
-- [docs/plan/net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) — TCP 回显 e2e 抖动（根因：CFS 时基背离 + 运行队列记账泄漏，DECISION-098 派生、DECISION-099 根治）
-- [scripts/qemu_mcast_test.sh](../../scripts/qemu_mcast_test.sh) — 组播端到端联调（注入器 + 十条里程碑断言）
-- [src/kernel/functions/net/smoltcp_impl.rs](../../src/kernel/functions/net/smoltcp_impl.rs) — functions 侧并行 socket 实现
-- [src/kernel/functions/fs/file_ops.rs](../../src/kernel/functions/fs/file_ops.rs) — `poll` / `ppoll` 系统调用路径
+- [docs/explain/explain-framekernel.md](../../explain/explain-framekernel.md) — framekernel 架构与 privileged/functions 边界
+- [docs/plan/ipv6-dual-stack.md](../ipv6-dual-stack.md) — IPv4/IPv6 双栈改造（DECISION-032），本计划的前置抽象层
+- [src/kernel/privileged/net/init/sm_fi.rs](../../../src/kernel/privileged/net/init/sm_fi.rs) — FFI 实现层（TCP/UDP 缺口集中地）
+- [src/kernel/privileged/net/syscall.rs](../../../src/kernel/privileged/net/syscall.rs) — 网络系统调用分发层
+- [src/kernel/privileged/net/init/state.rs](../../../src/kernel/privileged/net/init/state.rs) — `NetState` 统一状态结构
+- [src/kernel/privileged/net/init/raw.rs](../../../src/kernel/privileged/net/init/raw.rs) — 集中 static mut 访问与槽位 accessor
+- [src/kernel/privileged/net/wait_queue.rs](../../../src/kernel/privileged/net/wait_queue.rs) — per-fd 等待队列
+- [src/kernel/privileged/net/mcast.rs](../../../src/kernel/privileged/net/mcast.rs) — 组播成员引用计数簿记层（DECISION-097）
+- [docs/plan/net-e2e-tcp-echo-flakiness.md](../net-e2e-tcp-echo-flakiness.md) — TCP 回显 e2e 抖动（根因：CFS 时基背离 + 运行队列记账泄漏，DECISION-098 派生、DECISION-099 根治）
+- [scripts/qemu_mcast_test.sh](../../../scripts/qemu_mcast_test.sh) — 组播端到端联调（注入器 + 十条里程碑断言）
+- [src/kernel/functions/net/smoltcp_impl.rs](../../../src/kernel/functions/net/smoltcp_impl.rs) — functions 侧并行 socket 实现
+- [src/kernel/functions/fs/file_ops.rs](../../../src/kernel/functions/fs/file_ops.rs) — `poll` / `ppoll` 系统调用路径
 
 ---
 
@@ -613,7 +613,7 @@ Edgine 网络栈已通过 [ipv6-dual-stack.md](./ipv6-dual-stack.md)（DECISION-
 - P5d（EINTR + 超时）完成：wait_queue 增 `waiter_deadline` 死线维度 + `collect_expired`（非破坏）+ `poll_network` 每-tick 死线扫描（机制 B，共用出临界区 unblock 路，不增唤醒源）+ per-slot `recv/send_timeout_ns` + 6 阻塞循环三退出（`-EINTR`/`-EAGAIN`/connect `-EINPROGRESS`）+ `MSG_DONTWAIT` + `SO_RCVTIMEO`/`SO_SNDTIMEO` sockopt（16 字节 `struct timeval`，syscall 层改长度感知 marshalling）（DECISION-096）。P5 全四子轮完成，分期状态改 `[X]`。
 - P5 收口后 §9.2 文档-代码同步：D6（accept 先建后换，P3 已落地）、D10（阻塞睡眠，P5a–P5d 已落地）本体状态由 `[]` 改 `[X]`；U9（UDP 错误映射，与 G8 同实现路径）改 `[X]`。本 plan 剩余未实施项仅 D11 / P6（组播）。
 - P6（组播）完成：新增 `mcast.rs` per-socket 引用计数簿记层 + `mc_membership` 编排入口（四个组播 sockopt 选项，Linux ABI）+ `sm_close` 逐位拆离 + syscall copy-in 16→20 字节 + 启用 smoltcp `multicast` feature 与 `iface-max-multicast-group-count-8`（DECISION-097，含对 DECISION-091 三处事实误判的订正与 `IPPROTO_IPV6` ABI 错值订正）。D11 与 P6 状态改 `[X]`，本 plan 全部条目收敛。新增 `scripts/qemu_mcast_test.sh` 组播端到端脚本（十条里程碑）。
-- P6 门槛复跑期间派生 DECISION-098：`sm_close` 改「close → 排空 → remove」三步序（补 FIN 与尾包上线的 POSIX 语义缺口）；同时以单变量 A/B 订正先前的两项错误归因（egress 无驱动源 / NIC 静默掉帧）并把未定根因的 e2e 入向抖动移交 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md)。
+- P6 门槛复跑期间派生 DECISION-098：`sm_close` 改「close → 排空 → remove」三步序（补 FIN 与尾包上线的 POSIX 语义缺口）；同时以单变量 A/B 订正先前的两项错误归因（egress 无驱动源 / NIC 静默掉帧）并把未定根因的 e2e 入向抖动移交 [net-e2e-tcp-echo-flakiness.md](../net-e2e-tcp-echo-flakiness.md)。
 - 抖动工程收敛（DECISION-099）：`filter-dump` 抓包再证伪一条假设（“slirp 入向丢帧”），插桩把根因定在 **CFS 时基背离 + `nr_running` 记账泄漏**；据此按 IC1-IC5 单时基模型根治调度器，抖动门禁 `E2E_REPEATS=20` 由 1/20 失败转 20/20 通过。该 plan 改名 `net-e2e-tcp-inbound-flakiness.md` → `net-e2e-tcp-echo-flakiness.md` 并按核实事实重写；附带 S-2（TX 掉帧计数）/ S-4（去 `FLUSH_MS` 用户态兜底）/ S-5（`E2E_REPEATS` 门禁口）落地，S-3（`poll_at`→hrtimer）按用户裁定本轮不做，新立 S-6（`other/build/user/*.bin` 跨架构原地覆盖致 `ci/build.sh all` 产出嵌 aarch64 用户态的 x86_64 镜像且 rc=0）；S-6 已按用户裁定以三条防线收敛（产物按架构分目录 `other/build/<arch>/user/` + 内核 `EXPECTED_E_MACHINE` 严格校验 + QEMU 前 `scripts/verify_image_arch.py` fail-fast），取证见该 plan §5 实施记录。
 - P6 收尾轮消解四项预存问题（§9.2）：① 用户态 `MSG_DONTWAIT` ABI 错值 `0x80` 订正为 `0x40`（与 `sm_fi.rs` / `functions/net/syscall.rs` 内核侧一致），并在 `host-tests/tests/socket_wait_queue_test.rs` 加 `msg_dontwait_abi_single_value` 文本锁三侧单值防再漂移；② `smoltcp.versions` 的 `SMOLTCP_SHA` 由 `PENDING_NETWORK` 占位回填为上游 `v0.14.0` tag 的 commit SHA，`audit_smoltcp_purity.py` 由 fail 转 pass 且自验证锁值与上游一致；③ `src/user/{lib,init}` 两个 crate 的 rustfmt 漂移收口（其余 7 个 user crate 仍漂移，未在本轮范围）；④ `scripts/qemu_mcast_test.sh` 构建步由裸 `make` 改走 `./ci/build.sh x86_64`（跨架构中间产物戳串行修复），并避免无 `pipefail` 下的管道吞码。另登记一项**判定为非缺陷**：acpi/sync 处 `clippy::used_underscore_binding` 的 `#[expect]` 在 CI 规范命令（带 `-D clippy::pedantic`）下已 fulfilled，仅 ad-hoc `-D warnings`（不开 pedantic）会报 unfulfilled，删除反而破坏 CI。
 

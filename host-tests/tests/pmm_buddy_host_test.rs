@@ -10,7 +10,7 @@
 //! 2. 内核保留区防护: 分配不得落入 [0, `KERNEL_END`) 内核保留区
 //! 3. buddy 合并: order-9 块 free 后再分配同大小块成功 (验证合并正确)
 //! 4. `reserve_after_kernel`: `init_bitmap` 预留区不可被分配
-//! 5. 帧持有计数语义 (cr3 所有权, `docs/plan/cr3-lifetime-ownership.md` §3.1/§5.6):
+//! 5. 帧持有计数语义 (cr3 所有权, `docs/plan/archive/cr3-lifetime-ownership.md` §3.1/§5.6):
 //!    alloc 置 1、inc/dec 配对、归零恰好一次、未归零不归还、未计数帧拒绝登记、
 //!    `should_reuse` 判据边界 (§8.1)、pfn 越界 fail-closed (MMIO 地址)
 //! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
@@ -97,7 +97,7 @@ fn pmm_reserve_after_kernel_respected() {
     assert!(allocs > 0, "预留区之外应仍可分配");
 }
 
-// ---- 帧持有计数语义 (cr3-lifetime-ownership.md §3.1) ----
+// ---- 帧持有计数语义 (docs/plan/archive/cr3-lifetime-ownership.md §3.1) ----
 // 计数面: 0 = 未计数帧, n >= 1 = n 个持有者. 唯一销毁/归还判据是"计数归零".
 
 #[test]

@@ -163,7 +163,7 @@ jobs:
   # ========================================================================
   # Job 4: 内核 host 侧单元测试 (AGENTS.md §2.3 第 6 条门槛)
   # 源文件 `#[cfg(test)]` 内联用例: 由 cargo 自动发现, 无手工注册负担
-  # (与 kernel_test 注册表轨并存, 见 docs/plan/kernel-unit-test-harness-unification.md).
+  # (与 kernel_test 注册表轨并存, 见 docs/plan/archive/kernel-unit-test-harness-unification.md).
   # target-dir 由 src/kernel/.cargo/config.toml 指向 other/target, 故缓存该目录.
   # 实测耗时: 冷编译约 20s + 运行约 20s.
   # ========================================================================

@@ -549,7 +549,7 @@ fn test_count_present_user_pages() -> TestResult {
 }
 
 // ============================================================
-// 帧持有计数: COW 语义 (cr3-lifetime-ownership.md §8.1)
+// 帧持有计数: COW 语义 (docs/plan/archive/cr3-lifetime-ownership.md §8.1)
 // ============================================================
 
 /// COW 测试公共前置: 新建用户页表 + 映射一页 (以 `COW_TEST_BYTE` 填充).
@@ -778,7 +778,7 @@ fn test_cow_unique_mapping_fault_reuses_frame() -> TestResult {
 }
 
 // ============================================================
-// 拆除 / 改权限的目标页表正确性 (munmap-protect-pml4.md)
+// 拆除 / 改权限的目标页表正确性 (docs/plan/archive/munmap-protect-pml4.md)
 // ============================================================
 
 /// host-test 无 PMM/VMM 初始化 → 跳过 (依赖裸机页表与物理页)
@@ -956,7 +956,7 @@ fn test_mprotect_targets_user_table() -> TestResult {
 }
 
 // ============================================================
-// 帧句柄语义: Clone/Drop 与 PMM 持有计数配对 (cr3-lifetime-ownership.md §8.3)
+// 帧句柄语义: Clone/Drop 与 PMM 持有计数配对 (docs/plan/archive/cr3-lifetime-ownership.md §8.3)
 // ============================================================
 
 /// host-test 无 PMM 初始化 → 跳过 (帧归还面在 PMM 侧)
@@ -1071,7 +1071,7 @@ fn test_frame_dma_buffer_raii_release() -> TestResult {
 
 // ============================================================
 // pcache 文件页缓存: 引用登记与映射生命周期对齐
-// 立项与裁定见计划文档 docs/plan/pcache-frame-ownership.md
+// 立项与裁定见计划文档 docs/plan/archive/pcache-frame-ownership.md
 // ============================================================
 
 /// pcache 测试用虚拟地址 (低半区, 页对齐)

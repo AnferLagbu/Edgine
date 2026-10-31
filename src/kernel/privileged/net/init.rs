@@ -171,7 +171,7 @@ unsafe fn process_dhcp_events(_sockets: &mut SocketSet<'_>) {
             for (i, slot) in G_DNS.iter().enumerate() {
                 slot.store(u32::from_be_bytes(dns[i]), Ordering::Release);
             }
-            // S2 DNS 接线 (net-feature-alignment.md): 租约 server 同步进 dns::Socket.
+            // S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): 租约 server 同步进 dns::Socket.
             // SIMPLIFIED: Idle (租约丢失) 时 servers 保留旧值直至下次 Bound 刷新;
             //   影响面: 租约丢失窗口内查询因 iface 不可达自然超时返 None;
             //   何时扩展: DHCP 重新配置语义需要清场时.
@@ -663,7 +663,7 @@ fn net_init_open_sockets() {
     let handle = sockets.add(dhcp_socket);
     raw::set_dhcp_handle(Some(handle));
 
-    // S2 DNS 客户端接线 (net-feature-alignment.md): 注册 smoltcp dns::Socket.
+    // S2 DNS 客户端接线 (docs/plan/archive/net-feature-alignment.md): 注册 smoltcp dns::Socket.
     // smoltcp 未启 alloc feature → 查询槽表须由外部借出定长数组;
     // Box::leak 取 'static (同 sockets.rs::socket_storage 的堆分配先例).
     // servers 初始为空, 由 DHCP Bound / static fallback 经 apply_dns_servers 注入.
@@ -765,7 +765,7 @@ fn net_init_register() {
         net_tx_softirq_handler,
     );
 
-    // S2 DNS 接线 (net-feature-alignment.md): 实机验证钩子 —— feature 门控,
+    // S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): 实机验证钩子 —— feature 门控,
     // KERNEL_FEATURES=dns-selftest 点亮 (仿 lockdep 诊断 feature 先例).
     // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
     #[cfg(feature = "dns-selftest")]

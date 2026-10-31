@@ -4,7 +4,7 @@
 //! `parse_ipv4_literal`. 抽出为独立子模块后, init.rs 通过
 //! `pub use dns::*` re-export.
 //!
-//! S2 (net-feature-alignment.md): `dns_resolve` 升级为三级解析 —— IPv4 字面量
+//! S2 (docs/plan/archive/net-feature-alignment.md): `dns_resolve` 升级为三级解析 —— IPv4 字面量
 //! → 静态 hosts → smoltcp `dns::Socket` 真实查询 (阻塞有界等待). 未初始化/
 //! 无 server/查询失败均回退 `None`, 旧输入族的既有语义逐字保持.
 
@@ -77,7 +77,7 @@ pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
     if let Some(ip) = parse_ipv4_literal(name) {
         return Some(ip);
     }
-    // 第三级: 真实 DNS 查询 (S2, net-feature-alignment.md)
+    // 第三级: 真实 DNS 查询 (S2, docs/plan/archive/net-feature-alignment.md)
     dns_query_net(name)
 }
 

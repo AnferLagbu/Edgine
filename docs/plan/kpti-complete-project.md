@@ -66,7 +66,7 @@
 
 - **KPTI-13. EL1 视图（方案 S3）**
   - 描述：全切换模型下 EL0 与 EL1 使用不同 `TTBR0`。EL0 视图只含用户映射（Meltdown 面最小），但内核态必须**同时**看见内核镜像与用户页——`copy_from_user` / `UserReadPtr` 直接解引用用户裸指针（`userptr.rs`，不做页表遍历），地址空间缺映射即翻译故障。故需为每进程维护一份 EL1 专用视图。
-  - 方案：路线 = 方案 A，per-process 双视图：**EL1 视图 = 用户半区 ∪ 内核恒等**（内核恒等部分 **L1-05 已移除**，见下）；**EL0 视图 = 用户 + 内核栈顶页（EL1-only）**（栈顶页 **L1-03b 已移除**——入口改为先切两条 TTBR 再压帧，栈页不进任何 EL0 可见页表）。EL1 视图结构取 **S3**：内核 MMIO 统一走 TTBR1 高别名 ⇒ EL1 视图**刻意不含 Device 段**，其 L2/L3 与用户表**零同步共享**，每进程仅 +2 页（`L0_el1` + `L1_el1`）：`L0_el1[0]→L1_el1`、`L0_el1[170]/[255]` 与用户表同值、`L1_el1[0]→L2_u`（与用户视图同一页 ⇒ 用户页 map/unmap 对两侧同时生效）。**`L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 DRAM 1 GiB 块曾用于内核镜像/数据/BSS/内核栈（VA 1-2 GiB）可达；L1-05 已移除** —— 内核迁移到高半区后经 `TTBR1` 可达，EL1 视图只承载用户页（见 [aarch64-high-half-migration.md](./aarch64-high-half-migration.md)）。
+  - 方案：路线 = 方案 A，per-process 双视图：**EL1 视图 = 用户半区 ∪ 内核恒等**（内核恒等部分 **L1-05 已移除**，见下）；**EL0 视图 = 用户 + 内核栈顶页（EL1-only）**（栈顶页 **L1-03b 已移除**——入口改为先切两条 TTBR 再压帧，栈页不进任何 EL0 可见页表）。EL1 视图结构取 **S3**：内核 MMIO 统一走 TTBR1 高别名 ⇒ EL1 视图**刻意不含 Device 段**，其 L2/L3 与用户表**零同步共享**，每进程仅 +2 页（`L0_el1` + `L1_el1`）：`L0_el1[0]→L1_el1`、`L0_el1[170]/[255]` 与用户表同值、`L1_el1[0]→L2_u`（与用户视图同一页 ⇒ 用户页 map/unmap 对两侧同时生效）。**`L1_el1[1]` = 内核 `L1_IDMAP[1]` 的 DRAM 1 GiB 块曾用于内核镜像/数据/BSS/内核栈（VA 1-2 GiB）可达；L1-05 已移除** —— 内核迁移到高半区后经 `TTBR1` 可达，EL1 视图只承载用户页（见 [aarch64-high-half-migration.md](./archive/aarch64-high-half-migration.md)）。
   - 状态：[X]
   - 详情：实现于 `vmm_aarch64::build_el1_view` / `destroy_el1_view`（拆视图**仅**释放自身两页，不得递归——`L0_el1[170]/[255]` 与 `L1_el1[0]→L2_u` 均共享，递归会双释放/UAF）。关联方式（AI 自定）：用户表**保留槽 `EL1_VIEW_SLOT = 1`**（VA 512 GiB~1 TiB，用户态从不使用）存视图根物理地址，**只写地址不置 `bits[1:0]`** ⇒ 硬件视为无效描述符（该 VA 段保持未映射），软件可直接读出。收益：入口汇编只需 `ldr x4, [x2, #8]`（x2 = 当前 `TTBR0`）即取到本进程视图——关联**随页表一起切换**，无全局槽的陈旧值风险。`create_user_page_table` 建视图失败即 fail-closed 返回 `None`。fork 路径（`proc_ops.rs`）子页表由 COW 克隆产生（保留槽被 `[1:0]==0b11` 过滤掉）⇒ 须经 `vmm_build_el1_view` 补建，失败即回滚子进程。
 
@@ -160,7 +160,7 @@
   - 描述：QEMU x86_64 Ring 3 + syscall/中断往返 + 隔离断言。
   - 方案：`./scripts/qemu_boot_test.sh x86_64`（含 Ring 3 到达，顺带闭合分册 2 B02-25）；host-tests 断言进程用户页表不含内核 `.text`/`.data` 映射。**实现路径已裁定取"路径 A：扩展 `init` 的 fork 探针"**，并按要求**双架构一起做**（见 DECISION-068）。
   - 状态：[X]
-  - **前置依赖（已解除）**：[x86-init-probe-project.md](./x86-init-probe-project.md) 已收口 —— X86IP-06 实测达成 x86_64 Ring 3 到达（`[USER] Entering Ring 3 (init pid=4)` + init 打印 `X`/`Y` + `exit: pid=5/6 code=0`，登记时的启动阻塞现象不复现），本条的 QEMU 验证**不再被阻塞**。
+  - **前置依赖（已解除）**：[x86-init-probe-project.md](./archive/x86-init-probe-project.md) 已收口 —— X86IP-06 实测达成 x86_64 Ring 3 到达（`[USER] Entering Ring 3 (init pid=4)` + init 打印 `X`/`Y` + `exit: pid=5/6 code=0`，登记时的启动阻塞现象不复现），本条的 QEMU 验证**不再被阻塞**。
   - 详情：
     1. **三条判据的落点**：①Ring 3 到达 + syscall/中断往返 —— 由现有 QEMU 里程碑承担（`VFS ready` + `Entering Ring 3`）；②用户页表不含内核 `.text`/`.data` 映射 —— 由 KPTI-11 的**装配面静态断言**承担（[kpti_x86_user_table_test.rs](../../host-tests/tests/kpti_x86_user_table_test.rs)）；③**"用户态访问内核高半区触发异常而非可读"** —— 本轮新增的**运行期探针**承担（此前无任何运行期探测，是全新交付项）。三判据形态互补：②锁"页表里没有"，③证"即便尝试访问也不可得"，二者任一退化都会被拦。
     2. **探针形态（路径 A）**：[init/src/main.rs](../../src/user/init/src/main.rs) 在既有 fork/wait 序列之后新增第三个 fork —— 子进程以 `core::ptr::read_volatile` 读取**内核镜像基址的高半区(高别名)映射**，父进程按 `wait_pid` 退出码判定：非 0 ⇒ 隔离生效（打印里程碑 `[KPTI] EL0 kernel high-half access denied`）；读到值 ⇒ 子进程显式打印 `FAIL` 并以 0 退出，父进程亦判定不通过。选址理由见 DECISION-068。
@@ -342,7 +342,7 @@
   - 描述：aarch64 内核当前驻留**低半区恒等映射**（`KERNEL_BASE = 0`，镜像 @ `0x40080000`），因而 EL1 视图必须以 DRAM 1 GiB 块把内核镜像/数据/栈一并纳入 `TTBR0` 视图。这是 S3 的"大映射面"来源。
   - 方案：把内核迁移到高半区（TTBR1 领地），使命中路径回归"EL1 视图只承载用户页 + 内核经 TTBR1 可达"的自然形态。引用面盘点：`KERNEL_BASE` 在 `src/` 下 **154 处 / 36 文件**（`vmm_x86_64.rs` 21、`user_proc.rs` 24、`pmm.rs` 16、`process.rs` 8 等）。
   - 状态：[X]（已实施并交付, 详见独立工程文档；KPTI-09 的 aarch64 高半区隔离断言已在迁移后重新验证通过）
-  - 详情：独立工程文档见 [aarch64-high-half-migration.md](./aarch64-high-half-migration.md)。**不属本工程 Phase 1 交付范围**，登记为后续演进项。
+  - 详情：独立工程文档见 [aarch64-high-half-migration.md](./archive/aarch64-high-half-migration.md)。**不属本工程 Phase 1 交付范围**，登记为后续演进项。
 
 ### 验证标准
 

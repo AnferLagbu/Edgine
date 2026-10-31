@@ -1,7 +1,7 @@
 # x86_64 init_all 探测阻塞根治工程（独立工程）
 
-> 来源：[audit-fix-02-framework-arch-asm.md](./archive/audit-fix-02-framework-arch-asm.md) B02-25 调研根因问题 2（2026-08-23 审查拆开登记）。
-> 与 KPTI 完整化工程（[kpti-complete-project.md](./kpti-complete-project.md)）、分册 2 均无归属关系——启动早期问题，CPU 全程 KERNEL_PML4。
+> 来源：[audit-fix-02-framework-arch-asm.md](./audit-fix-02-framework-arch-asm.md) B02-25 调研根因问题 2（2026-08-23 审查拆开登记）。
+> 与 KPTI 完整化工程（[kpti-complete-project.md](../kpti-complete-project.md)）、分册 2 均无归属关系——启动早期问题，CPU 全程 KERNEL_PML4。
 >
 > **复核结论（实测）**：登记时的"探测阻塞"现象在现状下**不复现**（X86IP-01 原判据不成立），X86IP-06 验证标准已逐项达成 ⇒ 定位/根因/修复条目（X86IP-03/04/05）因前提消失而**废止**，本工程整体收口。
 
@@ -45,7 +45,7 @@
   - 方案：`TIMEOUT_QEMU=60 ./scripts/qemu_boot_test.sh x86_64`，日志出现 `Entering Ring 3` 且 init 打印 'X'/'Y'（`src/user/init`）；无 panic/#PF。
   - 状态：[X]
   - 详情：验证标准**逐项达成** —— `[USER] Entering Ring 3 (init pid=4)`（217 行）、`[SMP] first user syscall from pid=4`（244）、init 打印 `X`/`Y`（245/249）、`exit: pid=5/6 code=0`（246/250）、`panic`/`#PF`/`Triple Fault` 0 次。
-  - **下游依赖（已解除）**：x86_64 Ring 3 到达已达成，[kpti-complete-project.md](./kpti-complete-project.md) KPTI-09/KPTI-12（x86_64 侧 QEMU 验证）的隐式前置**不再阻塞**。
+  - **下游依赖（已解除）**：x86_64 Ring 3 到达已达成，[kpti-complete-project.md](../kpti-complete-project.md) KPTI-09/KPTI-12（x86_64 侧 QEMU 验证）的隐式前置**不再阻塞**。
 
 ### 决策记录
 

@@ -156,8 +156,8 @@
     - **批次 4**（framework proc/timer/ipc/chitin/driver/net + services barrier/driver，18+ 处）：删 5（elf/dynamic/driver·framework/driver·mod/keyboard）；迁 ~25——sched.rs（scheduler_ex 10 缺）、tick/calibration 已有载体注册补缺、test_ipc（ipc/mod msgq/signal_validation + stress_tests 缺失项）、新 chitin 载体（mod 13 kernel_test / composite 2 / user_driver 2 / devtree 补）、driver.rs（xhci 12 kernel_test / usb_core 5）、新 test_net 或修 net.rs 死载（net/init 7 纯逻辑 + 3 kernel_test、iface_trait 16）、services barrier 新载体 ×5（recovery_policy/cascade/audit_export/attribution/health_monitor）、dhcp_policy、proc/signal、display/dp 30（kernel_test 无 DpIo fallback）
     - **批次 5**：全量验证——双架构 0w0e + `make test-host` + QEMU + 断言审计（断言总数 ≥ 迁移前、逐载体 0 丢失）+ `grep '#[cfg(test)]'` 复核源码 0 残留
   - 验证：迁移后双架构 0w0e + `make test-host`（host_test_runner_main 全量注册无 Fail）+ QEMU（kernel_test 硬件路径）；断言审计——迁移后断言总数 ≥ 迁移前，逐载体比对 0 丢失。
-  - 状态：[X]（2026-09-26 收口：承接工程 [kernel-unit-test-harness-unification.md](../kernel-unit-test-harness-unification.md) 的 UT-01..UT-10 **全部完成并过 §2.3 六门槛**，UT-07 已置 `[X]`（该文件「孤儿清理 —— UT-07 收尾」：A 类 10 组 / A′ 类 5 组 / C 类 16 组均已收敛，B 类 4 组按裁定保留 `kernel_test` 载体，无残留待办）；本条终态形态由该文件 DECISION-080 定义，本册不再推进）〔历史记录（2026-09-11 **整体回退**：批次 1 + 波 1B 代码改动已全部还原至 HEAD `94ba4281`，工作区仅剩本规划文档改动。下文"批次 1 完成/波 1B 完成/漏删修复/验证补全"均为**历史验证记录**（代码已不生效），保留作为外部委托人交接依据——判据/批次计划/处置清单/盲区登记全部有效，**全部实施待委托人**）（2026-09-25 注记：承接工程 [kernel-unit-test-harness-unification.md](../kernel-unit-test-harness-unification.md) 的 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛；本条**终态形态改由该文件的 DECISION-080 定义**，其批次 2–5 载体迁移计划不再执行，仅余 UT-07 双轨收敛待办）
-    - **方向变更（本轮，用户重新裁定）**：本条"源码零 `#[cfg(test)]`"的方向已变更为**方案 A 完整版** —— 保留内联 `cfg(test)` 作为纯逻辑断言的唯一归属（由新增的 AGENTS §2.3 第 6 条 host 侧门槛强制执行），硬件路径断言留在 `kernel_test` 载体。变更理由：本条立论前提「`cfg(test)` 不可用」（DECISION-021 / E0152 双 core lang item 冲突）经实测已消失。裁定与实施计划见 [kernel-unit-test-harness-unification.md](../kernel-unit-test-harness-unification.md) 的 DECISION-080；本文档保留为交接依据与方向变更的依据链，其**批次 2–5 的载体迁移计划不再执行**。
+  - 状态：[X]（2026-09-26 收口：承接工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 UT-01..UT-10 **全部完成并过 §2.3 六门槛**，UT-07 已置 `[X]`（该文件「孤儿清理 —— UT-07 收尾」：A 类 10 组 / A′ 类 5 组 / C 类 16 组均已收敛，B 类 4 组按裁定保留 `kernel_test` 载体，无残留待办）；本条终态形态由该文件 DECISION-080 定义，本册不再推进）〔历史记录（2026-09-11 **整体回退**：批次 1 + 波 1B 代码改动已全部还原至 HEAD `94ba4281`，工作区仅剩本规划文档改动。下文"批次 1 完成/波 1B 完成/漏删修复/验证补全"均为**历史验证记录**（代码已不生效），保留作为外部委托人交接依据——判据/批次计划/处置清单/盲区登记全部有效，**全部实施待委托人**）（2026-09-25 注记：承接工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛；本条**终态形态改由该文件的 DECISION-080 定义**，其批次 2–5 载体迁移计划不再执行，仅余 UT-07 双轨收敛待办）
+    - **方向变更（本轮，用户重新裁定）**：本条"源码零 `#[cfg(test)]`"的方向已变更为**方案 A 完整版** —— 保留内联 `cfg(test)` 作为纯逻辑断言的唯一归属（由新增的 AGENTS §2.3 第 6 条 host 侧门槛强制执行），硬件路径断言留在 `kernel_test` 载体。变更理由：本条立论前提「`cfg(test)` 不可用」（DECISION-021 / E0152 双 core lang item 冲突）经实测已消失。裁定与实施计划见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md) 的 DECISION-080；本文档保留为交接依据与方向变更的依据链，其**批次 2–5 的载体迁移计划不再执行**。
     - **批次 1（12 处，host 352 PASSED / kernel_test 0w0e / clippy 0 新增）**：
       - 删除残留副本 5：sync/mutex、sync/atomic、sync/seqlock、sync/rwlock、cpu/mod（源 effective_family 0x0F bug 随删消除，载体已修正 0x15）
       - 迁移 7：lib/string 载体补裸 memcmp 断言；lib/cstr 新增 lib::cstr 组（4 测试）；error 新增 error::kernel_error 组（源 cfg(test) 依赖不存在的 `From<KernelError> for i32`，证明从未编译，载体以 as_errno().as_i32() 覆盖）；sync/lockdep 新增 sync::lockdep 组（10 测试，LockDepMap 私有 API 以公共 API 等价改写，overflow/pop_not_present 断言弱化已注释）；sync/spinlock 补 debug_assert（`cfg(all(host-test, debug_assertions))` 双门控，no_std 裸机不可编译）；sync/rcu 在 test_new_features 补 read_lock_unlock/nested 断言；cpu/cpuid 实现 arch.rs register_cpuid_tests（x86_64 门控 + aarch64 空 stub）
@@ -442,7 +442,7 @@
   - 方案：为 `0xFD`/`0xFE` 注册 IDT 门并补对应 IPI 处理程序（TLB 失效处理 + reschedule 处理）。
   - 状态：[X]
   - 详情：**与 D-8「锁序核验」的 TLB shootdown fire-and-forget 论证属同一风险**——该论证前提（单核下路径恒不执行）已被 2 核 boot 证伪，锁序论证需在 2 核语义下重新评估。
-  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](../tlb-shootdown-epoch.md)（代计数路线）承接，进度以该文件 S-1（`0xFD`/`0xFE` stub 与 IDT 门）/ S-2（`handle_irq` 前置分支）/ S-8（验收门槛）为准，本台账不再单独推进。当前形态：骨架已落地并通过双架构构建（波 1）；**运行验证已回填**——`make test-smp`（2/3/4 核）与 `./scripts/qemu_boot_test.sh x86_64` 均退出码 0，`0xFD` 定向 IPI 实测触发（`[SMP] TLB shootdown #N gen=N targets=M`，`M` 等于核数、`gen` 连续无跳变），且 §5 注入 1（前半）复验使 `test-smp` FAIL（判别力成立）。详见该文件 S-8 / S-11。
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md)（代计数路线）承接，进度以该文件 S-1（`0xFD`/`0xFE` stub 与 IDT 门）/ S-2（`handle_irq` 前置分支）/ S-8（验收门槛）为准，本台账不再单独推进。当前形态：骨架已落地并通过双架构构建（波 1）；**运行验证已回填**——`make test-smp`（2/3/4 核）与 `./scripts/qemu_boot_test.sh x86_64` 均退出码 0，`0xFD` 定向 IPI 实测触发（`[SMP] TLB shootdown #N gen=N targets=M`，`M` 等于核数、`gen` 连续无跳变），且 §5 注入 1（前半）复验使 `test-smp` FAIL（判别力成立）。详见该文件 S-8 / S-11。
 
 - **D-9-4. `Makefile` 的 `test-host` 目标退出码恒 0（门槛 fail-open）**
   - 描述：`Makefile` 的 `test-host` 目标（约 414-420 行）末尾带 `; true`，**退出码恒 0**，即该门槛 fail-open（与「审计脚本 fail-closed」原则相悖）；本次实测：`test-host` 目标退出码 0，但报告内容本身为 99 个 `test result: ok`、0 failed。
@@ -453,7 +453,7 @@
   - 描述：`vmm_x86_64.rs` 约 2007-2012 行 `smp::is_enabled() && smp::get_cpu_count() > 1` 现走 `smp::broadcast_tlb_invalidate()` 分支；2 核下是否自洽**未核实**（本次仅确认 boot 到 Ring 3 的窗口未触发）。
   - 方案：2 核语义下复核该分支（与 **D-9-3** 的 IDT 门缺口联动）。
   - 状态：[X]
-  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](../tlb-shootdown-epoch.md) 承接：原「2 核门控走 `broadcast_tlb_invalidate()`」形态已废止，改为运行期门控 `smp::is_enabled() && get_cpu_count() > 1` 下的「发布新代 + 定向 IPI（含本核）」（该文件 S-3 / S-5 / D6），不再使用 all-excluding-self 广播。**复核已回填**：2/3/4 核门槛均退出码 0，IPI 目标集合恒等于核数（含本核），代连续无跳变。
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 承接：原「2 核门控走 `broadcast_tlb_invalidate()`」形态已废止，改为运行期门控 `smp::is_enabled() && get_cpu_count() > 1` 下的「发布新代 + 定向 IPI（含本核）」（该文件 S-3 / S-5 / D6），不再使用 all-excluding-self 广播。**复核已回填**：2/3/4 核门槛均退出码 0，IPI 目标集合恒等于核数（含本核），代连续无跳变。
 
 - **D-9-6. `acpi.rs` MADT 日志占位串失真**
   - 描述：`arch/x86_64/acpi.rs` 约 436-441 行仍打印占位串 `LAPIC base=0xXXXXXXXX, AP count=N`，日志失真。经核实：该处把 `AP_COUNT` 读出到 `_count` 却未格式化进日志，占位串确实未被真实值替换。
@@ -464,7 +464,7 @@
   - 描述：x86_64 有生产 CPU 上线路径——`arch/x86_64/smp_init.rs` 的 `ap_entry` 调用 `smp::register_cpu`（`smp_init.rs:310`），使 `SMP_ENABLED=true`/`CPU_COUNT=2`；aarch64 侧无对应路径——`arch/aarch64/` 全目录无 `register_cpu` / `ap_entry` / `smp_init` 调用点（`send_ipi`/`broadcast_ipi` 虽已由 GICv3 SGI 实装，但无 AP 上线路径调用 `register_cpu`）⇒ aarch64 侧 `SMP_ENABLED` 仍恒 false、`CPU_COUNT` 恒 1。
   - 方案：明确 aarch64 SMP 上线路径是否在计划内；若不实现，需在文档标注平台差异。
   - 状态：[X]
-  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](../tlb-shootdown-epoch.md) 与 [smp-ipi-protocol.md](../smp-ipi-protocol.md) §5.3 承接并**明确标注**：aarch64 侧本轮实现接收侧 SGI 分支（同语义），但因无 AP 上线路径，`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1，IPI 路径**在 aarch64 上不可运行验证，仅编译验证**，不得标注为已验证。
+  - 详情：**归属转移**——本项已由 [tlb-shootdown-epoch.md](./tlb-shootdown-epoch.md) 与 [smp-ipi-protocol.md](./smp-ipi-protocol.md) §5.3 承接并**明确标注**：aarch64 侧本轮实现接收侧 SGI 分支（同语义），但因无 AP 上线路径，`SMP_ENABLED` 恒 false、`CPU_COUNT` 恒 1，IPI 路径**在 aarch64 上不可运行验证，仅编译验证**，不得标注为已验证。
 
 ### D-10. per-process fd 表全量下沉的边界登记（2026-09-27）
 

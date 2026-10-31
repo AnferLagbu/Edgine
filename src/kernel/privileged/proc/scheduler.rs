@@ -1642,7 +1642,7 @@ impl Scheduler {
                     proc.exiting.store(true, Ordering::Release);
                 }
             });
-            // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
+            // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
             // 上游分位 —— 与 `vmm_x86_64.rs` 的 `destroy_page_table` 埋点配对, 可区分
             // "子进程根本没跑到 exit" 与 "已退出成 zombie 但无人回收 (无 wait4 ⇒ 无人调
             // `remove_and_free` ⇒ `Process::drop` 不运行 ⇒ 页表不销毁)" 两种情形.
@@ -1710,7 +1710,7 @@ impl Scheduler {
             // `tick_accounting` 的周期僵尸回收 (条件: 父已死或父为 pid 1).
             // 地址空间因此晚于退出被释放; 这与上游 (Asterinas `set_vmar(None)` /
             // Linux `exit_mm`) 的"退出即释放"不同, 属已登记缺陷 (见
-            // docs/plan/tlb-shootdown-epoch.md §6 D4 与 docs/plan/cr3-lifetime-ownership.md G4).
+            // docs/plan/archive/tlb-shootdown-epoch.md §6 D4 与 docs/plan/archive/cr3-lifetime-ownership.md G4).
         }
 
         per_cpu.need_reschedule.store(true, Ordering::SeqCst);

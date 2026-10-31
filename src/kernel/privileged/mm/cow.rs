@@ -8,7 +8,7 @@
 //! **架构边界**：置只读依赖缺页恢复路径。`x86_64` 侧完整；aarch64 无 page-fault
 //! 处理器（EL0 非 SVC 同步异常径直停机），故 aarch64 的 `fork` **只登记帧持有计数、
 //! 不置只读**（保持既有"共享写"语义）。补齐 aarch64 缺页路径是内核工程必需项，
-//! 见 [cr3-lifetime-ownership.md](../../docs/plan/cr3-lifetime-ownership.md) D-13 登记项。
+//! 见 [cr3-lifetime-ownership.md](../../docs/plan/archive/cr3-lifetime-ownership.md) D-13 登记项。
 //!
 //! ## 引用计数
 //!
@@ -19,7 +19,7 @@
 //! - munmap / exit: 每 USER leaf -1，归零才释放。
 //!
 //! 本模块不再持有独立计数表（原 `COW_REFS` 已删除）——两份重复计数收敛为 PMM 单一
-//! 帧持有计数面，契约见 `docs/plan/cr3-lifetime-ownership.md` §8.1。
+//! 帧持有计数面，契约见 `docs/plan/archive/cr3-lifetime-ownership.md` §8.1。
 //!
 //! ## SAFETY
 //!
@@ -35,7 +35,7 @@ use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, is_user_leaf};
 ///
 /// 置只读的前提是"首次写入能被缺页处理器复制恢复". aarch64 无 page-fault 处理器
 /// (EL0 非 SVC 同步异常径直停机), 置只读会让 fork 后的首次写入挂死系统, 故 aarch64
-/// 分支恒返回原值 —— 保持既有"共享写"语义 (见 `docs/plan/cr3-lifetime-ownership.md`
+/// 分支恒返回原值 —— 保持既有"共享写"语义 (见 `docs/plan/archive/cr3-lifetime-ownership.md`
 /// D-13 详情与登记项).
 #[inline]
 fn mark_cow_readonly(entry: u64) -> u64 {

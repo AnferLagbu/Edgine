@@ -44,11 +44,11 @@
 >
 > **2026-08-09 更新** (`a656c91e`): option_if_let_else 全部根治 (185 → 0) + 10 处永久 expect 兜底全部消除. DECISION-044 nursery 评估结论推翻. stage-engineering-master.md 阶段 17 已同步更新.
 >
-> **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。【订正】UT-07 双轨收敛已于后续批次收口并置 `[X]`，本工程 UT-01..UT-10 全部完成 ⇒ 上句「仅余 UT-07 未开工」失效。
+> **2026-09-25 更新**: 新增活跃工程 [kernel-unit-test-harness-unification.md](./archive/kernel-unit-test-harness-unification.md)（内核单元测试 harness 统一，承接 audit-fix-09 的 B09-19）。其 UT-01..UT-06 / UT-08 / UT-10 已完成并过 §2.3 六门槛，仅余 UT-07 双轨收敛未开工。本文件工程计划 C 的门槛引用同步为现行 §2.3 六条（历史验证记录行不改）。【订正】UT-07 双轨收敛已于后续批次收口并置 `[X]`，本工程 UT-01..UT-10 全部完成 ⇒ 上句「仅余 UT-07 未开工」失效。
 >
 > **2026-09-26 文档漂移收敛 (逐项源码复验)**: 对本工程计划全部自称 `[X]`/`[]` 项回源码复验, 修正 3 类偏差 — (a) A2 遗留未清: `host-tests/README.md` 残留 3 处 `docs/CHANGELOG.md` 引用, 本轮按 DECISION-038 删除/改写 (已清零); (b) B4 表述过时: 当前 expect 注释为**双模板并存** (`// 有意窄化: <原因>` 237 处 + `reason = "<lint名>: ..."` 347 处), 非历史记载的"3 场景 + 1 兜底"单模板, 实况见 §方案 B4; (c) A1/B3/B5.2 待修对象 moot: `vision-hope.md` 已整篇重写 (无"风险 2"节)、`README.md` 已整篇重写为 18 行 (原 :21/:71 不复存在; 【订正】实测为 23 行, "18 行"为漂移)、`freg/api.rs` B5.2 目标函数形态已正确。另修正 §交叉引用 clippy-pedantic-cleanup.md 失效链接 (已归档 → archive/)。
 >
-> **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
+> **本轮更新**: 新增活跃工程 [smp-ap-user-scheduling.md](./archive/smp-ap-user-scheduling.md)（AP 参与用户态调度 + aarch64 KPTI per-CPU 化，**DECISION-084**，方案 C 相对完整）—— 使 ≥2 个用户任务可在多核并发处于 EL0（APS-01..APS-06 全部 `[X]`，批次 P1→{P2,P3}→P4 收口，并含收口期修复的批次 P5「次核 CPU 状态初始化」）。同族前置工程 [aarch64-smp-bringup.md](./archive/aarch64-smp-bringup.md)（DECISION-082）的后续专项 **KPTI-PCPU-01** 已由本工程落地结案。本文件据此更新活跃工程全景（既有一表沿用，本轮不新增表行，仅登记关联）。
 
 > **2026-10-20 漂移订正**: 总览表甲/乙计数由 17/11 校正为 16/12 —— `socket-option-constants-unification.md` 行原记「0/2 阻塞在用户裁定 + 漂移仍在原地」失效（该工程 `ac0d09a2` 已按方案 A 落地 `edgine-abi` 单源、sys.rs/sm_fi.rs 均改 `use edgine_abi::socket`、SO_BROADCAST 接受忽略分支 + 契约测试就位，专属 plan S1/S2 已 `[X]`），从甲表移入乙表；现总览表计数与 §变更历史「整表重新对账」行的 16/12 口径一致。
 >
@@ -515,11 +515,11 @@
 ### 现状 (2026-08-03)
 
 - **总览表（整表重新对账）**
-  - 描述: `docs/plan/` 非归档 35 份 plan 与实装的对齐情况，按「仍开放项 / 已闭环」分两张表（19 / 16）
+  - 描述: `docs/plan/` 非归档 19 份 plan 与实装的对齐情况（甲 18 / 乙 1），乙表另保留本轮归档 16 份的历史闭环记录（乙表合计 17 行）
   - 方案:
   - 状态: [X]
 
-  **甲・仍有开放项（19 份）**
+  **甲・仍有开放项（18 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
   |---|---|---|---|---|---|
@@ -537,32 +537,32 @@
   | framekernel-paradigm-enforcement.md | F/S 分层范式落实 | 27（+4 勾选）/ 2 | 阶段目标：TCB 占比 < 30%、privileged `.rs` 收敛至 200 | 一致：本轮实测 effective TCB 占比 **57.78%**（HEAD 57.80%，S-7 净减 55 行） | 长期演化目标，无固定工期 |
   | stage-engineering-master.md | 静态检查工程总览 | 37（+5 勾选）/ 3（+4 勾选，1 `[~]`） | 长期：cast 1700+ 保留（DECISION-041）/ QEMU 运行时验证 / 真实硬件启动；流程项：每轮门槛复跑；中期：kernel `#[test]` 迁移（DECISION-046 维持原状） | 两处口径过期，见漂移清单第 2 条 | 属「永久保留」清单，改写需用户裁定 |
   | syscall-followup.md | syscall 编号治理后的剩余任务 | 5 勾选 / 1 | T6-T7（TODO 33 项 / aarch64 编号）登记排后 | 一致：T1-T5 全部 `[X]`，eg 自有代码活跃 TODO 已清零 | 纯排后登记，无在途施工 |
-  | kernel-unit-test-harness-unification.md | 内核单测 harness 统一 | 10 / 1 | DECISION-080 自身状态字段仍 `[ ]` | **漂移，本轮已订正**：`src/kernel/Cargo.toml` 已无 `test = false`，`make test-kernel-host` 全绿 | 无（UT-01..UT-10 全 `[X]`） |
   | sgeg-capability-constants-plan.md | SGEG 能力位常量治理 | 表内形态：A 类 3 已治理 / B 类 5 + C 类 2 待实施 | B1-B5（reboot / open_by_handle_at / sethostname 魔法数 / mmap 无命名位 / `required=0` 可疑）、C1-C2（storage 域号冲突 / 裸数字域号） | 本轮未逐项复验源码（仅归集文档口径） | 文档自述「本计划不落地代码」，待委托 |
   | future-roadmap.md | 远期工程规划 | 1（F5 IPv6）/ F1-F4 无状态字段 | F1 mdBook、F2 RISC-V、F3 TDX、F4 NFS | 一致：无 mdBook 配置、无 `arch/riscv64/`、无 tdx 模块、无 `functions/fs/nfs/` | 远期未启动 |
   | unresolved-issues-2026-08-09.md | 未修复问题追踪清单 | 表内形态（复验订正：真正开放 ≈25 + 3 刻意维持） | RT-002 压测不可复现（保留）、RT-003 待真机、MIG×8 迁移中间态、B06-PRE×3、分册 3 遗留 ×3 | 一致（清单类文档，非执行 plan） | 作为后续 plan 制定的输入 |
   | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 75 / 0（+1 `[~]`） | `[~]`：cast 1910 处 `try_from` 改造推未来阶段（DECISION-041 保留原状） | 一致；按状态口径统计命中的 1 处 `状态：[]` 是乙表 duplicate-impl 行引用他文档文本，非待办。**计数口径（本轮踩坑后固化）**：① 只统计**行首**状态字段行（`^\s*(?:[-*]\s*)?状态\s*[:：]`），散文内作为被描述对象出现的形态字符串不计入；② 计数前先把 `**状态**：` 归一化成 `状态：`（少这步会把 bold 形态整批漏掉，本轮曾因此得 20/53 与 72/75 两组假读数）；③ 表格单元格形态 `[]`/`[X]` 仍不被此口径覆盖，见 §6 P-36 | 机制项，随轮更新 |
 
-  **乙・状态字段已全量闭环（16 份）**
+  **乙・状态字段已全量闭环（17 份；其中 16 份已归档至 `archive/`）**
 
   | 文档 | 主题 | 完成 | 本轮判定 |
   |---|---|---|---|
-  | tlb-shootdown-epoch.md | TLB shootdown 代计数与机会式排空 | 16 | 开放 0；`tlb_catch_up_local` 生产路径在用（S-14 门禁在 `ci/audit.sh`） |
+  | archive/tlb-shootdown-epoch.md | TLB shootdown 代计数与机会式排空 | 16 | 开放 0；`tlb_catch_up_local` 生产路径在用（S-14 门禁在 `ci/audit.sh`） |
   | code-audit-final-summary.md | 全项目代码与功能审计 | 59 | 开放 0（审计条目逐项收口） |
-  | cr3-lifetime-ownership.md | cr3 所有权计数与生命周期修复 | 13 | 开放 0 |
-  | eliminate-parallel-implementations.md | host-tests 平行实现消除 | 22 | 开放 0（内核源码 host 可编译） |
-  | smp-ipi-protocol.md | SMP IPI 协议（shootdown / reschedule） | 10 | 开放 0 |
-  | smp-ap-user-scheduling.md | AP 参与用户态调度 + aarch64 KPTI per-CPU 化 | 9 | 开放 0（APS-01..06 + 批次 P5，DECISION-084） |
-  | aarch64-high-half-migration.md | aarch64 高半区内核迁移 | 7 | 开放 0（EL1 视图构建在生产路径） |
-  | duplicate-impl-convergence.md | 重复实现收敛（帧归还语义单点化） | 7 | 开放 0；统计命中的 1 处 `状态：[]` 是正文引用他文档文本，非待办 |
-  | munmap-protect-pml4.md | munmap 拆除与 protect 目标页表修复 | 7 | 开放 0 |
-  | pcache-frame-ownership.md | pcache 帧持有计数与映射生命周期对齐 | 7 | 开放 0 |
-  | x86-init-probe-project.md | x86_64 `init_all` 探测阻塞根治 | 4 | 开放 0 |
-  | socket-option-constants-unification.md | sockopt 常量值域治理（`edgine-abi` 单源） | 2 | 开放 0；`ac0d09a2` 落地方案 A（`src/rust/edgine-abi` 单源 + `SO_BROADCAST` 接受忽略），`abi_socket_constants_test` 契约在位 |
-  | socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 53 | 开放 0；U5 组播已随 P6/D11（DECISION-097，实装 commit `474295a6`）落地——`privileged/net/mcast.rs` per-socket 引用计数登记表 + `sm_fi.rs` 的 `IP_ADD_MEMBERSHIP`/`IPV6_ADD_MEMBERSHIP` 分支（[sm_fi.rs:2079-2081](../../src/kernel/privileged/net/init/sm_fi.rs)）+ `multicast` feature 开启，集成验证载体 `scripts/qemu_mcast_test.sh`；原甲表行「`sm_setsockopt` 无组播分支」判定失效 |
-  | aarch64-virtio-net-tx-rootcause.md | P-31 aarch64 virtio-net legacy-MMIO TX 超时根因工程 | 7 | 开放 0；`df2076eb` 四层修复（vring 布局 / `GuestPageSize` / legacy 激活序 / 10 字节 net header / `QUEUE_READY`=0x044），实测 `tx_timeout=0` |
-  | aarch64-el0-sysreg-sync-rootcause.md | P-32 aarch64 EL0 入口与 e2e 最后一公里 | 5 | 开放 0；`534afd5a` 根治 ERET-return-window 竞态（三处异常 epilogue 先 `msr daifset, #0xf` 再装 `elr/spsr`），回归锁死 `host-tests/tests/aarch64_eret_window_mask_test.rs`，e2e `observe=pass accept=3 echo=3 addr=dhcp` |
-  | net-feature-alignment.md | 网络功能面收口与双架构观测对齐（档位 1+2） | 5 | 开放 0；DNS 三级解析接线 `fdb22ce6` + aarch64 e2e 软观测 `fb2cd3c5`；档位 3（soak 基础设施移植 aarch64）按文档标题口径（档位 1+2）不在本 plan 范围内 |
+  | archive/cr3-lifetime-ownership.md | cr3 所有权计数与生命周期修复 | 13 | 开放 0 |
+  | archive/eliminate-parallel-implementations.md | host-tests 平行实现消除 | 22 | 开放 0（内核源码 host 可编译） |
+  | archive/smp-ipi-protocol.md | SMP IPI 协议（shootdown / reschedule） | 10 | 开放 0 |
+  | archive/smp-ap-user-scheduling.md | AP 参与用户态调度 + aarch64 KPTI per-CPU 化 | 9 | 开放 0（APS-01..06 + 批次 P5，DECISION-084） |
+  | archive/aarch64-high-half-migration.md | aarch64 高半区内核迁移 | 7 | 开放 0（EL1 视图构建在生产路径） |
+  | archive/duplicate-impl-convergence.md | 重复实现收敛（帧归还语义单点化） | 7 | 开放 0；统计命中的 1 处 `状态：[]` 是正文引用他文档文本，非待办 |
+  | archive/munmap-protect-pml4.md | munmap 拆除与 protect 目标页表修复 | 7 | 开放 0 |
+  | archive/pcache-frame-ownership.md | pcache 帧持有计数与映射生命周期对齐 | 7 | 开放 0 |
+  | archive/x86-init-probe-project.md | x86_64 `init_all` 探测阻塞根治 | 4 | 开放 0 |
+  | archive/socket-option-constants-unification.md | sockopt 常量值域治理（`edgine-abi` 单源） | 2 | 开放 0；`ac0d09a2` 落地方案 A（`src/rust/edgine-abi` 单源 + `SO_BROADCAST` 接受忽略），`abi_socket_constants_test` 契约在位 |
+  | archive/socket-layer-completion.md | Socket 层深度补全（TCP/UDP） | 53 | 开放 0；U5 组播已随 P6/D11（DECISION-097，实装 commit `474295a6`）落地——`privileged/net/mcast.rs` per-socket 引用计数登记表 + `sm_fi.rs` 的 `IP_ADD_MEMBERSHIP`/`IPV6_ADD_MEMBERSHIP` 分支（[sm_fi.rs:2079-2081](../../src/kernel/privileged/net/init/sm_fi.rs)）+ `multicast` feature 开启，集成验证载体 `scripts/qemu_mcast_test.sh`；原甲表行「`sm_setsockopt` 无组播分支」判定失效 |
+  | archive/aarch64-virtio-net-tx-rootcause.md | P-31 aarch64 virtio-net legacy-MMIO TX 超时根因工程 | 7 | 开放 0；`df2076eb` 四层修复（vring 布局 / `GuestPageSize` / legacy 激活序 / 10 字节 net header / `QUEUE_READY`=0x044），实测 `tx_timeout=0` |
+  | archive/aarch64-el0-sysreg-sync-rootcause.md | P-32 aarch64 EL0 入口与 e2e 最后一公里 | 5 | 开放 0；`534afd5a` 根治 ERET-return-window 竞态（三处异常 epilogue 先 `msr daifset, #0xf` 再装 `elr/spsr`），回归锁死 `host-tests/tests/aarch64_eret_window_mask_test.rs`，e2e `observe=pass accept=3 echo=3 addr=dhcp` |
+  | archive/net-feature-alignment.md | 网络功能面收口与双架构观测对齐（档位 1+2） | 5 | 开放 0；DNS 三级解析接线 `fdb22ce6` + aarch64 e2e 软观测 `fb2cd3c5`；档位 3（soak 基础设施移植 aarch64）按文档标题口径（档位 1+2）不在本 plan 范围内 |
+  | archive/kernel-unit-test-harness-unification.md | 内核单测 harness 统一 | 10 | 开放 0（UT-01..UT-10 全 `[X]`；DECISION-080 状态字段已订正，`src/kernel/Cargo.toml` 无 `test = false`，`make test-kernel-host` 全绿） |
 
 - **对账方法与判定口径**
   - 描述: 本轮对账的判据来源与强度，供下一轮复现，避免「看着像对过」的假闭环
@@ -685,6 +685,11 @@
 
 ### 变更历史
 
+- **归档 16 份已完成工程册**
+  - 描述: 对状态字段全量闭环的 16 份册子逐册回源码核实后 `git mv` 至 `archive/`（仅重算文档内相对链接层级，正文零改动）：tlb-shootdown-epoch / cr3-lifetime-ownership / eliminate-parallel-implementations / smp-ipi-protocol / smp-ap-user-scheduling / aarch64-high-half-migration / duplicate-impl-convergence / munmap-protect-pml4 / pcache-frame-ownership / x86-init-probe-project / socket-option-constants-unification / socket-layer-completion / aarch64-virtio-net-tx-rootcause / aarch64-el0-sysreg-sync-rootcause / net-feature-alignment / kernel-unit-test-harness-unification。核实锚点：tlb 代计数经 `tlb_catch_up_local` 且 S-14 门禁在位；cr3 使用者计数 API 与 `FRAME_COUNTS` 日志；帧归还语义单点化；aarch64 EL1 高半区视图；munmap 目标页表 fail-closed；pcache 引用计数；DNS 三级解析；socket 四入口；`edgine-abi` sockopt 单源；UT 门槛 6 与 harness 统一。原乙表 16 份中 `code-audit-final-summary.md` 为最终审计报告（非执行 plan）保留活跃；`kernel-unit-test-harness-unification.md` 由甲表移入乙表（开放项仅剩已订正的状态字段漂移，UT-01..UT-10 全 `[X]`）。
+  - 方案: -
+  - 状态: [X]
+
 - **整表重新对账（`docs/plan` 非归档 28 份）**
   - 描述: §现状总览表由 5 份扩为 28 份（甲·仍开放项 16 / 乙·已闭环 12），新增「对账方法与判定口径」与「对账中发现的文档漂移」两条；工程计划 A §现状加注「全量视图以 B 表为准」
   - 方案: -
@@ -723,7 +728,7 @@
     3. 三审计通过 (functions_boundary + safety_coverage + deadlock_matrix)
     4. host-tests 全部通过
     5. QEMU 集成测试通过 (如改动 boot/架构相关)
-    6. host 侧内核单元测试 0 failed (`make test-kernel-host`; 2026-09-25 新增, 见 [kernel-unit-test-harness-unification.md](./kernel-unit-test-harness-unification.md))
+    6. host 侧内核单元测试 0 failed (`make test-kernel-host`; 2026-09-25 新增, 见 [kernel-unit-test-harness-unification.md](./archive/kernel-unit-test-harness-unification.md))
   - 状态: [X]
 
 - **文档同步**

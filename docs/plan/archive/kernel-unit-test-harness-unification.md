@@ -1,6 +1,6 @@
 # 内核单元测试 harness 统一工程（孤儿测试复活 + 双轨收敛）
 
-> 本文件是**新立项**的独立工程文档，承接 [audit-fix-09-hard-rules-deadcode.md](./archive/audit-fix-09-hard-rules-deadcode.md) 的 **B09-19（孤儿测试治理）** 条目，并**变更其技术方向**。
+> 本文件是**新立项**的独立工程文档，承接 [audit-fix-09-hard-rules-deadcode.md](./audit-fix-09-hard-rules-deadcode.md) 的 **B09-19（孤儿测试治理）** 条目，并**变更其技术方向**。
 >
 > B09-19 原文（含批次 1/波 1B 的历史验证记录）**保留不动**，作为交接依据与方向变更的依据链；本文件是当前唯一权威实施计划。
 
@@ -8,7 +8,7 @@
 
 **根因**：`src/kernel/` 下的 `#[cfg(test)] mod tests` 内联单元测试**从不编译、从不执行**。三条机制叠加：
 
-1. `src/kernel/Cargo.toml` 的 `[lib] test = false` —— kernel crate 自身不构建单元测试 harness（历史成因见 [archive/test-compile-issues-2026-07-31.md](./archive/test-compile-issues-2026-07-31.md) 的 DECISION-021：E0152 双 `core` lang item 冲突）；
+1. `src/kernel/Cargo.toml` 的 `[lib] test = false` —— kernel crate 自身不构建单元测试 harness（历史成因见 [archive/test-compile-issues-2026-07-31.md](./test-compile-issues-2026-07-31.md) 的 DECISION-021：E0152 双 `core` lang item 冲突）；
 2. `make test-host` 走 `host-tests`，它以**普通依赖**引用 `edgine`（`src/rust`）→ `kernel`，依赖编译不设 `cfg(test)`；
 3. `make test-unit` 走 `cargo build --features kernel_test`（不是 `cargo test`），测试发现依靠 `privileged/tests/mod.rs::register_all_tests()` 的**手工注册表**（115 个注册组），与 `#[cfg(test)]` 是两套互不相通的 harness。
 
@@ -304,7 +304,7 @@
     - 明细：`arch::gdt` 4 / `idt::statistics` 7 / `kmalloc_slab` 1 / `mm::slab` 5 / `rcu` 2 / `sync::atomic` 2 / `sync::seqlock` 3 / `sync::spinlock` 3 / `sync::types` 5 / `zil_persist` 1 = **33 用例**（对应门槛核算中的 98 条断言）。
     - 改动文件：`privileged/tests/{arch,idt,sync,sys,test_new_features}.rs`（删注册组/用例）+ `privileged/{arch/x86_64/gdt,idt/statistics,mm/slab,sync/{types,atomic,seqlock,spinlock}}.rs`（删转发 shim）。
     - 零覆盖损失核验（逐组）：`rcu`（2 用例）与 `kmalloc_slab`（1 用例）的注册侧**断言数为 0**（仅调用后返回 `Pass`，无任何 `assert`），源侧 `privileged/sync/rcu.rs::test_rcu_read_lock_unlock`（3 条断言，含嵌套锁场景）与 `privileged/mm/kmalloc_slab.rs::test_cache_index_selection` 为唯一且更强的载体 ⇒ 删注册副本无断言损失。
-    - 后续（分册 9 项 2，B09-21）：`privileged/mm/kmalloc_slab.rs` 因属**全仓零引用孤岛**已**整体删除**（含上条所述唯一载体 `test_cache_index_selection`）⇒ 上条「唯一载体」表述随之核销；删除判据、连带清理与六门槛实测见 [syscall-followup.md](syscall-followup.md) **B-10.10** 与 [audit-fix-09-hard-rules-deadcode.md](archive/audit-fix-09-hard-rules-deadcode.md) **B09-21**。
+    - 后续（分册 9 项 2，B09-21）：`privileged/mm/kmalloc_slab.rs` 因属**全仓零引用孤岛**已**整体删除**（含上条所述唯一载体 `test_cache_index_selection`）⇒ 上条「唯一载体」表述随之核销；删除判据、连带清理与六门槛实测见 [syscall-followup.md](../syscall-followup.md) **B-10.10** 与 [audit-fix-09-hard-rules-deadcode.md](./audit-fix-09-hard-rules-deadcode.md) **B09-21**。
     - 随删清理（本次删除直接导致，非工程外）：`privileged/tests/sys.rs` 的 `use crate::privileged::mm::slab::{..}` 整块随之失效 ⇒ 一并删除；`privileged/tests/test_new_features.rs` 三处空节横幅（RCU / Kmalloc-Slab / ZIL Persistence）在用例删除后一并删除。
     - 明确**不删**：`functions/fs/unkfs/zil_persist.rs::crc32_test_wrapper` —— `host-tests/tests/zil_replay_test.rs` 仍以它为入口（源侧与 host-tests 双载体，非本次收敛对象）。
   - 详情（A 类验证实测 —— 六门槛本机复跑）

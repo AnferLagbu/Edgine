@@ -649,7 +649,7 @@ impl IdtManager {
 
                 let action = exception_handler.handle(frame);
 
-                // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 用户态异常现场.
+                // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 用户态异常现场.
                 // `handlers.rs` 对用户态 #DE/#GPF 一律 `TerminateProcess(1)`, 对用户态
                 // #PF 用 `TerminateProcess(pid)` —— 故 "exit code=1" 与 "exit code=pid"
                 // 指向完全不同的异常源. 异常处理器自身不打印现场, 无本行就无法把

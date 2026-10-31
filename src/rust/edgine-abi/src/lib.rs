@@ -2,7 +2,7 @@
 //!
 //! 单一权威值域源: 内核（`privileged` FFI 分派）与用户态（userlib）两侧的
 //! syscall ABI 常量均引用本 crate, 结构上消除"两处各写各的、改一处忘另一处"
-//! 的漂移（见 `docs/plan/socket-option-constants-unification.md` 裁定记录）.
+//! 的漂移（见 `docs/plan/archive/socket-option-constants-unification.md` 裁定记录）.
 //!
 //! 值域基准: Linux x86_64 `asm-generic` 头文件（`<linux/socket.h>` /
 //! `<netinet/in.h>` / `<netinet/tcp.h>`）. 按本项目主目标架构 x86_64 取值;

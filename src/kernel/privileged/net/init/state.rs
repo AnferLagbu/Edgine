@@ -71,7 +71,7 @@ pub struct NetState {
     pub(crate) device: Option<EGDFNetDevice>,
     pub(crate) stack: Option<NetworkStack>,
     pub(crate) dhcp_handle: Option<SocketHandle>,
-    /// S2 DNS 接线 (net-feature-alignment.md): smoltcp `dns::Socket` 在
+    /// S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): smoltcp `dns::Socket` 在
     /// `SocketSet` 中的 handle, 由 `eg_net_init` Step3 写入, 查询/servers
     /// 更新经 `raw::dns_handle()` 读取 (持 `NET_STATE` 锁).
     pub(crate) dns_handle: Option<SocketHandle>,

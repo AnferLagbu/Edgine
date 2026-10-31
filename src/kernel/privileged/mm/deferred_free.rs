@@ -353,7 +353,7 @@ pub(crate) fn release_tail(shootdown_needed: bool, batch: u64) {
     // SIMPLIFIED: 只统计"释放帧总数"这一聚合量, 不区分批次/来源; 影响面为排查时无法
     // 从日志区分是哪条路径释放的; 何时需扩展: 需要定位滞留来源时, 改为分路径计数.
     //
-    // 埋点 (见 docs/plan/tlb-shootdown-epoch.md S-10): 本临界区**入链了帧**时也必须打印 ——
+    // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 本临界区**入链了帧**时也必须打印 ——
     // "入链了却一帧未归还" 与 "从未入链" 是两个完全不同的诊断, 只打归还数会把前者静默
     // 掩盖 (故用 `batch != 0` 判"本临界区有帧入链"). `pending` / `gen_g` / `min` 三者共同
     // 给出"是否因代未追平而滞留".

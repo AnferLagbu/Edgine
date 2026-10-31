@@ -1266,7 +1266,7 @@ mod tests {
     // 内核堆 (>4 KiB, 供 TCP 双缓冲) + privileged init_sockets() + 非桩 socket_open.
     // host-test 仅有 4 KiB early_buffer 且 kernel_test 下 socket_open 为 no-op 桩,
     // 两环境均不满足, 属未实装路径.
-    // 已登记为未来功能: docs/plan/kernel-unit-test-harness-unification.md.
+    // 已登记为未来功能: docs/plan/archive/kernel-unit-test-harness-unification.md.
 
     #[test]
     fn test_socket_close_invalid_handle_is_idempotent() {

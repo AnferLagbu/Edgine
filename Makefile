@@ -489,7 +489,7 @@ test-host:
 # 以便加载该目录 .cargo/config.toml 的 target-dir 与 curve25519 后端固化.
 # P-71: privileged 已拆为独立 crate, 故用 --workspace 让 kernel + kernel-privileged
 # 两个测试目标都执行 (否则 privileged 的内联用例静默不跑).
-# 详见 docs/plan/kernel-unit-test-harness-unification.md.
+# 详见 docs/plan/archive/kernel-unit-test-harness-unification.md.
 test-kernel-host:
 	@echo "╔══════════════════════════════════════════════╗"
 	@echo "║   Running Kernel Host-Side Unit Tests        ║"
@@ -692,12 +692,12 @@ test-smp: all user $(KERNEL_IMAGE)
 		echo "  含义: 延迟释放的帧未真正归还 PMM —— 入链后滞留 pending (代永远追不平),"; \
 		echo "        或销毁路径从未被走到 (released_total 恒 0); 'pending=false' 必须同时成立,"; \
 		echo "        否则 'released_total 非零' 可能只是滞留批次里漏还的少数几帧."; \
-		echo "  对应 docs/plan/tlb-shootdown-epoch.md S-10 的运行覆盖判据."; \
+		echo "  对应 docs/plan/archive/tlb-shootdown-epoch.md S-10 的运行覆盖判据."; \
 		exit 1; \
 	fi; \
 	if ! grep -q "\[SMP\] TLB probe PASS" "$${smp_log}"; then \
 		echo "SMP TEST FAILED: 未在 $${smp_log} 中找到 '[SMP] TLB probe PASS' (运行期跨核 TLB 失效探针未通过)"; \
-		echo "  对应 docs/plan/tlb-shootdown-epoch.md §5 注入 3 的运行覆盖判据."; \
+		echo "  对应 docs/plan/archive/tlb-shootdown-epoch.md §5 注入 3 的运行覆盖判据."; \
 		exit 1; \
 	fi; \
 	if grep -q "\[SMP\] TLB probe FAIL" "$${smp_log}"; then \

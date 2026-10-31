@@ -69,7 +69,7 @@ pub fn set_dhcp_handle(h: Option<SocketHandle>) {
     }
 }
 
-/// 安全读取 `dns_handle` (S2 DNS 接线, net-feature-alignment.md)
+/// 安全读取 `dns_handle` (S2 DNS 接线, docs/plan/archive/net-feature-alignment.md)
 pub fn dns_handle() -> Option<SocketHandle> {
     // SAFETY: SocketHandle 是 Copy, 调用方持有锁.
     unsafe { state().dns_handle }

@@ -150,6 +150,6 @@ AGENTS.md §2.3 全部 6 条 + R5/R6 专项。诊断 feature 先例不适用于�
 ## 关联文档
 
 - [net-feature-alignment.md](./net-feature-alignment.md) — T1 软观测（本工程输入）
-- [src/kernel/privileged/driver/virtio/queue.rs](../../src/kernel/privileged/driver/virtio/queue.rs) — 布局重构主体
-- [src/kernel/privileged/driver/virtio/mod.rs](../../src/kernel/privileged/driver/virtio/mod.rs) — 传输寄存器修正
-- [src/kernel/functions/driver/virtio/net.rs](../../src/kernel/functions/driver/virtio/net.rs) — 队列尺寸接线
+- [src/kernel/privileged/driver/virtio/queue.rs](../../../src/kernel/privileged/driver/virtio/queue.rs) — 布局重构主体
+- [src/kernel/privileged/driver/virtio/mod.rs](../../../src/kernel/privileged/driver/virtio/mod.rs) — 传输寄存器修正
+- [src/kernel/functions/driver/virtio/net.rs](../../../src/kernel/functions/driver/virtio/net.rs) — 队列尺寸接线
