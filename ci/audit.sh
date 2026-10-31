@@ -403,12 +403,13 @@ done
 # 循环依赖与机器派生基线 scripts/audit_coupling.baseline.json 双向对账 —— 新环、任一
 # 方向计数增加、或快照过期都 exit 1. 存量 5 对环 (privileged 4 + functions 1) 冻结在
 # 侧车里, 那是快照不是放行阈值.
-# 仍不覆盖 (P-65 立案): 依赖边只取单行 `use ...;` —— 跨行 use / `pub use` / 非 use 行
-# 的限定调用都不成边; 三者全扩会新增 27 对 privileged 禁止环 (4 → 31), 属红墙.
+# 边模型 (P-65 乙 / P-73 丙): 阻断面只取声明级 use / pub use (含跨行语句); 非 use 行的
+# 限定路径由 P-73 丙 做成**只报告不阻断**的第二矩阵, 以 `[D 只报告]` 前缀随本腿输出,
+# 不进基线也不影响退出码 —— 故过滤串同时放行该前缀, 避免只报告读数被误读为阻断环.
 step "0.5k2/6 硬规则 F3 模块耦合审计 (coupling)"
 mark_leg "coupling"
 COUPLING_OUT=$(python3 "$PROJECT_ROOT/scripts/audit_coupling.py" 2>&1) && COUPLING_RC=0 || COUPLING_RC=$?
-echo "$COUPLING_OUT" | grep -E '^ *⚠|^>>>' || true
+echo "$COUPLING_OUT" | grep -E '^ *⚠|^>>>|\[D 只报告\]' || true
 if [ "$COUPLING_RC" -eq 0 ]; then
     ok "coupling: F3 门禁通过 (两层循环依赖与基线一致, 完整矩阵见脚本 [1]/[2] 段输出)"
 else

@@ -16,12 +16,13 @@ B01-24 返工: audit 脚本统一自测.
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-五项真调入口:
+六项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
 4. tools/audit_unsafe.py: scan_file(path) (注入临时路径基准)
 5. audit_coupling.py: scan_cross_module_deps(base, layer) + detect_circular_deps(matrix, layer)
+6. audit_coupling.py: scan_reference_level_deps(base, layer) (P-73 丙 只报告矩阵)
 """
 from __future__ import annotations
 
@@ -62,7 +63,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/5] audit_functions_boundary.py")
+    print("\n[Test 1/6] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -87,7 +88,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/5] audit_deadlock_matrix.py")
+    print("\n[Test 2/6] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -113,7 +114,7 @@ def test_deadlock_matrix() -> bool:
 
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/5] audit_block_registration.py")
+    print("\n[Test 3/6] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -144,7 +145,7 @@ def test_block_registration() -> bool:
 
 def test_audit_unsafe() -> bool:
     """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
-    print("\n[Test 4/5] tools/audit_unsafe.py")
+    print("\n[Test 4/6] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -176,7 +177,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/5] audit_coupling.py")
+    print("\n[Test 5/6] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -213,6 +214,58 @@ def test_coupling_edges() -> bool:
     )
 
 
+def test_coupling_reference_edges() -> bool:
+    """P-73 丙 fixture 测试 6: D 类限定路径只报告, 不并入声明级矩阵.
+
+    病灶: 非 use 行的 `crate::privileged::<mod>` 限定路径原先完全不成边; 直接按文本
+    计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
+    D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
+    """
+    print("\n[Test 6/6] audit_coupling.py (P-73 丙 D 类引用级边)")
+    detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = Path(tmpdir) / "privileged"
+        for mod, body in (
+            ("alpha",
+             "//! 自测 fixture\n"
+             "use crate::privileged::beta::ViaUse;\n"       # 声明级边, D 类排除
+             "/* crate::privileged::beta::in_block(); */\n"  # 块注释 → 不成 D 类边
+             "// crate::privileged::beta::in_line();\n"      # 行注释 → 不成 D 类边
+             "/// 文档中的 crate::privileged::beta::in_doc() 不成边\n"
+             "const NOTE: &str = \"crate::privileged::beta::in_string()\";\n"
+             "pub fn a() {\n"
+             "    crate::privileged::beta::call_a();\n"
+             "    crate::privileged::beta::call_b();\n"
+             "}\n"),
+            ("beta",
+             "//! 自测 fixture\n"
+             "pub fn b() {\n"
+             "    crate::privileged::alpha::call_c();\n"
+             "}\n"),
+        ):
+            mod_dir = base / mod
+            mod_dir.mkdir(parents=True)
+            (mod_dir / "mod.rs").write_text(body, encoding="utf-8")
+        # KERNEL_ROOT 绑定仓库路径, fixture 在临时目录 ⇒ 注入临时根后调真实函数
+        detector.KERNEL_ROOT = Path(tmpdir)
+        use_matrix, _ = detector.scan_cross_module_deps(base, "privileged")
+        use_cycles, _ = detector.detect_circular_deps(use_matrix, "privileged")
+        ref_matrix, _ = detector.scan_reference_level_deps(base, "privileged")
+        ref_cycles, _ = detector.detect_circular_deps(ref_matrix, "privileged")
+
+    ref_ab = ref_matrix["alpha"].get("beta", 0)
+    ref_ba = ref_matrix["beta"].get("alpha", 0)
+    use_ab = use_matrix["alpha"].get("beta", 0)
+    use_ba = use_matrix["beta"].get("alpha", 0)
+    return _check(
+        "限定路径成 D 类边, 注释/字符串/use 不成边, 且不并入声明级矩阵",
+        ref_ab == 2 and ref_ba == 1 and len(ref_cycles) == 1
+        and use_ab == 1 and use_ba == 0 and len(use_cycles) == 0,
+        f"期望 D 类 2/1/1 且声明级 1/0/0, 实测 D 类 "
+        f"{ref_ab}/{ref_ba}/{len(ref_cycles)}, 声明级 {use_ab}/{use_ba}/{len(use_cycles)}",
+    )
+
+
 def main() -> int:
     print("=" * 60)
     print("B01-24 audit 脚本自测 (按 docs/plan/audit-fix-01 §B01-24)")
@@ -224,6 +277,7 @@ def main() -> int:
         test_block_registration(),
         test_audit_unsafe(),
         test_coupling_edges(),
+        test_coupling_reference_edges(),
     ]
     passed = sum(results)
     total = len(results)

@@ -21,8 +21,11 @@ F3 判据 (P-54 甲+丙a): 两层的禁止循环依赖全部与机器派生基�
 (+40)、functions 34 → **35** 处 (+1), 禁止环**对数不变** (privileged 4 对 / functions
 1 对), 但两对的计数被校正 (mm↔proc 2/12 → 2/13、proc↔syscall 5/1 → 7/2) ⇒ 基线随本轮
 `--update-baseline` 重铸 (refs 28 → 32, pairs 5 不变). 非 use 行的**限定调用** (P-54
-探针的 D 类: privileged 827 处 / 145 对, functions 322 处 / 22 对) 仍不成边 —— 那需要
-item 级 (AST / rustc 查询) 解析, 否则宏参数与文档字符串会被算成边, 另立 P-73.
+探针的 D 类) 仍不参与**阻断**边模型 —— 那需要 item 级 (AST / rustc 查询) 解析, 否则宏
+参数与文档字符串会被算成边. P-73 丙 收口: 另建一份**只报告不阻断**的 D 类引用级矩阵
+(`scan_reference_level_deps`), 掩掉注释、字符串与 use 语句后按
+`crate::privileged::<mod>` / `crate::functions::<mod>` 限定路径聚合模块对与双向环;
+该矩阵不进基线、不影响退出码, 读源失败仍 fail-closed (报告失真不可静默放行).
 订正 P-54 探针的一处分类: 该探针称「A+B+C ⇒ privileged 5 对 (新增 config↔tests)」,
 本轮复测 `config → tests` 确有 5 条 use 边 (全在 `config/memory.rs` 的 `#[cfg(test)]`
 内), 但 `tests → config` **零条 use 边** (唯一引用是 `tests/mod.rs:448` 的限定调用
@@ -30,7 +33,8 @@ item 级 (AST / rustc 查询) 解析, 否则宏参数与文档字符串会被算
 该环, 它只在 D 类扩边下才成立.
 
 用法: python3 scripts/audit_coupling.py [--update-baseline]
-退出码: 0 = 通过, 1 = 有违规 / 基线不符 / 快照缺失或不自洽
+退出码: 0 = 通过, 1 = 有违规 / 基线不符 / 快照缺失或不自洽; D 类引用级边只报告,
+不改变退出码 (P-73 丙).
 """
 
 import argparse
@@ -187,6 +191,139 @@ def iter_use_statements(rs_file):
         pending = None
 
 
+# ── D 类引用级边 (P-73 丙: 只报告不阻断的第二矩阵) ────────────────────────────
+# 判据 = 非 use 行的限定路径 `crate::<layer>::<mod>`; 注释、字符串字面量与 use 语句
+# 先掩成空格. 该矩阵不参与基线对账, 也不进入 main() 的结果判定.
+RAW_STRING_START = re.compile(r'(?:(?:b|c)?r|rb)(#*)"')
+CHAR_LITERAL = re.compile(
+    r"'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^\\'])'")
+USE_ANYWHERE = re.compile(r'(?<![\w#$])(?:pub(?:\([^)]*\))?\s+)?use\s')
+QUALIFIED_REF = re.compile(
+    r'(?<![\w$])crate::(privileged|functions)::([A-Za-z_][A-Za-z0-9_]*)')
+
+
+def mask_rust_noise(text):
+    """把注释与字符串字面量替换为空格, 保留换行 (D 类扫描的伪阳性抑制).
+
+    不区分 `#[cfg(test)]` 载体与宏体路径 —— 本矩阵只报告, 不做 item 级判定.
+    """
+    out = list(text)
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '/' and text.startswith('//', i):
+            end = text.find('\n', i)
+            end = n if end == -1 else end
+            for k in range(i, end):
+                out[k] = ' '
+            i = end
+            continue
+        if ch == '/' and text.startswith('/*', i):
+            depth = 1
+            j = i + 2
+            while j < n and depth:
+                if text.startswith('/*', j):
+                    depth += 1
+                    j += 2
+                elif text.startswith('*/', j):
+                    depth -= 1
+                    j += 2
+                else:
+                    j += 1
+            for k in range(i, min(j, n)):
+                if text[k] != '\n':
+                    out[k] = ' '
+            i = j
+            continue
+        raw = RAW_STRING_START.match(text, i)
+        if raw and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == '_')):
+            closer = '"' + raw.group(1)
+            end = text.find(closer, raw.end())
+            end = n if end == -1 else end + len(closer)
+            for k in range(i, min(end, n)):
+                if text[k] != '\n':
+                    out[k] = ' '
+            i = end
+            continue
+        if ch == "'":
+            char = CHAR_LITERAL.match(text, i)
+            if char:
+                for k in range(i, char.end()):
+                    out[k] = ' '
+                i = char.end()
+                continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == '\\':
+                    j += 2
+                elif text[j] == '"':
+                    j += 1
+                    break
+                else:
+                    j += 1
+            for k in range(i, min(j, n)):
+                if text[k] != '\n':
+                    out[k] = ' '
+            i = j
+            continue
+        i += 1
+    return ''.join(out)
+
+
+def mask_use_statements(text):
+    """把 use / pub use 语句替换为空格 (保留换行), 使 D 类边不与声明级边重叠."""
+    out = list(text)
+    pos = 0
+    while True:
+        match = USE_ANYWHERE.search(text, pos)
+        if not match:
+            break
+        semi = text.find(';', match.end())
+        if semi == -1:
+            break
+        for k in range(match.start(), semi + 1):
+            if out[k] != '\n':
+                out[k] = ' '
+        pos = semi + 1
+    return ''.join(out)
+
+
+def scan_reference_level_deps(base, layer_name):
+    """扫描 D 类引用级边 (P-73 丙): 非 use 行的限定路径, 只报告不阻断.
+
+    返回 (模块对计数矩阵, 明细). 读文件失败与声明级扫描同语义 fail-closed ——
+    报告失真不可静默放行.
+    """
+    modules = get_submodules(base)
+    module_set = set(modules)
+    ref_matrix = defaultdict(lambda: defaultdict(int))
+    ref_details = defaultdict(lambda: defaultdict(list))
+    for mod in modules:
+        for rs_file in sorted((base / mod).rglob('*.rs')):
+            try:
+                text = rs_file.read_text(encoding='utf-8', errors='replace')
+            except OSError as exc:
+                print(f'[FAIL-CLOSED] 无法读取待扫描源文件: {rs_file}: {exc}',
+                      file=sys.stderr)
+                sys.exit(1)
+            masked = mask_use_statements(mask_rust_noise(text))
+            for match in QUALIFIED_REF.finditer(masked):
+                if match.group(1) != layer_name:
+                    continue
+                target = match.group(2)
+                if target == mod or target not in module_set:
+                    continue
+                lineno = masked.count('\n', 0, match.start()) + 1
+                ref_matrix[mod][target] += 1
+                ref_details[mod][target].append({
+                    'file': str(rs_file.relative_to(KERNEL_ROOT)),
+                    'line': lineno,
+                })
+    return ref_matrix, ref_details
+
+
 def scan_cross_module_deps(base, layer_name):
     """扫描子模块间的交叉依赖."""
     modules = get_submodules(base)
@@ -266,7 +403,8 @@ def dump_baseline(entries):
                   '计数增加/减少同样阻断',
             'disposition': 'P-54 冻结存量环, 解耦归 F3 后续批次; P-65 乙 把 `pub use` 与'
                            '跨行 use 纳入边模型后计数校正 (mm↔proc 2/12→2/13, '
-                           'proc↔syscall 5/1→7/2), 环对数不变; 引用级边 (限定调用) 归 P-73',
+                           'proc↔syscall 5/1→7/2), 环对数不变; P-73 丙 把非 use 行的'
+                           '限定路径做成只报告不阻断的第二矩阵, 不进本基线',
         },
         'totals': totals_of(entries),
         'entries': [[layer, a, b, ab, ba]
@@ -430,7 +568,8 @@ def count_pub_surface(base):
 
 
 def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_issues,
-                                    pub_surface, reconciliation):
+                                    pub_surface, reconciliation,
+                                    reference_level_edges=None):
     """生成依赖矩阵 JSON 报告."""
     report = {
         'timestamp': '2026-06-16',
@@ -440,6 +579,7 @@ def generate_dependency_matrix_json(fw_matrix, svc_matrix, circular, internal_is
         'internal_access_issues': len(internal_issues),
         'pub_surface': pub_surface,
         'baseline_reconciliation': reconciliation,
+        'reference_level_edges': reference_level_edges or {},
     }
 
     for mod in sorted(fw_matrix.keys()):
@@ -520,6 +660,48 @@ def main():
             a, b = c['modules']
             print(f'    ✓ {a} ↔ {b}: {c["a_to_b"]}/{c["b_to_a"]} (合计 {c["total"]})')
     print()
+
+    # 3b. D 类引用级边 (P-73 丙: 只报告不阻断)
+    reference_level_edges = {}
+    if not args.update_baseline:
+        print('[3b] D 类引用级边 (非 use 行的限定路径; 只报告不阻断, P-73 丙)')
+        print('-' * 78)
+        for base, label in ((PRIVILEGED_BASE, 'privileged'),
+                            (FUNCTIONS_BASE, 'functions')):
+            ref_matrix, _ref_details = scan_reference_level_deps(base, label)
+            ref_cycles, ref_allowed = detect_circular_deps(ref_matrix, label)
+            ref_total = sum(sum(targets.values()) for targets in ref_matrix.values())
+            ref_pairs = sum(len(targets) for targets in ref_matrix.values())
+            print(f'  [D 只报告] {label}: {ref_total} 处 / {ref_pairs} 个有向模块对 / '
+                  f'禁止环 {len(ref_cycles)} 对 / 允许紧耦合 {len(ref_allowed)} 对')
+            for cycle in ref_cycles[:12]:
+                a, b = cycle['modules']
+                print(f'    [D 只报告] [{label}] {a} ↔ {b}: {cycle["a_to_b"]}/'
+                      f'{cycle["b_to_a"]} (合计 {cycle["total"]})')
+            if len(ref_cycles) > 12:
+                print(f'    [D 只报告] ... 还有 {len(ref_cycles) - 12} 对 '
+                      f'(完整明细见 JSON 报告)')
+            for cycle in ref_allowed:
+                a, b = cycle['modules']
+                print(f'    [D 只报告] [允许] [{label}] {a} ↔ {b}: {cycle["a_to_b"]}/'
+                      f'{cycle["b_to_a"]} (合计 {cycle["total"]})')
+            reference_level_edges[label] = {
+                'refs': ref_total,
+                'directed_pairs': ref_pairs,
+                'forbidden_cycles': [
+                    {'modules': list(c['modules']), 'a_to_b': c['a_to_b'],
+                     'b_to_a': c['b_to_a'], 'total': c['total']}
+                    for c in ref_cycles
+                ],
+                'allowed_cycles': [
+                    {'modules': list(c['modules']), 'a_to_b': c['a_to_b'],
+                     'b_to_a': c['b_to_a'], 'total': c['total']}
+                    for c in ref_allowed
+                ],
+            }
+        print('  注: 本矩阵不参与基线对账, 不影响退出码; 含 #[cfg(test)] 载体与宏体路径,')
+        print('      别名导入 (use … as …) 不捕获, 读数只作趋势观察.')
+        print()
 
     # 4. 与机器派生基线对账 (P-54: 不再使用 >20 阈值)
     print('[4] 禁止循环依赖与基线快照对账')
@@ -602,13 +784,13 @@ def main():
     json_path.parent.mkdir(parents=True, exist_ok=True)
     report = generate_dependency_matrix_json(fw_matrix, svc_matrix, circular,
                                              internal_issues, pub_surface,
-                                             reconciliation)
+                                             reconciliation, reference_level_edges)
     with open(json_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f'JSON 报告保存至: {json_path}')
     print()
 
-    # 8. 结果判定
+    # 8. 结果判定 — P-73 丙: D 类引用级边只报告, 不进入本判定, 也不进基线.
     high_severity = [i for i in internal_issues if i['severity'] == 'HIGH']
 
     if high_severity or over or under:

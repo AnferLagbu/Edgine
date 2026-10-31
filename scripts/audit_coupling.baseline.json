@@ -2,7 +2,7 @@
   "_meta": {
     "generated_by": "python3 scripts/audit_coupling.py --update-baseline",
     "口径": "privileged + functions 两层禁止循环依赖的冻结清单; 判定按 (层, 模块对) 集合与双向**声明级** use / pub use 边计数 (含跨行语句, P-65 乙), 计数增加/减少同样阻断",
-    "disposition": "P-54 冻结存量环, 解耦归 F3 后续批次; P-65 乙 把 `pub use` 与跨行 use 纳入边模型后计数校正 (mm↔proc 2/12→2/13, proc↔syscall 5/1→7/2), 环对数不变; 引用级边 (限定调用) 归 P-73"
+    "disposition": "P-54 冻结存量环, 解耦归 F3 后续批次; P-65 乙 把 `pub use` 与跨行 use 纳入边模型后计数校正 (mm↔proc 2/12→2/13, proc↔syscall 5/1→7/2), 环对数不变; P-73 丙 把非 use 行的限定路径做成只报告不阻断的第二矩阵, 不进本基线"
   },
   "totals": {
     "pairs": 5,

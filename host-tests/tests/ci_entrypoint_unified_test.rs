@@ -1467,6 +1467,98 @@ fn assert_p65_docs_name_declaration_level_edges() {
     }
 }
 
+/// P-73 丙 结构锁: D 类引用级边是**只报告不阻断**的第二矩阵.
+///
+/// 病灶: P-54 探针把限定调用计入后会出现 privileged 31 对 / functions 5 对禁止环,
+/// 属红墙; 若让它进入基线对账, F3 会因存量引用级环整体转红. 本锁钉住三条不变量:
+/// ① 扫描器存在且先掩注释/字符串/use 语句; ② D 类结果不进入退出码判定, 也不进基线;
+/// ③ 读数落进 JSON 报告, 自测腿真调检测器.
+#[test]
+fn test_p73_reference_edges_are_report_only() {
+    let py = read("../scripts/audit_coupling.py");
+    for needle in [
+        "def mask_rust_noise(",
+        "def mask_use_statements(",
+        "def scan_reference_level_deps(",
+        "mask_use_statements(mask_rust_noise(text))",
+        "[3b] D 类引用级边",
+        "只报告不阻断",
+        "[D 只报告]",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_coupling.py 缺 `{needle}` —— D 类扫描器或掩码链丢失, \
+             注释/字符串/use 语句会重新被算成引用级边"
+        );
+    }
+
+    let audit_sh = read("../ci/audit.sh");
+    assert!(
+        audit_sh.contains("[D 只报告]"),
+        "ci/audit.sh 的 coupling 腿过滤串未放行 `[D 只报告]` —— 只报告读数在 CI 日志里\
+         要么不可见, 要么以阻断标记 `⚠` 出现"
+    );
+
+    assert!(
+        py.contains("if not args.update_baseline:"),
+        "D 类报告块未与 --update-baseline 隔离 —— 基线重铸会混入只报告读数"
+    );
+    assert!(
+        py.contains("if high_severity or over or under:"),
+        "最终判定条件被改写 —— D 类只报告矩阵可能已经进入阻断面"
+    );
+    for forbidden in [
+        "ref_cycles or",
+        "or ref_cycles",
+        "reference_level_edges or high",
+    ] {
+        assert!(
+            !py.contains(forbidden),
+            "最终判定条件疑似纳入 D 类结果 (`{forbidden}`) —— 只报告矩阵不得阻断"
+        );
+    }
+    assert!(
+        py.contains("dump_baseline(actual_entries)") && !py.contains("dump_baseline(ref_"),
+        "基线写入口不再只接收声明级边 —— D 类读数会被冻结进阻断基线"
+    );
+    assert!(
+        py.contains("'reference_level_edges': reference_level_edges or {}"),
+        "JSON 报告未携带 D 类读数 —— 趋势观察无机器可读输出"
+    );
+
+    let st = read("../scripts/tests/audit_selftest.py");
+    assert!(
+        st.contains("def test_coupling_reference_edges("),
+        "自测缺 D 类引用级边腿 —— 扫描器行为只有脚本自述, 无同源证明"
+    );
+    let results_at = st
+        .find("results = [")
+        .unwrap_or_else(|| panic!("audit_selftest.py 缺 main() 的 results 列表"));
+    let results = &st[results_at..];
+    let results = &results[..results
+        .find(']')
+        .unwrap_or_else(|| panic!("results 列表未闭合"))];
+    assert!(
+        results.lines().any(|line| {
+            let item = line.trim();
+            item.starts_with("test_coupling_reference_edges()") && !item.starts_with('#')
+        }),
+        "D 类自测腿未接进 main() 的结果列表 (或被注释掉) —— 写了也不跑"
+    );
+    assert!(
+        st.contains("detector.scan_reference_level_deps("),
+        "D 类自测腿必须真调检测器自身的扫描函数, 不得复制一份平行实现"
+    );
+
+    let spec = read("../docs/explain/spec-engineering.md");
+    for needle in ["P-73 丙", "只报告不阻断", "别名导入", "不影响退出码"] {
+        assert!(
+            spec.contains(needle),
+            "docs/explain/spec-engineering.md 未写明 D 类矩阵 `{needle}`"
+        );
+    }
+}
+
 /// P-70 甲 结构锁: 硬规则的编号与条数只有一个持有者 (AGENTS §5), 门禁清单只有
 /// AGENTS §2.2 / 门槛只有 §2.3, must-sync 文档一律指向而不复制.
 ///
