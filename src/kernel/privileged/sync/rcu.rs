@@ -16,15 +16,17 @@
 //!
 //! ## 多核宽限期
 //!
-//! 每 CPU 维护独立的嵌套计数和静止状态标志。
-//! `synchronize_rcu()` 等待所有在线 CPU 报告静止状态后
-//! 才认为宽限期结束。
+//! 每 CPU 维护独立的嵌套计数和取值单调的宽限期序号 (epoch)。
+//! `synchronize_rcu()` 为每轮宽限期取全局唯一序号, 等待所有在线 CPU
+//! 给出「序号不早于本轮且已通过静止点」的证明后才认为宽限期结束。
+//! 序号单调使并发宽限期互不覆盖: 更晚轮次的静止证明同样满足更早轮次,
+//! 复位只清本轮, 不会抹掉其它写者的等待请求。
 
 #![deny(missing_docs)]
 
 use core::cell::UnsafeCell;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering, fence};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering, fence};
 
 use crate::privileged::racy_cell::RacyCell;
 
@@ -56,7 +58,8 @@ impl RcuHead {
 
 struct PerCpuRcu {
     nesting: AtomicU32,
-    gp_state: AtomicU32,
+    /// 打包的宽限期槽位字: 高 32 位为序号 (epoch), 低 32 位为三态.
+    gp_epoch_state: AtomicU64,
     callbacks: UnsafeCell<*mut RcuHead>,
     callback_tail: UnsafeCell<*mut RcuHead>,
     callback_count: AtomicU32,
@@ -67,7 +70,8 @@ impl PerCpuRcu {
     const fn new() -> Self {
         Self {
             nesting: AtomicU32::new(0),
-            gp_state: AtomicU32::new(GP_IDLE),
+            // 全零 = `gp_pack(0, GP_IDLE)`: 初始槽位尚无任何宽限期轮次.
+            gp_epoch_state: AtomicU64::new(0),
             callbacks: UnsafeCell::new(ptr::null_mut()),
             callback_tail: UnsafeCell::new(ptr::null_mut()),
             callback_count: AtomicU32::new(0),
@@ -89,6 +93,128 @@ unsafe impl Send for PerCpuRcu {}
 const GP_IDLE: u32 = 0;
 const GP_WAIT: u32 = 1;
 const GP_DONE: u32 = 2;
+
+/// 宽限期序号在槽位字中的位偏移 (低 32 位为三态).
+const GP_EPOCH_SHIFT: u32 = 32;
+
+/// 把 `(epoch, state)` 打包为单个 64 位原子字.
+///
+/// 序号与三态必须同一原子字读写: 拆成两个原子字会出现「新序号 + 旧状态」的
+/// 撕裂窗口, 等待方可能据此误判或覆盖并发请求.
+#[inline]
+fn gp_pack(epoch: u32, state: u32) -> u64 {
+    (u64::from(epoch) << GP_EPOCH_SHIFT) | u64::from(state)
+}
+
+/// 从槽位字取出宽限期序号.
+#[inline]
+fn gp_epoch(word: u64) -> u32 {
+    // 右移后恰在 u32 范围内, `unwrap_or` 分支不可达, 仅为保持无 panic 形态.
+    u32::try_from(word >> GP_EPOCH_SHIFT).unwrap_or(0)
+}
+
+/// 从槽位字取出三态.
+#[inline]
+fn gp_state(word: u64) -> u32 {
+    u32::try_from(word & u64::from(u32::MAX)).unwrap_or(GP_IDLE)
+}
+
+/// 回绕安全的序号先后比较: `candidate` 是否不早于 `reference`.
+///
+/// 以「差值小于半个序号空间」判先后, 允许序号跨 `u32::MAX` 回绕; 只有两个
+/// 序号相差达到 2^31 时才会给出保守的「不晚于」否定, 而单个宽限期窗口内
+/// 不可能积累如此多的并发轮次.
+#[inline]
+fn epoch_at_or_after(candidate: u32, reference: u32) -> bool {
+    candidate.wrapping_sub(reference) < (1u32 << 31)
+}
+
+/// 为远端 CPU 登记本轮 (`ticket`) 宽限期请求.
+///
+/// 分两种情形:
+/// - 槽位持有**更新轮次的未完成请求** (`GP_WAIT`): 保留之 — 它的静止证明
+///   必然产生于本轮登记之后, 同样满足本轮;
+/// - 其余情形 (含更新轮次**已完成/已复位**的记录): 一律覆盖为本轮 `GP_WAIT`.
+///   已完成记录产生于本轮登记**之前**, 不能作为本轮所需的静止证明; 覆盖后
+///   强迫目标在本轮登记之后重新通过静止点.
+#[inline]
+fn request_gp(data: &PerCpuRcu, ticket: u32) {
+    let mut word = data.gp_epoch_state.load(Ordering::Acquire);
+    loop {
+        let epoch = gp_epoch(word);
+        if gp_state(word) == GP_WAIT && epoch != ticket && epoch_at_or_after(epoch, ticket) {
+            return;
+        }
+        match data.gp_epoch_state.compare_exchange_weak(
+            word,
+            gp_pack(ticket, GP_WAIT),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(actual) => word = actual,
+        }
+    }
+}
+
+/// 为指定 CPU 上报静止状态: 把其当前等待轮次由 `GP_WAIT` 推为 `GP_DONE`.
+///
+/// 只推进槽位当前登记的轮次, 不引入新序号; 用 CAS 而非 store, 避免把并发
+/// 请求方刚写入的更新轮次覆盖回旧序号 (那会吞掉对方的等待请求).
+#[inline]
+fn report_qs(data: &PerCpuRcu) {
+    if data.nesting.load(Ordering::Acquire) > 0 {
+        return;
+    }
+    let mut word = data.gp_epoch_state.load(Ordering::Acquire);
+    loop {
+        if gp_state(word) != GP_WAIT {
+            return;
+        }
+        let done = gp_pack(gp_epoch(word), GP_DONE);
+        match data.gp_epoch_state.compare_exchange_weak(
+            word,
+            done,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return,
+            Err(actual) => word = actual,
+        }
+    }
+}
+
+/// 本轮是否已在该 CPU 上获得静止证明.
+///
+/// 判据 = 槽位序号不早于本轮, 且状态不是 `GP_WAIT`:
+/// - `GP_DONE`: 该 CPU 已在本轮或更晚轮次上报静止;
+/// - `GP_IDLE`: 只会在某轮 `GP_DONE` 之后被该轮持有者复位, 同样证明更晚
+///   轮次已完成;
+/// - `GP_WAIT`: 即使序号更新也只是别人刚提出的等待, 不构成静止证明.
+#[inline]
+fn gp_satisfied(data: &PerCpuRcu, ticket: u32) -> bool {
+    let word = data.gp_epoch_state.load(Ordering::Acquire);
+    gp_state(word) != GP_WAIT && epoch_at_or_after(gp_epoch(word), ticket)
+}
+
+/// 结束本轮: 只复位「序号属本轮且已获静止证明」的槽位.
+///
+/// 序号已被更新轮次抬高时保持原状 —— 既不能清掉别人的 `GP_WAIT`, 也不能把
+/// 更晚轮次的完成记录降级; 超时收尾时仍是 `GP_WAIT`, 也不得复位成看似
+/// 完成的 `GP_IDLE` (那会让其它等待方把无证明的轮次误判为已通过静止点).
+#[inline]
+fn finish_gp(data: &PerCpuRcu, ticket: u32) {
+    let word = data.gp_epoch_state.load(Ordering::Acquire);
+    if gp_epoch(word) != ticket || gp_state(word) != GP_DONE {
+        return;
+    }
+    let _ = data.gp_epoch_state.compare_exchange(
+        word,
+        gp_pack(ticket, GP_IDLE),
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+}
 
 /// BSP 的静态 per-CPU RCU 状态.
 ///
@@ -225,17 +351,30 @@ pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
 
 /// 阻塞直到所有 CPU 上已有 RCU 读者退出
 ///
-/// 宽限期流程:
-/// 1. 标记所有在线且已分配槽位的 CPU 的 `gp_state` = `GP_WAIT`
-/// 2. 等待每个 CPU 报告 `GP_DONE` (通过 `rcu_note_quiescent_state`)
-/// 3. 处理回调
+/// 宽限期流程 (epoch 化, P-76 甲):
+/// 1. 取全局唯一序号 `ticket`, 为每个在线且已分配槽位的远端 CPU 登记本轮
+///    `GP_WAIT` (槽位序号只升不降), 并发送重调度 IPI 促使目标报告静止;
+/// 2. 等待每个远端 CPU 给出「序号不早于本轮且状态非 `GP_WAIT`」的静止证明;
+///    等待循环内顺带为**本 CPU** 上报静止, 打破两个 CPU 并发进入宽限期时
+///    互相等待、双双自旋到超时的死锁;
+/// 3. 等待本 CPU 的读临界区嵌套归零;
+/// 4. 只复位序号仍属本轮的槽位, 处理回调.
 ///
 /// 离线 CPU 与未分配槽位的 CPU 不参与本轮宽限期 (前者无读者, 后者尚未完成
 /// RCU 初始化); 跨 CPU 槽位一律经 [`rcu_data_allocated`] 获取, 不回落 BSP 槽位.
 fn synchronize_rcu_impl() {
     const SYNC_TIMEOUT_SPINS: u32 = 50_000_000;
-    let start_gp = RCU_GP_COUNTER.load(Ordering::Relaxed);
-    RCU_GP_COUNTER.store(start_gp.wrapping_add(1), Ordering::Release);
+
+    // 每轮宽限期的唯一序号; 并发轮次凭此在槽位上取最大, 互不覆盖.
+    // 序号 0 保留给「尚无轮次」的初始槽位字, 回绕到 0 时跳过再取一号.
+    let mut ticket = RCU_GP_COUNTER
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1);
+    if ticket == 0 {
+        ticket = RCU_GP_COUNTER
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+    }
 
     let cpu_count = crate::privileged::smp::get_cpu_count();
     let current_cpu = crate::privileged::smp::get_current_cpu();
@@ -249,32 +388,40 @@ fn synchronize_rcu_impl() {
             // 不得回退 BSP 槽位, 否则会改写本 CPU 自身的宽限期状态.
             continue;
         };
-        data.gp_state.store(GP_WAIT, Ordering::Release);
+        request_gp(data, ticket);
         // 以逻辑索引为键发送重调度 IPI; 目标未登记时内部静默返回。
         crate::privileged::smp::send_reschedule_ipi(i);
     }
 
-    {
-        let data = current_rcu();
-        if data.nesting.load(Ordering::Acquire) == 0 {
-            data.gp_state.store(GP_DONE, Ordering::Release);
-        }
-    }
+    // 本 CPU 的槽位可能被并发轮次登记为 `GP_WAIT`; 立即上报自身静止.
+    report_qs(current_rcu());
 
-    for i in 0..cpu_count {
-        if i == current_cpu || !crate::privileged::smp::is_cpu_online(i) {
-            continue;
-        }
-        let Some(data) = rcu_data_allocated(i) else {
-            continue;
-        };
-        let mut spins = 0u32;
-        while data.gp_state.load(Ordering::Acquire) != GP_DONE {
-            core::hint::spin_loop();
-            spins += 1;
-            if spins >= SYNC_TIMEOUT_SPINS {
+    let mut spins = 0u32;
+    loop {
+        let mut pending = false;
+        for i in 0..cpu_count {
+            if i == current_cpu || !crate::privileged::smp::is_cpu_online(i) {
+                continue;
+            }
+            let Some(data) = rcu_data_allocated(i) else {
+                continue;
+            };
+            if !gp_satisfied(data, ticket) {
+                pending = true;
                 break;
             }
+        }
+        if !pending {
+            break;
+        }
+        // 并发宽限期的双方都可能停在本循环自旋, 不会发生上下文切换去触发
+        // `rcu_note_quiescent_state`; 这里主动上报本 CPU 的静止状态, 使对方的
+        // 等待条件可在本循环内满足.
+        report_qs(current_rcu());
+        core::hint::spin_loop();
+        spins += 1;
+        if spins >= SYNC_TIMEOUT_SPINS {
+            break;
         }
     }
 
@@ -292,7 +439,7 @@ fn synchronize_rcu_impl() {
 
     for i in 0..cpu_count {
         if let Some(data) = rcu_data_allocated(i) {
-            data.gp_state.store(GP_IDLE, Ordering::Release);
+            finish_gp(data, ticket);
         }
     }
 
@@ -393,14 +540,8 @@ pub fn process_callbacks() {
 pub fn rcu_note_quiescent_state() {
     let data = current_rcu();
 
-    if data.nesting.load(Ordering::Acquire) > 0 {
-        return;
-    }
-
-    let state = data.gp_state.load(Ordering::Acquire);
-    if state == GP_WAIT {
-        data.gp_state.store(GP_DONE, Ordering::Release);
-    }
+    // 读临界区未退出时 report_qs 内部直接返回, 不会误报静止.
+    report_qs(data);
 
     if data.need_callback_process.load(Ordering::Acquire)
         && data.nesting.load(Ordering::Acquire) == 0
@@ -548,5 +689,139 @@ mod tests {
 
         assert!(rcu_callback_count() == 0);
         assert!(CALLED.load(Ordering::Acquire));
+    }
+
+    // 以下用例只操作栈上独立槽位, 不触碰全局 RCU 状态, 无需串行闸门.
+
+    #[test]
+    fn test_gp_epoch_state_machine_cycle() {
+        let cpu = PerCpuRcu::new();
+
+        request_gp(&cpu, 1);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_WAIT
+        );
+        assert!(!gp_satisfied(&cpu, 1), "已登记等待但尚未上报静止");
+
+        report_qs(&cpu);
+        assert!(gp_satisfied(&cpu, 1), "上报静止后本轮应获证明");
+
+        finish_gp(&cpu, 1);
+        assert_eq!(gp_epoch(cpu.gp_epoch_state.load(Ordering::Acquire)), 1);
+        assert!(gp_satisfied(&cpu, 1), "复位只把状态降回 IDLE, 序号保留");
+    }
+
+    #[test]
+    fn test_gp_pending_newer_request_not_downgraded() {
+        let cpu = PerCpuRcu::new();
+
+        request_gp(&cpu, 1);
+        request_gp(&cpu, 2);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 2, "更晚轮次的待办请求不得被降级");
+        assert_eq!(gp_state(word), GP_WAIT);
+
+        report_qs(&cpu);
+        assert!(gp_satisfied(&cpu, 1), "更晚轮次的静止同样证明更早轮次");
+        assert!(gp_satisfied(&cpu, 2));
+        assert!(!gp_satisfied(&cpu, 3), "尚未发生的轮次不满足");
+
+        finish_gp(&cpu, 1);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 2, "早轮次收尾不得清除晚轮次记录");
+        assert_eq!(gp_state(word), GP_DONE);
+
+        finish_gp(&cpu, 2);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 2);
+        assert_eq!(gp_state(word), GP_IDLE);
+    }
+
+    #[test]
+    fn test_gp_completed_epoch_requires_fresh_quiescent() {
+        let cpu = PerCpuRcu::new();
+
+        request_gp(&cpu, 2);
+        report_qs(&cpu);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_DONE
+        );
+
+        // 晚到的更早轮次 (ticket 1): DONE@2 产生于本轮登记之前, 不能作为
+        // 本轮的静止证明, 必须覆盖为 WAIT@1 等待本轮之后的静止点.
+        request_gp(&cpu, 1);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 1);
+        assert_eq!(gp_state(word), GP_WAIT);
+        assert!(!gp_satisfied(&cpu, 1), "覆盖后不得直接判定满足");
+
+        request_gp(&cpu, 7);
+        request_gp(&cpu, 5);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 7, "待办请求只升不降");
+
+        report_qs(&cpu);
+        assert!(gp_satisfied(&cpu, 1));
+        finish_gp(&cpu, 7);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_IDLE
+        );
+    }
+
+    #[test]
+    fn test_gp_timeout_leaves_wait_unclaimed() {
+        let cpu = PerCpuRcu::new();
+        request_gp(&cpu, 9);
+
+        // 未获静止证明就收尾 (超时路径): 不得复位成可被误读的完成态.
+        finish_gp(&cpu, 9);
+        let word = cpu.gp_epoch_state.load(Ordering::Acquire);
+        assert_eq!(gp_epoch(word), 9);
+        assert_eq!(gp_state(word), GP_WAIT);
+        assert!(!gp_satisfied(&cpu, 9), "无静止证明的轮次不得被判满足");
+
+        report_qs(&cpu);
+        assert!(gp_satisfied(&cpu, 9));
+        finish_gp(&cpu, 9);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_IDLE
+        );
+    }
+
+    #[test]
+    fn test_gp_quiescent_report_blocked_by_nesting() {
+        let cpu = PerCpuRcu::new();
+        request_gp(&cpu, 7);
+        cpu.nesting.store(1, Ordering::Release);
+
+        report_qs(&cpu);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_WAIT,
+            "读者未退出时不得上报静止"
+        );
+
+        cpu.nesting.store(0, Ordering::Release);
+        report_qs(&cpu);
+        assert_eq!(
+            gp_state(cpu.gp_epoch_state.load(Ordering::Acquire)),
+            GP_DONE
+        );
+    }
+
+    #[test]
+    fn test_gp_epoch_wrap_comparison() {
+        assert!(epoch_at_or_after(0, 0));
+        assert!(epoch_at_or_after(3, 2));
+        assert!(!epoch_at_or_after(2, 3));
+        // 序号回绕: u32::MAX 的下一轮是 0.
+        assert!(epoch_at_or_after(0, u32::MAX));
+        assert!(!epoch_at_or_after(u32::MAX, 0));
+        // 恰好相差半个序号空间时保守判「不晚于」.
+        assert!(!epoch_at_or_after(0, 1u32 << 31));
     }
 }

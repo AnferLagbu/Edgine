@@ -15,7 +15,11 @@
 //!    不得出现会回退 BSP 的 `rcu_data(i)`;
 //! 2. `rcu_process_all_callbacks` 只处理本 CPU 回调, 远程 CPU 仅发 IPI 通知,
 //!    不得触碰远程 `callbacks` / `callback_tail`;
-//! 3. 三个 RCU 用例都经 `SerialGuard::acquire()` 串行化 (host 侧共用 BSP 槽位).
+//! 3. 三个触碰全局状态的 RCU 用例都经 `SerialGuard::acquire()` 串行化
+//!    (host 侧共用 BSP 槽位); 另有一组只操作栈上独立槽位的 epoch 状态机用例,
+//!    不触碰全局, 无需串行;
+//! 4. 宽限期槽位字只经 epoch 状态机 (`request_gp` / `report_qs` / `finish_gp`)
+//!    读写, 等待循环内必须自报静止 (P-76).
 
 use std::fs;
 use std::path::Path;
@@ -125,6 +129,32 @@ fn process_all_callbacks_notifies_remotes_instead_of_touching_lists() {
     assert!(
         !body.contains(".callback_tail.get()"),
         "不得跨 CPU 改写远程回调链表尾"
+    );
+}
+
+#[test]
+fn synchronize_uses_epoch_guarded_state_machine() {
+    let body = synchronize_body();
+    assert!(
+        body.contains("request_gp(data, ticket)"),
+        "远端槽位必须以本轮序号登记请求, 不得直接写 GP_WAIT (并发宽限期会互相覆盖)"
+    );
+    assert!(
+        body.contains("gp_satisfied(data, ticket)"),
+        "等待判据必须携带本轮序号, 裸 GP_DONE 会被旧轮次的完成记录骗过"
+    );
+    assert!(
+        body.contains("finish_gp(data, ticket)"),
+        "复位必须只清本轮序号的槽位, 不得无条件写 GP_IDLE"
+    );
+    assert_eq!(
+        count(&body, "report_qs(current_rcu());"),
+        2,
+        "本 CPU 静止须在登记后与等待循环内各上报一次: 后者用于打破并发宽限期的互相等待"
+    );
+    assert!(
+        !body.contains("gp_epoch_state.store("),
+        "槽位字只能经 CAS 状态机改写, 直接 store 会撕裂序号与三态"
     );
 }
 
