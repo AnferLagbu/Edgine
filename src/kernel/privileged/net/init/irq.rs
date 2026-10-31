@@ -20,7 +20,7 @@
 //! 设备侧 ack 与底半部置位。
 
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use crate::privileged::egdf::NetOps;
 use crate::privileged::irq::{SoftirqVec, raise_softirq};
@@ -31,6 +31,9 @@ static NET_IRQ_OPS: OnceLock<&'static NetOps> = OnceLock::new();
 
 /// 网卡驱动实例裸指针 (`NetDeviceRegistration::driver_data`)。
 static NET_IRQ_DATA: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
+
+/// 首个设备中断已投递 (一次置位, 供启动日志与 QEMU 里程碑断言).
+static FIRST_IRQ_SEEN: AtomicBool = AtomicBool::new(false);
 
 /// 安装网卡中断接线 (由 `probe::nic_probe_all` 在设备探测成功后调用)。
 ///
@@ -50,6 +53,12 @@ pub(crate) fn net_irq_install(ops: &'static NetOps, driver_data: *mut c_void) {
 fn net_irq_dispatch() {
     if let Some(ops) = NET_IRQ_OPS.get() {
         ops.handle_irq(NET_IRQ_DATA.load(Ordering::Acquire).cast::<u8>());
+    }
+    if !FIRST_IRQ_SEEN.swap(true, Ordering::Relaxed) {
+        crate::klog_info!(
+            Net,
+            "[net] first device interrupt delivered (IRQ-driven RX active)"
+        );
     }
     raise_softirq(SoftirqVec::NetRx);
 }
@@ -85,6 +94,42 @@ pub fn net_register_msix_isr(msi_vector: u8) -> Result<(), &'static str> {
     manager.register_msi_irq(irq, net_msix_irq_handler, "net-msix")?;
     // 与 NVMe MSI-X 注册一致: IDT 抽象统一要求 enable_irq 以免向量被屏蔽。
     IdtManager::enable_irq(irq);
+    Ok(())
+}
+
+// ============================================================================
+// x86_64: PCI INTx 中断 (8259A 向量段 → IOAPIC 重定向)
+// ============================================================================
+
+/// `INTx` ISR 入口 (IDT 签名) — 转发至统一分发。
+#[cfg(target_arch = "x86_64")]
+extern "C" fn net_intx_irq_handler(_frame: *mut crate::privileged::idt::InterruptFrame) {
+    net_irq_dispatch();
+}
+
+/// 注册网卡 PCI `INTx` ISR 并接通 IOAPIC 路由 (functions 可调用的 0 unsafe 入口)。
+///
+/// 仅接受传统线号 `1..=15`: IRQ0 属 PIT/legacy 定时器域 (启动期显式屏蔽),
+/// ≥16 属 MSI/LAPIC 向量域。`INTx` 使用向量 `IRQ_BASE + irq` (0x20-0x2F),
+/// 与 tick 向量 0x30 不重叠。
+///
+/// 路由写入 IOAPIC 重定向表并解除屏蔽; 极性/触发模式按
+/// `ioapic::route_intx_irq` 的 ISO 优先 + PCI 总线默认策略解析。
+///
+/// # Errors
+///
+/// - `irq` 不在 `1..=15`;
+/// - `IdtManager::register_irq` 拒绝该线;
+/// - IOAPIC 无法映射该 GSI (MADT 无 IOAPIC / 控制器未初始化 / 越界)。
+#[cfg(target_arch = "x86_64")]
+pub fn net_register_intx_isr(irq: u8) -> Result<(), &'static str> {
+    use crate::privileged::idt::{IRQ_BASE, IdtManager};
+    if !(1..16).contains(&irq) {
+        return Err("net INTx irq must be in 1..=15");
+    }
+    IdtManager::instance().register_irq(irq, net_intx_irq_handler, "net-intx", 0)?;
+    let apic_id = crate::privileged::glue::low_u8_from_u32(crate::privileged::arch::apic::get_id());
+    crate::privileged::arch::ioapic::route_intx_irq(irq, IRQ_BASE + irq, apic_id)?;
     Ok(())
 }
 

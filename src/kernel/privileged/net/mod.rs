@@ -78,7 +78,7 @@ pub(crate) use init::raw;
 #[cfg(all(not(feature = "kernel_test"), target_arch = "aarch64"))]
 pub use init::irq::net_register_intx_isr;
 #[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]
-pub use init::irq::net_register_msix_isr;
+pub use init::irq::{net_register_intx_isr, net_register_msix_isr};
 #[cfg(not(feature = "kernel_test"))]
 pub use smoltcp_impl::{EGDFNetDevice, NetworkStack, init_stack, poll_stack};
 // NetOps 安全桥 (批次 Z ④): trait + 注册入口 + DECISION-K 单向拉取槽。

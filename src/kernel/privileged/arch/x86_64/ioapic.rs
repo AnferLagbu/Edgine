@@ -22,6 +22,8 @@ const IOREDTBL_BASE: u32 = 0x10;
 
 const REDTBL_MASK: u64 = 1 << 16;
 const REDTBL_LEVEL: u64 = 1 << 15;
+/// 极性位: 1 = 低电平有效 (`INTx` 总线语义).
+const REDTBL_ACTIVE_LOW: u64 = 1 << 13;
 
 // IOAPIC 投递模式 (重定向表 bit[8:10], 与 Local APIC LVT 编码一致)
 const DELIVERY_FIXED: u64 = 0x000;
@@ -83,6 +85,11 @@ fn ioapic_write_on(base: u64, reg: u32, value: u32) {
 /// 每次从 ACPI MADT 枚举到 IOAPIC 时调用此函数.
 /// 多次调用会依次注册多个控制器.
 pub fn init(base_addr: u64) {
+    let _ = init_one(base_addr);
+}
+
+/// 注册单个 IOAPIC 控制器, 返回其重定向表条目数 (`IOAPICVER` bit`[23:16]` + 1).
+fn init_one(base_addr: u64) -> u8 {
     let base = if base_addr == 0 {
         IOAPIC_BASE_DEFAULT
     } else {
@@ -90,10 +97,11 @@ pub fn init(base_addr: u64) {
     };
 
     let ver = ioapic_read_on(base, IOAPIC_VER);
-    let max_irq = ((ver >> 16) & 0xFF) as u8 + 1;
+    // 条目数 = 最大重定向表索引 + 1; 字段为 0xFF 时 saturating 到 255 避免 u8 溢出
+    let max_irq = crate::privileged::glue::low_u8_from_u32((ver >> 16) & 0xFF).saturating_add(1);
 
-    // 屏蔽所有重定向表条目
-    for irq in 0..24u8 {
+    // 屏蔽所有重定向表条目 (向量字段预置 irq+32, 兼容按线号 unmask 的旧入口)
+    for irq in 0..max_irq {
         ioapic_write_on(
             base,
             IOREDTBL_BASE + u32::from(irq) * 2,
@@ -117,6 +125,45 @@ pub fn init(base_addr: u64) {
             Ordering::Release,
         );
     }
+    max_irq
+}
+
+/// 按 ACPI MADT 枚举初始化全部 IOAPIC, 并回填每条控制器的重定向表条目数.
+///
+/// 幂等: 控制器已注册时直接返回现有数量. 启动期由 `smp_init::init` 在
+/// MADT 解析后、任何设备 `INTx` 接线之前调用一次.
+///
+/// 返回本次 (或此前) 已初始化的控制器数量; 0 表示无 MADT IOAPIC, 中断
+/// 投递仍停留在 8259A/轮询兜底路径.
+pub fn init_from_acpi() -> u32 {
+    if is_initialized() {
+        return IOAPIC_COUNT.load(Ordering::Acquire);
+    }
+
+    let mut count = 0u32;
+    for (idx, info) in crate::privileged::arch::acpi::get_ioapics()
+        .iter()
+        .enumerate()
+    {
+        let Some(info) = info else { continue };
+        let max_irq = init_one(info.base_addr);
+        crate::privileged::arch::acpi::set_ioapic_max_irq(idx, max_irq);
+        count += 1;
+        crate::klog_info!(
+            Boot,
+            "[IOAPIC] controller {} base={:#X} id={} gsi_base={} lines={}",
+            idx,
+            info.base_addr,
+            info.id,
+            info.gsi_base,
+            max_irq
+        );
+    }
+
+    if count == 0 {
+        crate::klog_info!(Boot, "[IOAPIC] no controller in MADT, keep legacy PIC path");
+    }
+    count
 }
 
 /// 是否至少有一个 IOAPIC 已初始化
@@ -244,6 +291,122 @@ pub fn route_irq_to_cpu_gsi(gsi: u32, apic_id: u8) {
             ioapic_write_on(state.base_addr, reg, new_val);
         }
     }
+}
+
+// ============================================================================
+// INTx 接线 (PCI 传统中断线 → IOAPIC 重定向表)
+// ============================================================================
+
+/// 一条 `INTx` 线的 IOAPIC 重定向参数.
+#[derive(Debug, Clone, Copy)]
+pub struct IntxRoute {
+    /// 投递向量号 (IDT 向量, 即 `IRQ_BASE + irq`)
+    pub vector: u8,
+    /// 目标 LAPIC ID
+    pub apic_id: u8,
+    /// 触发模式: true = 电平触发
+    pub level_triggered: bool,
+    /// 极性: true = 低电平有效
+    pub active_low: bool,
+}
+
+/// 组装 `INTx` 重定向表项 (低地址域: 向量/电平/极性; 高地址域: 目标 LAPIC).
+fn encode_intx_rte(route: IntxRoute) -> u64 {
+    let mut entry = u64::from(route.vector) | DELIVERY_FIXED | (u64::from(route.apic_id) << 56);
+    if route.level_triggered {
+        entry |= REDTBL_LEVEL;
+    }
+    if route.active_low {
+        entry |= REDTBL_ACTIVE_LOW;
+    }
+    entry
+}
+
+/// 将一条 GSI 按完整 `INTx` 参数写入 IOAPIC 重定向表并解除屏蔽.
+///
+/// 与 [`set_irq_gsi`] 的差异: 该入口一次性写入向量/目标/触发/极性并解除
+/// 屏蔽, 供启动期单线程接线使用; 写入次序为"高字 → 屏蔽低字 → 未屏蔽低字",
+/// 避免重配已使能条目时出现半新半旧的投递窗口.
+///
+/// # Errors
+/// - GSI 不在任何已注册 IOAPIC 的区间内;
+/// - 目标控制器未初始化, 或本地 IRQ 超出其重定向表条目数.
+pub fn program_intx_gsi(gsi: u32, route: IntxRoute) -> Result<(), &'static str> {
+    let Some((idx, local_irq)) = crate::privileged::arch::acpi::gsi_to_ioapic(gsi) else {
+        return Err("IOAPIC: GSI not mapped to any controller");
+    };
+    let ioapics = IOAPICS.lock();
+    let Some(state) = ioapics[idx].as_ref() else {
+        return Err("IOAPIC: controller not registered");
+    };
+    if !state.initialized {
+        return Err("IOAPIC: controller not initialized");
+    }
+    if local_irq >= state.max_irq {
+        return Err("IOAPIC: local irq out of redirection table");
+    }
+
+    let entry = encode_intx_rte(route);
+    let reg = IOREDTBL_BASE + u32::from(local_irq) * 2;
+    ioapic_write_on(state.base_addr, reg + 1, (entry >> 32) as u32);
+    ioapic_write_on(
+        state.base_addr,
+        reg,
+        crate::privileged::glue::low_u32_from_u64(entry | REDTBL_MASK),
+    );
+    ioapic_write_on(
+        state.base_addr,
+        reg,
+        crate::privileged::glue::low_u32_from_u64(entry),
+    );
+    Ok(())
+}
+
+/// 解析并接通一条 PCI `INTx` 线的 IOAPIC 路由, 返回所用 GSI.
+///
+/// `irq` 为固件写在 PCI 配置空间 0x3C 的线号, `vector` 为 IDT 向量.
+/// 极性与触发模式取值: MADT ISO 显式指定优先; 未指定时按 PCI `INTx` 总线
+/// 语义取"电平触发 + 低电平有效".
+// SIMPLIFIED: 不解析 AML `_PRT`/链路设备 `_CRS`, 只消费固件已写入 PCI 配置空间
+// 的 `interrupt_line` 与 MADT ISO; 影响面 = 固件经 `_PRT` 改路而线号为陈旧值时
+// 路由落空 (网卡仍由轮询兜底收包); 扩展条件 = 出现必须 `_PRT` 的机型或共享引脚
+// 多设备分发需求时, 引入 AML 解释器与共享线 handler 链.
+///
+/// # Errors
+/// 同 [`program_intx_gsi`] (GSI 无法映射或控制器未初始化).
+pub fn route_intx_irq(irq: u8, vector: u8, apic_id: u8) -> Result<u32, &'static str> {
+    let override_flags = crate::privileged::arch::acpi::irq_override(irq).map(|ov| ov.flags);
+    // 未指定 (`Conforms`, 含保留编码) 时按 PCI `INTx` 总线语义补齐.
+    let level_triggered = !matches!(
+        override_flags.map(|f| f.trigger),
+        Some(crate::privileged::arch::acpi::IsoTrigger::Edge)
+    );
+    let active_low = !matches!(
+        override_flags.map(|f| f.polarity),
+        Some(crate::privileged::arch::acpi::IsoPolarity::ActiveHigh)
+    );
+    let gsi = crate::privileged::arch::acpi::irq_to_gsi(irq);
+
+    program_intx_gsi(
+        gsi,
+        IntxRoute {
+            vector,
+            apic_id,
+            level_triggered,
+            active_low,
+        },
+    )?;
+    crate::klog_info!(
+        Boot,
+        "[IOAPIC] INTx irq={} -> gsi={} vector={} apic={} level={} active_low={}",
+        irq,
+        gsi,
+        vector,
+        apic_id,
+        level_triggered,
+        active_low
+    );
+    Ok(gsi)
 }
 
 // ============================================================================
@@ -418,4 +581,51 @@ pub extern "C" fn ioapic_set_irq_with_mode(
 #[unsafe(no_mangle)]
 pub extern "C" fn ioapic_route_irq_to_cpu(irq: u8, apic_id: u8) {
     route_irq_to_cpu(irq, apic_id);
+}
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn intx_rte_encodes_vector_and_destination() {
+        let entry = encode_intx_rte(IntxRoute {
+            vector: 43,
+            apic_id: 0x12,
+            level_triggered: false,
+            active_low: false,
+        });
+        assert_eq!(entry & 0xFF, 43, "向量落在 bit[7:0]");
+        assert_eq!((entry >> 56) & 0xFF, 0x12, "目标 LAPIC 落在 bit[63:56]");
+        assert_eq!((entry >> 8) & 0x7, 0, "固定投递模式的 bit[10:8] 恒为 0");
+    }
+
+    #[test]
+    fn intx_rte_encodes_level_and_polarity() {
+        let level_low = encode_intx_rte(IntxRoute {
+            vector: 43,
+            apic_id: 0,
+            level_triggered: true,
+            active_low: true,
+        });
+        assert_eq!(level_low & REDTBL_LEVEL, REDTBL_LEVEL, "电平触发置 bit15");
+        assert_eq!(
+            level_low & REDTBL_ACTIVE_LOW,
+            REDTBL_ACTIVE_LOW,
+            "低电平有效置 bit13"
+        );
+        assert_eq!(level_low & REDTBL_MASK, 0, "编码本身不带屏蔽位");
+
+        let edge_high = encode_intx_rte(IntxRoute {
+            vector: 33,
+            apic_id: 0,
+            level_triggered: false,
+            active_low: false,
+        });
+        assert_eq!(edge_high & (REDTBL_LEVEL | REDTBL_ACTIVE_LOW), 0);
+    }
 }

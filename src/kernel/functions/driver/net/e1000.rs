@@ -395,12 +395,10 @@ mod e1000_impl {
         );
 
         // ISSUE-SRC-008: 接线中断 — 先注册 ISR, 仅在确有接收者时才使能 IMS.
-        // 死接线防线: IMS 收/发/链路掩码只在 MSI-X 使能且 ISR 注册成功后才写.
-        // MSI-X 不可用 (如 QEMU 82540EM) 或 ISR 注册失败时 IMS 保持掩蔽 ⇒ 设备
-        // 不经 INTx 管脚发中断, 内核不会出现"已配掩码却无人接收"的死接线 (x86_64
-        // INTx 路由发现尚未接线, net_register_intx_isr 仅 aarch64 使用); 收包改由
-        // poll_network 的 try_receive 兜底. 启动临界区 IF=0, ISR 注册与 IMS 使能
-        // 之间无"中断先于接收者就位"的竞态窗口.
+        // 死接线防线: IMS 掩码只在中断源接线成功后才写. 优先级: MSI-X →
+        // PCI INTx (IOAPIC 路由) → 轮询兜底; 两者都不可用时 IMS 保持掩蔽,
+        // 收包由 poll_network 的 try_receive 兜底. 启动临界区 IF=0, ISR 注册
+        // 与 IMS 使能之间无"中断先于接收者就位"的竞态窗口.
         if let Some(msix) = pci::msi::msix_enable(dev, 1) {
             match crate::privileged::net::net_register_msix_isr(msix.base_vector) {
                 Ok(()) => {
@@ -415,8 +413,30 @@ mod e1000_impl {
                     e
                 ),
             }
+        } else if dev.interrupt_pin != 0 {
+            // 无 MSI-X (QEMU 82540EM 等): 尝试 PCI INTx → IOAPIC 重定向.
+            // interrupt_line 由固件写入 PCI 配置空间 0x3C; 非法值由
+            // net_register_intx_isr 拒绝并回落轮询.
+            match crate::privileged::net::net_register_intx_isr(dev.interrupt_line) {
+                Ok(()) => {
+                    driver
+                        .io
+                        .irq_enable(E1000_ICR_RXT0 | E1000_ICR_RXDMT0 | E1000_ICR_LSC);
+                    crate::slog_info!(
+                        Driver,
+                        "e1000: INTx irq={} 已接通 IOAPIC, 切换中断驱动收包",
+                        dev.interrupt_line
+                    );
+                }
+                Err(e) => {
+                    crate::slog_warn!(Driver, "e1000: INTx 接线失败 {:?}, IMS 保持掩蔽走轮询", e);
+                }
+            }
         } else {
-            crate::slog_warn!(Driver, "e1000: MSI-X 不可用, 回落轮询模式 (IMS 保持掩蔽)");
+            crate::slog_warn!(
+                Driver,
+                "e1000: 无 MSI-X 且未分配 INTx 线, 回落轮询模式 (IMS 保持掩蔽)"
+            );
         }
 
         Some(register_net_device(Box::new(driver)))

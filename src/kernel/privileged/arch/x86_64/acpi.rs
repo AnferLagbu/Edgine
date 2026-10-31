@@ -39,7 +39,7 @@ pub use crate::privileged::config::MAX_CPUS;
 /// MADT 条目类型
 const MADT_TYPE_LAPIC: u8 = 0x00;
 const MADT_TYPE_IOAPIC: u8 = 0x01;
-const _MADT_TYPE_ISO: u8 = 0x02;
+const MADT_TYPE_ISO: u8 = 0x02;
 const _MADT_TYPE_NMI: u8 = 0x04;
 
 static MADT_BASE: AtomicU64 = AtomicU64::new(0);
@@ -74,6 +74,60 @@ static IOAPICS: IrqSpinLock<[Option<IoApicInfo>; MAX_IOAPICS]> =
     IrqSpinLock::new([None; MAX_IOAPICS]);
 static IOAPIC_COUNT: AtomicU32 = AtomicU32::new(0);
 const MAX_IOAPICS: usize = 8;
+
+/// MADT 中断源覆盖项容量 (固件实际条目数通常 ≤ 4).
+const MAX_IRQ_OVERRIDES: usize = 16;
+
+/// MADT ISO 极性编码 (flags bit`[1:0]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsoPolarity {
+    /// 遵循总线默认 (`00`; 保留编码 `10` 同样按未指定处理).
+    Conforms,
+    /// 高电平有效 (`01`).
+    ActiveHigh,
+    /// 低电平有效 (`11`).
+    ActiveLow,
+}
+
+/// MADT ISO 触发模式编码 (flags bit`[3:2]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsoTrigger {
+    /// 遵循总线默认 (`00`; 保留编码 `10` 同样按未指定处理).
+    Conforms,
+    /// 边沿触发 (`01`).
+    Edge,
+    /// 电平触发 (`11`).
+    Level,
+}
+
+/// 解析后的 MADT ISO 标志位.
+///
+/// ACPI 对 bit`[1:0]` (极性) 与 bit`[3:2]` (触发模式) 的编码一致:
+/// `00` = 遵循总线默认, `01` = 高电平/边沿, `10` = 保留, `11` = 低电平/电平.
+/// `Conforms` 时由消费方按总线语义补齐 (PCI `INTx` = 低电平有效 + 电平触发).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IsoFlags {
+    /// 极性.
+    pub polarity: IsoPolarity,
+    /// 触发模式.
+    pub trigger: IsoTrigger,
+}
+
+/// 一条 MADT 中断源覆盖 (Interrupt Source Override) 记录.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IrqOverride {
+    /// 被覆盖的源 IRQ 线号 (MADT `source` 字段).
+    pub irq: u8,
+    /// 覆盖后的全局系统中断号 (MADT `global_sys_int` 字段).
+    pub gsi: u32,
+    /// 极性与触发模式.
+    pub flags: IsoFlags,
+}
+
+/// MADT 中断源覆盖表 (启动期由 `parse_madt_entries` 填充).
+static IRQ_OVERRIDES: IrqSpinLock<[Option<IrqOverride>; MAX_IRQ_OVERRIDES]> =
+    IrqSpinLock::new([None; MAX_IRQ_OVERRIDES]);
+static IRQ_OVERRIDE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// AP 列表 — 惰性堆置, 避免 `[Option<ApInfo>; MAX_CPUS]` (约 12 KB) 常驻 BSS。
 ///
@@ -283,6 +337,17 @@ struct MadtIoApic {
     global_sys_int_base: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+struct MadtIso {
+    entry_type: u8,
+    length: u8,
+    _bus: u8,
+    source: u8,
+    global_sys_int: u32,
+    flags: u16,
+}
+
 // ============================================================================
 // MADT 解析 — 核心公共接口
 // ============================================================================
@@ -409,6 +474,35 @@ fn parse_madt_entries(madt_ptr: u64) {
                     );
                 }
             }
+            MADT_TYPE_ISO => {
+                if offset + core::mem::size_of::<MadtIso>() > entries_end {
+                    break;
+                }
+                // SAFETY: `offset` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(MadtIso)); 只读访问
+                let iso = unsafe { &*(offset as *const MadtIso) };
+                // packed 结构字段先按值取出, 避免在格式化/函数调用处构造未对齐引用
+                let irq = iso.source;
+                let gsi = iso.global_sys_int;
+                let raw_flags = iso.flags;
+                let idx = IRQ_OVERRIDE_COUNT.load(Ordering::Acquire) as usize;
+                if idx < MAX_IRQ_OVERRIDES {
+                    let flags = decode_iso_flags(raw_flags);
+                    IRQ_OVERRIDES.lock()[idx] = Some(IrqOverride { irq, gsi, flags });
+                    IRQ_OVERRIDE_COUNT.store(
+                        crate::privileged::glue::low_u32_from_usize(idx + 1),
+                        Ordering::Release,
+                    );
+                    crate::klog_info!(
+                        Acpi,
+                        "[ACPI] MADT ISO: irq={} -> gsi={} flags={:#06x} polarity={:?} trigger={:?}",
+                        irq,
+                        gsi,
+                        raw_flags,
+                        flags.polarity,
+                        flags.trigger
+                    );
+                }
+            }
             _ => {}
         }
 
@@ -490,6 +584,53 @@ pub fn gsi_to_ioapic(gsi: u32) -> Option<(usize, u8)> {
         }
     }
     None
+}
+
+/// 回填指定 IOAPIC 的实际重定向表条目数 (IOAPICVER 读数).
+///
+/// `parse_madt_entries` 只拿到 MADT 声明的基址, 条目数必须读硬件;
+/// 由 `ioapic::init_from_acpi` 在硬件初始化后回填, 否则 [`gsi_to_ioapic`]
+/// 会因 `max_irq == 0` 恒判区间为空.
+pub fn set_ioapic_max_irq(index: usize, max_irq: u8) {
+    let mut ioapics = IOAPICS.lock();
+    if let Some(info) = ioapics.get_mut(index).and_then(Option::as_mut) {
+        info.max_irq = max_irq;
+    }
+}
+
+/// 解码 MADT ISO 标志位 (编码见 [`IsoFlags`]).
+#[must_use]
+pub fn decode_iso_flags(raw: u16) -> IsoFlags {
+    let polarity = match (raw & 0b11) as u8 {
+        0b01 => IsoPolarity::ActiveHigh,
+        0b11 => IsoPolarity::ActiveLow,
+        // 0b00 = 遵循总线默认; 0b10 = 保留编码, 同样按未指定处理.
+        _ => IsoPolarity::Conforms,
+    };
+    let trigger = match ((raw >> 2) & 0b11) as u8 {
+        0b01 => IsoTrigger::Edge,
+        0b11 => IsoTrigger::Level,
+        _ => IsoTrigger::Conforms,
+    };
+    IsoFlags { polarity, trigger }
+}
+
+/// 在覆盖表中查找源 IRQ (首个匹配项判定, 与固件表内唯一性假设一致).
+fn lookup_irq_override(table: &[Option<IrqOverride>], irq: u8) -> Option<IrqOverride> {
+    table.iter().flatten().find(|o| o.irq == irq).copied()
+}
+
+/// 查询源 IRQ 的 MADT 覆盖项 (无覆盖返回 `None`).
+#[must_use]
+pub fn irq_override(irq: u8) -> Option<IrqOverride> {
+    let table = *IRQ_OVERRIDES.lock();
+    lookup_irq_override(&table, irq)
+}
+
+/// 源 IRQ → GSI (有 MADT ISO 覆盖时取覆盖值, 否则 GSI = IRQ).
+#[must_use]
+pub fn irq_to_gsi(irq: u8) -> u32 {
+    irq_override(irq).map_or(u32::from(irq), |ov| ov.gsi)
 }
 
 /// 获取 MADT 记录的本地 APIC MMIO 基址 (无 MADT 则返回 0)。
@@ -983,4 +1124,71 @@ pub extern "C" fn acpi_shutdown_system() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn acpi_reboot_system() -> ! {
     acpi_reboot()
+}
+
+// ============================================================================
+// 单元测试
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flags_of(raw: u16) -> IsoFlags {
+        decode_iso_flags(raw)
+    }
+
+    #[test]
+    fn iso_flags_conform_to_bus_is_unspecified() {
+        let flags = flags_of(0x0000);
+        assert_eq!(flags.polarity, IsoPolarity::Conforms);
+        assert_eq!(flags.trigger, IsoTrigger::Conforms);
+    }
+
+    #[test]
+    fn iso_flags_explicit_level_low() {
+        // 0x000F = 低电平有效 (bit[1:0]=11) + 电平触发 (bit[3:2]=11)
+        let flags = flags_of(0x000F);
+        assert_eq!(flags.polarity, IsoPolarity::ActiveLow);
+        assert_eq!(flags.trigger, IsoTrigger::Level);
+    }
+
+    #[test]
+    fn iso_flags_explicit_level_high() {
+        // 0x000D = 高电平有效 (bit[1:0]=01) + 电平触发 (bit[3:2]=11)
+        let flags = flags_of(0x000D);
+        assert_eq!(flags.polarity, IsoPolarity::ActiveHigh);
+        assert_eq!(flags.trigger, IsoTrigger::Level);
+    }
+
+    #[test]
+    fn iso_flags_explicit_edge_high() {
+        // 0x0005 = 高电平有效 (01) + 边沿触发 (01)
+        let flags = flags_of(0x0005);
+        assert_eq!(flags.polarity, IsoPolarity::ActiveHigh);
+        assert_eq!(flags.trigger, IsoTrigger::Edge);
+    }
+
+    #[test]
+    fn iso_flags_reserved_encoding_is_unspecified() {
+        // 保留编码 10 不得被当作已指定
+        let flags = flags_of(0x000A);
+        assert_eq!(flags.polarity, IsoPolarity::Conforms);
+        assert_eq!(flags.trigger, IsoTrigger::Conforms);
+    }
+
+    #[test]
+    fn iso_override_lookup_returns_first_match() {
+        let over = |irq: u8, gsi: u32| {
+            Some(IrqOverride {
+                irq,
+                gsi,
+                flags: decode_iso_flags(0x000D),
+            })
+        };
+        let table = [over(0, 2), None, over(9, 9)];
+        assert_eq!(lookup_irq_override(&table, 0).map(|o| o.gsi), Some(2));
+        assert_eq!(lookup_irq_override(&table, 9).map(|o| o.gsi), Some(9));
+        assert!(lookup_irq_override(&table, 11).is_none());
+    }
 }

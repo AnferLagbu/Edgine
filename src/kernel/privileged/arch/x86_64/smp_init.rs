@@ -115,6 +115,10 @@ pub extern "C" fn smp_get_ap_count() -> u32 {
 #[inline(never)]
 pub fn init() {
     super::acpi::parse_madt(0);
+    // MADT 解析完成后立即初始化 IOAPIC: 设备 INTx 接线 (net 探测) 依赖
+    // `gsi_to_ioapic` 的区间信息, 而区间上界只能读 IOAPICVER 回填.
+    // 必须在 `ap_count <= 1` 提前返回之前执行 (单核同样需要中断路由).
+    super::ioapic::init_from_acpi();
 
     let ap_count = super::acpi::get_ap_count();
     if ap_count <= 1 {

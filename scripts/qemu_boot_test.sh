@@ -435,7 +435,15 @@ while True:
         err "[x86_64] P4 UDP 里程碑不足: CONNECT=${udpconn_cnt} PEERNAME=${udppeer_cnt} SOCKNAME=${udpsock_cnt} RECVFROM=${udprecv_cnt}"
         rc=1
     fi
-    # 5. 失败标记兜底: 出现 [tcp] FAIL 时打印首条便于诊断.
+    # 5. P-19(c): 中断投递里程碑 — 默认 e1000 无 MSI-X, 走 PCI INTx → IOAPIC;
+    #    echo 流量期间必须有设备中断实际到达 (轮询兜底不产生该标记).
+    if grep -aqF "first device interrupt delivered" "$log"; then
+        ok "[x86_64] 网卡中断投递生效 (INTx → IOAPIC 路径)"
+    else
+        err "[x86_64] 未见网卡中断投递 (仍为轮询兜底)"
+        rc=1
+    fi
+    # 6. 失败标记兜底: 出现 [tcp] FAIL 时打印首条便于诊断.
     if grep -aqF "[tcp] FAIL:" "$log"; then
         warn "[x86_64] 日志出现 [tcp] FAIL 标记: $(grep -aF "[tcp] FAIL:" "$log" | head -1)"
     fi

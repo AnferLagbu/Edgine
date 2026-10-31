@@ -845,7 +845,10 @@ impl IdtManager {
             // - slave 假性 (IRQ15): 仅向 master 发送 EOI (0x20), 不向 slave 发送 (0xA0)
             #[cfg(target_arch = "x86_64")]
             {
-                if let Some(spurious) = detect_spurious_8259_irq(irq)
+                // IOAPIC 投递时不读 8259A ISR: PIC 已被全掩蔽, ISR 位恒 0,
+                // 会把经 IOAPIC 到达的 IRQ7/15 误判为假性中断并丢弃.
+                if !legacy_irq_via_ioapic()
+                    && let Some(spurious) = detect_spurious_8259_irq(irq)
                     && spurious
                 {
                     SPURIOUS_IRQ_COUNT.fetch_add(1, Ordering::Relaxed);
