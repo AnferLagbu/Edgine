@@ -115,28 +115,43 @@ fn rcu_slot(cpu: u32) -> usize {
     (cpu as usize) % crate::privileged::config::MAX_CPUS
 }
 
-/// 获取指定 CPU 的 per-CPU RCU 状态引用.
+/// 获取指定 CPU 已分配的 per-CPU RCU 状态引用; 槽位未分配时返回 `None`.
+///
+/// 跨 CPU 路径 (宽限期状态机 / 远程回调通知) 必须用本函数而非 [`rcu_data`]:
+/// 后者在槽位为 `null` 时回退 BSP, 会让调用方把**远程 CPU 的状态写到 BSP 槽位**,
+/// 与 BSP 自身状态互相覆盖. 返回 `None` 表示该 CPU 尚无独立 RCU 状态
+/// (启动时序: `rcu_alloc_cpu` 早于 AP 上线), 调用方应跳过该槽位.
+#[inline]
+fn rcu_data_allocated(cpu: u32) -> Option<&'static PerCpuRcu> {
+    let idx = rcu_slot(cpu);
+    if idx == 0 {
+        // SAFETY: RCU_BSP 为静态实例; 启动期单线程写入, 运行期只读/原子访问.
+        return Some(unsafe { RCU_BSP.get() });
+    }
+    let ptr = RCU_PER_CPU[idx].load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: 指针由 rcu_alloc_cpu 以 Release 发布, 指向页池分配且已清零的
+    // PerCpuRcu; 高半区直接映射使其运行期可访问; 只读/原子访问.
+    Some(unsafe { &*ptr })
+}
+
+/// 获取指定 CPU 的 per-CPU RCU 状态引用 (仅限**本 CPU** 路径使用).
 ///
 /// # 不变量
 ///
 /// 调用方保证目标槽位已分配 (启动时序: `rcu_alloc_cpu` 早于 AP 使用 RCU).
 /// 若槽位为 `null` (目标 `cpu_index` 尚未分配 RCU 状态), 回退 BSP 状态以保证
-/// 内存安全.
+/// 内存安全; 该回退只适用于本 CPU 的读写, 跨 CPU 路径必须用
+/// [`rcu_data_allocated`].
 #[inline]
 fn rcu_data(cpu: u32) -> &'static PerCpuRcu {
-    let idx = rcu_slot(cpu);
-    if idx == 0 {
-        // SAFETY: RCU_BSP 为静态实例; 启动期单线程写入, 运行期只读/原子访问.
-        return unsafe { RCU_BSP.get() };
+    if let Some(data) = rcu_data_allocated(cpu) {
+        return data;
     }
-    let ptr = RCU_PER_CPU[idx].load(Ordering::Acquire);
-    if ptr.is_null() {
-        // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的槽位未分配情形).
-        return unsafe { RCU_BSP.get() };
-    }
-    // SAFETY: 指针由 rcu_alloc_cpu 以 Release 发布, 指向页池分配且已清零的
-    // PerCpuRcu; 高半区直接映射使其运行期可访问; 只读/原子访问.
-    unsafe { &*ptr }
+    // SAFETY: 回退 BSP 仅用于避免 null 解引用 (见 doc 的槽位未分配情形).
+    unsafe { RCU_BSP.get() }
 }
 
 /// 为指定 `cpu_index` 分配 per-CPU RCU 状态 (幂等).
@@ -211,9 +226,12 @@ pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
 /// 阻塞直到所有 CPU 上已有 RCU 读者退出
 ///
 /// 宽限期流程:
-/// 1. 标记所有在线 CPU 的 `gp_state` = `GP_WAIT`
+/// 1. 标记所有在线且已分配槽位的 CPU 的 `gp_state` = `GP_WAIT`
 /// 2. 等待每个 CPU 报告 `GP_DONE` (通过 `rcu_note_quiescent_state`)
 /// 3. 处理回调
+///
+/// 离线 CPU 与未分配槽位的 CPU 不参与本轮宽限期 (前者无读者, 后者尚未完成
+/// RCU 初始化); 跨 CPU 槽位一律经 [`rcu_data_allocated`] 获取, 不回落 BSP 槽位.
 fn synchronize_rcu_impl() {
     const SYNC_TIMEOUT_SPINS: u32 = 50_000_000;
     let start_gp = RCU_GP_COUNTER.load(Ordering::Relaxed);
@@ -223,15 +241,14 @@ fn synchronize_rcu_impl() {
     let current_cpu = crate::privileged::smp::get_current_cpu();
 
     for i in 0..cpu_count {
-        if i == current_cpu {
+        if i == current_cpu || !crate::privileged::smp::is_cpu_online(i) {
             continue;
         }
-        if !crate::privileged::smp::is_cpu_online(i) {
-            let data = rcu_data(i);
-            data.gp_state.store(GP_DONE, Ordering::Release);
+        let Some(data) = rcu_data_allocated(i) else {
+            // 槽位未分配 ⇒ 该 AP 尚未完成 RCU 初始化, 不可能有 RCU 读者;
+            // 不得回退 BSP 槽位, 否则会改写本 CPU 自身的宽限期状态.
             continue;
-        }
-        let data = rcu_data(i);
+        };
         data.gp_state.store(GP_WAIT, Ordering::Release);
         // 以逻辑索引为键发送重调度 IPI; 目标未登记时内部静默返回。
         crate::privileged::smp::send_reschedule_ipi(i);
@@ -245,16 +262,17 @@ fn synchronize_rcu_impl() {
     }
 
     for i in 0..cpu_count {
-        if i == current_cpu {
+        if i == current_cpu || !crate::privileged::smp::is_cpu_online(i) {
             continue;
         }
-        let data = rcu_data(i);
+        let Some(data) = rcu_data_allocated(i) else {
+            continue;
+        };
         let mut spins = 0u32;
         while data.gp_state.load(Ordering::Acquire) != GP_DONE {
             core::hint::spin_loop();
             spins += 1;
             if spins >= SYNC_TIMEOUT_SPINS {
-                data.gp_state.store(GP_DONE, Ordering::Release);
                 break;
             }
         }
@@ -273,8 +291,9 @@ fn synchronize_rcu_impl() {
     }
 
     for i in 0..cpu_count {
-        let data = rcu_data(i);
-        data.gp_state.store(GP_IDLE, Ordering::Release);
+        if let Some(data) = rcu_data_allocated(i) {
+            data.gp_state.store(GP_IDLE, Ordering::Release);
+        }
     }
 
     process_callbacks();
@@ -390,40 +409,26 @@ pub fn rcu_note_quiescent_state() {
     }
 }
 
-/// 通知所有 CPU 的 RCU 回调 (由同步宽限期调用)
+/// 通知所有 CPU 处理各自挂起的 RCU 回调 (由同步宽限期调用)
+///
+/// 本 CPU 的回调就地处理; 远程 CPU 只发送重调度 IPI 通知, 由目标 CPU 在
+/// 下一次上下文切换时经 [`rcu_note_quiescent_state`] 本地处理. 回调链表节点
+/// (`callbacks` / `callback_tail`) 只允许所属 CPU 访问: 跨 CPU 清链会与目标
+/// CPU 关中断下的 `call_rcu` 链表操作竞争.
 pub fn rcu_process_all_callbacks() {
-    let cpu_count = crate::privileged::smp::get_cpu_count();
-    for i in 0..cpu_count {
-        let data = rcu_data(i);
-        if data.need_callback_process.load(Ordering::Acquire) {
-            // 使用 IPI 或直接处理 — 简化实现: 直接处理
-            // 注意: 在单核或特定场景下可行; 完整实现需 IPI
-            let flags = crate::privileged::sync::disable_interrupts();
-            // SAFETY: `data` 由调用方保证为有效指针; 只读访问
-            let head = unsafe { *data.callbacks.get() };
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                *data.callbacks.get() = ptr::null_mut();
-                *data.callback_tail.get() = ptr::null_mut();
-            }
-            data.callback_count.store(0, Ordering::Relaxed);
-            data.need_callback_process.store(false, Ordering::Release);
-            crate::privileged::sync::restore_interrupts(flags);
+    process_callbacks();
 
-            let mut cur = head;
-            while !cur.is_null() {
-                // SAFETY: `cur` 由调用方保证为有效指针; 只读访问
-                let next = unsafe { (*cur).next };
-                // SAFETY: `cur` 由调用方保证为有效指针; 只读访问
-                let func = unsafe { (*cur).func };
-                if let Some(f) = func {
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    unsafe {
-                        f(cur);
-                    }
-                }
-                cur = next;
-            }
+    let cpu_count = crate::privileged::smp::get_cpu_count();
+    let current_cpu = crate::privileged::smp::get_current_cpu();
+    for i in 0..cpu_count {
+        if i == current_cpu || !crate::privileged::smp::is_cpu_online(i) {
+            continue;
+        }
+        let Some(data) = rcu_data_allocated(i) else {
+            continue;
+        };
+        if data.need_callback_process.load(Ordering::Acquire) {
+            crate::privileged::smp::send_reschedule_ipi(i);
         }
     }
 }
@@ -472,8 +477,36 @@ pub extern "C" fn rcu_init() {
 mod tests {
     use super::*;
 
+    // host 侧 `current_cpu_index()` 恒回退 0, 所有测试线程共用 BSP 槽位; 而宽限期
+    // 会清空「当前 CPU」的回调链表. 并行用例下, 另一用例的 `synchronize_rcu` 会
+    // 清掉本用例刚注册的回调 (P-35 flaky 根因). 三个用例以本闸门互斥执行;
+    // 真机各 CPU 持独立槽位, 无此共享面.
+    static TEST_SERIAL: AtomicBool = AtomicBool::new(false);
+
+    /// RAII 串行闸门: 构造即获取, 析构 (含 panic 展开) 释放.
+    struct SerialGuard;
+
+    impl SerialGuard {
+        fn acquire() -> Self {
+            while TEST_SERIAL
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                core::hint::spin_loop();
+            }
+            Self
+        }
+    }
+
+    impl Drop for SerialGuard {
+        fn drop(&mut self) {
+            TEST_SERIAL.store(false, Ordering::Release);
+        }
+    }
+
     #[test]
     fn test_rcu_read_lock_unlock() {
+        let _serial = SerialGuard::acquire();
         rcu_read_lock();
         assert!(rcu_read_lock_held());
         rcu_read_lock();
@@ -485,6 +518,7 @@ mod tests {
 
     #[test]
     fn test_rcu_gp_counter() {
+        let _serial = SerialGuard::acquire();
         let before = rcu_gp_count();
         synchronize_rcu();
         let after = rcu_gp_count();
@@ -493,6 +527,7 @@ mod tests {
 
     #[test]
     fn test_call_rcu() {
+        let _serial = SerialGuard::acquire();
         static CALLED: AtomicBool = AtomicBool::new(false);
 
         // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
