@@ -34,9 +34,8 @@ pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
 /// - 进程替换失败 → `ENOENT` (与原 privileged 实现语义一致)
 pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     use crate::privileged::syscall::api;
-    use crate::privileged::syscall::raw;
 
-    if path == 0 || !raw::check_user_ptr(path) {
+    if path == 0 || !api::validate_user_ptr(path) {
         return Err(Errno::Efault);
     }
     let _ = envp;
@@ -44,12 +43,12 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     // argv 扫描: 逐项读取用户空间指针数组, 统计 argc 直到 NULL 终止
     let mut arg_count: u32 = 0;
     if argv != 0 {
-        if !raw::check_user_ptr(argv) {
+        if !api::validate_user_ptr(argv) {
             return Err(Errno::Efault);
         }
         let mut slot = argv;
         loop {
-            if !raw::check_user_ptr(slot) {
+            if !api::validate_user_ptr(slot) {
                 return Err(Errno::Efault);
             }
             let Some(entry) = api::read_u64_from_user(slot) else {
@@ -58,7 +57,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
             if entry == 0 {
                 break;
             }
-            if !raw::check_user_ptr(entry) {
+            if !api::validate_user_ptr(entry) {
                 return Err(Errno::Efault);
             }
             arg_count += 1;

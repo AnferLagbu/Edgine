@@ -10,7 +10,7 @@
 use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // link
@@ -25,10 +25,10 @@ pub fn link_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno> 
     if oldpath_ptr == 0 || newpath_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(oldpath_ptr) {
+    if !api::validate_user_ptr(oldpath_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(newpath_ptr) {
+    if !api::validate_user_ptr(newpath_ptr) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
@@ -53,10 +53,10 @@ pub fn symlink_syscall(target_ptr: u64, linkpath_ptr: u64) -> Result<usize, Errn
     if target_ptr == 0 || linkpath_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(target_ptr) {
+    if !api::validate_user_ptr(target_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(linkpath_ptr) {
+    if !api::validate_user_ptr(linkpath_ptr) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
@@ -84,10 +84,10 @@ pub fn readlink_syscall(path_ptr: u64, buf_ptr: u64, bufsiz: u64) -> Result<usiz
     if bufsiz == 0 {
         return Err(Errno::Einval);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(buf_ptr, bufsiz) {
+    if !api::validate_user_buf(buf_ptr, bufsiz) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();

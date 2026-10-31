@@ -14,7 +14,7 @@
 use super::unix as uds;
 use crate::privileged::net::syscall as fw;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // 12 个 Socket Syscall 安全代理
@@ -229,7 +229,7 @@ pub fn recvfrom_syscall(
         return Err(Errno::Efault);
     }
     if uds::is_uds_fd(fd) {
-        if !raw::check_user_buf(buf_ptr, u64::from(len)) {
+        if !api::validate_user_buf(buf_ptr, u64::from(len)) {
             return Err(Errno::Efault);
         }
         // 栈上缓冲接收, 再 copy-out (走 TCB raw_copy_out, 0 unsafe)
@@ -368,11 +368,11 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if msg_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(msg_ptr, 56) {
+    if !api::validate_user_buf(msg_ptr, 56) {
         return Err(Errno::Efault);
     }
-    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
-    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
+    let iov_ptr = api::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
+    let iovlen = api::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > 1024 {
         return Err(Errno::Einval);
     }
@@ -380,18 +380,18 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         return Err(Errno::Einval);
     }
     let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
-    if !raw::check_user_buf(iov_ptr, iov_bytes) {
+    if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
     // v2: UDS cmsg 处理 — 在 fw 调之前注入凭据 (如果对端 passcred)
     // cmsg 头格式: cmsghdr { cmsg_len: usize (8B), cmsg_level: i32 (4B), cmsg_type: i32 (4B) }
     // 总 16 字节头, 然后是 data (cmsg_len - 16 字节)
-    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
+    let msg_control_ptr = api::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
     let msg_controllen_raw = crate::functions::intcast::usize_from_u64(
-        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
+        api::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
     if msg_control_ptr != 0 && msg_controllen_raw >= 28 {
-        if !raw::check_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
+        if !api::validate_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
             return Err(Errno::Efault);
         }
         // uds_getsockopt_passcred 内部已检查 fd family, 非 UDS 返 0/ENOPROTOOPT.
@@ -407,23 +407,23 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
             let pid: u64 = u64::from(crate::privileged::proc::process_get_current_pid());
             let uid: u64 = u64::from(crate::privileged::sgeg::get_current_uid());
             let gid: u64 = u64::from(crate::privileged::sgeg::get_current_gid());
-            let _ = raw::write_u64_to_user(msg_control_ptr, 28u64);
-            let _ = raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
-            let _ = raw::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);
-            let _ = raw::write_u64_to_user(msg_control_ptr + 24, gid);
-            let _ = raw::write_u64_to_user(msg_ptr + 40, 28u64);
+            let _ = api::write_u64_to_user(msg_control_ptr, 28u64);
+            let _ = api::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
+            let _ = api::write_u64_to_user(msg_control_ptr + 16, (pid << 32) | uid);
+            let _ = api::write_u64_to_user(msg_control_ptr + 24, gid);
+            let _ = api::write_u64_to_user(msg_ptr + 40, 28u64);
         }
         // 解析 cmsg 头序列处理 SCM_RIGHTS
         let mut coff = 0;
         while coff + 16 <= msg_controllen_raw {
             let cmsg_len = crate::functions::intcast::usize_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64).ok_or(Errno::Efault)?,
+                api::read_u64_from_user(msg_control_ptr + coff as u64).ok_or(Errno::Efault)?,
             );
             let cmsg_level = crate::functions::intcast::low_i32_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 8).ok_or(Errno::Efault)?,
+                api::read_u64_from_user(msg_control_ptr + coff as u64 + 8).ok_or(Errno::Efault)?,
             );
             let cmsg_type = crate::functions::intcast::low_i32_from_u64(
-                raw::read_u64_from_user(msg_control_ptr + coff as u64 + 12).ok_or(Errno::Efault)?,
+                api::read_u64_from_user(msg_control_ptr + coff as u64 + 12).ok_or(Errno::Efault)?,
             );
             if cmsg_len < 16 || cmsg_len > msg_controllen_raw - coff {
                 break;
@@ -463,11 +463,11 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if msg_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(msg_ptr, 56) {
+    if !api::validate_user_buf(msg_ptr, 56) {
         return Err(Errno::Efault);
     }
-    let iov_ptr = raw::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
-    let iovlen = raw::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
+    let iov_ptr = api::read_u64_from_user(msg_ptr + 16).ok_or(Errno::Efault)?;
+    let iovlen = api::read_u64_from_user(msg_ptr + 24).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > 1024 {
         return Err(Errno::Einval);
     }
@@ -475,32 +475,32 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         return Err(Errno::Einval);
     }
     let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
-    if !raw::check_user_buf(iov_ptr, iov_bytes) {
+    if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
     // v2: UDS cmsg 回传 — 写回对端注入的 SCM_CREDENTIALS (对端 passcred 启用时)
     // 框架 fw_recvmsg 把数据搬入 iov, 凭据在 stream/dgram 缓冲里已添加 12 字节.
     // 这里仅在 msg_control 区域写回标准 SCM_CREDENTIALS cmsghdr, 让用户能解析凭据.
-    let msg_control_ptr = raw::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
+    let msg_control_ptr = api::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
     let msg_controllen = crate::functions::intcast::usize_from_u64(
-        raw::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
+        api::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
     if msg_control_ptr != 0 && msg_controllen >= 28 {
-        if !raw::check_user_buf(msg_control_ptr, msg_controllen as u64) {
+        if !api::validate_user_buf(msg_control_ptr, msg_controllen as u64) {
             return Err(Errno::Efault);
         }
         // B07-02: 从 UDS 接收缓冲反序列化真实发送方凭据; 非 UDS / 无凭据
         // 时不伪造 root, 保持 msg_controllen 原样 (无凭据).
         if let Some(cred) = uds::uds_peer_creds(fd) {
             // 写回 SCM_CREDENTIALS cmsghdr + 12 字节凭据 (与 send 路径相同编码)
-            let _ = raw::write_u64_to_user(msg_control_ptr, 28u64);
-            let _ = raw::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
-            let _ = raw::write_u64_to_user(
+            let _ = api::write_u64_to_user(msg_control_ptr, 28u64);
+            let _ = api::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
+            let _ = api::write_u64_to_user(
                 msg_control_ptr + 16,
                 (u64::from(cred.pid) << 32) | u64::from(cred.uid),
             );
-            let _ = raw::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
-            let _ = raw::write_u64_to_user(msg_ptr + 40, 28u64);
+            let _ = api::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
+            let _ = api::write_u64_to_user(msg_ptr + 40, 28u64);
         }
     }
     let r = fw::recvmsg_syscall(fd, msg_ptr, flags);
@@ -556,7 +556,7 @@ pub fn socketpair_syscall(
     protocol: i32,
     sv_ptr: u64,
 ) -> Result<usize, Errno> {
-    if sv_ptr == 0 || !raw::check_user_buf(sv_ptr, 8) {
+    if sv_ptr == 0 || !api::validate_user_buf(sv_ptr, 8) {
         return Err(Errno::Efault);
     }
     if domain != 1 {
@@ -574,7 +574,7 @@ pub fn socketpair_syscall(
     // sv[0]=fd0, sv[1]=fd1: 拼为主机序 u64 一次写回 (低 4 字节落在 sv[0])
     let packed =
         (crate::functions::intcast::u64_from_i32(fd1) << 32) | u64::from(fd0.cast_unsigned());
-    if !raw::write_u64_to_user(sv_ptr, packed) {
+    if !api::write_u64_to_user(sv_ptr, packed) {
         // 写回失败: 两端 FD 已无用户可见入口, 关闭回收
         let _ = uds::close(fd0);
         let _ = uds::close(fd1);
@@ -607,7 +607,7 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
     let mut sent: usize = 0;
     for i in 0..u64::from(vlen) {
         let entry = msgvec_ptr + i * MMSGHDR_SIZE;
-        if !raw::check_user_buf(entry, MMSGHDR_SIZE) {
+        if !api::validate_user_buf(entry, MMSGHDR_SIZE) {
             if sent > 0 {
                 break;
             }
@@ -650,13 +650,13 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
     let data = gather_entry_iov(entry)?;
     let st =
         uds::uds_sock_type(fd).map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?;
-    let name_ptr = raw::read_u64_from_user(entry + MSGHDR_NAME_OFF).ok_or(Errno::Efault)?;
+    let name_ptr = api::read_u64_from_user(entry + MSGHDR_NAME_OFF).ok_or(Errno::Efault)?;
     if name_ptr != 0 {
         // 有目标地址: 按路径发送, 目标为 Dgram, 数据超过单报上限拒绝
         if data.len() > uds::UNIX_DGRAM_MAX {
             return Err(Errno::Emsgsize);
         }
-        let namelen = raw::read_u64_from_user(entry + MSGHDR_NAMELEN_OFF).ok_or(Errno::Efault)?;
+        let namelen = api::read_u64_from_user(entry + MSGHDR_NAMELEN_OFF).ok_or(Errno::Efault)?;
         let addr = fw::raw_read_sockaddr_un(
             name_ptr,
             crate::functions::intcast::low_u32_from_u64(namelen),
@@ -678,23 +678,23 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
 /// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回
 /// `Err(Errno::Efault)`。
 fn gather_entry_iov(entry: u64) -> Result<alloc::vec::Vec<u8>, Errno> {
-    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
-    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
+    let iov_ptr = api::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
+    let iovlen = api::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > UIO_MAXIOV || iov_ptr == 0 {
         return Err(Errno::Einval);
     }
     let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
-    if !raw::check_user_buf(iov_ptr, iov_bytes) {
+    if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
     let mut data = alloc::vec::Vec::new();
     for j in 0..iovlen {
-        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
+        let base = api::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
+        let seg_len = api::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         if seg_len == 0 {
             continue;
         }
-        if base == 0 || !raw::check_user_buf(base, seg_len) {
+        if base == 0 || !api::validate_user_buf(base, seg_len) {
             return Err(Errno::Efault);
         }
         // 单段长度需可经 raw_copy_in 的 u32 长度参数表达
@@ -739,11 +739,11 @@ pub fn recvmmsg_syscall(
     // timeout 解析: struct timespec { tv_sec: i64, tv_nsec: i64 }, 相对时长
     let mut deadline_ms: u64 = 0;
     if timeout_ptr != 0 {
-        if !raw::check_user_buf(timeout_ptr, 16) {
+        if !api::validate_user_buf(timeout_ptr, 16) {
             return Err(Errno::Efault);
         }
-        let sec_raw = raw::read_u64_from_user(timeout_ptr).ok_or(Errno::Efault)?;
-        let nsec_raw = raw::read_u64_from_user(timeout_ptr + 8).ok_or(Errno::Efault)?;
+        let sec_raw = api::read_u64_from_user(timeout_ptr).ok_or(Errno::Efault)?;
+        let nsec_raw = api::read_u64_from_user(timeout_ptr + 8).ok_or(Errno::Efault)?;
         if sec_raw > i64::MAX as u64 || nsec_raw > i64::MAX as u64 {
             return Err(Errno::Einval);
         }
@@ -770,7 +770,7 @@ pub fn recvmmsg_syscall(
     let mut received: usize = 0;
     for i in 0..u64::from(vlen) {
         let entry = msgvec_ptr + i * MMSGHDR_SIZE;
-        if !raw::check_user_buf(entry, MMSGHDR_SIZE) {
+        if !api::validate_user_buf(entry, MMSGHDR_SIZE) {
             if received > 0 {
                 break;
             }
@@ -867,18 +867,18 @@ fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, E
 /// `iovlen` 为 0 或超过 `UIO_MAXIOV` 时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回
 /// `Err(Errno::Efault)`。
 fn read_entry_iov_cap(entry: u64) -> Result<(u64, u64), Errno> {
-    let iov_ptr = raw::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
-    let iovlen = raw::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
+    let iov_ptr = api::read_u64_from_user(entry + MSGHDR_IOV_OFF).ok_or(Errno::Efault)?;
+    let iovlen = api::read_u64_from_user(entry + MSGHDR_IOVLEN_OFF).ok_or(Errno::Efault)?;
     if iovlen == 0 || iovlen > UIO_MAXIOV || iov_ptr == 0 {
         return Err(Errno::Einval);
     }
     let iov_bytes = iovlen.checked_mul(16).ok_or(Errno::Einval)?;
-    if !raw::check_user_buf(iov_ptr, iov_bytes) {
+    if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
     let mut total: u64 = 0;
     for j in 0..iovlen {
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
+        let seg_len = api::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         total = total.saturating_add(seg_len);
     }
     Ok((iov_ptr, total))
@@ -893,8 +893,8 @@ fn copy_out_to_entry_iov(iov_ptr: u64, data: &[u8]) -> Result<(), Errno> {
     let mut off = 0usize;
     let mut j: u64 = 0;
     while off < data.len() {
-        let base = raw::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
-        let seg_len = raw::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
+        let base = api::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
+        let seg_len = api::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
         if seg_len == 0 {
             j += 1;
             continue;

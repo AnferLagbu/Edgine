@@ -22,6 +22,22 @@ fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path} failed: {e}"))
 }
 
+/// 递归收集目录下的 `.rs` 文件 (跳过 vendored 三方树 `smoltcp`).
+fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("read {} failed: {e}", dir.display()))
+    {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            if path.file_name().is_some_and(|name| name == "smoltcp") {
+                continue;
+            }
+            collect_rs_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+}
+
 /// 取出 Makefile.ci 中定义的目标名 (行首 `name:` 形式, 忽略变量赋值与注释).
 fn defined_targets(mk: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -1555,6 +1571,114 @@ fn test_p73_reference_edges_are_report_only() {
         assert!(
             spec.contains(needle),
             "docs/explain/spec-engineering.md 未写明 D 类矩阵 `{needle}`"
+        );
+    }
+}
+
+/// P-74 甲 结构锁: functions 层不得穿透 `privileged::syscall::raw`, 内部访问判据
+/// 必须覆盖跨层并且只认三条具名豁免.
+///
+/// 病灶: `check_internal_access` 原先只扫 privileged 层 (functions → privileged 的
+/// 12 个文件 106 处 `syscall::raw` 穿透因此零读数), 且「目标模块 == 所在模块」自动
+/// 跳过会在跨层扫描时把 `functions/mm` → `privileged/mm` 内部导入静默放行. 本锁钉住
+/// 四面: ① F2 黑名单收回 `raw`; ② 耦合审计真调跨层判定且豁免恰为三条; ③ 全树不再
+/// 出现 `privileged::syscall::raw` 导入, api 侧有对应 safe 包装; ④ 自测腿真调跨层函数.
+#[test]
+fn test_p74_functions_layer_does_not_pierce_syscall_raw() {
+    let boundary = read("../scripts/audit_functions_boundary.py");
+    assert!(
+        boundary.contains("'privileged::syscall::raw',"),
+        "audit_functions_boundary.py 的 FORBIDDEN_PRIVILEGED_MODULES 未收回 syscall::raw —— \
+         functions 可以重新依赖 unsafe 集中点"
+    );
+
+    let py = read("../scripts/audit_coupling.py");
+    for needle in [
+        "CROSS_LAYER_ALLOWED",
+        "check_internal_access(FUNCTIONS_BASE, 'functions',",
+        "cross_layer=True",
+        "if not cross_layer and target_mod == mod:",
+    ] {
+        assert!(
+            py.contains(needle),
+            "audit_coupling.py 缺 `{needle}` —— 跨层内部访问判定或同名跳过隔离丢失"
+        );
+    }
+    let set_at = py
+        .find("CROSS_LAYER_ALLOWED = {")
+        .unwrap_or_else(|| panic!("audit_coupling.py 缺 CROSS_LAYER_ALLOWED 豁免表"));
+    let set_body = &py[set_at..];
+    let set_body = &set_body[..set_body
+        .find('}')
+        .unwrap_or_else(|| panic!("CROSS_LAYER_ALLOWED 未闭合"))];
+    assert_eq!(
+        set_body.matches("('functions/").count(),
+        3,
+        "跨层具名豁免不是三条 —— 新增豁免必须先补公开出口或另立裁定"
+    );
+
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("../src/kernel/functions"), &mut files);
+    assert!(
+        files.len() > 100,
+        "functions 树只读到 {} 个 .rs —— 扫描面失效会让本锁恒绿",
+        files.len()
+    );
+    let offenders: Vec<String> = files
+        .iter()
+        .filter(|path| {
+            fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()))
+                .contains("privileged::syscall::raw")
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "functions 仍穿透 privileged::syscall::raw: {offenders:?}"
+    );
+
+    let api = read("../src/kernel/privileged/syscall/api.rs");
+    for needle in [
+        "pub fn read_keyboard_byte()",
+        "pub fn validate_user_buf(",
+        "pub fn write_u64_to_user(",
+    ] {
+        assert!(
+            api.contains(needle),
+            "syscall::api 缺 safe 包装 `{needle}` —— raw 穿透没有合法出口"
+        );
+    }
+
+    let st = read("../scripts/tests/audit_selftest.py");
+    assert!(
+        st.contains("def test_coupling_cross_layer_access("),
+        "自测缺跨层内部访问腿 —— 同名跳过与新判据只有脚本自述, 无同源证明"
+    );
+    assert!(
+        st.contains("detector.check_internal_access(base, \"functions\", cross_layer=True)"),
+        "跨层自测腿必须真调检测器自身的 check_internal_access, 不得复制平行实现"
+    );
+    let results_at = st
+        .find("results = [")
+        .unwrap_or_else(|| panic!("audit_selftest.py 缺 main() 的 results 列表"));
+    let results = &st[results_at..];
+    let results = &results[..results
+        .find(']')
+        .unwrap_or_else(|| panic!("results 列表未闭合"))];
+    assert!(
+        results.lines().any(|line| {
+            let item = line.trim();
+            item.starts_with("test_coupling_cross_layer_access()") && !item.starts_with('#')
+        }),
+        "跨层自测腿未接进 main() 的结果列表 (或被注释掉) —— 写了也不跑"
+    );
+
+    let spec = read("../docs/explain/spec-engineering.md");
+    for needle in ["P-74 甲", "跨层", "具名豁免", "privileged::syscall::raw"] {
+        assert!(
+            spec.contains(needle),
+            "docs/explain/spec-engineering.md 未写明跨层内部访问 `{needle}`"
         );
     }
 }

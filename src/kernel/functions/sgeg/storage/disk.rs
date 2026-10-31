@@ -7,7 +7,7 @@
 //!
 //! - 0 unsafe, 纯类型安全 + 参数验证
 //! - sgeg 鉴权 (走 `privileged::sgeg::api::pwm`_*)
-//! - 用户指针 + 容量验证 (走 `privileged::syscall::raw`)
+//! - 用户指针 + 容量验证 (走 `privileged::syscall::api`)
 //! - 委托 `privileged::driver::block` 执行块设备实际操作
 //!
 //! ## 与 privileged 边界
@@ -20,7 +20,7 @@
 use crate::privileged::driver::block as blk;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 /// sgeg disk 域 = 4 (PWM domain 4 = storage 域)
 const PWM_DOMAIN_STORAGE: u16 = 4;
@@ -57,13 +57,13 @@ pub fn disk_list(disks_ptr: u64, max_count: u32) -> Result<usize, Errno> {
         return Err(Errno::Einval);
     }
     let bytes = u64::from(max_count).checked_mul(8).ok_or(Errno::Einval)?;
-    if !raw::check_user_buf(disks_ptr, bytes) {
+    if !api::validate_user_buf(disks_ptr, bytes) {
         return Err(Errno::Efault);
     }
     let count = blk::block_device_count();
     let limit = (max_count as usize).min(count);
     for i in 0..limit {
-        if !raw::write_u64_to_user(disks_ptr + (i as u64) * 8, i as u64) {
+        if !api::write_u64_to_user(disks_ptr + (i as u64) * 8, i as u64) {
             return Err(Errno::Efault);
         }
     }
@@ -79,7 +79,7 @@ pub fn disk_info(disk_id: u32, info_ptr: u64) -> Result<(), Errno> {
     if info_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(info_ptr, USER_DISK_INFO_SIZE) {
+    if !api::validate_user_buf(info_ptr, USER_DISK_INFO_SIZE) {
         return Err(Errno::Efault);
     }
     // 有意窄化: 资源类型转换, u8 块设备 ID 范围 0-255
@@ -106,7 +106,7 @@ pub fn disk_info(disk_id: u32, info_ptr: u64) -> Result<(), Errno> {
         sectors,
         model,
     };
-    if !raw::write_struct_to_user(info_ptr, &info) {
+    if !api::write_struct_to_user(info_ptr, &info) {
         return Err(Errno::Efault);
     }
     Ok(())
@@ -123,7 +123,7 @@ pub fn disk_format(disk_id: u32, fstype_ptr: u64) -> Result<(), Errno> {
     if fstype_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(fstype_ptr) {
+    if !api::validate_user_ptr(fstype_ptr) {
         return Err(Errno::Efault);
     }
     // sgeg 鉴权: storage 域 required=1 (写)

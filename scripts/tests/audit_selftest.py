@@ -16,13 +16,14 @@ B01-24 返工: audit 脚本统一自测.
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-六项真调入口:
+七项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
 4. tools/audit_unsafe.py: scan_file(path) (注入临时路径基准)
 5. audit_coupling.py: scan_cross_module_deps(base, layer) + detect_circular_deps(matrix, layer)
 6. audit_coupling.py: scan_reference_level_deps(base, layer) (P-73 丙 只报告矩阵)
+7. audit_coupling.py: check_internal_access(base, layer, cross_layer) (P-74 甲 跨层穿透)
 """
 from __future__ import annotations
 
@@ -63,7 +64,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/6] audit_functions_boundary.py")
+    print("\n[Test 1/7] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -88,7 +89,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/6] audit_deadlock_matrix.py")
+    print("\n[Test 2/7] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -114,7 +115,7 @@ def test_deadlock_matrix() -> bool:
 
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/6] audit_block_registration.py")
+    print("\n[Test 3/7] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -145,7 +146,7 @@ def test_block_registration() -> bool:
 
 def test_audit_unsafe() -> bool:
     """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
-    print("\n[Test 4/6] tools/audit_unsafe.py")
+    print("\n[Test 4/7] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -177,7 +178,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/6] audit_coupling.py")
+    print("\n[Test 5/7] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -221,7 +222,7 @@ def test_coupling_reference_edges() -> bool:
     计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
     D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
     """
-    print("\n[Test 6/6] audit_coupling.py (P-73 丙 D 类引用级边)")
+    print("\n[Test 6/7] audit_coupling.py (P-73 丙 D 类引用级边)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -266,6 +267,57 @@ def test_coupling_reference_edges() -> bool:
     )
 
 
+def test_coupling_cross_layer_access() -> bool:
+    """P-74 甲 fixture 测试 7: functions → privileged 内部访问跨层判定.
+
+    病灶: `check_internal_access` 原先只扫 privileged 层, 且「目标模块 == 所在模块」
+    自动跳过 —— 跨层扫描时 `functions/mm` 导入 `privileged::mm` 内部会被同名规则
+    静默放行. 本用例钉住三面: (a) 同名模块不再自动跳过 (`mm/mod.rs` 的 numa 内部
+    导入被拦); (b) 具名豁免路径 (`functions/mm/numa.rs`) 放行; (c) `syscall::raw`
+    穿透被拦, 而公开出口 `syscall::api` 不匹配内部清单.
+    """
+    print("\n[Test 7/7] audit_coupling.py (P-74 甲 跨层内部访问)")
+    detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = Path(tmpdir) / "functions"
+        for mod, files in (
+            ("alpha", {"mod.rs": (
+                "//! 自测 fixture\n"
+                "use crate::privileged::syscall::raw::check_user_buf;\n"
+                "use crate::privileged::syscall::api::validate_user_buf;\n"
+            )}),
+            ("mm", {
+                "mod.rs": (
+                    "//! 自测 fixture\n"
+                    "use crate::privileged::mm::numa::NumaPolicy;\n"
+                ),
+                "numa.rs": (
+                    "//! 自测 fixture\n"
+                    "use crate::privileged::mm::numa::NumaPolicy;\n"
+                ),
+            }),
+        ):
+            mod_dir = base / mod
+            mod_dir.mkdir(parents=True)
+            for name, body in files.items():
+                (mod_dir / name).write_text(body, encoding="utf-8")
+        # KERNEL_ROOT 绑定仓库路径, fixture 在临时目录 ⇒ 注入临时根后调真实函数
+        detector.KERNEL_ROOT = Path(tmpdir)
+        default_files = sorted(
+            issue["file"] for issue in detector.check_internal_access(base, "functions"))
+        cross_files = sorted(
+            issue["file"] for issue in
+            detector.check_internal_access(base, "functions", cross_layer=True))
+
+    return _check(
+        "跨层拦同名模块内部导入与 syscall::raw, 具名豁免与 api 出口放行",
+        cross_files == ["functions/alpha/mod.rs", "functions/mm/mod.rs"]
+        and default_files == ["functions/alpha/mod.rs"],
+        f"期望跨层 [alpha/mod.rs, mm/mod.rs] 且默认面仅 [alpha/mod.rs], "
+        f"实测跨层 {cross_files}, 默认 {default_files}",
+    )
+
+
 def main() -> int:
     print("=" * 60)
     print("B01-24 audit 脚本自测 (按 docs/plan/audit-fix-01 §B01-24)")
@@ -278,6 +330,7 @@ def main() -> int:
         test_audit_unsafe(),
         test_coupling_edges(),
         test_coupling_reference_edges(),
+        test_coupling_cross_layer_access(),
     ]
     passed = sum(results)
     total = len(results)

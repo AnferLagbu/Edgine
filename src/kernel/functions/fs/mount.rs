@@ -16,7 +16,7 @@
 use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // mount
@@ -38,13 +38,13 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
     if fstype_ptr == 0 {
         return Err(Errno::Einval);
     }
-    if !raw::check_user_ptr(target_ptr) {
+    if !api::validate_user_ptr(target_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(fstype_ptr, 1) {
+    if !api::validate_user_buf(fstype_ptr, 1) {
         return Err(Errno::Efault);
     }
-    if source_ptr != 0 && !raw::check_user_ptr(source_ptr) {
+    if source_ptr != 0 && !api::validate_user_ptr(source_ptr) {
         return Err(Errno::Efault);
     }
 
@@ -78,7 +78,7 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if target_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(target_ptr) {
+    if !api::validate_user_ptr(target_ptr) {
         return Err(Errno::Efault);
     }
 

@@ -24,7 +24,7 @@ use crate::functions::fs::vfs_manager::VFS_MANAGER;
 use crate::functions::fs::vfs_types::{VFS_MAX_PATH, VfsFileType};
 use crate::privileged::glue::CStrExt;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // chdir
@@ -41,7 +41,7 @@ pub fn chdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     // SAFETY: path_ptr 由 check_user_ptr 验证为可读
@@ -67,7 +67,7 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
     if buf_ptr == 0 || size == 0 {
         return Err(Errno::Einval);
     }
-    if !raw::check_user_buf(buf_ptr, size) {
+    if !api::validate_user_buf(buf_ptr, size) {
         return Err(Errno::Efault);
     }
     // SAFETY: buf_ptr 由 check_user_buf 验证为可写
@@ -97,7 +97,7 @@ fn require_sys_admin() -> Result<u64, Errno> {
 
 /// 校验用户路径指针并取 `&str`.
 fn checked_user_path(ptr: u64) -> Result<&'static str, Errno> {
-    if ptr == 0 || !raw::check_user_ptr(ptr) {
+    if ptr == 0 || !api::validate_user_ptr(ptr) {
         return Err(Errno::Efault);
     }
     // ptr 经 check_user_ptr 验证为可读的 NUL 终止用户字符串

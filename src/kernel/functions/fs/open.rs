@@ -16,7 +16,7 @@
 use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // open flags
@@ -96,7 +96,7 @@ pub fn open_syscall(path_ptr: u64, flags: i32, mode: i32) -> Result<usize, Errno
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     validate_flags(flags)?;

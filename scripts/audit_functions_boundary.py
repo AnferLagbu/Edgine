@@ -85,6 +85,9 @@ FORBIDDEN_PRIVILEGED_MODULES = [
     'privileged::ipc::msgq::raw',
     # syscall 内部 (类型/API 应通过 functions/syscall 顶层)
     'privileged::syscall::types',
+    # P-74 甲: raw 是 unsafe 集中点, functions 只能走 api.rs 的 safe 包装
+    # (validate_user_ptr/buf、read/write_*_to_user、get_ticks、read_keyboard_byte).
+    'privileged::syscall::raw',
     # errno 不列入禁止: privileged::errno 是刻意的中性 re-export
     # (实际定义在 functions::syscall::types, 见 privileged/errno.rs 头注释),
     # 用于消除 proc/mm/fs/io 对 syscall 子系统的直接依赖.

@@ -18,7 +18,7 @@ use crate::functions::fs::VfsStat;
 use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 const VFS_STAT_SIZE: u64 = core::mem::size_of::<VfsStat>() as u64;
 
@@ -34,17 +34,17 @@ pub fn stat_syscall(path_ptr: u64, st_buf_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 || st_buf_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
+    if !api::validate_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     // privileged safe API: 返回 VfsStat (无 raw pointer 跨边界)
     let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eio)?;
     // privileged safe API: 写结构体到 user buf, 内部已 check_user_buf
-    if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
+    if !api::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
         return Err(Errno::Efault);
     }
     Ok(0)
@@ -80,12 +80,12 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
     if st_buf_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
+    if !api::validate_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let stat = fw::vfs_fstat_safe(fd.cast_unsigned(), pwm).ok_or(Errno::Eio)?;
-    if !raw::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
+    if !api::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
         return Err(Errno::Efault);
     }
     Ok(0)
@@ -231,16 +231,16 @@ pub fn statx_syscall(
     if path_ptr == 0 || buf_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(buf_ptr, stx_size) {
+    if !api::validate_user_buf(buf_ptr, stx_size) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
     let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eio)?;
     let stx = Statx::from_vfs_stat(&stat);
-    if !raw::write_struct_to_user::<Statx>(buf_ptr, &stx) {
+    if !api::write_struct_to_user::<Statx>(buf_ptr, &stx) {
         return Err(Errno::Efault);
     }
     Ok(0)
@@ -258,7 +258,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
     if dirfd != AT_FDCWD {
         return Errno::Enotsup.as_ret();
     }
-    if path_ptr == 0 || !raw::check_user_ptr(path_ptr) {
+    if path_ptr == 0 || !api::validate_user_ptr(path_ptr) {
         return Errno::Efault.as_ret();
     }
     let (atime, mtime) = if times_ptr == 0 {

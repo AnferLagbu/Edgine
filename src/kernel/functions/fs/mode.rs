@@ -9,7 +9,7 @@
 use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // umask
@@ -42,7 +42,7 @@ pub fn mkdir_syscall(path_ptr: u64, _mode: i32) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
@@ -68,7 +68,7 @@ pub fn rmdir_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();
@@ -94,7 +94,7 @@ pub fn chmod_syscall(path_ptr: u64, mode: u32) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     // mode 9 bit 合法

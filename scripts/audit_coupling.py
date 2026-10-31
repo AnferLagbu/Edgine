@@ -26,6 +26,9 @@ F3 判据 (P-54 甲+丙a): 两层的禁止循环依赖全部与机器派生基�
 (`scan_reference_level_deps`), 掩掉注释、字符串与 use 语句后按
 `crate::privileged::<mod>` / `crate::functions::<mod>` 限定路径聚合模块对与双向环;
 该矩阵不进基线、不影响退出码, 读源失败仍 fail-closed (报告失真不可静默放行).
+P-74 甲: `check_internal_access` 补 functions → privileged 的**跨层**判据 (两层模块同名
+不再自动跳过, 只认 `CROSS_LAYER_ALLOWED` 三条具名豁免), 原先 12 个文件 106 处
+`syscall::raw` 穿透已迁到 `syscall::api` 的 safe 包装.
 订正 P-54 探针的一处分类: 该探针称「A+B+C ⇒ privileged 5 对 (新增 config↔tests)」,
 本轮复测 `config → tests` 确有 5 条 use 边 (全在 `config/memory.rs` 的 `#[cfg(test)]`
 内), 但 `tests → config` **零条 use 边** (唯一引用是 `tests/mod.rs:448` 的限定调用
@@ -136,6 +139,15 @@ INTERNAL_PATTERNS = [
     # cpu 内部 — tsc 已 re-export (read_tsc/read_tsc_serialized)
     # io 内部 — iouring 已 glob re-export
 ]
+
+# P-74 甲: functions 层对 privileged 内部的具名豁免 (先例: audit_functions_boundary 的
+# msgq.raw 具名豁免). 三条都是 functions 侧 glob re-export 兼容层, privileged 内部模块
+# 没有公开出口可走; 新增豁免一律拒收, 需先补公开 API 或另立裁定.
+CROSS_LAYER_ALLOWED = {
+    ('functions/mm/numa.rs', 'privileged::mm::numa'),
+    ('functions/proc/oomd.rs', 'privileged::proc::oomd'),
+    ('functions/proc/sched_policy.rs', 'privileged::proc::cfs'),
+}
 
 
 def get_submodules(base):
@@ -465,8 +477,12 @@ def repo_rel(path):
         return str(path)
 
 
-def check_internal_access(base, layer_name):
-    """检查跨子系统直接访问内部子模块 (边提取与循环依赖检测同源, P-65 乙)."""
+def check_internal_access(base, layer_name, cross_layer=False):
+    """检查跨子系统直接访问内部子模块 (边提取与循环依赖检测同源, P-65 乙).
+
+    `cross_layer=True` 时扫描 functions 层对 privileged 内部的导入 (P-74 甲):
+    两层模块名相同不代表访问合法, 故不做同名模块跳过, 只认具名豁免表.
+    """
     issues = []
     modules = get_submodules(base)
 
@@ -484,11 +500,14 @@ def check_internal_access(base, layer_name):
                         end = idx + len(pattern)
                         if end < len(import_path) and import_path[end:end+2] != '::':
                             continue
+                        rel = str(rs_file.relative_to(KERNEL_ROOT))
+                        if cross_layer and (rel, pattern) in CROSS_LAYER_ALLOWED:
+                            continue
                         # 排除自身模块的内部访问
                         # e.g. privileged::mm::pmm 被 privileged/mm/ 内部使用是允许的
                         # pattern 格式: privileged::proc::process → 子系统是 proc (index 1)
                         target_mod = pattern.split('::')[1] if '::' in pattern else ''
-                        if target_mod == mod:
+                        if not cross_layer and target_mod == mod:
                             continue
                         # 排除 tests 目录 — 白盒测试允许直接访问内部实现
                         if mod == 'tests':
@@ -753,6 +772,9 @@ def main():
     print('[5] 跨子系统内部访问检查')
     print('-' * 78)
     internal_issues = check_internal_access(PRIVILEGED_BASE, 'privileged')
+    # P-74 甲: functions → privileged 内部的跨层穿透同样进入判定 (HIGH ⇒ 阻断).
+    internal_issues += check_internal_access(FUNCTIONS_BASE, 'functions',
+                                             cross_layer=True)
     if internal_issues:
         # 按源模块分组
         by_source = defaultdict(list)

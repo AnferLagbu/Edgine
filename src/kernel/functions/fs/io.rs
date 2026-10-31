@@ -16,7 +16,7 @@
 //!   实际访问 VFS / 创建内核对象
 
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 /// 将 i64 返回码 (负数 = -errno) 转为 functions 层 Result
 #[inline]
@@ -75,7 +75,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
         return Err(Errno::Einval);
     }
-    if !raw::check_user_buf(buf, count) {
+    if !api::validate_user_buf(buf, count) {
         return Err(Errno::Efault);
     }
     let has_entry = fd_table_has_entry(fd);
@@ -85,7 +85,7 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if fd == 0 && !has_entry {
         // stdin: 键盘输入 (x86_64 生产构建); 其余配置无输入源, 返回 EOF
         #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
-        if let Some(c) = raw::read_keyboard_byte() {
+        if let Some(c) = api::read_keyboard_byte() {
             // copy_to_user: 异常表兜底的 safe 用户内存写入 (1 字节)
             return match crate::privileged::mm::copy_user::copy_to_user(buf, &[c], 1) {
                 Ok(_) => Ok(1),
@@ -157,7 +157,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
         return Err(Errno::Einval);
     }
-    if !raw::check_user_buf(buf, count) {
+    if !api::validate_user_buf(buf, count) {
         return Err(Errno::Efault);
     }
     if (fd == 1 || fd == 2) && !fd_table_has_entry(fd) {
@@ -258,7 +258,7 @@ pub fn pipe_syscall(fds: u64) -> Result<usize, Errno> {
 /// `O_CLOEXEC` 落到 per-process fd 表, `O_NONBLOCK` 落到两端点 `OpenFile`
 /// (读/写空满时分别返回 `EAGAIN` 或睡眠等待).
 pub fn pipe2_syscall(fds: u64, flags: i32) -> Result<usize, Errno> {
-    if fds == 0 || !raw::check_user_buf(fds, 8) {
+    if fds == 0 || !api::validate_user_buf(fds, 8) {
         return Err(Errno::Efault);
     }
     let allowed = super::open::O_CLOEXEC | O_NONBLOCK;
@@ -807,7 +807,7 @@ pub fn preadv_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<us
         if len == 0 {
             continue;
         }
-        if !raw::check_user_buf(base, len) {
+        if !api::validate_user_buf(base, len) {
             return Err(Errno::Efault);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_read 一致)
@@ -853,7 +853,7 @@ pub fn pwritev_syscall(fd: i32, iov_ptr: u64, iovcnt: u64, pos: i64) -> Result<u
         if len == 0 {
             continue;
         }
-        if !raw::check_user_buf(base, len) {
+        if !api::validate_user_buf(base, len) {
             return Err(Errno::Efault);
         }
         // 有意窄化: 资源类型转换, 单段长度截断到 u32 (与 vfs_write 一致)

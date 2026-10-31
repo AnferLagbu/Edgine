@@ -16,7 +16,7 @@ use crate::functions::fs::api as fw;
 use crate::privileged::sgeg;
 use crate::privileged::sgeg::capability::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // 权限位
@@ -50,7 +50,7 @@ pub fn access_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     // mode 仅取低 6 位 (POSIX R|W|X|F)
@@ -115,7 +115,7 @@ pub fn unlink_syscall(path_ptr: u64) -> Result<usize, Errno> {
     if path_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(path_ptr) {
+    if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
     let pwm = current_pwm();

@@ -95,6 +95,13 @@ pub fn get_ticks() -> u64 {
     super::raw::get_ticks()
 }
 
+/// 从键盘读取一个字节 (`x86_64` 生产构建; 其余配置无输入源, 返回 `None`)
+#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
+#[must_use]
+pub fn read_keyboard_byte() -> Option<u8> {
+    super::raw::read_keyboard_byte()
+}
+
 /// nanosleep 系统调用实现 (TCB: 操作 hrtimer + 调度器)
 #[must_use]
 pub fn sys_nanosleep(req: u64, rem: u64) -> i64 {

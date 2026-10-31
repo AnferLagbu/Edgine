@@ -14,7 +14,7 @@ use crate::privileged::proc::api as proc_fw;
 use crate::privileged::sgeg;
 use crate::privileged::sgeg::capability::FS_CAP_CHOWN;
 use crate::privileged::syscall::Errno;
-use crate::privileged::syscall::raw;
+use crate::privileged::syscall::api;
 
 // ============================================================================
 // rename
@@ -30,10 +30,10 @@ pub fn rename_syscall(oldpath_ptr: u64, newpath_ptr: u64) -> Result<usize, Errno
     if oldpath_ptr == 0 || newpath_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(oldpath_ptr) {
+    if !api::validate_user_ptr(oldpath_ptr) {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_ptr(newpath_ptr) {
+    if !api::validate_user_ptr(newpath_ptr) {
         return Err(Errno::Efault);
     }
     if oldpath_ptr == newpath_ptr {
@@ -93,12 +93,12 @@ pub fn fsync_syscall(fd: i32) -> Result<usize, Errno> {
 /// # Errors
 /// 当 `tloc_ptr` 非空但越界或写入用户空间失败时返回 `EFAULT`.
 pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
-    let ticks = raw::get_ticks();
+    let ticks = api::get_ticks();
     if tloc_ptr != 0 {
-        if !raw::check_user_buf(tloc_ptr, 8) {
+        if !api::validate_user_buf(tloc_ptr, 8) {
             return Err(Errno::Efault);
         }
-        if !raw::write_u64_to_user(tloc_ptr, ticks) {
+        if !api::write_u64_to_user(tloc_ptr, ticks) {
             return Err(Errno::Efault);
         }
     }
@@ -207,7 +207,7 @@ impl Itimerval {
 /// # Errors
 /// 当 `buf_ptr` 非空但越界、底层读取失败或写入用户空间失败时返回 `EFAULT`.
 pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
-    if buf_ptr != 0 && !raw::check_user_buf(buf_ptr, 16) {
+    if buf_ptr != 0 && !api::validate_user_buf(buf_ptr, 16) {
         return Err(Errno::Efault);
     }
     let pid = current_pid();
@@ -223,11 +223,11 @@ pub fn times_syscall(buf_ptr: u64) -> Result<usize, Errno> {
         cutime: 0,
         cstime: 0,
     };
-    if buf_ptr != 0 && !raw::write_struct_to_user(buf_ptr, &tms) {
+    if buf_ptr != 0 && !api::write_struct_to_user(buf_ptr, &tms) {
         return Err(Errno::Efault);
     }
     // 实时钟返回值: 不允许依赖真实 wall time, 返 clock_ticks 作为单调值
-    Ok(crate::functions::intcast::usize_from_u64(raw::get_ticks()))
+    Ok(crate::functions::intcast::usize_from_u64(api::get_ticks()))
 }
 
 /// getitimer(which, value) — 读取间隔定时器.
@@ -247,7 +247,7 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
     if value_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !raw::check_user_buf(value_ptr, core::mem::size_of::<Itimerval>() as u64) {
+    if !api::validate_user_buf(value_ptr, core::mem::size_of::<Itimerval>() as u64) {
         return Err(Errno::Efault);
     }
     if which == 0 {
@@ -259,7 +259,7 @@ pub fn getitimer_syscall(which: i32, value_ptr: u64) -> Result<usize, Errno> {
             it_interval: Timeval::from_ns(interval_ns),
             it_value: Timeval::from_ns(remaining_ns),
         };
-        if !raw::write_struct_to_user(value_ptr, &iv) {
+        if !api::write_struct_to_user(value_ptr, &iv) {
             return Err(Errno::Efault);
         }
         Ok(0)
@@ -289,14 +289,14 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
         return Err(Errno::Efault);
     }
     let itimerval_len = core::mem::size_of::<Itimerval>() as u64;
-    if !raw::check_user_buf(new_ptr, itimerval_len) {
+    if !api::validate_user_buf(new_ptr, itimerval_len) {
         return Err(Errno::Efault);
     }
-    if old_ptr != 0 && !raw::check_user_buf(old_ptr, itimerval_len) {
+    if old_ptr != 0 && !api::validate_user_buf(old_ptr, itimerval_len) {
         return Err(Errno::Efault);
     }
     let mut new: Itimerval = Itimerval::zero();
-    if !raw::read_struct_from_user(new_ptr, &mut new) {
+    if !api::read_struct_from_user(new_ptr, &mut new) {
         return Err(Errno::Efault);
     }
     let pid = current_pid();
@@ -310,7 +310,7 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
             it_interval: Timeval::from_ns(prev_interval_ns),
             it_value: Timeval::from_ns(prev_remaining_ns),
         };
-        if !raw::write_struct_to_user(old_ptr, &old_iv) {
+        if !api::write_struct_to_user(old_ptr, &old_iv) {
             return Err(Errno::Efault);
         }
     }

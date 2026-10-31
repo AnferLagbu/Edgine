@@ -130,7 +130,7 @@ fn uffd_copy(fd: i32, arg: u64) -> i64 {
     {
         return Errno::Einval.as_ret();
     }
-    if !crate::privileged::syscall::raw::check_user_buf(cp.src, cp.len) {
+    if !crate::privileged::syscall::api::validate_user_buf(cp.src, cp.len) {
         return Errno::Efault.as_ret();
     }
     let mut page =
