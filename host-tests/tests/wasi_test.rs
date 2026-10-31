@@ -25,6 +25,7 @@ fn entry(inner_fd: i32) -> WasiFdEntry {
         file_type: WasiFileType::RegularFile,
         rights: WasiRights::FILE,
         inner_fd,
+        socket: None,
         path: None,
     }
 }

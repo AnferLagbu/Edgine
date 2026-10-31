@@ -86,9 +86,9 @@ fn test_smoltcp_impl_kernel_test_fw_init_stub() {
     let functions_mod = fs::read_to_string("../src/kernel/functions/net/mod.rs")
         .expect("无法读取 functions/net/mod.rs");
     assert!(
-        functions_mod.contains("smoltcp_net_stack_socket_open")
-            && functions_mod.contains("smoltcp_net_stack_slot_base"),
-        "functions/net/init kernel_test 桩必须包含 smoltcp_net_stack_* stub"
+        functions_mod.contains("smoltcp_net_stack_poll")
+            && functions_mod.contains("smoltcp_net_stack_poll_at_ms"),
+        "functions/net/init kernel_test 桩必须包含轮询相关 smoltcp_net_stack_* stub"
     );
 
     // smoltcp_impl.rs 必须 cfg-gate fw_init import

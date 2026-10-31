@@ -5,9 +5,9 @@
 //! 调用方契约: 本模块内所有函数要求调用方持有 `NET_STATE` 锁.
 
 use super::{
-    EGDFNetDevice, MAX_SM_FD, NET_STATE, NetState, NetworkStack, SOCKET_SET, SocketHandle,
-    SocketSet, TCP_BUF_SIZE, TOTAL_SLOTS, UDP_BUF_SIZE, UDP_META_COUNT, dhcpv4, klog_init_msg,
-    klog_net, klog_net_err, tcp, udp,
+    EGDFNetDevice, NET_STATE, NetState, NetworkStack, SOCKET_SET, SocketHandle, SocketSet,
+    TCP_BUF_SIZE, TOTAL_SLOTS, UDP_BUF_SIZE, UDP_META_COUNT, dhcpv4, klog_init_msg, klog_net,
+    klog_net_err, udp,
 };
 use crate::privileged::net::iface_trait::NetEndpoint;
 use crate::privileged::net::mcast::McError;
@@ -414,13 +414,10 @@ static PREV_DHCP_DNS: [core::sync::atomic::AtomicU32; 3] = [
 /// 指针到 `SOCKET_TABLE` / `TCP_RX_BUFS` / `TCP_TX_BUFS` / `UDP_RX_BUFS` /
 /// `UDP_TX_BUFS` / `FD_TYPES`, 返回 `smol_handle`.
 ///
-/// ## 索引空间分配 (W4.2.3.1)
+/// ## 索引空间
 ///
-/// `slot_idx` ∈ [0, `TOTAL_SLOTS)`:
-/// - `0..MAX_SM_FD`:           `sm_socket` 路径 (现有 `sm_socket` 调用)
-/// - `MAX_SM_FD..TOTAL_SLOTS`: `SmoltcpNetStack` 路径 (W4.2.4 整合后)
-///
-/// 两个范围严格隔离, 不冲突.
+/// `slot_idx` ∈ [0, `TOTAL_SLOTS`), 即紧凑 `sm_socket` 槽位空间;
+/// `sm_socket` / `accept` 两条路径共用同一槽位段 (P-18 后无专属段).
 ///
 /// ## buffer 来源 (W4.2.3.2 实装)
 ///
@@ -434,13 +431,12 @@ static PREV_DHCP_DNS: [core::sync::atomic::AtomicU32; 3] = [
 /// 'static. 我们用 `unsafe { core::slice::from_raw_parts_mut(ptr, size) }`
 /// 强制 'static (与现有 `sm_socket` 模式一致). 安全性依赖于:
 ///   - `k_malloc` 不会在进程生命周期内释放 (slab 进程级)
-///   - `socket_close` 时通过 `k_free` 归还 (W4.2.3.3 迁移时实装)
+///   - `sm_close` 时通过 `k_free` 归还
 ///
-/// ## 简化 (W4.2.3.2 阶段)
+/// ## 支持的 socket 类型
 ///
-/// - 暂不实装 Icmp/Raw/Dhcpv4/Dns (返回 None)
-/// - `sm_socket` 路径暂不调用本函数 (W4.2.3.3 迁移)
-/// - `SmoltcpNetStack` 路径暂不调用本函数 (W4.2.3.4 整合)
+/// - `Tcp` / `Udp` / `Icmp`: 构造对应 smoltcp socket (Icmp 复用 UDP socket)
+/// - `Raw` / `Dhcpv4` / `Dns`: 用户态不可见, 返回 `None`
 pub fn socket_open_stub(
     sockets: &mut SocketSet<'_>,
     kind: crate::privileged::net::iface_trait::SocketKind,
@@ -681,75 +677,6 @@ pub fn dhcp_dns_servers() -> [[u8; 4]; 3] {
         out[i] = slot.load(Ordering::Acquire).to_be_bytes();
     }
     out
-}
-
-/// `SmoltcpNetStack::close` 的 safe wrapper (W4.2.3.4).
-///
-/// 关闭 `[MAX_SM_FD, TOTAL_SLOTS)` 范围内的 smoltcp socket,
-/// 释放 buffer 并清空槽位状态. 与 `sm_close` 逻辑对称, 但索引
-/// 校验针对 `SmoltcpNetStack` 专属范围.
-///
-/// ## 返回
-///
-/// - `true`: 关闭成功
-/// - `false`: `slot_idx` 越界或槽位空闲
-pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
-    // SAFETY: 调用方持有 NET_STATE 锁, 整个函数体通过 raw accessor 访问 NetState.
-    unsafe {
-        // 1. 校验 slot_idx 在 SmoltcpNetStack 范围内
-        if !(MAX_SM_FD..TOTAL_SLOTS).contains(&slot_idx) {
-            return false;
-        }
-        // 2. 校验槽位已占用
-        if socket_handle(slot_idx).is_none() || fd_type(slot_idx) == 0 {
-            return false;
-        }
-
-        let handle = socket_handle(slot_idx).unwrap();
-        let stype = fd_type(slot_idx);
-        let sockets = &mut *socket_set();
-
-        // 3. 根据类型关闭 TCP/UDP socket
-        match stype {
-            1 => {
-                let sock = sockets.get_mut::<tcp::Socket>(handle);
-                sock.close();
-            }
-            2 => {
-                let sock = sockets.get_mut::<udp::Socket>(handle);
-                sock.close();
-            }
-            _ => {}
-        }
-
-        // 4. 从 SocketSet 移除
-        sockets.remove(handle);
-
-        // 5. 释放 slab buffer
-        // `tcp_rx_buf` 等四个槽位指针均由 k_malloc 分配且此处仅归还一次;
-        // 归还后立即置 NULL, 不会二次释放 (所在函数体已在 unsafe 块内).
-        if !tcp_rx_buf(slot_idx).is_null() {
-            crate::privileged::mm::k_free(tcp_rx_buf(slot_idx));
-            set_tcp_rx_buf(slot_idx, core::ptr::null_mut());
-        }
-        if !tcp_tx_buf(slot_idx).is_null() {
-            crate::privileged::mm::k_free(tcp_tx_buf(slot_idx));
-            set_tcp_tx_buf(slot_idx, core::ptr::null_mut());
-        }
-        if !udp_rx_buf(slot_idx).is_null() {
-            crate::privileged::mm::k_free(udp_rx_buf(slot_idx));
-            set_udp_rx_buf(slot_idx, core::ptr::null_mut());
-        }
-        if !udp_tx_buf(slot_idx).is_null() {
-            crate::privileged::mm::k_free(udp_tx_buf(slot_idx));
-            set_udp_tx_buf(slot_idx, core::ptr::null_mut());
-        }
-
-        // 6. 清空槽位状态
-        set_socket_handle(slot_idx, None);
-        set_fd_type(slot_idx, 0);
-        true
-    }
 }
 
 /// `SmoltcpNetStack::poll` 的 safe wrapper (W4.2.3.4).

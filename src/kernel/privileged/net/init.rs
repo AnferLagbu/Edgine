@@ -806,24 +806,17 @@ fn net_tx_softirq_handler() {
 // 公共 API
 // ============================================================================
 
-// I-47: FD 表容量, 与 MAX_SOCKETS 对齐 (每个 FD 对应一个 smoltcp socket).
+// I-47: FD 表容量 (sm_socket 段, 每个 FD 对应一个 smoltcp socket).
 // TD-02: 基址与容量改由 `privileged::proc::FdPlan::SMOLTCP` 单一来源; 容量现从 FdRange.capacity 派生.
 const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 const TCP_BUF_SIZE: usize = 4096;
 const UDP_BUF_SIZE: usize = 2048;
 const UDP_META_COUNT: usize = 4;
 
-// REVAL-W W4.2.3.1 (2026-06-25): 总槽位数 = sm_socket 范围 (0..MAX_SM_FD) +
-// SmoltcpNetStack 范围 (MAX_SM_FD..TOTAL_SLOTS). 范围严格隔离, 不冲突.
-//
-// 索引空间分配:
-//   - 0..MAX_SM_FD:           sm_socket 槽位 (方案 C: fd = FdPlan::SMOLTCP.base + 槽位,
-//                             经 sm_fi::sm_slot 换算, 表下标仍为紧凑槽位)
-//   - MAX_SM_FD..TOTAL_SLOTS: SmoltcpNetStack (新增, 留给 W4.2.3.2+ 整合)
-//
-// BSS 增长: 9 张数组 × (TOTAL_SLOTS - MAX_SM_FD) = 9 × MAX_SOCKETS 槽位
-// (主要是 UDP_RX_METAS / UDP_TX_METAS).
-const TOTAL_SLOTS: usize = MAX_SM_FD + MAX_SOCKETS;
+// P-18: SmoltcpNetStack 专属槽位段已随「SocketHandle 单入口」改造退役,
+// NetState 各表统一为紧凑 sm_socket 槽位空间 [0, MAX_SM_FD)
+// (方案 C: fd = FdPlan::SMOLTCP.base + 槽位, 经 sm_fi::sm_slot 换算).
+const TOTAL_SLOTS: usize = MAX_SM_FD;
 
 // TD-05: 8 张 smoltcp 大表, 现已合并到 NetState 结构中 (由 NET_STATE IrqSpinLock 保护).
 // 原 Align64 对齐优化已通过 NetState 内部字段布局保留.
@@ -833,49 +826,11 @@ const TOTAL_SLOTS: usize = MAX_SM_FD + MAX_SOCKETS;
 // shutdown_network/reset_network_state) 已移至 query.rs.
 
 // ============================================================================
-// REVAL-W W4.2.3.4 步骤 2: SmoltcpNetStack 桥接 safe API (init 模块顶层)
+// SmoltcpNetStack 轮询桥接 safe API (init 模块顶层)
 //
-// SmoltcpNetStack (functions 层) 调用本模块的 safe wrapper 来实际构造
-// smoltcp socket. 内部 unsafe 块 (raw::socket_set + raw::socket_open_stub
-// + transmute SocketHandle → u32) 封装在 privileged 层, functions 层调用
-// 时无 unsafe 暴露.
+// P-18 后 socket 能力统一走 `functions::net::socket` (SocketHandle 域) →
+// `sm_net_socket` → `sm_socket`; 本层只保留轮询/定时查询两个入口.
 // ============================================================================
-
-/// `SmoltcpNetStack::socket_open` 的 safe wrapper (W4.2.3.4 步骤 2).
-///
-/// ## 调用方契约
-///
-/// - `kind`: 要创建的 socket 类型 (Tcp/Udp/...)
-/// - `slot_idx`: 槽位索引, 必须在 `[MAX_SM_FD, TOTAL_SLOTS)` 范围
-///   (`SmoltcpNetStack` 专属范围, 不与 `sm_socket` 冲突)
-///
-/// ## 返回
-///
-/// - `Some(u32)`: smoltcp handle (用于 `smol_socket_get`)
-/// - `None`: 创建失败 (`k_malloc` 失败 / 槽位已占用 / `slot_idx` 越界)
-#[must_use]
-pub fn smoltcp_net_stack_socket_open(
-    kind: crate::privileged::net::iface_trait::SocketKind,
-    slot_idx: usize,
-) -> Option<u32> {
-    // SAFETY: 调用方持有 NET_LOCK, socket_set() 返回的指针由 init_sockets
-    // 单次初始化, SOCKET_SET MaybeUninit 区域独占.
-    let sockets = unsafe { &mut *raw::socket_set() };
-    let smol_handle = raw::socket_open_stub(sockets, kind, slot_idx)?;
-    // W5 transmute_copy 路径: 复用 `as_u32_handle` helper (编译期强制
-    // size 匹配, 不依赖 SocketHandle repr 假设). SocketSet 容量上限
-    // (MAX_SOCKETS = 1024) 远低于 u32::MAX, usize → u32 截断安全.
-    Some(as_u32_handle(smol_handle))
-}
-
-/// `SmoltcpNetStack` 专属范围的 smol 槽位基址 (W4.2.3.4 步骤 2).
-///
-/// 返回 `MAX_SM_FD` (即 `SmoltcpNetStack` 范围的起始索引). functions 层
-/// `SmoltcpNetStack::socket_open` 内部 `smol_slot_idx = slot_base() + handle_map_idx`.
-#[must_use]
-pub fn smoltcp_net_stack_slot_base() -> usize {
-    MAX_SM_FD
-}
 
 /// `SmoltcpNetStack::poll` 的 safe wrapper (W4.2.3.4).
 ///
@@ -894,14 +849,6 @@ pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutc
 #[must_use]
 pub fn smoltcp_net_stack_poll_at_ms() -> Option<u64> {
     poll_timer::net_poll_deadline_ns().map(|ns| ns / 1_000_000)
-}
-
-/// `SmoltcpNetStack::close` 的 safe wrapper (W4.2.3.4).
-///
-/// 关闭 `SmoltcpNetStack` 范围内的 smoltcp socket, 释放 buffer.
-/// 委托给 `raw::smoltcp_net_stack_socket_close`.
-pub fn smoltcp_net_stack_close(slot_idx: usize) {
-    raw::smoltcp_net_stack_socket_close(slot_idx);
 }
 
 // ============================================================================

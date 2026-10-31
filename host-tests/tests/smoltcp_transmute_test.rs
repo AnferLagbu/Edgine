@@ -12,7 +12,8 @@
 //! ## 历史 bug 修复
 //!
 //! W5 完成后, 第 2161 行 (`smoltcp_net_stack_socket_open` 内部) 仍残留 1 处
-//! unsafe transmute, 2026-06-25 在本测试触发后修复.
+//! unsafe transmute, 2026-06-25 在本测试触发后修复. P-18 单入口改造后该桥接
+//! 函数整体退役, 本测试追加「桥接不得复活」断言.
 
 use std::fs;
 use std::path::Path;
@@ -55,36 +56,21 @@ fn test_only_transmute_copy_in_init_rs() {
 }
 
 #[test]
-fn test_smoltcp_net_stack_socket_open_uses_as_u32_handle() {
-    // 验收: smoltcp_net_stack_socket_open 复用 as_u32_handle helper,
-    //       不再独立 transmute (修复 W5 遗漏)
+fn test_smoltcp_net_stack_bridges_removed() {
+    // P-18: SmoltcpNetStack 专属桥接 (open/slot_base/close) 已随单入口改造退役,
+    // 不得以任何形式复活.
     let content = read(&init_rs());
-
-    // 找到 smoltcp_net_stack_socket_open 函数
-    let sig = "fn smoltcp_net_stack_socket_open(";
-    let idx = content
-        .find(sig)
-        .expect("应有 smoltcp_net_stack_socket_open 函数");
-
-    // 找到函数体结束 (下一个顶层 fn 起始或文件结束)
-    let body_end = content[idx..]
-        .find("\npub fn ")
-        .or_else(|| content[idx..].find("\nfn "))
-        .or_else(|| content[idx..].find("\n// ===="))
-        .unwrap_or(content.len() - idx);
-    let body = &content[idx..idx + body_end];
-
-    // 函数体内应调用 as_u32_handle
-    assert!(
-        body.contains("as_u32_handle(smol_handle)"),
-        "smoltcp_net_stack_socket_open 应调用 as_u32_handle(smol_handle), 避免独立 transmute"
-    );
-
-    // 函数体内不应有 unsafe transmute
-    assert!(
-        !body.contains("unsafe { core::mem::transmute("),
-        "smoltcp_net_stack_socket_open 不应有独立 unsafe transmute (W5 遗漏 bug)"
-    );
+    for removed in [
+        "smoltcp_net_stack_socket_open",
+        "smoltcp_net_stack_slot_base",
+        "smoltcp_net_stack_socket_close",
+        "smoltcp_net_stack_close",
+    ] {
+        assert!(
+            !content.contains(removed),
+            "privileged/net/init.rs 不应再定义或调用 {removed} (P-18 单入口)"
+        );
+    }
 }
 
 #[test]

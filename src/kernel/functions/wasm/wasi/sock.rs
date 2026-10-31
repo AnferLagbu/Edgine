@@ -1,8 +1,8 @@
 #![deny(unsafe_code)]
 //! WASI Socket: `sock_accept`, `sock_connect`, `sock_recv`, `sock_send`
 //!
-//! Socket 函数桥接到 `functions::net` 层。WASI fd 通过 `WasiFdTable` 映射到
-//! 内部 POSIX fd，再调用 `functions::net` 的安全 API。
+//! Socket 函数桥接到 `functions::net` 层。WASI fd 经 `WasiFdEntry.socket`
+//! 直接持有 `SocketHandle`，以 `SocketHandle` 域调用 `functions::net` 的安全 API。
 
 use super::fd_table::{read_iovec_from_memory, write_i32_to_memory, write_u32_to_memory};
 use super::{WasiContext, WasiErrno, wasi_errno, wasi_success};
@@ -20,22 +20,29 @@ pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     let _addr_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let _addr_len_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
-    let entry = match ctx.fd_table.get(fd) {
-        Ok(e) => e,
+    let handle = match ctx.fd_table.get(fd) {
+        Ok(e) => e.socket,
         Err(e) => {
             interp.stack.push(Value::I32(wasi_errno(e)))?;
             return Ok(());
         }
     };
+    let Some(handle) = handle else {
+        interp
+            .stack
+            .push(Value::I32(wasi_errno(WasiErrno::Notsock)))?;
+        return Ok(());
+    };
 
-    // 调用 functions::net accept
-    match crate::functions::net::socket::accept(entry.inner_fd) {
-        Ok(new_fd) => {
-            // 创建新的 WASI fd 表条目
+    // 调用 functions::net accept (P-18 单入口: SocketHandle 域)
+    match crate::functions::net::socket::accept(handle) {
+        Ok(new_handle) => {
+            // 创建新的 WASI fd 表条目 (无 VFS 后端, 仅持 socket 句柄)
             let new_entry = super::fd_table::WasiFdEntry {
                 file_type: super::fd_table::WasiFileType::Socket,
                 rights: super::fd_table::WasiRights::ALL,
-                inner_fd: new_fd,
+                inner_fd: -1,
+                socket: Some(new_handle),
                 path: None,
             };
             match ctx.fd_table.alloc(new_entry) {
@@ -65,12 +72,18 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
     let addr_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let _addr_len = interp.stack.pop_i32()?.cast_unsigned();
 
-    let entry = match ctx.fd_table.get(fd) {
-        Ok(e) => e,
+    let handle = match ctx.fd_table.get(fd) {
+        Ok(e) => e.socket,
         Err(e) => {
             interp.stack.push(Value::I32(wasi_errno(e)))?;
             return Ok(());
         }
+    };
+    let Some(handle) = handle else {
+        interp
+            .stack
+            .push(Value::I32(wasi_errno(WasiErrno::Notsock)))?;
+        return Ok(());
     };
 
     // 从 WASM 线性内存读取 sockaddr_in 结构
@@ -102,7 +115,7 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
 
     let addr = crate::functions::net::socket::SockAddrIn::new(sin_port, sin_addr);
 
-    match crate::functions::net::socket::connect(entry.inner_fd, addr) {
+    match crate::functions::net::socket::connect(handle, addr) {
         Ok(()) => {
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -128,12 +141,18 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     let nread_ptr = interp.stack.pop_i32()?.cast_unsigned();
     let roflags_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
-    let entry = match ctx.fd_table.get(fd) {
-        Ok(e) => e,
+    let handle = match ctx.fd_table.get(fd) {
+        Ok(e) => e.socket,
         Err(e) => {
             interp.stack.push(Value::I32(wasi_errno(e)))?;
             return Ok(());
         }
+    };
+    let Some(handle) = handle else {
+        interp
+            .stack
+            .push(Value::I32(wasi_errno(WasiErrno::Notsock)))?;
+        return Ok(());
     };
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
@@ -145,7 +164,7 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
         // 分配临时缓冲区接收数据
         let mut buf = alloc::vec![0u8; iov.len as usize];
-        if let Ok(n) = crate::functions::net::socket::recv(entry.inner_fd, &mut buf) {
+        if let Ok(n) = crate::functions::net::socket::recv(handle, &mut buf) {
             // 将数据写回 WASM 线性内存
             if let Some(ref mut mem) = interp.memory {
                 for (i, &byte) in buf[..n].iter().enumerate() {
@@ -180,12 +199,18 @@ pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
     let _flags = interp.stack.pop_i32()?.cast_unsigned();
     let nwritten_ptr = interp.stack.pop_i32()?.cast_unsigned();
 
-    let entry = match ctx.fd_table.get(fd) {
-        Ok(e) => e,
+    let handle = match ctx.fd_table.get(fd) {
+        Ok(e) => e.socket,
         Err(e) => {
             interp.stack.push(Value::I32(wasi_errno(e)))?;
             return Ok(());
         }
+    };
+    let Some(handle) = handle else {
+        interp
+            .stack
+            .push(Value::I32(wasi_errno(WasiErrno::Notsock)))?;
+        return Ok(());
     };
 
     let iovecs = read_iovec_from_memory(interp, iovs_ptr, iovs_len)?;
@@ -204,7 +229,7 @@ pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
     }
 
-    match crate::functions::net::socket::send(entry.inner_fd, &send_buf) {
+    match crate::functions::net::socket::send(handle, &send_buf) {
         Ok(n) => {
             write_u32_to_memory(
                 interp,

@@ -1,12 +1,14 @@
-//! `SmoltcpNetStack` fd 生命周期追踪运行时测试
+//! P-18 单入口防回归: socket 能力收敛到 `SocketHandle` 域
 //!
 //! 验证:
-//! 1. `active_fds` 字段存在于 `SmoltcpNetStack` 结构体
-//! 2. `is_active_fd` 验证方法存在且正确
-//! 3. `socket_create_fd` 跟踪 fd 到 `active_fds`
-//! 4. `close_fd` 清理 `active_fds`
-//! 5. 所有 fd-based 方法 (`bind_fd`, `listen_fd` 等) 调用 `is_active_fd` 做前置校验
-//! 6. 新增单元测试覆盖 fd 生命周期
+//! 1. inherent `*_fd` 平行入口与 `active_fds` 追踪表已退役
+//! 2. `handle_map` 登记 `(user_id, privileged_fd)` 二元组
+//! 3. `socket_open` 经 `sm_net_socket` 创建并登记句柄
+//! 4. `accept` 把 privileged 返回的新 fd 登记为新句柄 (失败即归还 fd)
+//! 5. `NetStack` trait 提供 close / setsockopt / getsockopt / `poll_sockets`
+//! 6. DHCP 预留槽位用负 fd 哨兵, 数据面操作被 `handle_to_fd` 过滤拒绝
+//! 7. `functions::net::socket` 全部操作以 `SocketHandle` 寻址
+//! 8. 句柄生命周期单元测试存在
 
 use std::fs;
 use std::path::PathBuf;
@@ -22,124 +24,23 @@ fn read_src(rel: &str) -> String {
 }
 
 const SMOLTCP_IMPL_RS: &str = "src/kernel/functions/net/smoltcp_impl.rs";
+const SOCKET_RS: &str = "src/kernel/functions/net/socket.rs";
 
-// ============================================================================
-// 结构体字段验证
-// ============================================================================
-
-#[test]
-fn test_active_fds_field_exists() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    assert!(
-        src.contains("active_fds: [bool; MAX_SOCKETS]"),
-        "SmoltcpNetStack 应包含 active_fds: [bool; MAX_SOCKETS] 字段"
-    );
-}
-
-#[test]
-fn test_active_fds_initialized_in_new() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    // 找到 new() 函数体, 检查 active_fds 初始化
-    let idx = src.find("fn new() -> Self").expect("应存在 new() 方法");
-    let body = &src[idx..idx + 800];
-    assert!(
-        body.contains("active_fds: [false; MAX_SOCKETS]"),
-        "new() 应初始化 active_fds 为 [false; MAX_SOCKETS]"
-    );
+/// 取 `sig` 起始到下一个 impl 方法 (`\n    fn `) 之间的片段.
+fn impl_fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
+    let idx = src.find(sig).unwrap_or_else(|| panic!("应存在 {sig}"));
+    let rest = &src[idx..];
+    let end = rest[1..].find("\n    fn ").map_or(rest.len(), |e| e + 1);
+    &rest[..end]
 }
 
 // ============================================================================
-// is_active_fd 验证方法
+// 退役的 inherent fd 入口
 // ============================================================================
 
-#[test]
-fn test_is_active_fd_method_exists() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    assert!(
-        src.contains("fn is_active_fd(&self, fd: i32) -> bool"),
-        "应存在 is_active_fd(&self, fd: i32) -> bool 方法"
-    );
-}
-
-#[test]
-fn test_is_active_fd_bounds_check() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src.find("fn is_active_fd").expect("应存在 is_active_fd");
-    let body = &src[idx..idx + 200];
-    assert!(
-        body.contains("idx < MAX_SOCKETS"),
-        "is_active_fd 应做边界检查 idx < MAX_SOCKETS"
-    );
-    assert!(
-        body.contains("self.active_fds[idx]"),
-        "is_active_fd 应检查 self.active_fds[idx]"
-    );
-}
-
-// ============================================================================
-// socket_create_fd fd 跟踪
-// ============================================================================
-
-#[test]
-fn test_socket_create_fd_tracks_active_fd() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src
-        .find("fn socket_create_fd")
-        .expect("应存在 socket_create_fd");
-    let body = &src[idx..idx + 400];
-    assert!(
-        body.contains("self.active_fds[idx] = true"),
-        "socket_create_fd 成功时应设置 self.active_fds[idx] = true"
-    );
-}
-
-#[test]
-fn test_socket_create_fd_takes_mut_self() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src
-        .find("fn socket_create_fd")
-        .expect("应存在 socket_create_fd");
-    let sig_end = src[idx..].find(')').expect("应有函数签名结束");
-    let sig = &src[idx..=(idx + sig_end)];
-    assert!(
-        sig.contains("&mut self"),
-        "socket_create_fd 应接受 &mut self (需修改 active_fds)"
-    );
-}
-
-// ============================================================================
-// close_fd 清理
-// ============================================================================
-
-#[test]
-fn test_close_fd_clears_active_fd() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src.find("pub fn close_fd").expect("应存在 close_fd");
-    let body = &src[idx..idx + 300];
-    assert!(
-        body.contains("self.active_fds[idx] = false"),
-        "close_fd 应设置 self.active_fds[idx] = false"
-    );
-}
-
-#[test]
-fn test_close_fd_takes_mut_self() {
-    let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src.find("pub fn close_fd").expect("应存在 close_fd");
-    let sig_end = src[idx..].find(')').expect("应有函数签名结束");
-    let sig = &src[idx..=(idx + sig_end)];
-    assert!(
-        sig.contains("&mut self"),
-        "close_fd 应接受 &mut self (需修改 active_fds)"
-    );
-}
-
-// ============================================================================
-// fd-based 方法校验
-// ============================================================================
-
-/// 所有需要校验 fd 的方法列表
-const FD_VALIDATED_METHODS: &[&str] = &[
+/// P-18 前的 10 个 fd-based 操作 + 创建/轮询入口.
+const RETIRED_FD_METHODS: &[&str] = &[
+    "is_active_fd",
     "bind_fd",
     "listen_fd",
     "accept_fd",
@@ -150,73 +51,155 @@ const FD_VALIDATED_METHODS: &[&str] = &[
     "recvfrom_fd",
     "setsockopt_fd",
     "getsockopt_fd",
+    "poll_all_fd",
+    "socket_create_fd",
+    "close_fd",
 ];
 
 #[test]
-fn test_all_fd_based_methods_have_validation() {
+fn test_inherent_fd_api_retired() {
     let src = read_src(SMOLTCP_IMPL_RS);
-    for method in FD_VALIDATED_METHODS {
-        let sig = format!("pub fn {method}(");
-        let idx = src
-            .find(&sig)
-            .unwrap_or_else(|| panic!("应存在 {method} 方法"));
-        // 取函数体直到下一个 pub fn, 检查 is_active_fd 调用
-        let rest = &src[idx..];
-        let end = rest.find("\npub fn ").unwrap_or(rest.len());
-        let body = &rest[..end];
+    for method in RETIRED_FD_METHODS {
+        let sig = format!("fn {method}(");
         assert!(
-            body.contains("self.is_active_fd(fd)"),
-            "{method} 方法应调用 self.is_active_fd(fd) 做前置校验"
+            !src.contains(&sig),
+            "inherent `{method}` 应已退役 (单入口 = SocketHandle 域)"
         );
+    }
+    assert!(
+        !src.contains("active_fds"),
+        "active_fds 追踪表应已删除 (fd 有效性由 handle_map/fd 本身保证)"
+    );
+}
+
+// ============================================================================
+// 句柄表结构
+// ============================================================================
+
+#[test]
+fn test_handle_map_shape() {
+    let src = read_src(SMOLTCP_IMPL_RS);
+    assert!(
+        src.contains("type HandleSlot = Option<(u32, i32)>;"),
+        "HandleSlot 应登记 (user_id, privileged_fd) 二元组"
+    );
+    assert!(
+        src.contains("handle_map: [HandleSlot; MAX_SOCKETS]"),
+        "SmoltcpNetStack 应以 handle_map: [HandleSlot; MAX_SOCKETS] 保存句柄"
+    );
+    assert!(
+        src.contains("handle_map: [None; MAX_SOCKETS]"),
+        "new() 应初始化 handle_map 为空表"
+    );
+}
+
+// ============================================================================
+// 创建 / 接受路径登记句柄
+// ============================================================================
+
+#[test]
+fn test_socket_open_single_entry() {
+    let src = read_src(SMOLTCP_IMPL_RS);
+    let body = impl_fn_body(&src, "fn socket_open(");
+    assert!(
+        body.contains("fw_net_socket::sm_net_socket(domain, sock_type, 0)"),
+        "socket_open 应经唯一的 sm_net_socket 入口创建 privileged fd"
+    );
+    assert!(
+        body.contains("self.handle_map[slot] = Some((user_id, fd))"),
+        "socket_open 应将 (user_id, fd) 登记入 handle_map"
+    );
+    assert!(
+        !body.contains("smoltcp_net_stack_socket_open"),
+        "socket_open 不得再走 SmoltcpNetStack 专属桥接"
+    );
+}
+
+#[test]
+fn test_accept_registers_returned_handle() {
+    let src = read_src(SMOLTCP_IMPL_RS);
+    let body = impl_fn_body(&src, "fn accept(");
+    assert!(
+        body.contains("self.insert_handle(new_fd)"),
+        "accept 应把 privileged 返回的 fd 登记为新句柄"
+    );
+    assert!(
+        body.contains("sm_net_close(new_fd)"),
+        "登记失败时应归还 privileged fd, 不留无人认领的连接"
+    );
+    assert!(
+        body.contains("Ok(new_handle)"),
+        "accept 应返回登记后的新句柄, 而非 privileged fd 数值"
+    );
+}
+
+// ============================================================================
+// trait 能力面
+// ============================================================================
+
+#[test]
+fn test_trait_impl_has_capability_ops() {
+    let src = read_src(SMOLTCP_IMPL_RS);
+    for sig in [
+        "fn close(",
+        "fn setsockopt(",
+        "fn getsockopt(",
+        "fn poll_sockets(",
+    ] {
         assert!(
-            body.contains("NetError::InvalidHandle"),
-            "{method} 方法校验失败应返回 NetError::InvalidHandle"
+            src.contains(sig),
+            "SmoltcpNetStack 必须实现 {sig} (抽象层作为唯一能力入口)"
         );
     }
 }
 
+// ============================================================================
+// DHCP 预留槽位
+// ============================================================================
+
 #[test]
-fn test_poll_all_fd_has_no_fd_validation() {
-    // poll_all_fd 不接受 fd 参数, 不需要 is_active_fd 校验
+fn test_dhcp_reserved_slot_uses_sentinel() {
     let src = read_src(SMOLTCP_IMPL_RS);
-    let idx = src.find("pub fn poll_all_fd").expect("应存在 poll_all_fd");
-    let body = &src[idx..idx + 200];
-    // poll_all_fd 不应有 is_active_fd 调用 (它轮询所有 fd)
     assert!(
-        !body.contains("self.is_active_fd(fd)"),
-        "poll_all_fd 不接受 fd 参数, 不应有 is_active_fd 校验"
+        src.contains("const DHCP_SENTINEL_FD: i32 = -1;"),
+        "DHCP 预留槽位应以 -1 哨兵占位"
+    );
+    assert!(
+        src.contains("self.insert_handle(DHCP_SENTINEL_FD)"),
+        "init() 的 DHCP 分支应把哨兵登记为句柄"
+    );
+    assert!(
+        src.contains(".filter(|fd| *fd >= 0)"),
+        "handle_to_fd 应过滤负 fd, 使 DHCP 句柄无法触达数据面 FFI"
     );
 }
 
 // ============================================================================
-// socket.rs 调用方 mut 兼容性
+// functions::net::socket 的 SocketHandle 域
 // ============================================================================
 
 #[test]
-fn test_socket_create_fd_caller_uses_mut() {
-    let socket_rs = read_src("src/kernel/functions/net/socket.rs");
-    // socket 函数调用 socket_create_fd, 需要 mut binding
-    let idx = socket_rs
-        .find("fn socket(domain:")
-        .expect("应存在 socket 函数");
-    let body = &socket_rs[idx..idx + 300];
+fn test_socket_rs_uses_socket_handle_domain() {
+    let src = read_src(SOCKET_RS);
     assert!(
-        body.contains("net_stack().ok_or(SocketError::NotReady)?"),
-        "socket() 应处理 net_stack() 返回的 Option"
+        src.contains("pub use crate::privileged::net::iface_trait::SocketHandle;"),
+        "socket.rs 应 re-export SocketHandle 作为公开句柄类型"
     );
-}
-
-#[test]
-fn test_close_fd_caller_uses_mut() {
-    let socket_rs = read_src("src/kernel/functions/net/socket.rs");
-    let idx = socket_rs
-        .find("pub fn close(fd:")
-        .expect("应存在 close 函数");
-    let body = &socket_rs[idx..idx + 300];
+    let handle_params = src.matches("h: SocketHandle").count();
     assert!(
-        body.contains("net_stack().ok_or(SocketError::NotReady)?"),
-        "close() 应处理 net_stack() 返回的 Option"
+        handle_params >= 10,
+        "socket.rs 全部操作应以 SocketHandle 寻址, 实测 h: SocketHandle 出现 {handle_params} 次"
     );
+    assert!(
+        src.contains("SocketKind::Tcp") && src.contains("SocketKind::Udp"),
+        "socket() 应把 Stream/Dgram 映射为 Tcp/Udp 的 SocketKind"
+    );
+    for retired in ["fn bind(fd: i32", "fn close(fd: i32", "fn accept(fd: i32"] {
+        assert!(
+            !src.contains(retired),
+            "socket.rs 不得保留数值 fd 形参入口: {retired}"
+        );
+    }
 }
 
 // ============================================================================
@@ -241,23 +224,26 @@ fn test_no_unsafe_in_smoltcp_impl() {
 }
 
 // ============================================================================
-// 新增单元测试数量验证
+// 句柄生命周期单元测试
 // ============================================================================
 
 #[test]
-fn test_fd_lifecycle_unit_tests_present() {
+fn test_handle_lifecycle_unit_tests_present() {
     let src = read_src(SMOLTCP_IMPL_RS);
-    // 检查新增的 fd 生命周期相关测试
-    let fd_tests = [
-        "test_active_fds_initialized",
-        "test_socket_create_fd_tracks",
-        "test_close_fd_clears_active",
-        "test_is_active_fd_rejects_invalid",
-        "test_fd_based_methods_reject_inactive",
+    let tests = [
+        "test_handle_map_initialized_empty",
+        "test_insert_handle_maps_to_privileged_fd",
+        "test_reserved_slot_released_by_close",
+        "test_handle_table_exhaustion",
+        "test_socket_open_rejects_unsupported_kind",
+        "test_socket_ops_reject_unknown_handle",
+        "test_dhcp_handle_rejects_data_ops",
     ];
-    let found = fd_tests.iter().filter(|t| src.contains(*t)).count();
-    assert!(
-        found >= 3,
-        "smoltcp_impl.rs 应有至少 3 个 fd 生命周期单元测试, 实测: {found}"
+    let found = tests.iter().filter(|t| src.contains(*t)).count();
+    assert_eq!(
+        found,
+        tests.len(),
+        "句柄生命周期单元测试应全部存在, 实测 {found}/{}",
+        tests.len()
     );
 }

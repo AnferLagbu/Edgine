@@ -22,8 +22,10 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
     let fd = interp.stack.pop_i32()?.cast_unsigned();
     match ctx.fd_table.close(fd) {
         Ok(entry) => {
-            // 调用 VFS 关闭底层 fd
-            if entry.inner_fd >= 0 {
+            // socket fd 走 SocketHandle 域关闭, 其余走 VFS
+            if let Some(handle) = entry.socket {
+                let _ = crate::functions::net::socket::close(handle);
+            } else if entry.inner_fd >= 0 {
                 let _ = crate::functions::fs::api::vfs_close(entry.inner_fd.cast_unsigned());
             }
             interp.stack.push(Value::I32(wasi_success()))?;
@@ -593,6 +595,7 @@ pub fn wasi_fd_dup(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<()
         file_type: entry.file_type,
         rights: entry.rights,
         inner_fd: entry.inner_fd,
+        socket: entry.socket,
         path: None,
     };
 

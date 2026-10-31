@@ -555,22 +555,6 @@ pub fn sm_net_close(fd: i32) -> i32 {
 }
 
 // ============================================================================
-// SmoltcpNetStack 专属 safe wrapper (W4.2.3.4)
-// ============================================================================
-
-/// `SmoltcpNetStack::close` 的 safe wrapper — 关闭 `SmoltcpNetStack` 范围内的 socket.
-///
-/// # Safety
-///
-/// `slot_idx` 必须在 `[smoltcp_net_stack_slot_base(), TOTAL_SLOTS)` 范围内,
-/// 由 `SmoltcpNetStack` 调用方保证.
-#[cfg(not(feature = "kernel_test"))]
-#[must_use]
-pub fn smoltcp_net_stack_socket_close(slot_idx: usize) -> bool {
-    init::raw::smoltcp_net_stack_socket_close(slot_idx)
-}
-
-// ============================================================================
 // Socket 选项与轮询 FFI 安全代理
 // ============================================================================
 

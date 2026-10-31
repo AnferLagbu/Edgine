@@ -68,13 +68,6 @@ mod init {
     }
     // I-预存 (kernel_test build): 为 smoltcp_impl.rs 的 fw_init:: 调用
     // 提供 no-op stub, 避免编译失败. 测试模式下不创建真实 socket.
-    use crate::privileged::net::iface_trait::SocketKind;
-    pub fn smoltcp_net_stack_socket_open(_kind: SocketKind, _slot_idx: usize) -> Option<u32> {
-        None
-    }
-    pub fn smoltcp_net_stack_slot_base() -> usize {
-        0
-    }
     pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutcome {
         crate::privileged::net::iface_trait::PollOutcome::idle()
     }
@@ -82,7 +75,6 @@ mod init {
     pub fn smoltcp_net_stack_poll_at_ms() -> Option<u64> {
         None
     }
-    pub fn smoltcp_net_stack_close(_slot_idx: usize) {}
 }
 
 /// REVAL-W 第 6 组 W6 (2026-06-25): DHCP 策略 trait 抽象

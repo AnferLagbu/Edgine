@@ -3,6 +3,7 @@
 //! WASI 文件描述符表 (独立于 POSIX fd 表)
 
 use super::errno::WasiErrno;
+use crate::functions::net::socket::SocketHandle;
 use alloc::vec::Vec;
 
 /// WASI 标准 fd 编号
@@ -85,8 +86,10 @@ pub struct WasiFdEntry {
     pub file_type: WasiFileType,
     /// 该 fd 携带的权限
     pub rights: WasiRights,
-    /// 映射到 VFS 的内部 fd (edgine 内部使用)
+    /// 映射到 VFS 的内部 fd (`-1` 表示无 VFS 后端, 如 socket)
     pub inner_fd: i32,
+    /// 该 fd 绑定的网络 socket 句柄 (非 socket fd 为 `None`)
+    pub socket: Option<SocketHandle>,
     /// preopen 路径 (仅 preopen fd 有值)
     pub path: Option<alloc::string::String>,
 }

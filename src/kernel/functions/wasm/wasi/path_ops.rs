@@ -100,6 +100,7 @@ pub fn wasi_path_open(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         file_type: WasiFileType::RegularFile,
         rights: WasiRights::FILE,
         inner_fd: vfs_fd,
+        socket: None,
         path: Some(path),
     };
 
