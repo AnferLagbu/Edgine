@@ -5,6 +5,7 @@
 //! - flags 合法性检查
 //! - `child_stack` 对齐检查
 //! - `CLONE_VM` + `CLONE_THREAD` 必须同时设置 `CLONE_SIGHAND`
+//! - `CLONE_THREAD` 必须同时设置 `CLONE_VM`
 //!
 //! ## 安全边界
 //!
@@ -28,12 +29,13 @@ const CLONE_CHILD_SETTID: u64 = 0x0100_0000; // 写 TID 到 child tidptr
 
 /// clone 安全代理
 ///
-/// 验证: flags 合法, `CLONE_VM+CLONE_THREAD` 需要 `CLONE_SIGHAND`
+/// 验证: flags 合法, `CLONE_VM+CLONE_THREAD` 需要 `CLONE_SIGHAND`,
+/// `CLONE_THREAD` 需要 `CLONE_VM`
 ///
 /// # Errors
 ///
-/// - `CLONE_VM`/`CLONE_THREAD` 未同时设置 `CLONE_SIGHAND`, 或 `child_stack`
-///   非零但未按 16 字节对齐 → `EINVAL`
+/// - `CLONE_VM`/`CLONE_THREAD` 未同时设置 `CLONE_SIGHAND`, `CLONE_THREAD`
+///   未同时设置 `CLONE_VM`, 或 `child_stack` 非零但未按 16 字节对齐 → `EINVAL`
 /// - 底层 clone 返回负值时转换为对应的 `Errno`
 pub fn clone_syscall(
     flags: u64,
@@ -45,6 +47,12 @@ pub fn clone_syscall(
     // CLONE_VM + CLONE_THREAD 必须同时设置 CLONE_SIGHAND (POSIX 线程要求)
     // 注: Rust 中 `&` 优先级高于 `==`, 括号仅为明确语义 (B05-31 审计复核).
     if ((flags & CLONE_VM) != 0 || (flags & CLONE_THREAD) != 0) && (flags & CLONE_SIGHAND) == 0 {
+        return Err(Errno::Einval);
+    }
+
+    // CLONE_THREAD 必须同时共享地址空间 (Linux: SIGHAND 又要求 VM 同时置位).
+    // 缺 VM 时无法表达同一地址空间内的线程, 按非法组合拒绝而非静默走 fork 路径.
+    if (flags & CLONE_THREAD) != 0 && (flags & CLONE_VM) == 0 {
         return Err(Errno::Einval);
     }
 
@@ -163,40 +171,49 @@ fn clone_vm_path(
         return Errno::Enomem.as_ret();
     }
 
+    // K-02: CLONE_THREAD 走"入组"语义; 仅 CLONE_VM 仍是共享地址空间的独立进程.
+    let joins_group = flags & CLONE_THREAD != 0;
+
     // 分配子进程 PID
     let child_pid = api::proc_alloc_pid();
     if child_pid == 0 {
         return Errno::Enomem.as_ret();
     }
 
-    let Some(child_ptr) = vm_child_alloc(parent_pid, child_pid, parent_cr3) else {
+    let Some(child_ptr) = vm_child_alloc(parent_pid, child_pid, parent_cr3, joins_group) else {
         return Errno::Enomem.as_ret();
     };
     let child = raw::process_ref_mut(child_ptr);
 
-    // 继承父进程属性 / 内核栈 / 上下文 (内核栈分配失败时内部已回滚 PCB)
-    if let Err(ret) = vm_child_inherit(
-        parent_pid,
-        child_ptr,
-        &mut *child,
-        child_pid,
-        parent_cr3,
-        child_stack,
-        tls,
-    ) {
+    // 继承父进程属性 / 内核栈 / 上下文 (失败时内部已回滚 PCB)
+    if let Err(ret) = vm_child_inherit(parent_pid, &mut *child, parent_cr3, child_stack, tls) {
         return ret;
     }
 
-    vm_child_register(flags, &mut *child, child_pid, parent_tidptr, child_tidptr);
+    if let Err(ret) = vm_child_register(
+        flags,
+        &mut *child,
+        child_pid,
+        parent_pid,
+        parent_tidptr,
+        child_tidptr,
+        joins_group,
+    ) {
+        return ret;
+    }
 
     i64::from(child_pid)
 }
 
 /// 分配子进程 PCB 并登记父进程 cr3 持有者; 失败返回 `None` (PCB 已回滚)
+///
+/// `joins_group` 为真时子 TCB 是父线程同组的线程: 其父字段置空 (线程不进入
+/// 任何 `children` 列表, 父子关系归线程组, 见 K-04/K-06).
 fn vm_child_alloc(
     parent_pid: u32,
     child_pid: u32,
     parent_cr3: u64,
+    joins_group: bool,
 ) -> Option<*mut crate::privileged::proc::Process> {
     // 克隆父进程名称
     let name_str = api::process_with(parent_pid, |p| {
@@ -206,11 +223,12 @@ fn vm_child_alloc(
     .unwrap_or_default();
 
     // 创建子进程 (共享 CR3, 不 COW)
-    let child_ptr = raw::alloc_process(
-        child_pid,
-        name_str.as_str(),
-        Some(crate::privileged::proc::ProcessId(parent_pid)),
-    );
+    let parent_record = if joins_group {
+        None
+    } else {
+        Some(crate::privileged::proc::ProcessId(parent_pid))
+    };
+    let child_ptr = raw::alloc_process(child_pid, name_str.as_str(), parent_record);
     let child = raw::process_ref_mut(child_ptr);
 
     // 共享地址空间: 子进程使用父进程的 CR3
@@ -239,12 +257,11 @@ fn vm_child_alloc(
 
 /// 继承父进程属性、复制内核栈并初始化子进程上下文
 ///
-/// 返回 `Err(ret)` 时 `ret` 即 `clone_impl` 的返回值 (语义与拆分前一致).
+/// 返回 `Err(ret)` 时 `ret` 即 `clone_impl` 的返回值 (语义与拆分前一致);
+/// 失败路径释放半成品 PCB (含共享 cr3 引用).
 fn vm_child_inherit(
     parent_pid: u32,
-    child_ptr: *mut crate::privileged::proc::Process,
     child: &mut crate::privileged::proc::Process,
-    child_pid: u32,
     parent_cr3: u64,
     child_stack: u64,
     tls: u64,
@@ -270,16 +287,9 @@ fn vm_child_inherit(
     // 未指定 CLONE_SETTLS 时子线程继承父线程的 TLS 基址 (Linux 语义)
     child.tls_base.store(parent_tls_base, Ordering::Release);
 
-    // 添加到父进程的子进程列表
-    api::process_with_mut(parent_pid, |p| {
-        p.children
-            .lock()
-            .push(crate::privileged::proc::ProcessId(child_pid));
-    });
-
     // 分配内核栈
     if !child.allocate_kernel_stack() {
-        raw::drop_boxed_process(child_ptr);
+        raw::drop_boxed_process(core::ptr::from_ref(child).cast_mut());
         return Err(Errno::Enomem.as_ret());
     }
 
@@ -290,6 +300,7 @@ fn vm_child_inherit(
     // 同一偏移, 见 `arch/aarch64/context.rs` 头注释, 故必须按架构分别写)
     let Some(parent_ctx) = api::process_with(parent_pid, |p| *p.context.lock()) else {
         crate::slog_err!(Kernel, "clone: 父进程 {} 在进程表中未找到", parent_pid);
+        raw::drop_boxed_process(core::ptr::from_ref(child).cast_mut());
         return Err(Errno::Esrch.as_ret());
     };
     vm_child_init_context(child, &parent_ctx, parent_cr3, child_stack, tls);
@@ -356,15 +367,51 @@ fn vm_child_init_context(
 }
 
 /// 注册子进程到进程表、写回 TID 指针并加入就绪队列
+///
+/// `joins_group` 为真时先加入父线程所在的线程组, 再登记进程表 —— 写入顺序保证
+/// `getpid` 自首次上核起即读到正确的 tgid. 任一步失败都回滚 PCB 与组成员身份
+/// (同时释放共享 cr3 引用), 不在进程表中留下半成品. 非入组的 `CLONE_VM` 子进程
+/// 在登记成功后进入父进程 `children`, 成为可被 wait 收割的独立进程.
 fn vm_child_register(
     flags: u64,
     child: &mut crate::privileged::proc::Process,
     child_pid: u32,
+    parent_pid: u32,
     parent_tidptr: u64,
     child_tidptr: u64,
-) {
-    // 注册到进程表
-    api::process_insert(core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut());
+    joins_group: bool,
+) -> Result<(), i64> {
+    if joins_group {
+        let Some(group) = api::process_with(parent_pid, |p| alloc::sync::Arc::clone(p.group()))
+        else {
+            raw::drop_boxed_process(
+                core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+            );
+            return Err(Errno::Esrch.as_ret());
+        };
+        child.join_thread_group(group);
+    }
+
+    // 注册到进程表; 失败时回滚组成员身份与 PCB (含内核栈 / cr3 引用).
+    if !api::process_insert(
+        core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+    ) {
+        let _ = child.thread_group.leave(child_pid);
+        raw::drop_boxed_process(
+            core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+        );
+        return Err(Errno::Enomem.as_ret());
+    }
+
+    // 独立进程 (不带 CLONE_THREAD) 登记到父进程的 children; 线程不进入
+    // `children` — 父进程只收割线程组 (K-02), 线程退出不产生可 wait 的子进程.
+    if !joins_group {
+        api::process_with_mut(parent_pid, |p| {
+            p.children
+                .lock()
+                .push(crate::privileged::proc::ProcessId(child_pid));
+        });
+    }
 
     // CLONE_PARENT_SETTID
     if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
@@ -388,6 +435,7 @@ fn vm_child_register(
     // 添加到调度器
     let _ = child.set_state_safe(ProcessState::Ready);
     api::scheduler_add_to_run_queue(child_pid);
+    Ok(())
 }
 
 /// `set_robust_list(head, len)` 策略 — 登记当前进程的 robust futex 链表头
@@ -477,5 +525,28 @@ pub fn arch_prctl_syscall(code: u64, addr: u64) -> Result<usize, Errno> {
         Err(Errno::from_ret(ret))
     } else {
         Ok(crate::functions::intcast::usize_from_i64(ret))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_thread_without_vm_is_rejected() {
+        let ret = clone_syscall(CLONE_THREAD | CLONE_SIGHAND, 0, 0, 0, 0);
+        assert!(matches!(ret, Err(Errno::Einval)));
+    }
+
+    #[test]
+    fn clone_thread_without_sighand_is_rejected() {
+        let ret = clone_syscall(CLONE_THREAD | CLONE_VM, 0, 0, 0, 0);
+        assert!(matches!(ret, Err(Errno::Einval)));
+    }
+
+    #[test]
+    fn clone_vm_without_sighand_is_rejected() {
+        let ret = clone_syscall(CLONE_VM, 0, 0, 0, 0);
+        assert!(matches!(ret, Err(Errno::Einval)));
     }
 }

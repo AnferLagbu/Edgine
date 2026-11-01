@@ -100,7 +100,8 @@
 - **K-02. CLONE_THREAD 语义实现（线程创建接线）**
   - 描述：`clone_vm_path` 拆分为「入组」与「独立进程共享 VM」两条：带 `CLONE_THREAD` 时共享 tgid、加入线程组、分配独立 TID/内核栈/上下文；不带 `CLONE_THREAD` 时仍是共享地址空间的独立进程。
   - 方案：以现 `functions/proc/clone.rs` 的 `clone_vm_path` 为基础（不存在 `create_thread`）；线程不得推入 `parent.children`；补齐 `CLONE_SETTLS`/`PARENT_SETTID`/`CHILD_SETTID`/`CHILD_CLEARTID`；新组走 fd/安全状态继承，新线程共享组资源。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：`clone_syscall` 增 `CLONE_THREAD` ⇒ `CLONE_VM` 校验（缺 VM 按非法组合返回 `EINVAL`，不静默走 fork）。`clone_vm_path` 以 `joins_group = flags & CLONE_THREAD != 0` 拆两路：线程的 `parent` 置 `None`（`vm_child_alloc`），`vm_child_register` 先取父线程组 `Arc` 入组（`Process::join_thread_group` / `ThreadGroup::join` 登记 TID）再插进程表，保证 `getpid` 首次上核即读到 tgid；独立 CLONE_VM 进程在登记成功后挂入 `parent.children`，线程不入 `children`。任一步失败回滚组成员身份 + 释放 PCB（含共享 cr3 引用），父组缺失返回 `ESRCH`、进程表满返回 `ENOMEM`。`vm_child_inherit` 收为 5 参（`child_ptr`/`child_pid`/`joins_group` 由 `child` 与登记阶段派生），内核栈分配失败与父上下文缺失两处改为释放半成品 PCB（原泄漏）。`CLONE_SETTLS` 沿用 K-00 的入参语义（`tls` 非零即覆盖继承值），`CLONE_PARENT_SETTID`/`CLONE_CHILD_SETTID`/`CLONE_CHILD_CLEARTID` 在共享 VM 路径写入，fork 路径维持不写 `CLONE_CHILD_SETTID`。**线程退出语义（`exit`/`exit_group` 分离、组收割）按 K-06，本阶段不越界**；共享 fd/信号/FS 句柄按 K-03。验证：`clone.rs` 内联单测 3 例 + `host-tests/tests/thread_group_k02_test.rs` 5 例（THREAD⇒VM 校验 / 入组先于登记与失败回滚 / 线程不挂父账 / 组身份共享）。门槛读数：`./ci/build.sh all` 6/6 通过（仅上游 `core`/`sha2` future-incompat 元信息）；`bash ci/audit.sh full` EXIT=0（审计腿 19/19、存量腿 9/9、Lockbud 4/4 crate 零发现、QEMU 2/2 + P-62 4/4，x86_64/aarch64 TCP 回显 e2e 各 3 轮通过）；`make test-host` 1212 passed / 0 failed；`make test-kernel-host` 1105 passed / 0 failed；`make -f Makefile.ci ci-rustdoc` 两架构各 exit 0（0 源码级 link 错误）。
 - **K-03. 共享资源语义（CLONE_FILES/SIGHAND/FS）**
   - 描述：线程共享 fd 表/信号处理/FS 状态；待处理信号与屏蔽字保持每线程；`exec` 终止组内其他线程、成为组长、解除 fd 表共享并关闭 `CLOEXEC`。
   - 方案：fd 表与 FS 对象引用计数；`process_exit` 的 fd 全关改为按引用计数/最后线程收口；全局 `VFS_MANAGER.cwd` 改为按组 FS 对象访问；信号组定向投递选择目标线程，无目标时挂组级待处理集。
@@ -162,6 +163,7 @@ K-00 → K-01 → K-02 → K-03 ─┐
 - 现状调研重写：移除已删除的 `scheduler_ex.rs`/`thread.rs`/`privileged/syscall/clone.rs` 引用，改按现树（`functions/proc/clone.rs`、`functions/proc/info.rs`、`functions/proc/signal.rs`、`functions/proc/wait4.rs`、`functions/fs/vfs_manager.rs`）登记；补充 CLONE_VM 伪线程、TLS 未恢复、全局 cwd、PID 复用四项缺口。
 - 阶段与门槛修正：新增 K-00，K-02 改按 `clone_vm_path` 拆分入组/独立进程共享 VM，K-03 纳入 exec 组语义与每线程信号状态，K-06 引用改为现 `dispatch.rs`；验证门槛补齐 §2.3 六条与 TLS/线程组专项。
 - **2026-11-01**：K-01 闭（`[X]`）。落 `ThreadGroup`（tgid/成员账/退出状态）与 `Process::thread_group: Arc<ThreadGroup>`；`Process::new` 自建单成员组；`getpid` 返回 tgid、`gettid` 返回 TID；`Scheduler::exit` 在进程表锁内移除成员并在最后一个成员离开时置组退出状态。共享资源句柄按 K-03、线程入组按 K-02 推进，K-01 不建占位字段。
+- **2026-11-01**：K-02 闭（`[X]`）。`clone_vm_path` 按 `CLONE_THREAD` 拆「入组」与「独立进程共享 VM」：线程 `parent=None`、不入 `parent.children`，`ThreadGroup::join` 在进程表登记前登记 TID 并带回滚；`CLONE_THREAD` 缺 `CLONE_VM` 返回 `EINVAL`；顺带修掉 `vm_child_inherit` 两处失败路径的 PCB 泄漏。线程退出语义与组收割按 K-06 推进。
 
 ## 8. 并发安全能力现状与缺口（登记）
 

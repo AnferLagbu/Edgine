@@ -73,6 +73,13 @@ impl ThreadGroup {
         self.members.lock().len()
     }
 
+    /// 新线程入组时登记其 TID（K-02）。
+    ///
+    /// 调用方保证 `tid` 是新分配且未登记的 TID；重复登记会使成员账失真。
+    pub fn join(&self, tid: Pid) {
+        self.members.lock().push(tid);
+    }
+
     /// 线程退出时移除其成员身份；返回移除后组是否已无成员。
     ///
     /// 幂等：成员不存在时按"已移除"处理（重复退出不改变结果）。
@@ -113,6 +120,17 @@ mod tests {
         assert_eq!(group.tgid(), 7);
         assert_eq!(group.members(), alloc::vec![7]);
         assert_eq!(group.member_count(), 1);
+        assert!(!group.has_exited());
+    }
+
+    #[test]
+    fn join_appends_member_and_keeps_tgid() {
+        let group = ThreadGroup::new_leader(7);
+        group.join(8);
+        group.join(9);
+        assert_eq!(group.members(), alloc::vec![7, 8, 9]);
+        assert_eq!(group.member_count(), 3);
+        assert_eq!(group.tgid(), 7, "入组不得改变组身份");
         assert!(!group.has_exited());
     }
 

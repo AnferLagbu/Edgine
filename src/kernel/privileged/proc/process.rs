@@ -676,6 +676,15 @@ impl Process {
         &self.thread_group
     }
 
+    /// 加入既有线程组 (K-02): 登记本 TCB 为成员并共享组身份.
+    ///
+    /// 替换 `Process::new` 自建的单线程组; 该新 TCB 的 `pid` 即组内 TID,
+    /// `tgid` 取自目标组的组长.
+    pub fn join_thread_group(&mut self, group: Arc<ThreadGroup>) {
+        group.join(self.pid.0);
+        self.thread_group = group;
+    }
+
     /// 设置进程优先级.
     pub fn set_priority(&self, priority: ProcessPriority) {
         self.priority.store(priority as u32, Ordering::SeqCst);
