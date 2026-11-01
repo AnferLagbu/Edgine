@@ -166,7 +166,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - **E-04. tick 记账、切片预算与抢占接线**
   - 描述：运行任务的 vruntime 推进时以增量维护本核 `running_weight/running_sum_w_vr`；tick 递减 `eevdf_slice_left` 并在到期时按 `Requeue` 语义重投入树、请求重调度；用 EEVDF 判据替换或收编现有 `should_yield`。
   - 方案：保持 `advance_floor` 与 IC1/IC3；tick 热路径只做 O(1) 运行账增量，不写树账；重调度仍走 `mark_resched_pending_local` / `run_pending_resched`，不在中断上下文直接切换。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：tick 的 CFS 分支收口为 `Scheduler::tick_current_cfs`，vruntime 推进、运行账增量（`advance_running_vruntime`）、floor 推进（`advance_floor`）与切片状态机在同一 rq 锁内完成，锁序仍为 `cfs_rq -> PROCESS_TABLE`。切片三态：`slice_left == 0` 为 Build（只建本轮切片与 `vd`，不请求抢占）、`> 0` 为 Advance（递减、不写树）、归零为 Expire（`rebuild_eevdf_round` 后按 `Requeue` 原位 `enqueue` 并请求重调度）。重调度只置 `need_reschedule`，实际切换仍在中断退出路径执行。Requeue 仅对「运行账在册或已在树」的任务执行，boot 期 keep-current 任务不入树（避免 `NO_RQ_CPU` 裸节点被偷取后双重记账）；到期后 `eevdf_current_view` 因 current 在树上而返回 None，由 `pick_eevdf` 走树→运行账的激活路径。本阶段同批删除旧判据：`cfs_should_preempt`、`vr > floor + TARGET_LATENCY_TICKS` 与 `vr << VIRT_SHIFT` 换算桥全部移除，`placement` 改用 `MIN_GRANULARITY_VIRT`，全链路单一时基 Q16.16。唤醒抢占（`vd_new < vd_current`）按依赖归 E-05a，本阶段以「切片到期必重选」给出有界时延。回归锁：[eevdf_tick_accounting_test.rs](../../host-tests/tests/eevdf_tick_accounting_test.rs) 5 项（真实 rq 上 Build/Advance/Expire 两轮切片 + 源码契约 + 旧判据负控制），`cfs_single_time_base_test` 同步为 E-04 契约；旧 `tick` 分支的行为断言改由新用例承接。
 - **E-05a. 入队、唤醒与 prev 重投**
   - 描述：实现 `Wake/Migrate/Requeue` 三分语义；`unblock`、prev 重投（`requeue_prev`）、block/dequeue 路径维护 EEVDF 账目与切片预算；实现 `vd` 比较的唤醒抢占。
   - 方案：沿用现有投送路径与锁序，不新增锁；在 `sched_current_type_consistency_test` 与新增 host 用例上覆盖三分语义、睡眠欠账上界、唤醒抢占下界；迁移暂只保证不破坏旧行为，完整迁移账目在 E-05b 收口。
@@ -239,3 +240,4 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - E-01 完成：新增 host 参考模型（Q16.16 纯整数）与 14 项对拍测试；冻结 `slice_virt = Δvr * slice_real`、`W_inc` 口径与三分入队语义；修正 IE3 为「信用有界 + 欠账保留」；证明非空可运行集必有合格任务（current-aware fallback 降为防御路径）；§3.8 开放议题全部收口，E-01 状态置 `[X]`。
 - E-03 完成：`CfsRunQueue` 落树账/运行账分解与 `pick_eevdf`（单树合格前缀 + current-aware + 最小 `(vd, pid)`），提供 `reweight` / `advance_running_vruntime` 两个 rq 锁内入口；9 个纯函数与 E-01 模型对拍，`Process` 增五个 EEVDF 字段；本阶段不接生产 tick（切片生效与抢占归 E-04，权重链路归 E-02），状态置 `[X]`。
 - E-02 完成：`Scheduler::set_nice` 进入 setpriority/nice 生产路径，按「认领 → rq 锁 → 写 nice/权重 → `reweight` → 重建切片/vd」收口，新增不持锁等待的 `claim_rq_blocking`；functions 侧 `getpriority` 返回真实 nice、负数 nice 误判修复；新增 `Process::get_nice` 与 9 项回归锁。fork 未继承 nice/权重的审计发现登记至 E-06，状态置 `[X]`。
+- E-04 完成：tick CFS 分支收口为 `tick_current_cfs`，在同一 rq 锁内推进 vruntime/运行账/floor，并执行切片 Build/Advance/Expire 状态机；到期按 `Requeue` 原位入树并置 `need_reschedule`，切换仍由中断退出路径执行；Requeue 仅限运行账在册或已在树的任务，boot keep-current 不入树。同批删除 `cfs_should_preempt`、`floor + TARGET_LATENCY_TICKS` 旧判据与 `vr << VIRT_SHIFT` 桥，全链路统一 Q16.16；唤醒抢占归 E-05a。新增 5 项 tick 回归锁，状态置 `[X]`。

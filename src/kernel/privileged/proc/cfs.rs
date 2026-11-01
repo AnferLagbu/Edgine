@@ -287,8 +287,10 @@ impl CfsRunQueue {
         self.min_vruntime.fetch_max(vr, Ordering::AcqRel);
     }
 
-    /// 树上最小 vruntime (即下一次 [`Self::pick_next`] 的候选) —— 抢占判据的
-    /// 比较对象 (IC1: 与运行任务的 vr 同域, 差值有意义)。
+    /// 树上最小 vruntime (即下一次 [`Self::pick_next`] 的候选)。
+    ///
+    /// E-04 起生产 tick / 选择路径改由切片与 [`Self::pick_eevdf`] 判定, 本访问器
+    /// 保留为队列结构断言与诊断入口 (不承载抢占判据)。
     #[inline]
     pub fn leftmost_vruntime(&self) -> Option<u64> {
         self.tree.first().map(|&(vr, _)| vr)
@@ -381,9 +383,12 @@ impl CfsRunQueue {
     ///
     /// 调度器 tick 也对运行中的任务调用本函数 —— 那是 IC1 的兜底: 经
     /// `keep_current` 回退上核的任务 (如 boot 期 init) 可能从未在队列落过点。
+    ///
+    /// E-04 起本队列全链路使用 Q16.16 虚拟时间 (E-01 冻结口径), 钳制量取
+    /// [`MIN_GRANULARITY_VIRT`] —— 与 `floor` / 任务 `vr` 同域。
     #[inline]
     pub fn placement(&self, vruntime: u64) -> u64 {
-        vruntime.max(self.floor().saturating_sub(MIN_GRANULARITY_TICKS))
+        vruntime.max(self.floor().saturating_sub(MIN_GRANULARITY_VIRT))
     }
 
     /// 入队 (**幂等**): 把 `pid` 放到 IC1 钳制后的位置, 返回该位置。
@@ -618,12 +623,6 @@ impl CfsRunQueue {
         n
     }
 
-    /// 按权重占比计算默认真实切片 (tick): `W_inc` 取当前可运行集权重和
-    /// (调用方须保证本任务已计入, 语义同 EEVDF Requeue)。
-    pub fn calc_time_slice(&self, weight: u64) -> u64 {
-        default_slice_real(weight, self.total_weight.load(Ordering::Acquire))
-    }
-
     /// 读取可运行集权重和 (负载均衡判据; 由账目派生)。
     pub fn get_weighted_load(&self) -> u64 {
         self.runnable_weight()
@@ -767,45 +766,13 @@ impl DlRunQueue {
 }
 
 // ============================================================================
-// Tick 计数辅助
-// ============================================================================
-
-/// 计算单 tick 的 vruntime 增量 (权重越大增量越小; 权重为 0 时退化为 nice0 权重)。
-#[inline]
-#[must_use]
-pub fn calc_vruntime_delta(weight: u64) -> u64 {
-    // 权重 0 是非法态 (合法权重恒 ≥ `nice_to_weight(19)`=15). 此处按 `NICE0_WEIGHT`
-    // "退化权重" 处理, 故增量取 1。**不可**直接返回 `NICE0_WEIGHT` 作为增量: 那会
-    // 让该进程 vruntime 以 1024 倍速度暴涨, 而上核任务的 vr 又直接推进本核
-    // `min_vruntime` 下界 (IC3), 等于把同核其他任务的抢占差值无限拉大 ⇒ 集体
-    // 饥饿 (历史缺陷根因之一, 与 `init_kernel_process_fields` 漏写 `cfs_weight` 叠加)。
-    let w = if weight == 0 { NICE0_WEIGHT } else { weight };
-    (NICE0_WEIGHT / w).max(1)
-}
-
-/// 判定当前任务是否应被树上最小 vruntime 者抢占。
-///
-/// 两个入参**必须来自同一时基域** (即都已经 [`CfsRunQueue::placement`] 对齐):
-/// `curr_vruntime` 是运行任务欠账, `next_vruntime` 是队列左端。差值超过按权重
-/// 缩小的最小粒度即让出。若调用方传入跨域的值, `saturating_sub` 会把负差压成
-/// 0 ⇒ 永假 ⇒ 该核永不请求重调度 (S-1 进程饥饿的直接机理)。
-#[inline]
-#[must_use]
-pub fn cfs_should_preempt(curr_vruntime: u64, next_vruntime: u64, weight: u64) -> bool {
-    let base = MIN_GRANULARITY_TICKS.saturating_mul(NICE0_WEIGHT);
-    let threshold = base.checked_div(weight).unwrap_or(base);
-    curr_vruntime.saturating_sub(next_vruntime) > threshold
-}
-
-// ============================================================================
 // EEVDF 纯函数 (E-03; 口径冻结于 E-01 参考模型)
 // ============================================================================
 
 /// 单 tick 虚拟时间增量 `Δvr = max(1, (NICE0 << 16) / w)`; `w == 0` 按 NICE0 退化。
 ///
-/// 与整数域的 [`calc_vruntime_delta`] 是同一公式的两个量纲: 本函数输出 Q16.16
-/// 定点, 供 EEVDF 的 `vr` / `vd` / `slice_virt` 使用; 整数版仍服务既有 tick 路径,
-/// 待 E-04 切换生产时基后由本函数接管。
+/// 生产 tick 的唯一增量来源 (E-04 起 `cfs_vruntime` 即 Q16.16, 不再有整数域
+/// 换算桥): nice -20..19 全 40 档的增量严格随权重递减。
 #[inline]
 #[must_use]
 pub fn calc_vruntime_delta_virt(weight: u64) -> u64 {
@@ -897,7 +864,8 @@ pub fn wake_vruntime(vr_raw: u64, avg_before: u64, slice_virt: u64) -> u64 {
 // - nice_to_weight / weight_to_nice: NICE 双向转换 (含 -20..19 边界 + clamp)
 // - mlfq_level_to_nice: 层级 → nice
 // - DeadlineParams 校验: is_valid + utilization_pct
-// - CfsRunQueue: enqueue/dequeue/pick_next + 时间片计算
+// - CfsRunQueue: enqueue/dequeue/pick_next + EEVDF 账目/选择
+// - EEVDF 纯函数: Q16.16 增量 / 切片 / V / 合格 / vd / Wake 钳制
 
 #[cfg(test)]
 mod tests {
@@ -1051,45 +1019,35 @@ mod tests {
         assert_eq!(q.leftmost_vruntime(), Some(300));
     }
 
-    /// 7. CfsRunQueue: calc_time_slice (权重比例)
-    #[test]
-    fn test_sched_cfs_time_slice() {
-        let q = CfsRunQueue::new();
-        // total=0 → 返回 MIN_GRANULARITY (避免除零)
-        assert_eq!(q.calc_time_slice(1024), MIN_GRANULARITY_TICKS);
-        // weight=0 → MIN_GRANULARITY (避免除零)
-        let mut q = CfsRunQueue::new();
-        q.enqueue(1, 0, 1024, false);
-        assert_eq!(q.calc_time_slice(0), MIN_GRANULARITY_TICKS);
-        // 单进程 (total=1024, weight=1024) → TARGET_LATENCY
-        let q = CfsRunQueue::new();
-        // 直接设置 total_weight
-        q.total_weight.store(1024, Ordering::Release);
-        assert_eq!(q.calc_time_slice(1024), TARGET_LATENCY_TICKS);
-        // 2 进程 (total=2048, weight=1024) → TARGET/2
-        let q = CfsRunQueue::new();
-        q.total_weight.store(2048, Ordering::Release);
-        assert_eq!(q.calc_time_slice(1024), TARGET_LATENCY_TICKS / 2);
-    }
-
-    /// 7b. calc_vruntime_delta: 权重 0 (非法态) 必须退化为增量 1, 而非 NICE0_WEIGHT.
+    /// 7. `calc_vruntime_delta_virt`: 权重 0 (非法态) 必须按 NICE0 退化, 不得为 0.
     ///
     /// 回归: 历史实现 `if weight == 0 { return NICE0_WEIGHT; }` 让权重 0 的进程
-    /// vruntime 以 1024 倍速度增长, 经 `start_vr = max(vr, min_vr)` 把所在核的
-    /// `min_vruntime` 钉在高位, 使同核任务永不满足抢占条件而集体饥饿.
+    /// vruntime 以 1024 倍速度增长, 经 `placement` 把所在核的 `min_vruntime` 钉在
+    /// 高位, 使同核任务长期无法获得应有的 CPU 份额. E-04 的 Q16.16 口径下
+    /// 退化增量恰为 `VIRT_ONE` (一个虚拟 tick), 而不是 1024。
     #[test]
-    fn test_sched_calc_vruntime_delta_zero_weight() {
-        // 权重 0 → 退化权重 NICE0_WEIGHT → 增量 1 (绝不可为 1024)
-        assert_eq!(calc_vruntime_delta(0), 1);
-        // nice=0 权重 (1024) → 增量 1
-        assert_eq!(calc_vruntime_delta(NICE0_WEIGHT), 1);
-        // nice=19 最低合法权重 (15) → 增量 1024/15 = 68
-        assert_eq!(calc_vruntime_delta(nice_to_weight(19)), NICE0_WEIGHT / 15);
-        // nice=-20 最高权重 (88761) → 整除为 0, 钳到下限 1
-        assert_eq!(calc_vruntime_delta(nice_to_weight(-20)), 1);
+    fn test_sched_calc_vruntime_delta_virt_zero_weight() {
+        assert_eq!(
+            calc_vruntime_delta_virt(0),
+            VIRT_ONE,
+            "权重 0 按 NICE0 退化 ⇒ 一个虚拟 tick"
+        );
+        assert_eq!(calc_vruntime_delta_virt(NICE0_WEIGHT), VIRT_ONE);
+        // nice=19 最低合法权重 (15) → 1024 * 65536 / 15
+        assert_eq!(
+            calc_vruntime_delta_virt(nice_to_weight(19)),
+            (NICE0_WEIGHT << VIRT_SHIFT) / 15
+        );
+        // nice=-20 最高权重 (88761) → (1024 << 16) / 88761 = 756
+        assert_eq!(
+            calc_vruntime_delta_virt(nice_to_weight(-20)),
+            (NICE0_WEIGHT << VIRT_SHIFT) / 88761
+        );
+        // 增量下限: 权重极大时整除仍 ≥ 1 (不得为 0, 否则 vr 永不推进)
+        assert_eq!(calc_vruntime_delta_virt(u64::MAX), 1);
     }
 
-    /// 8. IC1 + IC3: 落点钳制与下界单调 (S-1 饿死根的直接回归)
+    /// 8. IC1 + IC3: 落点钳制与下界单调 (Q16.16 时基; S-1 饿死根的直接回归)
     ///
     /// 回归: 旧 `sync_min_vruntime` 把 floor "重设为树最小键" —— 被钳到 floor 的
     /// 唤醒者反过来推高 floor, 形成棘轮; 而运行任务的 `cfs_vruntime` 从不与
@@ -1097,104 +1055,130 @@ mod tests {
     #[test]
     fn test_sched_cfs_placement_and_monotonic_floor() {
         let mut q = CfsRunQueue::new();
+        let floor = 1000u64 << VIRT_SHIFT;
         // IC3: floor 只增不减 —— 往低推进必须是 no-op.
-        q.advance_floor(1000);
-        q.advance_floor(500);
-        assert_eq!(q.floor(), 1000);
+        q.advance_floor(floor);
+        q.advance_floor(floor / 2);
+        assert_eq!(q.floor(), floor);
         // IC1: 远低于 floor 的 vr (睡久了 / boot 期从未落点的任务) 被抬到
         // floor - MIN_GRANULARITY, 而不是原样入队.
-        assert_eq!(q.placement(45), 1000 - MIN_GRANULARITY_TICKS);
+        assert_eq!(q.placement(45), floor - MIN_GRANULARITY_VIRT);
         let placed = q.enqueue(10, 45, NICE0_WEIGHT, false);
-        assert_eq!(placed, 1000 - MIN_GRANULARITY_TICKS);
+        assert_eq!(placed, floor - MIN_GRANULARITY_VIRT);
         // 高于 floor 的值原样保留 (已消耗较多 CPU 的任务应排在后面).
-        assert_eq!(q.placement(6000), 6000);
+        let far = 6000u64 << VIRT_SHIFT;
+        assert_eq!(q.placement(far), far);
         // 唤醒者落在队列最前 → 下一个拣出点即选中它 (有界延迟).
         assert_eq!(q.leftmost_vruntime(), Some(placed));
         assert_eq!(q.pick_next().unwrap().0, 10);
     }
 
-    /// 8b. 抢占判据必须在同一时基内比较 (旧模型下差值恒 0).
+    /// 8b. EEVDF 选择必须在同一时基内比较 (旧模型下差值恒 0).
+    ///
+    /// 旧判据 `cfs_should_preempt` 的跨域比较已被 D6① 删除; 本用例锁定其替代:
+    /// 运行任务与唤醒任务都经 `placement` 收进 floor 邻域后, `pick_eevdf` 用
+    /// `vr <= V` 的合格前缀判定谁该上核 —— 运行任务多跑一个最小粒度后不再合格,
+    /// 唤醒者必须胜出.
     #[test]
     fn test_sched_cfs_preempt_uses_shared_time_base() {
         let mut q = CfsRunQueue::new();
-        q.advance_floor(5152);
-        // 旧模型的致命情形: 运行任务 vr=45, 队列 floor=5152 (两个时基域).
+        let floor = 5152u64 << VIRT_SHIFT;
+        q.advance_floor(floor);
+        // 旧模型的致命情形: 运行任务 vr=45 (整数 tick 域), 队列 floor=5152.
         // 新模型由 tick 经 placement 先把运行任务抬进 floor 邻域, 差值即有意义.
         let reconciled = q.placement(45);
+        assert_eq!(reconciled, floor - MIN_GRANULARITY_VIRT);
         let wakee = q.enqueue(10, 0, NICE0_WEIGHT, false);
-        assert_eq!(wakee, reconciled);
-        assert!(
-            !cfs_should_preempt(reconciled, wakee, NICE0_WEIGHT),
-            "刚对齐时差值 0, 不该抢占"
-        );
-        // 运行任务多跑 MIN_GRANULARITY+1 个 tick 后必须触发抢占 (旧模型永假).
-        assert!(
-            cfs_should_preempt(reconciled + MIN_GRANULARITY_TICKS + 1, wakee, NICE0_WEIGHT),
-            "同域比较下欠账超过最小粒度即应让出"
-        );
-        assert!(
-            !cfs_should_preempt(45, 5152, NICE0_WEIGHT),
-            "跨域差值被 saturating_sub 压成 0 —— 这正是必须经 placement 对齐的理由"
-        );
+        assert_eq!(wakee, reconciled, "唤醒落点与运行任务必须同域");
+
+        let slice_real = default_slice_real(NICE0_WEIGHT, 2 * NICE0_WEIGHT);
+        let slice_virt = slice_virt_of(slice_real, NICE0_WEIGHT);
+        let current = EevdfTaskView {
+            pid: 9,
+            vruntime: reconciled,
+            vdeadline: virtual_deadline(reconciled, slice_virt),
+            weight: NICE0_WEIGHT,
+        };
+        let vdeadline = virtual_deadline(wakee, slice_virt);
+        // 同 vr / 同 vd 时按 pid 决胜: pid 9 < 10, current 保持上核.
+        let pick = q
+            .pick_eevdf(Some(current), |pid| (pid == 10).then_some(vdeadline))
+            .unwrap();
+        assert_eq!(pick.pid, 9);
+        assert!(!pick.from_tree, "current 胜出时不得动树账");
+
+        // 运行任务多跑超过最小粒度后不再合格 (vr > V), 唤醒者必然胜出.
+        // 这正是旧 `saturating_sub` 判据在跨域时永远得不出的事件.
+        let current = EevdfTaskView {
+            vruntime: reconciled
+                .saturating_add(MIN_GRANULARITY_VIRT)
+                .saturating_add(calc_vruntime_delta_virt(NICE0_WEIGHT)),
+            ..current
+        };
+        let pick = q
+            .pick_eevdf(Some(current), |pid| (pid == 10).then_some(vdeadline))
+            .unwrap();
+        assert_eq!(pick.pid, 10, "同域下运行任务欠账即应让出 CPU");
+        assert!(pick.from_tree);
     }
 
     /// 8c. 端到端时基仿真: S-1 故障场景 (CPU 密集任务在核上长跑, 交互任务在
     /// floor 已推进很远之后才唤醒) 下, 唤醒者必须在**有界 tick** 内被拣出.
     ///
-    /// 与 `scheduler.rs` 的实际路径同构: tick 内 `placement` 对齐 → 累加 delta →
-    /// `advance_floor` → 与 `leftmost_vruntime()` 同域比较 → 抢占时幂等 `enqueue`
-    /// 原位放回 + `pick_next` 拣新者. 旧模型在此场景下差值被 `saturating_sub` 压成 0
-    /// ⇒ 该核永不请求重调度 ⇒ 唤醒者永久饿死 (实测 4~10 s, 跨过宿主 5 s 超时).
+    /// 与 `scheduler.rs` 的实际路径同构: tick 内 `placement` 对齐 → 累加 Q16.16
+    /// 增量 → `advance_running_vruntime` → `advance_floor` → `pick_eevdf` 的合格
+    /// 判定. 旧模型下跨域差值被 `saturating_sub` 压成 0 ⇒ 该核永不请求重调度
+    /// ⇒ 唤醒者永久饿死 (实测 4~10 s, 跨过宿主 5 s 超时).
     #[test]
     fn test_sched_cfs_wakeup_bounded_latency_under_tick_loop() {
         let mut q = CfsRunQueue::new();
-        // 后台 CPU 密集任务入队后立即上核运行 (树中不保留, 但仍在记账中).
-        q.enqueue(1, 0, NICE0_WEIGHT, false);
-        let (running, vr) = q.pick_next().unwrap();
-        assert_eq!(running, 1);
-        let mut curr_vr = vr;
+        let weight = NICE0_WEIGHT;
+        let delta = calc_vruntime_delta_virt(weight);
+        // 后台 CPU 密集任务入队后立即上核运行 (树中不保留, 但仍在运行账中).
+        q.enqueue(1, 0, weight, false);
+        let pick = q.pick_eevdf(None, |_| None).unwrap();
+        assert_eq!(pick.pid, 1);
+        let mut curr_vr = pick.vruntime;
+        let mut wakee_vd = 0u64;
         let mut wake_tick = 0u64;
         let mut picked_wakee = false;
 
         for tick in 1..=2000u64 {
-            // tick 路径: 运行任务时基累加 + 推进队列下界 (IC1 + IC3)
+            // tick 路径: 运行任务时基累加 + 运行账增量 + 推进队列下界 (IC1 + IC3)
             let base = q.placement(curr_vr);
-            curr_vr = base.saturating_add(calc_vruntime_delta(NICE0_WEIGHT));
+            curr_vr = base.saturating_add(delta);
+            assert!(
+                q.advance_running_vruntime(1, curr_vr),
+                "运行账中的任务必须接受 O(1) 增量"
+            );
             q.advance_floor(curr_vr);
 
             if tick == 1000 {
                 // 交互任务唤醒: 自身 vr 仍停留在很久以前 (旧模型的两个时基域)
-                let placed = q.enqueue(2, 0, NICE0_WEIGHT, false);
+                let placed = q.enqueue(2, 0, weight, false);
                 assert!(
-                    placed >= q.floor().saturating_sub(MIN_GRANULARITY_TICKS),
+                    placed >= q.floor().saturating_sub(MIN_GRANULARITY_VIRT),
                     "IC1: 唤醒落点必须收进 floor 邻域"
                 );
                 assert_eq!(q.leftmost_vruntime(), Some(placed));
+                wakee_vd = placed.saturating_add(delta);
             }
 
-            // 抢占判定 (IC1: 两者同域)
-            let Some(next_vr) = q.leftmost_vruntime() else {
+            let current = EevdfTaskView {
+                pid: 1,
+                vruntime: curr_vr,
+                vdeadline: curr_vr,
+                weight,
+            };
+            let pick = q.pick_eevdf(Some(current), |pid| (pid == 2).then_some(wakee_vd));
+            let Some(pick) = pick else {
                 continue;
             };
-            if cfs_should_preempt(curr_vr, next_vr, NICE0_WEIGHT) {
+            if pick.pid == 2 {
                 wake_tick = tick;
-                let bg_vr = curr_vr;
-                // 切走者原位放回 (凭证 true ⇒ 不动账), 唤醒者上核
-                q.enqueue(1, bg_vr, NICE0_WEIGHT, true);
-                let (picked, _) = q.pick_next().unwrap();
-                assert_eq!(picked, 2, "唤醒者必须被拣出 (反饥饿)");
+                // 切走者原位放回 (凭证 true ⇒ 不动账), 唤醒者已由树账移入运行账.
+                q.enqueue(1, curr_vr, weight, true);
                 picked_wakee = true;
-                // 交互任务跑一个 tick 后主动阻塞: 它正在核上 (已不在树上),
-                // 故出队只撤账 —— 返回 false 是结构真相的体现 (IC2).
-                assert!(
-                    !q.dequeue(2, NICE0_WEIGHT, true),
-                    "核上任务出树不入队, 只撤账"
-                );
-                // 后台任务重新成为运行者 (仍在记账中, 移动节点不动账)
-                q.enqueue(1, bg_vr, NICE0_WEIGHT, true);
-                let (r, v) = q.pick_next().unwrap();
-                assert_eq!(r, 1);
-                assert_eq!(v, bg_vr, "回放的后台任务必须回到原时基位置 (IC3 不倒退)");
                 break;
             }
         }
@@ -1204,11 +1188,11 @@ mod tests {
             wake_tick <= 1000 + MIN_GRANULARITY_TICKS + 2,
             "唤醒到抢占的延迟必须有界 (实得 tick={wake_tick})"
         );
-        // 记账守恒: 只剩后台任务一个可运行主体
-        assert_eq!(q.total_weight.load(Ordering::Acquire), NICE0_WEIGHT);
+        // 记账守恒: 后台任务在上树 (enqueue) 后仍在可运行集, 运行账只剩唤醒者.
+        assert_eq!(q.runnable_weight(), 2 * weight);
+        assert!(q.is_running(2));
         // IC3: floor 只增不减, 且不小于运行任务的时基
         assert!(q.floor() >= 1000);
-        assert_eq!(q.len(), 0, "树上只剩正在运行的任务 (已拣出) 则为空");
     }
 
     /// 11. integration: 完整调度循环

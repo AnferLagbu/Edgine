@@ -206,7 +206,8 @@ fn pick_prunes_unschedulable_nodes() {
     );
 }
 
-/// IC1 + IC3: tick 必须推进 floor 并在同一时基内做抢占判定.
+/// IC1 + IC3 + E-04: tick 必须在同一时基内推进 floor / 运行账, 并由切片到期
+/// 驱动抢占; 旧的 `floor + 固定阈值` 让出判据必须已退役 (D6①).
 #[test]
 fn tick_advances_floor_and_compares_in_one_domain() {
     let sched = code_only(&read_src(SCHED));
@@ -215,16 +216,35 @@ fn tick_advances_floor_and_compares_in_one_domain() {
         "IC3: 反饥饿机制只能是 tick 随运行任务推进 floor"
     );
     assert!(
-        has(&sched, "cfs_rq.leftmost_vruntime()"),
-        "IC1: 抢占比较对象必须取自树左端 (与运行任务同域)"
+        has(&sched, "cfs_rq.advance_running_vruntime(current_pid, vr)"),
+        "E-04: tick 必须把运行任务的 vruntime 增量写进运行账 (W/S 的 current 份额)"
+    );
+    assert!(
+        has(&sched, "calc_vruntime_delta_virt(weight)"),
+        "E-04: tick 增量必须来自 Q16.16 权重增量 (整数域换算桥不得回归)"
     );
     assert!(
         has(&sched, "cfs_rq.placement(p.cfs_vruntime.load"),
         "IC1: 从未在队列落过点的运行任务必须先对齐到时基域"
     );
     assert!(
-        has(&sched, "vr > cfs_rq.floor() + TARGET_LATENCY_TICKS"),
-        "IC1: 让出判据同样必须以 floor 为同域基准"
+        has(
+            &sched,
+            "Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight)"
+        ),
+        "E-04: 切片到期必须重建 slice_real/slice_virt/slice_left/vd"
+    );
+    assert!(
+        has(&sched, "cfs_rq.enqueue(current_pid, vr, weight, true)"),
+        "E-04: 切片到期必须按 Requeue 语义把 current 重新入树 (否则永不重选)"
+    );
+    assert!(
+        !has(&sched, "cfs_should_preempt"),
+        "D6①: 旧 vr 差值抢占判据必须删除, 不得留兼容阈值"
+    );
+    assert!(
+        !has(&sched, "floor() + TARGET_LATENCY_TICKS"),
+        "D6①: `vr > floor + TARGET_LATENCY_TICKS` 让出判据必须由切片预算取代"
     );
 }
 

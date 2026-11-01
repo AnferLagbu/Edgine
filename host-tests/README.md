@@ -11,7 +11,7 @@
 | 类型 | 位置 | 入口 |
 |------|------|------|
 | 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p edgine-host-tests --lib` |
-| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (146 个文件) | `cargo test -p edgine-host-tests --test <name>` |
+| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (147 个文件) | `cargo test -p edgine-host-tests --test <name>` |
 | 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p edgine-host-tests` |
 
 > **不要**把单元测试 + 集成测试 + 性能基准混放在一个 `tests/*.rs` 文件, Cargo 自动发现会让 `tests/*.rs` 编译为独立 binary, 极慢.
@@ -180,6 +180,7 @@ criterion_main!(benches);
 | `eevdf_reference_model_test.rs` | EEVDF 参考模型对拍 (Q16.16/账目/三分入队) | E-01 |
 | `eevdf_queue_mechanism_test.rs` | EEVDF 队列机制 (树账/运行账/合格前缀/选择对拍/迁移守恒) | E-03 |
 | `eevdf_weight_chain_test.rs` | EEVDF 权重链路 (nice→权重→Δvr/切片/vd + syscall 端到端) | E-02 |
+| `eevdf_tick_accounting_test.rs` | EEVDF tick 记账与切片预算 (真实 rq 上 Build/Advance/Expire + 源码契约) | E-04 |
 
 #### 信号
 
@@ -259,7 +260,7 @@ criterion_main!(benches);
 
 | 类别 | 数量 | 行数 |
 |------|------|------|
-| 集成测试 | 146 文件 | 31,891 |
+| 集成测试 | 147 文件 | 32,287 |
 | 单元测试模块 | 3 (`dma_stream` / `fsx` / `framekernel_bench`) | 1,114 |
 | 公共库代码 | 5 文件 (`lib` / `eevdf_model` / `framekernel_bench` / `fsx` / `dma_stream`) | 3,823 |
 | 性能基准 | 1 bin (`src/bin/framekernel_bench.rs`, 待迁 benches/) | 20 |

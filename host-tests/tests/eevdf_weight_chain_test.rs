@@ -243,8 +243,11 @@ fn off_rq_set_nice_leaves_no_eevdf_accounting() {
 fn on_rq_set_nice_reweights_and_rebuilds_slice() {
     let _serial = lock_rq();
     let proc = TestProc::new("e02-on-rq");
-    // 非零 vr 让 `vd` 同时验证 E-04 之前的 Q16.16 时基桥.
-    proc.with_mut(|p| p.cfs_vruntime.store(100, Ordering::Release));
+    // 非零 vr 让 `vd` 同时验证 E-04 起 `cfs_vruntime` 即 Q16.16 域 (无换算桥).
+    proc.with_mut(|p| {
+        p.cfs_vruntime
+            .store(100u64 << VIRT_SHIFT, Ordering::Release);
+    });
 
     let _rq = RqGuard::enqueue(proc.pid);
     assert!(proc.on_rq(), "任务应已进入全局 CFS 运行记账");

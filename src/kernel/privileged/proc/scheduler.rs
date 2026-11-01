@@ -29,9 +29,9 @@ use alloc::collections::VecDeque;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
-    CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, LOAD_BALANCE_THRESHOLD,
-    NICE0_WEIGHT, TARGET_LATENCY_TICKS, VIRT_SHIFT, calc_vruntime_delta, cfs_should_preempt,
-    effective_slice_real, nice_to_weight, slice_virt_of, virtual_deadline,
+    CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
+    LOAD_BALANCE_THRESHOLD, calc_vruntime_delta_virt, effective_slice_real, nice_to_weight,
+    slice_virt_of, virtual_deadline,
 };
 use super::process::{MIGRATE_PENDING, NO_RQ_CPU, PROCESS_TABLE, Process};
 use super::types::{BlockReason, Pid, ProcessContext, ProcessId, ProcessPriority, ProcessState};
@@ -660,6 +660,8 @@ impl Scheduler {
     }
 
     /// 以 `weight` 重建 `pid` 的本轮 EEVDF 账目 (调用方必须持有其所属 rq 锁).
+    ///
+    /// E-04 起 `cfs_vruntime` 即 Q16.16 域, 与 `vd` / 切片同单位 (无换算桥).
     fn rebuild_eevdf_round(rq: &CfsRunQueue, pid: Pid, weight: u64) {
         let Some((vr, requested_raw)) = PROCESS_TABLE.with_process(pid, |proc| {
             (
@@ -669,13 +671,18 @@ impl Scheduler {
         }) else {
             return;
         };
-        // E-04 时基桥: 生产 tick 仍以整数 tick 维护 `cfs_vruntime`, 这里先换算到
-        // Q16.16 再写 `vd`; E-04 把 tick 增量切到 Q16.16 后, 本行改为直接使用 `vr`.
-        let vr_virt = u64::try_from(u128::from(vr) << VIRT_SHIFT).unwrap_or(u64::MAX);
+        // W_inc 必须含本任务: 已在树账/运行账者其权重已计入; 尚未入账的
+        // keep-current 任务 (boot / 未投送的 Ready) 在此补上自身权重, 语义同 Wake.
+        let in_ledger = rq.is_on_tree(pid) || rq.is_running(pid);
+        let weight_incl = if in_ledger {
+            rq.runnable_weight()
+        } else {
+            rq.runnable_weight().saturating_add(weight)
+        };
         let requested = (requested_raw != 0).then_some(requested_raw);
-        let slice_real = effective_slice_real(weight, rq.runnable_weight(), requested);
+        let slice_real = effective_slice_real(weight, weight_incl, requested);
         let slice_virt = slice_virt_of(slice_real, weight);
-        let vdeadline = virtual_deadline(vr_virt, slice_virt);
+        let vdeadline = virtual_deadline(vr, slice_virt);
         PROCESS_TABLE.with_process(pid, |proc| {
             proc.eevdf_slice_real.store(slice_real, Ordering::Release);
             proc.eevdf_slice_virt.store(slice_virt, Ordering::Release);
@@ -1061,22 +1068,84 @@ impl Scheduler {
         }
     }
 
-    /// 选取一个 CFS 任务 (vruntime 最小者).
+    /// 本核 current 的 EEVDF 选择视图 (仅 CFS 可运行任务参与选择).
+    ///
+    /// 返回 `None` 的三种情形:
+    /// - 无 current / current 是本核 idle / 策略非 `Normal`;
+    /// - current 状态已不可运行 (Blocked/Zombie 等);
+    /// - current 已在树账中 —— 切片到期重投后 (Requeue) 由树侧把它收进运行账,
+    ///   若同时作为 `current` 候选会令 `pick_eevdf` 认定 "current 胜出" 而不动
+    ///   树账, 同一任务将同时占据树节点与核上位置.
+    fn eevdf_current_view(cfs_rq: &CfsRunQueue) -> Option<EevdfTaskView> {
+        let per_cpu = per_cpu();
+        let pid = per_cpu.current.load(Ordering::SeqCst);
+        if pid == 0 || per_cpu.idle.load(Ordering::SeqCst) == pid || cfs_rq.is_on_tree(pid) {
+            return None;
+        }
+        PROCESS_TABLE
+            .with_process(pid, |p| {
+                let state = p.get_state();
+                if p.get_sched_policy() != SchedPolicy::Normal
+                    || (state != ProcessState::Running && state != ProcessState::Ready)
+                {
+                    return None;
+                }
+                let weight = p.cfs_weight.load(Ordering::Acquire);
+                if weight == 0 {
+                    return None;
+                }
+                let vruntime = p.cfs_vruntime.load(Ordering::Acquire);
+                let vdeadline = p.eevdf_vdeadline.load(Ordering::Acquire);
+                // 未建账 / 陈旧 vd (0 或早于 vr) 按 vd = vr 参与选择.
+                let vdeadline = if vdeadline >= vruntime {
+                    vdeadline
+                } else {
+                    vruntime
+                };
+                Some(EevdfTaskView {
+                    pid,
+                    vruntime,
+                    vdeadline,
+                    weight,
+                })
+            })
+            .flatten()
+    }
+
+    /// 树内任务的虚拟截止期; 未建账 (0) 或早于 `vr` 的陈旧值返回 `None`,
+    /// 由 [`CfsRunQueue::pick_eevdf`] 按 `vd = vruntime` 兜底.
+    fn eevdf_vdeadline(pid: Pid) -> Option<u64> {
+        PROCESS_TABLE
+            .with_process(pid, |p| {
+                let vruntime = p.cfs_vruntime.load(Ordering::Acquire);
+                let vdeadline = p.eevdf_vdeadline.load(Ordering::Acquire);
+                (vdeadline >= vruntime && vdeadline != 0).then_some(vdeadline)
+            })
+            .flatten()
+    }
+
+    /// 选取一个 CFS 任务 (EEVDF: 合格前缀 + 最小 `(vd, pid)`).
     fn pick_cfs_task() -> Option<Pid> {
         let per_cpu = per_cpu();
         let mut cfs_rq = per_cpu.cfs_rq.lock();
-        // 循环取下一个节点, 直到取到可调度者 (或树空).
+        // 循环拣选, 直到取到可调度者 (或无可选者).
         //
-        // 不能"取一个不可调度节点就 return None" —— 若最小 vruntime 位置恰好
-        // 是不可调度节点, 每次调度都会在此早返回, 树上其余可调度任务永远选不
+        // 不能"拣一个不可调度节点就 return None" —— 若合格集合里恰好只有
+        // 不可调度节点, 每次调度都会在此早返回, 树上其余可调度任务永远选不
         // 出来 (本核 CFS 永久饥饿).
         //
         // 不可调度节点一律**撤账摘除** (旧实现是暂存后原样放回): 树是 IC2 的
-        // 唯一真相, 留在树上的不可调度节点会长期占据最小键位, 既挡住其余任务,
-        // 又让 `is_empty()` / 抢占判据与真实可运行集背离. 被摘除者后续由
-        // `unblock` 重新投送 (唤醒语义), 故不丢任务.
-        let mut picked: Option<Pid> = None;
-        while let Some((pid, _vr)) = cfs_rq.pick_next() {
+        // 唯一真相, 留在树上的不可调度节点会长期占据候选位, 既挡住其余任务,
+        // 又让 `is_empty()` 与真实可运行集背离. 被摘除者后续由 `unblock`
+        // 重新投送 (唤醒语义), 故不丢任务.
+        loop {
+            let current = Self::eevdf_current_view(&cfs_rq);
+            let pick = cfs_rq.pick_eevdf(current, Self::eevdf_vdeadline)?;
+            if !pick.from_tree {
+                // current 胜出: 账目未动, 直接回报.
+                return Some(pick.pid);
+            }
+            let pid = pick.pid;
             // 锁序 cfs_rq -> PROCESS_TABLE (本函数既有语义): 一次加锁取回
             // 可调度性与撤账所需的权重/记账凭证.
             let (schedulable, weight, on_rq) = PROCESS_TABLE
@@ -1095,12 +1164,11 @@ impl Scheduler {
                 // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`cfs_on_rq` 保持
                 // true, 语义同 Linux on_rq) —— 其 vruntime 由 tick 推进并同步
                 // 队列 floor, 切走时经幂等 `enqueue` 原位放回.
-                picked = Some(pid);
-                break;
+                return Some(pid);
             }
             cfs_rq.dequeue(pid, weight, on_rq);
             if on_rq {
-                // 不可调度节点: 已离树 (`pick_next` 摘除), 此处只需撤账 + 归属归零.
+                // 不可调度节点: 已离树 (`pick_eevdf` 摘除), 此处只需撤账 + 归属归零.
                 // 归属必须经认领凭证写: 直接写会与并发搬动者抢同一字段 (它可能正持
                 // `MIGRATE_PENDING`), 且让"归属只有一个写入者"重新退化成约定.
                 if let Some(mut claim) = Self::try_claim_rq(pid) {
@@ -1113,7 +1181,6 @@ impl Scheduler {
                 // (不等待不持锁重试 —— 它可能正需要本函数手里的 rq 锁).
             }
         }
-        picked
     }
 
     /// 调度决策入口: 按 DL → RT → CFS 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
@@ -1616,7 +1683,7 @@ impl Scheduler {
                 proc.block_reason.store(reason as u32, Ordering::SeqCst);
             });
             // IC2/IC4: 阻塞即离开可运行集 —— 摘节点 + 撤账. 树上只留可运行
-            // 任务, `is_empty()` / `leftmost_vruntime()` 才与真实可运行集一致.
+            // 任务, `is_empty()` 与 `pick_eevdf` 的合格集合才与真实可运行集一致.
             Self::cfs_deactivate(pid);
             per_cpu.need_reschedule.store(true, Ordering::SeqCst);
         }
@@ -2045,54 +2112,78 @@ impl Scheduler {
                     );
                 }
             }
-        } else {
-            // CFS —— 基于 vruntime 的抢占.
-
-            // 重要: 不要在此把运行中任务重新插入树.
-            // 运行中任务保持在树外, 仅在停止运行时
-            // (schedule 的重新入队路径) 才会被重新入队.
-            let (should_preempt, should_yield) = {
-                let cfs_rq = per_cpu.cfs_rq.lock();
-                let (vr, weight) = PROCESS_TABLE
-                    .with_process(current_pid, |p| {
-                        let weight = p.cfs_weight.load(Ordering::Acquire);
-                        // IC1 兜底: 经 `keep_current` 回退上核的任务 (如 boot
-                        // 期 init) 可能从未在队列落过点, 其 vr 与 floor 不同域
-                        // —— 先对齐再累加, 使两者恒在同一时基上比较.
-                        let base = cfs_rq.placement(p.cfs_vruntime.load(Ordering::Acquire));
-                        let delta = calc_vruntime_delta(weight);
-                        // L2 修复: 使用 saturating_add 防止 vruntime 溢出
-                        let new_vr = base.saturating_add(delta);
-                        p.cfs_vruntime.store(new_vr, Ordering::Release);
-                        let sum = p.cfs_sum_exec_runtime.load(Ordering::Acquire);
-                        // L2 修复: 使用 saturating_add 防止 sum_exec_runtime 溢出
-                        p.cfs_sum_exec_runtime
-                            .store(sum.saturating_add(1), Ordering::Release);
-                        (new_vr, weight)
-                    })
-                    .unwrap_or((0, NICE0_WEIGHT));
-
-                // IC3: 运行任务的时基推进队列下界 —— 这是本调度器唯一的
-                // 反饥饿机制 (旧的周期性整树折叠 boost 会抹掉相对次序, 且与
-                // 任务自身 vruntime 分域, 已删除).
-                cfs_rq.advance_floor(vr);
-
-                // IC1: `vr` 与树左端同域, 差值才真正表示"领先了多少 tick".
-                // IC2: 候选数判据取自树 (旧 `nr_running` 与树背离时, 抢占
-                // 判据会在 `nr>0 / tree=0` 的假象下永久失效).
-                let should_preempt = cfs_rq
-                    .leftmost_vruntime()
-                    .is_some_and(|next_vr| cfs_should_preempt(vr, next_vr, weight));
-
-                let should_yield = vr > cfs_rq.floor() + TARGET_LATENCY_TICKS;
-
-                (should_preempt, should_yield)
-            };
-
-            if should_preempt || should_yield {
-                per_cpu.need_reschedule.store(true, Ordering::SeqCst);
-            }
+        } else if Self::tick_current_cfs(per_cpu, current_pid) {
+            per_cpu.need_reschedule.store(true, Ordering::SeqCst);
         }
+    }
+
+    /// tick 的 CFS 记账: 推进运行任务 vruntime、维护运行账增量、推进 floor,
+    /// 并按 EEVDF 切片预算判定本轮是否到期。
+    ///
+    /// 返回 `true` = 本轮切片到期, 调用方须请求重调度 (运行账在册的任务已按
+    /// `Requeue` 语义重投入树; 未入账的 keep-current 任务不投树, 但仍参与本轮
+    /// 重选). 重调度只登记标记 —— 本函数运行于定时器 ISR, 实际切换由中断退出
+    /// 路径 (`mark_resched_pending_local` / `run_pending_resched`) 执行.
+    ///
+    /// 切片状态三分: `slice_left == 0` 为 `Build` (首次上核 / 未建账任务, 建立
+    /// 本轮切片), `left > 0` 为 `Advance`, 归零为 `Expire` (重建切片与 `vd` 后
+    /// 重投入树, 由 [`CfsRunQueue::pick_eevdf`] 与其余可运行任务重新比较).
+    fn tick_current_cfs(per_cpu: &'static PerCpuSched, current_pid: Pid) -> bool {
+        let mut cfs_rq = per_cpu.cfs_rq.lock();
+        // 锁序 `cfs_rq -> PROCESS_TABLE`; 单次加锁取回本轮记账所需字段.
+        let Some((vr, weight, slice_left)) = PROCESS_TABLE.with_process(current_pid, |p| {
+            let weight = p.cfs_weight.load(Ordering::Acquire);
+            // IC1 兜底: 经 `keep_current` 回退上核的任务 (如 boot 期 init)
+            // 可能从未在队列落过点, 其 vr 与 floor 不同域 —— 先对齐再累加.
+            let base = cfs_rq.placement(p.cfs_vruntime.load(Ordering::Acquire));
+            let vr = base.saturating_add(calc_vruntime_delta_virt(weight));
+            p.cfs_vruntime.store(vr, Ordering::Release);
+            let sum = p.cfs_sum_exec_runtime.load(Ordering::Acquire);
+            // L2 修复: 使用 saturating_add 防止 sum_exec_runtime 溢出
+            p.cfs_sum_exec_runtime
+                .store(sum.saturating_add(1), Ordering::Release);
+            (vr, weight, p.eevdf_slice_left.load(Ordering::Acquire))
+        }) else {
+            return false;
+        };
+
+        // 运行账 O(1) 增量: 只改本任务的 `w * vr`, `W` 不变 —— tick 热路径
+        // 不写树账. 未入账的 keep-current 任务 (boot / 未投送的 Ready) 无此
+        // 账目, 其权重在 `pick_eevdf` / `rebuild_eevdf_round` 的 W_inc 里补.
+        let _ = cfs_rq.advance_running_vruntime(current_pid, vr);
+        // IC3: 运行任务的时基推进队列下界 —— 这是本调度器唯一的反饥饿机制
+        // (旧的周期性整树折叠 boost 会抹掉相对次序, 且与任务自身 vruntime
+        // 分域, 已删除).
+        cfs_rq.advance_floor(vr);
+
+        if slice_left == 0 {
+            // Build: 本任务尚未建账, 只建立本轮切片, 不请求抢占.
+            Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight);
+            return false;
+        }
+        let left = slice_left - 1;
+        let expired = left == 0;
+        PROCESS_TABLE.with_process(current_pid, |p| {
+            p.eevdf_slice_left.store(left, Ordering::Release);
+        });
+        if !expired {
+            return false;
+        }
+
+        // Expire (Requeue): 重建切片与 `vd` 后原位入树. 只对已在可运行记账
+        // 中的任务入树 —— keep-current 的 boot 任务没有归属核, 裸入树会产生
+        // `rq_cpu=NO_RQ_CPU` 的树节点, 被偷取时即双重记账.
+        Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight);
+        let accounted =
+            cfs_rq.running_task(current_pid).is_some() || cfs_rq.is_on_tree(current_pid);
+        if accounted {
+            let placed = cfs_rq.enqueue(current_pid, vr, weight, true);
+            PROCESS_TABLE.with_process(current_pid, |p| {
+                p.cfs_vruntime.store(placed, Ordering::Release);
+                p.cfs_on_rq.store(true, Ordering::Release);
+            });
+        }
+        true
     }
 
     /// tick 的睡眠唤醒扫描: 到期的 `Sleeping` 任务批量唤醒 (单轮上限 8).
