@@ -30,7 +30,8 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
     CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, LOAD_BALANCE_THRESHOLD,
-    NICE0_WEIGHT, TARGET_LATENCY_TICKS, calc_vruntime_delta, cfs_should_preempt, nice_to_weight,
+    NICE0_WEIGHT, TARGET_LATENCY_TICKS, VIRT_SHIFT, calc_vruntime_delta, cfs_should_preempt,
+    effective_slice_real, nice_to_weight, slice_virt_of, virtual_deadline,
 };
 use super::process::{MIGRATE_PENDING, NO_RQ_CPU, PROCESS_TABLE, Process};
 use super::types::{BlockReason, Pid, ProcessContext, ProcessId, ProcessPriority, ProcessState};
@@ -605,20 +606,81 @@ impl Scheduler {
         Self::cfs_enqueue(pid);
     }
 
-    /// 设置 nice 值并更新进程的 CFS 权重.
-    // SIMPLIFIED: 已入队任务改权重时, 其所在核 `total_weight` 里仍是旧权重,
-    // 后续撤账按新权重扣减 ⇒ 权重和出现 (新-旧) 偏差; 影响面 = 仅负载均衡判定精度
-    // (可运行性判据取自树, IC2 不受影响); 何时需扩展 = `set_nice` 接入 syscall 且
-    // 允许在队改 nice 时, 按 Linux 语义改为 dequeue + enqueue 重投.
-    pub fn set_nice(pid: Pid, nice: i8) {
+    /// 设置 nice 值并同步 CFS 权重与 EEVDF 切片账目.
+    ///
+    /// 任务在可运行记账中 (树或运行账) 时, 在同一 rq 锁内按新权重修正
+    /// `CfsRunQueue` 账目, 并以新权重重建本轮切片 (`slice_real` / `slice_virt` /
+    /// `slice_left`) 与虚拟截止期 (`vd`); 队列归属保持不变.
+    ///
+    /// 权重变更按**重建本轮账目**处理: `slice_left` 重置为新 `slice_real`,
+    /// 不折算旧切片已消耗量 —— setpriority 非热路径, 一次至多多给
+    /// `TARGET_LATENCY_TICKS` 预算, 换取 `vd = vr + slice_virt` 恒成立.
+    ///
+    /// 返回 `false` = 进程不存在. 归属认领期间等待迁移完成, 调用方不得持有 rq 锁.
+    pub fn set_nice(pid: Pid, nice: i8) -> bool {
+        let clamped = nice.clamp(-20, 19);
+        let new_weight = nice_to_weight(clamped);
+
+        let Some(mut claim) = Self::claim_rq_blocking(pid) else {
+            return false;
+        };
+        let src_cpu = claim.prev_cpu;
+        if src_cpu == NO_RQ_CPU {
+            // 不在可运行集中: 只写调度字段, 无需取 rq 锁; 凭证 Drop 原样回滚归属.
+            return PROCESS_TABLE
+                .with_process(pid, |proc| {
+                    Self::store_nice(proc, clamped, new_weight);
+                })
+                .is_some();
+        }
+
+        let mut rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        if PROCESS_TABLE
+            .with_process(pid, |proc| {
+                Self::store_nice(proc, clamped, new_weight);
+            })
+            .is_none()
+        {
+            return false;
+        }
+        if rq.reweight(pid, new_weight) {
+            Self::rebuild_eevdf_round(&rq, pid, new_weight);
+        }
+        claim.commit(src_cpu);
+        true
+    }
+
+    /// 写入 nice 与其派生权重 (调用方负责持有进程表锁或所属 rq 锁).
+    fn store_nice(proc: &Process, nice: i8, weight: u64) {
+        proc.nice.store(
+            crate::privileged::glue::u32_from_i8(nice),
+            Ordering::Release,
+        );
+        proc.cfs_weight.store(weight, Ordering::Release);
+    }
+
+    /// 以 `weight` 重建 `pid` 的本轮 EEVDF 账目 (调用方必须持有其所属 rq 锁).
+    fn rebuild_eevdf_round(rq: &CfsRunQueue, pid: Pid, weight: u64) {
+        let Some((vr, requested_raw)) = PROCESS_TABLE.with_process(pid, |proc| {
+            (
+                proc.cfs_vruntime.load(Ordering::Acquire),
+                proc.eevdf_requested_slice.load(Ordering::Acquire),
+            )
+        }) else {
+            return;
+        };
+        // E-04 时基桥: 生产 tick 仍以整数 tick 维护 `cfs_vruntime`, 这里先换算到
+        // Q16.16 再写 `vd`; E-04 把 tick 增量切到 Q16.16 后, 本行改为直接使用 `vr`.
+        let vr_virt = u64::try_from(u128::from(vr) << VIRT_SHIFT).unwrap_or(u64::MAX);
+        let requested = (requested_raw != 0).then_some(requested_raw);
+        let slice_real = effective_slice_real(weight, rq.runnable_weight(), requested);
+        let slice_virt = slice_virt_of(slice_real, weight);
+        let vdeadline = virtual_deadline(vr_virt, slice_virt);
         PROCESS_TABLE.with_process(pid, |proc| {
-            let clamped = nice.clamp(-20, 19);
-            let w = nice_to_weight(clamped);
-            proc.nice.store(
-                crate::privileged::glue::u32_from_i8(clamped),
-                Ordering::Release,
-            );
-            proc.cfs_weight.store(w, Ordering::Release);
+            proc.eevdf_slice_real.store(slice_real, Ordering::Release);
+            proc.eevdf_slice_virt.store(slice_virt, Ordering::Release);
+            proc.eevdf_slice_left.store(slice_real, Ordering::Release);
+            proc.eevdf_vdeadline.store(vdeadline, Ordering::Release);
         });
     }
 
@@ -691,6 +753,22 @@ impl Scheduler {
             core::hint::spin_loop();
         }
         None
+    }
+
+    /// 认领 + 等待迁移完成, 直到成功或进程消失.
+    ///
+    /// 只允许在**不持有任何 rq 锁**的上下文 (`set_nice` 的系统调用路径) 使用:
+    /// 归属被迁移者占着时本线程不持锁自旋, 迁移者必然能取到它需要的 rq 锁并
+    /// 释放认领, 不构成环形等待. 返回 `None` 仅当进程已不在进程表中.
+    /// (持有 rq 锁时仍只能用有界的 [`Self::claim_rq`] —— 等待可能自死锁.)
+    fn claim_rq_blocking(pid: Pid) -> Option<RqClaim> {
+        loop {
+            if let Some(claim) = Self::try_claim_rq(pid) {
+                return Some(claim);
+            }
+            PROCESS_TABLE.get(pid)?;
+            core::hint::spin_loop();
+        }
     }
 
     /// 队列归属搬定的**唯一入口**: 把 `pid` 放进 `dst_cpu` 的可运行记账.

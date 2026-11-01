@@ -218,6 +218,15 @@ pub const fn low_u16_from_u32(v: u32) -> u16 {
     u16::from_le_bytes([b[0], b[1]])
 }
 
+/// `u32` → `i8`: 取低 8 位后按补码解释 (等价于 `v as i8`).
+///
+/// 与 [`u32_from_i8`] 互逆: `low_i8_from_u32(u32_from_i8(v)) == v`.
+#[inline]
+#[must_use]
+pub const fn low_i8_from_u32(v: u32) -> i8 {
+    i8::from_le_bytes([v.to_le_bytes()[0]])
+}
+
 /// `i32` → `i8`: 取低 8 位后按补码解释 (等价于 `v as i8`).
 #[inline]
 #[must_use]
@@ -310,6 +319,9 @@ mod tests {
         assert_eq!(low_i32_from_u64(u32::MAX as u64), -1);
         assert_eq!(low_i32_from_i64(u32::MAX as i64), -1);
         assert_eq!(low_i8_from_i32(0xFF), -1);
+        assert_eq!(low_i8_from_u32(u32::MAX), -1);
+        assert_eq!(low_i8_from_u32(u32_from_i8(-20)), -20);
+        assert_eq!(low_i8_from_u32(u32_from_i8(19)), 19);
         assert_eq!(low_u64_from_u128(u128::MAX), u64::MAX);
         assert_eq!(low_u64_from_u128(0x1_0000_0000_0000_0001), 1);
         assert_eq!(low_i16_from_i32(0x1_0001), 1);

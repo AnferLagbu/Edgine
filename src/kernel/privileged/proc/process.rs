@@ -199,7 +199,8 @@ pub struct Process {
     /// 实时调度优先级 (仅实时策略使用).
     pub rt_priority: AtomicU32,
 
-    /// CFS nice 值 (0..=39, 映射为调度权重).
+    /// CFS nice 值, 取值 `-20..=19`; 以 [`crate::privileged::glue::u32_from_i8`]
+    /// 的符号扩展位模式存储 (读写必须与 [`crate::privileged::glue::low_i8_from_u32`] 配对).
     pub nice: AtomicU32,
     /// CFS 虚拟运行时间; 与运行队列共用同一时基 (不变式 IC1).
     pub cfs_vruntime: AtomicU64,
@@ -659,6 +660,11 @@ impl Process {
     /// 设置进程优先级.
     pub fn set_priority(&self, priority: ProcessPriority) {
         self.priority.store(priority as u32, Ordering::SeqCst);
+    }
+
+    /// 读取 CFS nice 值 (`-20..=19`).
+    pub fn get_nice(&self) -> i8 {
+        crate::privileged::glue::low_i8_from_u32(self.nice.load(Ordering::Acquire))
     }
 
     /// 是否为内核线程 (`ProcessFlags::IS_KERNEL`).

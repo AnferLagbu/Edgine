@@ -183,7 +183,7 @@ impl Scheduler for EdgineScheduler {
     }
 
     fn set_nice(&self, pid: Pid, nice: i8) {
-        crate::privileged::proc::scheduler::Scheduler::set_nice(pid, nice);
+        let _ = crate::privileged::proc::scheduler::Scheduler::set_nice(pid, nice);
     }
 
     fn schedule(&self) -> Option<Pid> {

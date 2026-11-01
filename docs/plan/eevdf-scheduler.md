@@ -156,7 +156,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - **E-02. 权重链路打通与调度字段审计**（依赖 E-03 的账目入口）
   - 描述：修复 `nice`/`setpriority` 只写 `ProcessPriority`、不写 `nice`/`cfs_weight` 的既有缺口；让 `Scheduler::set_nice` 进入生产调用路径；核对 `Process::new` / init 默认值（[process.rs:424-430](../../src/kernel/privileged/proc/process.rs#L424-L430)）。
   - 方案：在 functions 层经 privileged 安全 API 更新 `nice` + `cfs_weight`；任务在 rq 上时，经 E-03 提供的权重变更入口在**同一 rq 锁内**先撤旧账（旧 `w` 与旧 `w*vr`）再按新 `w` 记入，并重算 `slice_virt/vd`；不新增锁、不改锁序。补 nice → weight → Q16.16 增量的全 40 档单测与负控制。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：`Scheduler::set_nice` 改为「`RqClaim` 认领 → 取所属 rq 锁 → 写 nice/cfs_weight → `reweight` → 重建 `slice_real/slice_virt/slice_left/vd`」；新增 `claim_rq_blocking`（只在系统调用上下文、不持 rq 锁时等待迁移完成，持锁路径仍用有界 `claim_rq`），锁序保持 `cfs_rq -> PROCESS_TABLE`。权重变更按重建本轮账目处理（`slice_left` 置为新 `slice_real`，不做剩余切片折算，`vd = vr + slice_virt` 恒成立）；在 E-04 切换时基前，`vd` 用 `cfs_vruntime << 16` 桥接，桥接点已注释标明。functions 侧：`getpriority` 返回真实 nice；`setpriority`/`nice` 统一走 `Scheduler::set_nice`，负数 nice 不再被误判为错误（新增 `apply_nice`），粗粒度 `ProcessPriority` 同步维护；`priority_to_nice` 无调用已删除（F9）。进程字段：新增 `Process::get_nice` 与 `glue::low_i8_from_u32`，修正 `Process::nice` 的编码注释；`Process::new` 默认值（nice=0 / weight=1024 / EEVDF 全 0）与 `user_proc` 委托路径已核对。回归锁 [eevdf_weight_chain_test.rs](../../host-tests/tests/eevdf_weight_chain_test.rs) 9 项（40 档模型对拍 + 边界/负控制 + syscall 端到端 + 在队 reweight/切片/vd 真实 rq 验证 + 源码契约）。**审计登记**：fork 的 `inherit_parent_state` 未继承父进程 nice/cfs_weight/ProcessPriority（POSIX 缺口，host 无可行直测路径），归 E-06 处理，不在本阶段静默修复。
 - **E-03. EEVDF 队列机制与纯函数**（先于 E-02 落地，消除账目循环依赖）
   - 描述：为 `CfsRunQueue` 引入树账/运行账分解（`tree_weight`/`tree_sum_w_vr` + 每核 `running_*`）、`V` 计算、合格前缀判定、虚拟截止期与 `pick_eevdf`；把切片计算从「仅测试调用」变为生产切片来源；保留 IC1-IC3 与幂等入队/撤账语义。
   - 方案：先实现不接生产 tick 的纯函数与属性测试（暴力重算/资格集合/无重复节点/权重守恒/运行账并入）；`pick_eevdf` 按 D7 用单树合格前缀 + 线性 `(vd, pid)` 选择；提供 rq 锁内的权重变更入口供 E-02 调用；所有写路径在同一 rq 锁内更新对应账目。
@@ -175,8 +176,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
   - 方案：迁移全程携带 `vr/slice_virt/slice_left/vd`（`Migrate` 语义）；在 `smp_rq_migration_test` / `sched_offcore_placement_barrier_test` 上扩展 IE5 守恒断言；评估结论落 E-01 参考模型的候选选择对照，不改锁序。
   - 状态：[]
 - **E-06. functions/syscall 面与可观测**
-  - 描述：按 D9③ 打通 `nice`/`setpriority`、新增 `sched_setscheduler`/`getscheduler` 与 `sched_setattr`/`getattr`；`sched_setattr` 的请求切片按 D8③ 夹取后经 E-03 入口生效；必要时暴露 `V`/lag/切片统计供测试读取。
-  - 方案：ABI 常量落 `edgine-abi` 单源；functions 层只调用 privileged 安全 API（F1/F2）；权限与 `SCHED_NORMAL` 之外策略的返回码逐项测试；不在 functions 层复制调度公式；`sched_setattr` 的其他字段（affinity/deadline）明确返回 `EINVAL` 而非静默忽略。
+  - 描述：按 D9③ 打通 `nice`/`setpriority`、新增 `sched_setscheduler`/`getscheduler` 与 `sched_setattr`/`getattr`；`sched_setattr` 的请求切片按 D8③ 夹取后经 E-03 入口生效；必要时暴露 `V`/lag/切片统计供测试读取。E-02 审计登记：fork 子进程须按 POSIX 继承父进程 nice/cfs_weight/ProcessPriority（当前 `inherit_parent_state` 未覆盖）。
+  - 方案：ABI 常量落 `edgine-abi` 单源；functions 层只调用 privileged 安全 API（F1/F2）；权限与 `SCHED_NORMAL` 之外策略的返回码逐项测试；不在 functions 层复制调度公式；`sched_setattr` 的其他字段（affinity/deadline）明确返回 `EINVAL` 而非静默忽略；fork 继承经 `Process::new` 默认值之上的显式字段复制实现，并补继承语义测试。
   - 状态：[]
 - **E-07. 回归锁、性能基线与文档收口**
   - 描述：把 EEVDF 语义固化为 host-tests 回归锁；补内核队列选择路径的基准并与 `cfs_btreemap_bench_test` 对照；跑 QEMU 双架构与网络 e2e；按 D6 决定 CFS 旧路径的去留并同步 docs/explain。
@@ -237,3 +238,4 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - 阶段修正：E-03 前置于 E-02 以消除账目循环依赖；E-05 拆为 E-05a（入队/唤醒/prev 重投）与 E-05b（迁移/负载均衡）；E-08 由「字段机械迁移」改为线程组语义对齐（因多线程 D7 的 Process=每线程 TCB 口径）。
 - E-01 完成：新增 host 参考模型（Q16.16 纯整数）与 14 项对拍测试；冻结 `slice_virt = Δvr * slice_real`、`W_inc` 口径与三分入队语义；修正 IE3 为「信用有界 + 欠账保留」；证明非空可运行集必有合格任务（current-aware fallback 降为防御路径）；§3.8 开放议题全部收口，E-01 状态置 `[X]`。
 - E-03 完成：`CfsRunQueue` 落树账/运行账分解与 `pick_eevdf`（单树合格前缀 + current-aware + 最小 `(vd, pid)`），提供 `reweight` / `advance_running_vruntime` 两个 rq 锁内入口；9 个纯函数与 E-01 模型对拍，`Process` 增五个 EEVDF 字段；本阶段不接生产 tick（切片生效与抢占归 E-04，权重链路归 E-02），状态置 `[X]`。
+- E-02 完成：`Scheduler::set_nice` 进入 setpriority/nice 生产路径，按「认领 → rq 锁 → 写 nice/权重 → `reweight` → 重建切片/vd」收口，新增不持锁等待的 `claim_rq_blocking`；functions 侧 `getpriority` 返回真实 nice、负数 nice 误判修复；新增 `Process::get_nice` 与 9 项回归锁。fork 未继承 nice/权重的审计发现登记至 E-06，状态置 `[X]`。

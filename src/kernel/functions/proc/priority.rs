@@ -1,19 +1,23 @@
 #![deny(unsafe_code)]
 //! 进程优先级策略 — nice / getpriority / setpriority
 //!
-//! 从 privileged/syscall/mod.rs 迁移的策略代码:
-//! - nice_to_priority: nice 值 → ProcessPriority 映射
-//! - priority_to_nice: ProcessPriority → nice 值映射
+//! - nice_to_priority: nice 值 → ProcessPriority 映射 (历史粗粒度字段)
 //! - nice_syscall: nice() 系统调用策略
-//! - getpriority_syscall: getpriority() 系统调用策略
-//! - setpriority_syscall: setpriority() 系统调用策略
+//! - getpriority_syscall: getpriority() 系统调用策略 (返回真实 nice)
+//! - setpriority_syscall: setpriority() 系统调用策略 (nice 与权重同步)
+//!
+//! nice 的权威值是 `Process::nice` 与其派生 `Process::cfs_weight`;
+//! `ProcessPriority` 只作粗粒度兼容字段, 每次写 nice 时同步维护.
 //!
 //! ## 框内核边界
 //! - 100% safe Rust
-//! - 通过 privileged::proc 公开 API 访问进程表
+//! - 经 privileged 安全 API (`Scheduler::set_nice` / `process_with`) 访问进程表
 //! - 无 unsafe, 无裸指针
 
-use crate::privileged::proc::ProcessPriority;
+use crate::privileged::proc::process::Process;
+use crate::privileged::proc::{
+    ProcessPriority, Scheduler, process_get_current_pid, process_with, process_with_mut,
+};
 use crate::privileged::syscall::Errno;
 
 const PRIO_PROCESS: i32 = 0;
@@ -35,54 +39,42 @@ pub fn nice_to_priority(nice: i32) -> ProcessPriority {
     }
 }
 
-/// `ProcessPriority` → nice 值映射
-#[must_use]
-pub fn priority_to_nice(p: ProcessPriority) -> i32 {
-    match p {
-        ProcessPriority::RealTime => -20,
-        ProcessPriority::High => -10,
-        ProcessPriority::Normal => 0,
-        ProcessPriority::Low => 10,
-        ProcessPriority::Idle => 19,
-    }
-}
-
 /// nice(inc) 系统调用策略
 #[must_use]
 pub fn nice_syscall(inc: i32) -> i64 {
-    let pid = crate::privileged::proc::process_get_current_pid();
-    let current_nice =
-        crate::functions::intcast::low_i32_from_i64(getpriority_syscall(PRIO_PROCESS, pid));
-    if current_nice < 0 && current_nice != -38 {
-        // getpriority 失败 (非 ENOSYS)
-        return i64::from(current_nice);
+    let pid = process_get_current_pid();
+    if pid == 0 {
+        return Errno::Esrch.as_ret();
     }
-    let current_nice = if current_nice == -38 { 0 } else { current_nice };
-    let new_nice = (current_nice + inc).clamp(-20, 19);
-    let set_ret = setpriority_syscall(PRIO_PROCESS, pid, new_nice);
-    if set_ret < 0 {
-        return set_ret;
-    }
-    i64::from(new_nice)
+    apply_nice(pid, inc)
+}
+
+/// 对 `pid` 应用 nice 增量, 返回新 nice (负值 = errno).
+///
+/// `nice_syscall` 的显式 pid 形式: 负数 nice 是合法值, 不得与错误返回码混淆.
+#[must_use]
+pub fn apply_nice(pid: u32, inc: i32) -> i64 {
+    let Some(current_nice) = process_with(pid, Process::get_nice) else {
+        return Errno::Esrch.as_ret();
+    };
+    let new_nice = i32::from(current_nice).saturating_add(inc).clamp(-20, 19);
+    let ret = setpriority_for_pid(pid, new_nice);
+    if ret < 0 { ret } else { i64::from(new_nice) }
 }
 
 /// getpriority(which, who) 系统调用策略
+#[must_use]
 pub fn getpriority_syscall(which: i32, who: u32) -> i64 {
     if which != PRIO_PROCESS {
         return Errno::Einval.as_ret();
     }
-    let pid = if who == 0 {
-        crate::privileged::proc::process_get_current_pid()
-    } else {
-        who
-    };
-    let Some(pri) = crate::privileged::proc::process_with(
-        pid,
-        crate::privileged::proc::process::Process::get_priority,
-    ) else {
+    let Some(pid) = resolve_pid(who) else {
         return Errno::Esrch.as_ret();
     };
-    i64::from(priority_to_nice(pri))
+    let Some(nice) = process_with(pid, Process::get_nice) else {
+        return Errno::Esrch.as_ret();
+    };
+    i64::from(nice)
 }
 
 /// setpriority(which, who, prio) 系统调用策略
@@ -91,15 +83,29 @@ pub fn setpriority_syscall(which: i32, who: u32, prio: i32) -> i64 {
     if which != PRIO_PROCESS {
         return Errno::Einval.as_ret();
     }
-    let clamped = prio.clamp(-20, 19);
-    let pid = if who == 0 {
-        crate::privileged::proc::process_get_current_pid()
-    } else {
-        who
+    let Some(pid) = resolve_pid(who) else {
+        return Errno::Esrch.as_ret();
     };
-    let new_pri = nice_to_priority(clamped);
-    match crate::privileged::proc::process_with_mut(pid, |p| p.set_priority(new_pri)) {
-        Some(()) => 0,
-        None => Errno::Esrch.as_ret(),
+    setpriority_for_pid(pid, prio)
+}
+
+/// `who == 0` 解析为当前进程; 无法解析时返回 `None`.
+fn resolve_pid(who: u32) -> Option<u32> {
+    if who == 0 {
+        let pid = process_get_current_pid();
+        (pid != 0).then_some(pid)
+    } else {
+        Some(who)
     }
+}
+
+/// 夹取 nice 后经调度器写入 nice/权重, 并同步粗粒度优先级.
+fn setpriority_for_pid(pid: u32, prio: i32) -> i64 {
+    let clamped = prio.clamp(-20, 19);
+    if !Scheduler::set_nice(pid, crate::functions::intcast::low_i8_from_i32(clamped)) {
+        return Errno::Esrch.as_ret();
+    }
+    let coarse = nice_to_priority(clamped);
+    process_with_mut(pid, |proc| proc.set_priority(coarse));
+    0
 }

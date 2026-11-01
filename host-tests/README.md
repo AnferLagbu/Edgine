@@ -11,7 +11,7 @@
 | 类型 | 位置 | 入口 |
 |------|------|------|
 | 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p edgine-host-tests --lib` |
-| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (145 个文件) | `cargo test -p edgine-host-tests --test <name>` |
+| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (146 个文件) | `cargo test -p edgine-host-tests --test <name>` |
 | 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p edgine-host-tests` |
 
 > **不要**把单元测试 + 集成测试 + 性能基准混放在一个 `tests/*.rs` 文件, Cargo 自动发现会让 `tests/*.rs` 编译为独立 binary, 极慢.
@@ -108,11 +108,13 @@ criterion_main!(benches);
 
 ## 测试分类索引
 
-### 单元测试 (1 模块, 内联)
+### 单元测试 (3 模块, 内联)
 
 | 模块 | 内容 | 位置 |
 |------|------|------|
 | `dma_stream` | DMA 状态机 + 校验 | `src/dma_stream.rs` |
+| `fsx` | 文件系统一致性工具自测 | `src/fsx.rs` |
+| `framekernel_bench` | 微基准库自测 | `src/framekernel_bench.rs` |
 
 > H-04 (2026-09-09): `buddy` 平行实现已删除 — buddy 测试移至集成测试
 > `pmm_buddy_host_test.rs` (经 `MetaStore` 注入 `VecMetaStore` 驱动内核真实 pmm).
@@ -177,6 +179,7 @@ criterion_main!(benches);
 | `functions_ipc_complete_test.rs` | functions IPC 完整性 | I-14 |
 | `eevdf_reference_model_test.rs` | EEVDF 参考模型对拍 (Q16.16/账目/三分入队) | E-01 |
 | `eevdf_queue_mechanism_test.rs` | EEVDF 队列机制 (树账/运行账/合格前缀/选择对拍/迁移守恒) | E-03 |
+| `eevdf_weight_chain_test.rs` | EEVDF 权重链路 (nice→权重→Δvr/切片/vd + syscall 端到端) | E-02 |
 
 #### 信号
 
@@ -256,10 +259,10 @@ criterion_main!(benches);
 
 | 类别 | 数量 | 行数 |
 |------|------|------|
-| 集成测试 | 70 文件 (从 73 - 3) | ~11,200 |
-| 单元测试模块 | 5 | ~800 |
-| 公共库代码 | egfs + egfs_mock + framekernel_bench | ~6,000 |
-| 性能基准 | 1 bin (待迁 benches/) | - |
+| 集成测试 | 146 文件 | 31,891 |
+| 单元测试模块 | 3 (`dma_stream` / `fsx` / `framekernel_bench`) | 1,114 |
+| 公共库代码 | 5 文件 (`lib` / `eevdf_model` / `framekernel_bench` / `fsx` / `dma_stream`) | 3,823 |
+| 性能基准 | 1 bin (`src/bin/framekernel_bench.rs`, 待迁 benches/) | 20 |
 
 **对比规范化前**:
 - 73 → 70 文件 (-3 重复/退役)
