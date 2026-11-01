@@ -7,6 +7,7 @@
 //! ### 1. 库代码 (供 bin/ 和 tests/ 引用)
 //! - `framekernel_bench` — 微基准测试库, 供 `bin/framekernel_bench` 调用
 //! - `fsx`              — 文件系统一致性测试工具
+//! - `eevdf_model`      — E-01 EEVDF 参考模型 (Q16.16 纯整数口径)
 //!
 //! ### 2. 单元测试 (内联在各源文件 `#[cfg(test)] mod tests`)
 //! - `dma_stream`  — DMA 状态机 (改引内核 `dma_buf`)
@@ -34,5 +35,6 @@
 mod dma_stream;
 
 // ── 公共库代码 (供 tests/ 与 bin/ 引用) ──
+pub mod eevdf_model;
 pub mod framekernel_bench;
 pub mod fsx;
