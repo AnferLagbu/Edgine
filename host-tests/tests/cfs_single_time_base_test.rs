@@ -131,8 +131,8 @@ fn enqueue_placement_is_written_back_to_task() {
     let body = code_only(&fn_body(&sched, "fn place_locked"));
     // 同核/首次投送透传记账凭证; 跨核投送必然已在源核撤账, 目的核恒为新记账.
     assert!(
-        has(&body, "dst.enqueue(pid, vr, weight, on_rq)")
-            && has(&body, "dst.enqueue(pid, vr, weight, false)"),
+        has(&body, "dst.enqueue(pid, plan.vruntime, weight, on_rq)")
+            && has(&body, "dst.enqueue(pid, plan.vruntime, weight, false)"),
         "IC1/IC4: 入队必须把记账凭证透传到队列 (同核带凭证 / 跨核恒新记账)"
     );
     assert!(
@@ -146,7 +146,7 @@ fn enqueue_placement_is_written_back_to_task() {
     // 入口只能有一条: 委托给搬定主体, 不得自带第二套投送逻辑.
     let to = code_only(&fn_body(&sched, "fn cfs_enqueue_to"));
     assert!(
-        has(&to, "Self::cfs_place_on(pid, cpu_id)"),
+        has(&to, "Self::cfs_place_on(pid, cpu_id, kind)"),
         "IC1/IC4: 入队出现第二条搬定路径 (绕过归属认领)"
     );
 }

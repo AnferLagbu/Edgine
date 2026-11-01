@@ -30,7 +30,8 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
     CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
-    LOAD_BALANCE_THRESHOLD, calc_vruntime_delta_virt, effective_slice_real, nice_to_weight,
+    LOAD_BALANCE_THRESHOLD, PlacementKind, PlacementLedger, PlacementPlan,
+    calc_vruntime_delta_virt, effective_slice_real, is_eligible, nice_to_weight, plan_placement,
     slice_virt_of, virtual_deadline,
 };
 use super::process::{MIGRATE_PENDING, NO_RQ_CPU, PROCESS_TABLE, Process};
@@ -419,6 +420,26 @@ impl Drop for RqClaim {
     }
 }
 
+/// 入队结果 (E-05a).
+///
+/// `landed` = 本次搬定闭合 (已投进目的树, 或任务正被投送屏障 P-21 挡住而
+/// 只做了延迟投送); `need_resched` = 唤醒抢占判据要求目的核重调度.
+#[derive(Clone, Copy)]
+struct PlacementOutcome {
+    /// 搬定是否发生 (失败 = 任务不存在 / 已终 / 认领耗尽).
+    landed: bool,
+    /// 唤醒抢占判据 `eligible && vd_new < vd_current` 是否成立.
+    need_resched: bool,
+}
+
+impl PlacementOutcome {
+    /// 搬定未发生 (调用方不得继续置 Ready / 请求重调度).
+    const FAILED: Self = Self {
+        landed: false,
+        need_resched: false,
+    };
+}
+
 /// 全局调度器 — 持有 PWM 级 CPU 带宽配额表与进程数上限表, 并跟踪初始化状态。
 pub struct Scheduler {
     quotas: Mutex<[PwidQuota; MAX_QUOTAS]>,
@@ -601,9 +622,9 @@ impl Scheduler {
         Some(idle_pid)
     }
 
-    /// 把任务加入 CFS 运行队列 (语义等价 `cfs_enqueue`)
+    /// 把任务加入 CFS 运行队列 (语义等价 `cfs_enqueue`, 按 Wake 处理)
     pub fn add(pid: Pid) {
-        Self::cfs_enqueue(pid);
+        Self::cfs_enqueue(pid, PlacementKind::Wake);
     }
 
     /// 设置 nice 值并同步 CFS 权重与 EEVDF 切片账目.
@@ -693,13 +714,13 @@ impl Scheduler {
 
     /// 将进程入队**当前核**的 CFS 运行队列.
     ///
-    /// 返回 `false` = 本次搬定未发生 (任务不存在 / 已终 / 认领耗尽).
-    /// 返回 `true` 有两种含义: 已投进本核树, 或该任务正被投送屏障 (P-21) 挡住 —— 后者
-    /// 只做了延迟投送 (搬状态不入树), 落地由占用者核接手.
+    /// 返回 `landed == false` = 本次搬定未发生 (任务不存在 / 已终 / 认领耗尽).
+    /// `landed == true` 有两种含义: 已投进本核树, 或该任务正被投送屏障 (P-21) 挡住
+    /// —— 后者只做了延迟投送 (搬状态不入树), 落地由占用者核接手.
     /// 调用方**必须**据此决定后续动作 —— 尤其不得先把任务置 `Ready` 再入队,
     /// 否则失败即造成"Ready 但不在任何树上"的永久隐形 (见 [`Self::cfs_place_on`]).
-    fn cfs_enqueue(pid: Pid) -> bool {
-        Self::cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu())
+    fn cfs_enqueue(pid: Pid, kind: PlacementKind) -> PlacementOutcome {
+        Self::cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu(), kind)
     }
 
     /// 将进程入队**指定核**的 CFS 运行队列.
@@ -707,8 +728,8 @@ impl Scheduler {
     /// 与 [`Self::cfs_enqueue`] 的区别: 本函数可投送到目标核, 供跨核投送
     /// (fork / 唤醒) 使用。归属搬定一律经 [`Self::cfs_place_on`] —— 它保证任务
     /// **只在一棵树上** (旧写法只持目的锁, 遇到任务仍挂在别的核时既不去重也不搬账).
-    fn cfs_enqueue_to(pid: Pid, cpu_id: u32) -> bool {
-        Self::cfs_place_on(pid, cpu_id)
+    fn cfs_enqueue_to(pid: Pid, cpu_id: u32, kind: PlacementKind) -> PlacementOutcome {
+        Self::cfs_place_on(pid, cpu_id, kind)
     }
 
     // ========================================================================
@@ -789,8 +810,8 @@ impl Scheduler {
     /// P-21 投送屏障使本入口对"正占用某个核"的任务只做**延迟投送** (搬状态不入树,
     /// 仍返回 `true`), 落地由占用者核的 prev 收尾 / `reap_off_cpu` 补投两条腿接手
     /// —— 故 `true` 不等于"已在树上", 调用方不得据此再动该任务的记账.
-    fn cfs_place_on(pid: Pid, dst_cpu: u32) -> bool {
-        Self::cfs_place_on_inner(pid, dst_cpu, false)
+    fn cfs_place_on(pid: Pid, dst_cpu: u32, kind: PlacementKind) -> PlacementOutcome {
+        Self::cfs_place_on_inner(pid, dst_cpu, false, kind)
     }
 
     /// [`Self::cfs_place_on`] 的内部形态, 多一个**调用者身份**参数.
@@ -802,15 +823,20 @@ impl Scheduler {
     /// 而设的 (本核把 prev 投回**自己**的树, 不构成两核交叠).
     /// 若这里也拒收, prev 的可运行性会被藏到下一次切换 (`reap_off_cpu`) 为止,
     /// 本核的抢占判据在这段区间里看不见它.
-    fn cfs_place_on_inner(pid: Pid, dst_cpu: u32, owner_landing: bool) -> bool {
+    fn cfs_place_on_inner(
+        pid: Pid,
+        dst_cpu: u32,
+        owner_landing: bool,
+        kind: PlacementKind,
+    ) -> PlacementOutcome {
         let Some(mut claim) = Self::claim_rq(pid) else {
-            return false;
+            return PlacementOutcome::FAILED;
         };
         let src_cpu = claim.prev_cpu;
         // 源与目的同一把锁 (或本就无归属) 时只锁目的 —— 嵌套同一把 IrqSpinLock 即自死锁.
         if src_cpu == NO_RQ_CPU || src_cpu == dst_cpu {
             let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
-            Self::place_locked(&mut claim, dst_cpu, &mut dst_rq, None, owner_landing)
+            Self::place_locked(&mut claim, dst_cpu, &mut dst_rq, None, owner_landing, kind)
         } else if src_cpu < dst_cpu {
             // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
             // 反向取锁的两个搬动者会 AB-BA.
@@ -822,6 +848,7 @@ impl Scheduler {
                 &mut dst_rq,
                 Some(&mut src_rq),
                 owner_landing,
+                kind,
             )
         } else {
             let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
@@ -832,6 +859,7 @@ impl Scheduler {
                 &mut dst_rq,
                 Some(&mut src_rq),
                 owner_landing,
+                kind,
             )
         }
     }
@@ -847,7 +875,8 @@ impl Scheduler {
         dst: &mut CfsRunQueue,
         src: Option<&mut CfsRunQueue>,
         owner_landing: bool,
-    ) -> bool {
+        kind: PlacementKind,
+    ) -> PlacementOutcome {
         let pid = claim.pid;
         let src_cpu = claim.prev_cpu;
         // 锁序 `cfs_rq -> PROCESS_TABLE` (与本文件其余调度路径一致).
@@ -863,58 +892,48 @@ impl Scheduler {
                 p.cfs_weight.load(Ordering::Acquire),
                 p.cfs_on_rq.load(Ordering::Acquire),
                 p.cfs_on_cpu.load(Ordering::Acquire),
+                p.eevdf_slice_left.load(Ordering::Acquire),
+                p.eevdf_vdeadline.load(Ordering::Acquire),
+                p.eevdf_requested_slice.load(Ordering::Acquire),
             )
         });
-        let Some((state, vr, weight, on_rq, on_cpu)) = snap else {
-            return false;
+        let Some((state, vr, weight, on_rq, on_cpu, slice_left, vd, requested_raw)) = snap else {
+            return PlacementOutcome::FAILED;
         };
         let gone = state == ProcessState::Zombie || state == ProcessState::Terminated;
         if gone {
-            return false;
+            return PlacementOutcome::FAILED;
         }
-        // 投送屏障 (P-21): `Process::cfs_on_cpu` 在位 ⇒ 该任务正占用某个核 (其上下文
-        // 可能尚未保存完), 不得进树 —— 进树即"树上与核上各一份", 被别核拣走就是两个
-        // 核交叠使用同一块进程内核栈.
-        //
-        // 屏障期到达的唤醒**不丢**: 本支只搬状态 Blocked/Frozen → Ready, 不动任何一棵树,
-        // 落地由占用者核接手。但「两条腿覆盖全部到达次序」的成立依赖屏障判定与状态翻转
-        // 的原子性 —— 见下.
-        // 例外: `owner_landing` —— 占用者本核的 prev 收尾正是屏障的解除者, 它入自己
-        // 的树不构成两核交叠 (见 [`Self::cfs_place_on_inner`]).
-        if on_cpu && !owner_landing {
-            // 屏障 TOCTOU 修复 (P-26): 上方快照的 `on_cpu` 读取与本支的状态翻转分属两次
-            // `PROCESS_TABLE` 加锁, 占用者核的 `reap_off_cpu` 可夹在两者之间 —— 它清掉
-            // `on_cpu`、读到仍是 `Blocked` 的状态而放弃补投腿; 本支随后才把状态翻成
-            // `Ready`, 于是 prev 收尾腿与 reap 补投腿同时落空, 任务永久停在
-            // 「Ready 且不在任何树上」(`rq_cpu=NO_RQ_CPU`). 实测: x86_64 双核 e2e 中 init
-            // 网络探针 recv 唤醒约 6% 轮命中该窗口, 就绪超时挂死 (init 即 pid=5).
-            //
-            // 修法是在同一临界区内复查屏障再决定投送路径:
-            // - 屏障仍在位 => 就地翻 `Ready` (Blocked/Frozen→Ready), 落地交占用者核 `reap`
-            //   接手 —— 它此刻尚未取锁清屏障, 必然在本临界区之后重读到 `Ready` 即补投;
-            // - 屏障已在本快照之后被清除 => 补投腿已放弃, 本调用点必须亲自入树, 落到
-            //   下方完整搬定路径, 不再依赖任何补投腿.
-            let still_on_cpu = PROCESS_TABLE.with_process(pid, |p| {
-                if p.cfs_on_cpu.load(Ordering::Acquire) {
-                    let s = p.get_state();
-                    if s == ProcessState::Blocked || s == ProcessState::Frozen {
-                        let _ = p.set_state_safe(ProcessState::Ready);
-                    }
-                    true
-                } else {
-                    false
-                }
-            });
-            if let Some(still_barred) = still_on_cpu {
-                // 屏障仍在位: 已在本临界区把状态翻成 Ready, 落地交占用者核 reap 补投.
-                if still_barred {
-                    return true;
-                }
-                // 屏障已在本快照之后被清除: 往下走完整搬定路径, 由本入口把任务投进目的核的树.
-            } else {
-                // pid 已从进程表消失: 无权投送, 认领凭证 Drop 自动回滚归属.
-                return false;
-            }
+        // E-05a 三分语义: 已在**任一**可运行队列记账的 Wake 降级为 Requeue ——
+        // 重复唤醒是 no-op, 不得再次重置切片预算 (E-01: Wake 只对不在可运行集的
+        // 睡眠任务生效). 源核在册也算"已可运行", 否则跨核重复投送会把一次纯搬动
+        // 误当唤醒, 白送睡眠信用与新切片.
+        let already_here = dst.is_on_tree(pid) || dst.is_running(pid);
+        let already_queued = already_here
+            || src
+                .as_ref()
+                .is_some_and(|rq| rq.is_on_tree(pid) || rq.is_running(pid));
+        let kind = if kind == PlacementKind::Wake && already_queued {
+            PlacementKind::Requeue
+        } else {
+            kind
+        };
+        let requested = (requested_raw != 0).then_some(requested_raw);
+        let plan = plan_placement(
+            kind,
+            vr,
+            weight,
+            slice_left,
+            requested,
+            PlacementLedger {
+                total_weight: dst.runnable_weight(),
+                sum_w_vr: dst.sum_w_vr(),
+                includes_self: already_here,
+            },
+        );
+        // P-21 投送屏障: 任务正占用某个核时只搬状态, 不动任何一棵树.
+        if let Some(outcome) = Self::place_barrier(pid, on_cpu, owner_landing, &plan) {
+            return outcome;
         }
         // 兜底: 非 `schedule()` 路径写入的 `per_cpu.current` (boot / AP 首发经
         // `set_current`) 不带屏障, 故仍按归属核查在核判据 (语义同 Linux 不迁移
@@ -922,26 +941,165 @@ impl Scheduler {
         let on_current = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst) == pid
             || (src_cpu != NO_RQ_CPU && per_cpu_for(src_cpu).current.load(Ordering::SeqCst) == pid);
         if on_current {
-            return false;
+            return PlacementOutcome::FAILED;
         }
         let placed = match src {
             // 跨核: 源撤账摘节点, 目的重新记账投节点 —— 两核权重和守恒.
             Some(src_rq) => {
                 src_rq.dequeue(pid, weight, on_rq);
-                dst.enqueue(pid, vr, weight, false)
+                dst.enqueue(pid, plan.vruntime, weight, false)
             }
             // 同核 (或原本不在队): 幂等移动, 记账凭证原样带走.
-            None => dst.enqueue(pid, vr, weight, on_rq),
+            None => dst.enqueue(pid, plan.vruntime, weight, on_rq),
         };
+        let new_vd = if let Some((_, slice_virt)) = plan.slice {
+            virtual_deadline(placed, slice_virt)
+        } else {
+            // 携带语义: 队列 floor 钳制抬高落点时同步平移截止期, 保持 `vd - vr`
+            // 恒定 (IE6 的剩余切片关系不受 IC1 对齐破坏).
+            vd.saturating_add(placed.saturating_sub(vr))
+        };
+        // E-05a 唤醒抢占: 仅 Wake 语义参与判决, 且用入队后的 W/S 判合格.
+        let need_resched =
+            kind == PlacementKind::Wake && Self::wake_preempts(dst_cpu, pid, placed, new_vd, dst);
         PROCESS_TABLE.with_process(pid, |p| {
             let _ = p.set_state_safe(ProcessState::Ready);
             // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
             // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
             p.cfs_vruntime.store(placed, Ordering::Release);
             p.cfs_on_rq.store(true, Ordering::Release);
+            p.eevdf_vdeadline.store(new_vd, Ordering::Release);
+            if let Some((slice_real, slice_virt)) = plan.slice {
+                p.eevdf_slice_real.store(slice_real, Ordering::Release);
+                p.eevdf_slice_virt.store(slice_virt, Ordering::Release);
+                p.eevdf_slice_left.store(slice_real, Ordering::Release);
+            }
         });
         claim.commit(dst_cpu);
-        true
+        PlacementOutcome {
+            landed: true,
+            need_resched,
+        }
+    }
+
+    /// P-21 投送屏障闸门: `Process::cfs_on_cpu` 在位 ⇒ 该任务正占用某个核 (其
+    /// 上下文可能尚未保存完), 不得进树 —— 进树即"树上与核上各一份", 被别核拣走
+    /// 就是两个核交叠使用同一块进程内核栈.
+    ///
+    /// 返回 `Some(outcome)` = 本入口已闭合 (延迟投送或失败); `None` = 无需拦阻
+    /// (屏障已清除, 或本核 prev 收尾在给自己投送), 调用方继续完整搬定.
+    ///
+    /// `owner_landing` 是唯一例外: 占用者本核的 prev 收尾正是屏障的解除者, 它入
+    /// 自己的树不构成两核交叠 (见 [`Self::cfs_place_on_inner`]).
+    fn place_barrier(
+        pid: Pid,
+        on_cpu: bool,
+        owner_landing: bool,
+        plan: &PlacementPlan,
+    ) -> Option<PlacementOutcome> {
+        if !on_cpu || owner_landing {
+            return None;
+        }
+        // 屏障 TOCTOU 修复 (P-26): 上方快照的 `on_cpu` 读取与本支的状态翻转分属两次
+        // `PROCESS_TABLE` 加锁, 占用者核的 `reap_off_cpu` 可夹在两者之间 —— 它清掉
+        // `on_cpu`、读到仍是 `Blocked` 的状态而放弃补投腿; 本支随后才把状态翻成
+        // `Ready`, 于是 prev 收尾腿与 reap 补投腿同时落空, 任务永久停在
+        // 「Ready 且不在任何树上」(`rq_cpu=NO_RQ_CPU`). 实测: x86_64 双核 e2e 中 init
+        // 网络探针 recv 唤醒约 6% 轮命中该窗口, 就绪超时挂死 (init 即 pid=5).
+        //
+        // 修法是在同一临界区内复查屏障再决定投送路径:
+        // - 屏障仍在位 => 就地翻 `Ready` (Blocked/Frozen→Ready), 落地交占用者核 `reap`
+        //   接手 —— 它此刻尚未取锁清屏障, 必然在本临界区之后重读到 `Ready` 即补投;
+        // - 屏障已在本快照之后被清除 => 补投腿已放弃, 本调用点必须亲自入树, 落到
+        //   下方完整搬定路径, 不再依赖任何补投腿.
+        let still_on_cpu = PROCESS_TABLE.with_process(pid, |p| {
+            if p.cfs_on_cpu.load(Ordering::Acquire) {
+                let s = p.get_state();
+                if s == ProcessState::Blocked || s == ProcessState::Frozen {
+                    let _ = p.set_state_safe(ProcessState::Ready);
+                }
+                // Wake 的落点与切片必须与状态翻转同临界区落账: 占用者核的
+                // 补投按 `Requeue` 语义执行, 若此处不写, 旧的睡眠信用会被原样
+                // 搬进树 (绕过 IE3); 分两次加锁则会在中间留出"已 Ready 但
+                // 归属仍被本调用认领着"的窗口, 补投腿的认领会失败.
+                p.cfs_vruntime.store(plan.vruntime, Ordering::Release);
+                if let Some((slice_real, slice_virt)) = plan.slice {
+                    p.eevdf_slice_real.store(slice_real, Ordering::Release);
+                    p.eevdf_slice_virt.store(slice_virt, Ordering::Release);
+                    p.eevdf_slice_left.store(slice_real, Ordering::Release);
+                    p.eevdf_vdeadline.store(
+                        virtual_deadline(plan.vruntime, slice_virt),
+                        Ordering::Release,
+                    );
+                }
+                true
+            } else {
+                false
+            }
+        });
+        match still_on_cpu {
+            // 屏障仍在位: 已在本临界区把状态翻成 Ready, 落地交占用者核 reap 补投.
+            Some(true) => Some(PlacementOutcome {
+                landed: true,
+                need_resched: false,
+            }),
+            // 屏障已在本快照之后被清除: 由调用方把任务投进目的核的树.
+            Some(false) => None,
+            // pid 已从进程表消失: 无权投送, 认领凭证 Drop 自动回滚归属.
+            None => Some(PlacementOutcome::FAILED),
+        }
+    }
+
+    /// 唤醒抢占判据 (E-05a, E-01 冻结口径).
+    ///
+    /// 仅当目的核当前任务是普通 CFS 任务时比较
+    /// `eligible(woken) && vd_woken < vd_current`; 目的核无 current / 当前任务
+    /// 已不可运行时直接请求重调度; 当前任务是 RT / DL 时不因 CFS 唤醒抢占
+    /// (选择顺序本就 DL → RT → CFS)。
+    fn wake_preempts(
+        dst_cpu: u32,
+        pid: Pid,
+        vruntime: u64,
+        vdeadline: u64,
+        rq: &CfsRunQueue,
+    ) -> bool {
+        let current = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst);
+        if current == 0 {
+            return true;
+        }
+        if current == pid {
+            return false;
+        }
+        let snap = PROCESS_TABLE.with_process(current, |p| {
+            (
+                p.get_state(),
+                p.get_sched_policy(),
+                p.cfs_vruntime.load(Ordering::Acquire),
+                p.eevdf_vdeadline.load(Ordering::Acquire),
+            )
+        });
+        let Some((state, policy, current_runtime, current_deadline)) = snap else {
+            return true;
+        };
+        if state != ProcessState::Running && state != ProcessState::Ready {
+            return true;
+        }
+        match policy {
+            SchedPolicy::Normal => {
+                let eligible = is_eligible(vruntime, rq.runnable_weight(), rq.sum_w_vr());
+                // 未建账的 current (vd == 0 / 早于 vr) 按 `vd = vr` 参与比较,
+                // 与 `pick_eevdf` 的兜底同口径.
+                let effective_deadline =
+                    if current_deadline >= current_runtime && current_deadline != 0 {
+                        current_deadline
+                    } else {
+                        current_runtime
+                    };
+                eligible && vdeadline < effective_deadline
+            }
+            SchedPolicy::Idle => true,
+            _ => false,
+        }
     }
 
     /// 让 `pid` 离开 CFS 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出但不可调度).
@@ -1339,7 +1497,9 @@ impl Scheduler {
                         break;
                     }
                     _ => {
-                        Self::cfs_enqueue(rt_pid);
+                        // RT 队列里降级出的任务早已在可运行记账中: 按 Requeue 重投,
+                        // 不得把它当唤醒重发睡眠信用 / 重置切片.
+                        Self::cfs_enqueue(rt_pid, PlacementKind::Requeue);
                         per_cpu.rt_running.store(false, Ordering::SeqCst);
                         break;
                     }
@@ -1473,6 +1633,7 @@ impl Scheduler {
                 current_pid,
                 crate::privileged::smp::get_current_cpu(),
                 true,
+                PlacementKind::Requeue,
             );
         }
         PROCESS_TABLE.with_process(current_pid, |p| {
@@ -1653,7 +1814,11 @@ impl Scheduler {
             && policy == SchedPolicy::Normal
             && per_cpu.idle.load(Ordering::SeqCst) != prev
         {
-            Self::cfs_place_on(prev, crate::privileged::smp::get_current_cpu());
+            Self::cfs_place_on(
+                prev,
+                crate::privileged::smp::get_current_cpu(),
+                PlacementKind::Requeue,
+            );
         }
     }
 
@@ -1731,11 +1896,22 @@ impl Scheduler {
 
         match sched_policy {
             Some((SchedPolicy::Normal, _, _)) => {
-                // 统一走搬定入口: 落点钳制 (IC1) + 回写 vruntime + 记账凭证 + 置 Ready.
+                // 统一走搬定入口: 睡眠信用钳制 (Wake) + 落点钳制 (IC1) + 回写
+                // vruntime / 切片 / 截止期 + 记账凭证 + 置 Ready.
                 //
                 // 失败 ⇒ 保持原状态直接返回: 不动唤醒不变式 (本核无新可运行任务,
                 // 不需要重调度), 且下一轮电平重扫/超时重投会再次尝试.
-                if !Self::cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu()) {
+                let outcome = Self::cfs_enqueue_to(
+                    pid,
+                    crate::privileged::smp::get_current_cpu(),
+                    PlacementKind::Wake,
+                );
+                if !outcome.landed {
+                    return;
+                }
+                // 唤醒抢占判据 (vd 比较) 未通过 ⇒ 不入队即返回, 不打扰在跑的
+                // current; 通过则继续走底部 `mark_resched_pending_local` 入口.
+                if !outcome.need_resched {
                     return;
                 }
             }
@@ -1917,7 +2093,7 @@ impl Scheduler {
         // 搬定结果不在这里分支: 新子进程尚未入过队, 失败只可能是"它已被别的路径
         // 放上了某个队列" (幂等) 或任务已终 —— 两种情形下目标核仍需一次重调度提名,
         // 多发一个 IPI 无代价, 少了 IPI 则会拖到下一轮 tick.
-        Self::cfs_enqueue_to(pid, target);
+        Self::cfs_enqueue_to(pid, target, PlacementKind::Wake);
         if target != this_cpu {
             // 有界诊断 (仅前若干次): 供 `-smp 2` 验证观测跨核投送.
             static MIGRATE_LOG: AtomicU64 = AtomicU64::new(0);

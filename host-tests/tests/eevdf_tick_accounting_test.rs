@@ -125,12 +125,22 @@ fn tick_builds_advances_and_expires_slice_on_real_rq() {
     Scheduler::add_to_run_queue(pid);
     assert!(proc.on_rq(), "入队后应带记账凭证");
     assert_eq!(proc.rq_cpu(), 0);
+    // E-05a: 入队按 Wake 语义当场建好本轮切片 (与 E-01 冻结模型一致).
+    assert_eq!(proc.slice_left(), slice_real, "Wake 入队应已建好切片预算");
     let _cur = CurrentGuard::install(pid);
     assert_eq!(Scheduler::schedule(), Some(pid), "当前任务应从树拣入运行账");
     assert!(
         !Scheduler::has_runnable(),
         "拣出后运行任务应离开树账 (运行账不是树)"
     );
+    // Build 分支仍服务于"未经 Wake 直接进入运行账"的任务 (boot / keep-current):
+    // 这里显式清空切片字段以覆盖该分支.
+    proc.with(|p| {
+        p.eevdf_slice_real.store(0, Ordering::Release);
+        p.eevdf_slice_virt.store(0, Ordering::Release);
+        p.eevdf_slice_left.store(0, Ordering::Release);
+        p.eevdf_vdeadline.store(0, Ordering::Release);
+    });
 
     // 1) Build: 首个 tick 建立本轮切片, 不把 current 投回树.
     Scheduler::tick(0);

@@ -857,6 +857,91 @@ pub fn wake_vruntime(vr_raw: u64, avg_before: u64, slice_virt: u64) -> u64 {
 }
 
 // ============================================================================
+// EEVDF 入队语义三分 (E-05a)
+// ============================================================================
+
+/// 入队语义: 决定落点钳制与切片是否重建。
+///
+/// 三分口径冻结于 E-01 参考模型: `Wake` 重置切片并钳制睡眠信用; `Requeue`
+/// 只在本轮切片耗尽时补充; `Migrate` 原样携带全部字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlacementKind {
+    /// 唤醒 / 新任务: 睡眠信用钳制 + 重建切片与截止期。
+    Wake,
+    /// 原样重投 (prev 收尾 / 屏障补投): 切片未耗尽时携带原值, 耗尽时重建。
+    Requeue,
+    /// 跨核迁移: 原样携带 `vr` / 切片 / `vd`, 不钳制也不重建。
+    Migrate,
+}
+
+/// 入队计划: 落点与需要重建的切片。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacementPlan {
+    /// 落点 (尚未经队列 floor 钳制)。
+    pub vruntime: u64,
+    /// `Some((slice_real, slice_virt))` = 重建本轮切片; `None` = 携带原值。
+    pub slice: Option<(u64, u64)>,
+}
+
+/// 目的队列的入队前账目视图 (E-05a)。
+#[derive(Debug, Clone, Copy)]
+pub struct PlacementLedger {
+    /// 可运行集权重和 `W` (树账 + 运行账)。
+    pub total_weight: u64,
+    /// 加权虚拟时间和 `S`。
+    pub sum_w_vr: u128,
+    /// 本任务是否已计入上述账目。
+    ///
+    /// 已计入者重建切片时**不得**重复加权重 (`W_inc` 虚增会压小切片)。
+    pub includes_self: bool,
+}
+
+/// 按 [`PlacementKind`] 计算入队落点与切片重建 (E-01 冻结口径)。
+///
+/// `requested` 为 D8③ 请求切片 (调用方须把 0 过滤为 `None`); `ledger` 取
+/// **目的队列**本次入队前的读数。
+#[must_use]
+pub fn plan_placement(
+    kind: PlacementKind,
+    vruntime: u64,
+    weight: u64,
+    slice_left: u64,
+    requested: Option<u64>,
+    ledger: PlacementLedger,
+) -> PlacementPlan {
+    let rebuild = match kind {
+        PlacementKind::Wake => true,
+        PlacementKind::Requeue => slice_left == 0,
+        PlacementKind::Migrate => false,
+    };
+    if !rebuild {
+        return PlacementPlan {
+            vruntime,
+            slice: None,
+        };
+    }
+    let weight_incl = if ledger.includes_self {
+        ledger.total_weight
+    } else {
+        ledger.total_weight.saturating_add(weight)
+    };
+    let slice_real = effective_slice_real(weight, weight_incl, requested);
+    let slice_virt = slice_virt_of(slice_real, weight);
+    let placed = match kind {
+        PlacementKind::Wake => wake_vruntime(
+            vruntime,
+            weighted_avg_vruntime(ledger.total_weight, ledger.sum_w_vr),
+            slice_virt,
+        ),
+        _ => vruntime,
+    };
+    PlacementPlan {
+        vruntime: placed,
+        slice: Some((slice_real, slice_virt)),
+    }
+}
+
+// ============================================================================
 // 单元测试 — 调度策略契约
 // ============================================================================
 //
@@ -1416,5 +1501,83 @@ mod tests {
         assert_eq!(pick.pid, 7);
         assert!(pick.from_tree);
         assert_eq!(pick.vdeadline, 42, "未建账任务按 vd = vr 参与选择");
+    }
+
+    /// 16. EEVDF 入队语义三分 (E-05a): Wake 钳制 + 重建, Requeue 仅耗尽时重建,
+    /// Migrate 原样携带; `W_inc` 不得重复计入已在账的任务.
+    #[test]
+    fn test_sched_eevdf_placement_kinds() {
+        let w = NICE0_WEIGHT;
+        let avg = 100 * VIRT_ONE;
+        let slice_virt = TARGET_LATENCY_TICKS / 2 * VIRT_ONE;
+        let total = 2 * w;
+        let sum = u128::from(w) * u128::from(avg);
+        let ledger = |total_weight: u64, includes_self: bool| PlacementLedger {
+            total_weight,
+            sum_w_vr: sum,
+            includes_self,
+        };
+
+        // Wake: 睡眠信用上界 = 一个 slice_virt; 欠账 (raw > V) 不补偿.
+        let plan = plan_placement(PlacementKind::Wake, 0, w, 0, None, ledger(w, false));
+        assert_eq!(
+            plan.vruntime,
+            avg - slice_virt,
+            "Wake 落点应为 V_before - slice_virt"
+        );
+        assert_eq!(
+            plan.slice,
+            Some((TARGET_LATENCY_TICKS / 2, slice_virt)),
+            "W_inc = W_before + w 时切片减半"
+        );
+        let plan = plan_placement(
+            PlacementKind::Wake,
+            avg + VIRT_ONE,
+            w,
+            0,
+            None,
+            ledger(w, false),
+        );
+        assert_eq!(plan.vruntime, avg + VIRT_ONE, "raw > V 时保留负 lag");
+
+        // D8③ 请求切片在 Wake 建账时生效.
+        let plan = plan_placement(PlacementKind::Wake, 0, w, 0, Some(10), ledger(w, false));
+        assert_eq!(plan.slice, Some((10, 10 * VIRT_ONE)));
+        assert_eq!(plan.vruntime, avg - 10 * VIRT_ONE);
+
+        // Requeue: 切片未耗尽时原样携带; 耗尽时按当前 W 重建 (不再钳制落点).
+        let carried = plan_placement(PlacementKind::Requeue, 7, w, 3, None, ledger(total, true));
+        assert_eq!(
+            carried,
+            PlacementPlan {
+                vruntime: 7,
+                slice: None
+            },
+            "Requeue 不得重置未耗尽的切片预算"
+        );
+        let rebuilt = plan_placement(PlacementKind::Requeue, 7, w, 0, None, ledger(total, true));
+        assert_eq!(rebuilt.vruntime, 7, "Requeue 不做 Wake 落点钳制");
+        assert_eq!(
+            rebuilt.slice,
+            Some((TARGET_LATENCY_TICKS / 2, slice_virt)),
+            "耗尽后按已含本任务的 W 重建"
+        );
+        let outside = plan_placement(PlacementKind::Requeue, 7, w, 0, None, ledger(w, false));
+        assert_eq!(
+            outside.slice,
+            Some((TARGET_LATENCY_TICKS / 2, slice_virt)),
+            "未在账者重建时 W_inc 必须含本任务"
+        );
+
+        // Migrate: 任何字段都不重建、不钳制.
+        let migrated = plan_placement(PlacementKind::Migrate, 7, w, 0, Some(10), ledger(w, false));
+        assert_eq!(
+            migrated,
+            PlacementPlan {
+                vruntime: 7,
+                slice: None
+            },
+            "Migrate 必须原样携带切片与落点"
+        );
     }
 }

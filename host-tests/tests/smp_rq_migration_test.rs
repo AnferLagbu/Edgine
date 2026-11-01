@@ -242,7 +242,7 @@ fn test_wake_path_never_flips_state_before_placement() {
     }
     // 搬定失败必须早退 (不能当作已成功继续跑唤醒不变式).
     assert!(
-        unblock.contains("if!Self::cfs_enqueue_to("),
+        unblock.contains("if!outcome.landed{"),
         "unblock 未根据搬定结果决定后续 (失败被静默忽略)"
     );
     // 成功路径的 Ready 由持锁主体写.
@@ -294,7 +294,7 @@ fn test_membership_change_requires_claim_and_claim_never_blocks() {
     // 一切归属变更都经认领 (搬定主体 = cfs_place_on_inner, 公有入口只做委托).
     for (sig, needle) in [
         (
-            "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool)",
+            "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
             "Self::claim_rq(pid)",
         ),
         ("fncfs_deactivate(pid:Pid)", "Self::claim_rq(pid)"),
@@ -327,25 +327,31 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
     );
 
     // 入队唯一入口收口到 cfs_place_on.
-    let enqueue_to =
-        fn_body(&sched, "fncfs_enqueue_to(pid:Pid,cpu_id:u32)").expect("cfs_enqueue_to 不存在");
+    let enqueue_to = fn_body(
+        &sched,
+        "fncfs_enqueue_to(pid:Pid,cpu_id:u32,kind:PlacementKind)",
+    )
+    .expect("cfs_enqueue_to 不存在");
     assert!(
-        enqueue_to.contains("Self::cfs_place_on(pid,cpu_id)"),
+        enqueue_to.contains("Self::cfs_place_on(pid,cpu_id,kind)"),
         "cfs_enqueue_to 未委托 cfs_place_on (搬定出现第二条路径)"
     );
 
     // 跨核搬动双持锁, 且锁序按 cpu index 升序.
     // 搬定主体在 `cfs_place_on_inner` (多一个 `owner_landing` 参数, 见 P-21),
     // 公有入口 `cfs_place_on` 只做一层委托 —— 委托不丢, 否则等于开出第二条入口.
-    let entry =
-        fn_body(&sched, "fncfs_place_on(pid:Pid,dst_cpu:u32)").expect("cfs_place_on 不存在");
+    let entry = fn_body(
+        &sched,
+        "fncfs_place_on(pid:Pid,dst_cpu:u32,kind:PlacementKind)",
+    )
+    .expect("cfs_place_on 不存在");
     assert!(
-        entry.contains("Self::cfs_place_on_inner(pid,dst_cpu,false)"),
+        entry.contains("Self::cfs_place_on_inner(pid,dst_cpu,false,kind)"),
         "cfs_place_on 未把 owner_landing 固定为 false 再委托 (屏障可被任意入口绕过)"
     );
     let place = fn_body(
         &sched,
-        "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool)",
+        "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
     )
     .expect("cfs_place_on_inner 不存在");
     assert!(

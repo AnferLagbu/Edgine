@@ -212,22 +212,19 @@ fn placement_delivers_state_but_not_tree_under_barrier() {
     assert!(
         before(
             &place,
-            "if on_cpu && !owner_landing {",
+            "Self::place_barrier(pid, on_cpu, owner_landing, &plan)",
             "let placed = match src"
         ),
         "P-21: 拒投分支必须在真正入树的搬移之前"
     );
-    // 屏障分支的函数体 (到 `return true;` 为止) 内不得出现入树/撤账动作.
-    let gate = place
-        .find("if on_cpu && !owner_landing {")
-        .expect("place_locked 缺屏障拒投分支");
-    let barrier_seg = &place[gate..place.find("return true;").unwrap()];
+    // 屏障分支已收口为 `place_barrier` 单一闸门: 其体内不得出现入树/撤账动作.
+    let barrier_seg = code_only(&fn_body(&sched, "fn place_barrier"));
     assert!(
-        !has(barrier_seg, "enqueue") && !has(barrier_seg, "dequeue"),
+        !has(&barrier_seg, "enqueue") && !has(&barrier_seg, "dequeue"),
         "P-21: 屏障期不得动任何一棵树 (进树即'树上与核上各一份', 被别核拣走即双派)"
     );
     assert!(
-        has(barrier_seg, "ProcessState::Ready"),
+        has(&barrier_seg, "ProcessState::Ready"),
         "P-21: 屏障期到达的唤醒必须仍把状态搬成 `Ready` 并回报承接 —— 丢弃唤醒\
          (edge-triggered 事件源) 就是丢任务"
     );
@@ -247,26 +244,18 @@ fn placement_delivers_state_but_not_tree_under_barrier() {
 #[test]
 fn barrier_defer_rechecks_on_cpu_atomically() {
     let sched = code_only(&read_src(SCHED));
-    let place = code_only(&fn_body(&sched, "fn place_locked"));
-    let gate = place
-        .find("if on_cpu && !owner_landing {")
-        .expect("place_locked 缺屏障拒投分支");
-    // 延迟支体 = gate 到其内第一处 `return true;` (屏障在位时的承接返回).
-    let defer_end = place[gate..]
-        .find("return true;")
-        .map(|i| gate + i)
-        .expect("屏障延迟支缺 return true;");
-    let barrier_seg = &place[gate..defer_end];
-    // 延迟支必须重新读取屏障 (不能只用上方快照的 on_cpu) —— 复查即 TOCTOU 的闭合点.
+    // 延迟支已收口为 `place_barrier` 单一闸门 (place_locked 只转发).
+    let barrier_seg = code_only(&fn_body(&sched, "fn place_barrier"));
+    // 延迟支必须重新读取屏障 (不能只用快照的 on_cpu) —— 复查即 TOCTOU 的闭合点.
     assert!(
-        has(barrier_seg, "cfs_on_cpu.load(Ordering::Acquire)"),
+        has(&barrier_seg, "cfs_on_cpu.load(Ordering::Acquire)"),
         "P-26: 屏障延迟支必须在临界区内复查 cfs_on_cpu —— 靠快照的陈旧 on_cpu 判延迟, \
          会让 reap_off_cpu 夹在快照与置 Ready 之间清屏障, 两条腿同时落空"
     );
     // 复查必须先于置 Ready (同一 with_process 闭包: 先 load 屏障再条件翻 Ready).
     assert!(
         before(
-            barrier_seg,
+            &barrier_seg,
             "cfs_on_cpu.load",
             "set_state_safe(ProcessState::Ready",
         ),
@@ -274,7 +263,7 @@ fn barrier_defer_rechecks_on_cpu_atomically() {
     );
     // 延迟支仍不得动任何一棵树 (落地交占用者核 reap, 或 fall-through 完整搬定路径).
     assert!(
-        !has(barrier_seg, "enqueue") && !has(barrier_seg, "dequeue"),
+        !has(&barrier_seg, "enqueue") && !has(&barrier_seg, "dequeue"),
         "P-26: 屏障延迟支复查后仍不得入树 —— 进树即'树上与核上各一份', 被别核拣走即双派"
     );
 }
@@ -313,14 +302,14 @@ fn prev_landing_goes_through_the_single_placement_entry() {
     );
     // 唯一一处 `owner_landing = true`: 只有占用者本核的 prev 收尾可以放行屏障.
     assert_eq!(
-        occurrences(&sched, "get_current_cpu(), true)"),
+        occurrences(&sched, "get_current_cpu(), true, PlacementKind::Requeue)"),
         1,
         "P-21: 屏障放行不得出现在 prev 收尾之外的调用点 —— 多点放行等于无屏障"
     );
     assert!(
         has(
             &fn_body(&sched, "fn cfs_place_on"),
-            "Self::cfs_place_on_inner(pid, dst_cpu, false)"
+            "Self::cfs_place_on_inner(pid, dst_cpu, false, kind)"
         ),
         "P-21: 公有入口必须把 `owner_landing` 固定为 false"
     );
