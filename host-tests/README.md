@@ -11,7 +11,7 @@
 | 类型 | 位置 | 入口 |
 |------|------|------|
 | 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p edgine-host-tests --lib` |
-| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (144 个文件) | `cargo test -p edgine-host-tests --test <name>` |
+| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (145 个文件) | `cargo test -p edgine-host-tests --test <name>` |
 | 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p edgine-host-tests` |
 
 > **不要**把单元测试 + 集成测试 + 性能基准混放在一个 `tests/*.rs` 文件, Cargo 自动发现会让 `tests/*.rs` 编译为独立 binary, 极慢.
@@ -176,6 +176,7 @@ criterion_main!(benches);
 | `td14_ipc_full_lifecycle_test.rs` | IPC 全生命周期 | TD-14 |
 | `functions_ipc_complete_test.rs` | functions IPC 完整性 | I-14 |
 | `eevdf_reference_model_test.rs` | EEVDF 参考模型对拍 (Q16.16/账目/三分入队) | E-01 |
+| `eevdf_queue_mechanism_test.rs` | EEVDF 队列机制 (树账/运行账/合格前缀/选择对拍/迁移守恒) | E-03 |
 
 #### 信号
 

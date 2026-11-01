@@ -15,7 +15,7 @@
 //! functions 侧改 `pub use crate::privileged::proc::cfs::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::privileged::proc::Pid;
@@ -30,10 +30,17 @@ pub use crate::privileged::config::{
     CFS_DL_MAX_UTILIZATION_PCT as DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
     CFS_DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, CFS_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,
     CFS_NICE0_WEIGHT as NICE0_WEIGHT, CFS_TARGET_LATENCY as TARGET_LATENCY_TICKS,
+    CFS_VIRT_ONE as VIRT_ONE, CFS_VIRT_SHIFT as VIRT_SHIFT,
 };
 
 /// 负载均衡触发阈值 (权重差)
 pub const LOAD_BALANCE_THRESHOLD: u64 = 1024;
+
+/// 目标延迟的 Q16.16 表示 (EEVDF 虚拟时间域).
+pub const TARGET_LATENCY_VIRT: u64 = TARGET_LATENCY_TICKS << VIRT_SHIFT;
+
+/// 最小粒度的 Q16.16 表示 (EEVDF 虚拟时间域).
+pub const MIN_GRANULARITY_VIRT: u64 = MIN_GRANULARITY_TICKS << VIRT_SHIFT;
 
 // ============================================================================
 // NICE → 权重映射
@@ -134,6 +141,52 @@ impl DeadlineParams {
 // CFS Run Queue
 // ============================================================================
 
+/// 队列内任务的记账副本 (权重 + 落点)。
+///
+/// 与 `tree` 键 / 运行账分开保存: 键只承载排序所需的 `(vruntime, pid)`，权重与
+/// 落点由账目持有。出队时按**账目**中的权重扣减，调用方传入的陈旧权重不参与运算
+/// (排队期间 nice 变更不会让 `W` 漂移)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueuedTask {
+    /// 任务号。
+    pub pid: Pid,
+    /// 记账落点 (vruntime; 单位随调用方口径，同一队列内必须同域)。
+    pub vruntime: u64,
+    /// 记账权重。
+    pub weight: u64,
+}
+
+/// EEVDF 选择所需的当前运行任务视图。
+///
+/// `current` 通常已在队列运行账中 (W/S 已含它), 此时本视图只用于提供最新的
+/// vruntime / 截止期; 若它**不在**任何账目中 (boot 期经 `keep_current` 上核),
+/// [`CfsRunQueue::pick_eevdf`] 会把这份权重临时并入 `W`/`S`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EevdfTaskView {
+    /// 任务号。
+    pub pid: Pid,
+    /// 当前虚拟运行时间 (与队列同域)。
+    pub vruntime: u64,
+    /// 本轮虚拟截止期。
+    pub vdeadline: u64,
+    /// 调度权重。
+    pub weight: u64,
+}
+
+/// EEVDF 选择结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EevdfPick {
+    /// 被选中的任务号。
+    pub pid: Pid,
+    /// 该任务的虚拟运行时间。
+    pub vruntime: u64,
+    /// 该任务的虚拟截止期。
+    pub vdeadline: u64,
+    /// `true` = 胜者来自树账, 已被移入运行账 (调用方须处理旧 current);
+    /// `false` = current 胜出, 账目未动。
+    pub from_tree: bool,
+}
+
 /// CFS 运行队列 —— 以 (vruntime, pid) 为键的有序树 + 本核 vruntime 时基下界。
 ///
 /// ## 单时基模型 (DECISION-099)
@@ -154,19 +207,47 @@ impl DeadlineParams {
 ///   `sync_min_vruntime`: 被钳到 floor 的唤醒者会反过来推高 floor, 形成棘轮),
 ///   也不整树折叠 (旧 `boost_all_vruntime`: 抹掉相对次序)。
 ///
-/// `total_weight` 是"可运行集 (树上的 + 正在本核运行的) 权重和", 由
-/// [`Self::enqueue`]/[`Self::dequeue`] 依调用方传入的记账凭证精确加减一次;
-/// 树内移动 (`pick_next` 拣出 / `enqueue` 去重重投) 不动账。记账凭证由 `Process::cfs_on_rq`
-/// 承载 (语义同 Linux 的 `on_rq`: 处于可运行记账中, 上核运行期间仍为 true)。
+/// ## EEVDF 账目分解 (E-03)
+///
+/// 可运行集拆成两份**互斥**账目:
+///
+/// - **树账**: 在 [`Self::tree`] 上等待的任务; `tree_weight` / `tree_sum_w_vr`;
+/// - **运行账**: 已被 [`Self::pick_next`] / [`Self::pick_eevdf`] 拣出、正在本核
+///   运行的任务; `running_weight` / `running_sum_w_vr`。
+///
+/// 由此得到 EEVDF 的两个对账量: `W = tree_weight + running_weight`,
+/// `S = tree_sum_w_vr + running_sum_w_vr`, `V = floor(S / W)`。
+///
+/// `total_weight` 只是 `W` 的对外缓存: 每次结构变更后由 `sync_total_weight` 从
+/// 账目重算, **不再**由调用方按传入权重增减。旧模型按调用方权重扣账, 排队期间
+/// nice 变更或陈旧凭证都会让 `W` 漂移; 结构记账使这一点在构造上不可能。
+///
+/// IE2 (账目完备) 由三类写路径共同维持: 入队只落树账, 拣出把同一笔账从树移到
+/// 运行账, 出队从两账之一摘除。`enqueue` / `dequeue` 先按 pid 摘除任意既有记账
+/// 再动作, 因此重复调用幂等, 且同一任务不会同时出现在两账里。
 pub struct CfsRunQueue {
-    /// 可运行任务树, 键 = (vruntime, pid) (IC2 唯一真相)
+    /// 可运行任务树, 键 = (vruntime, pid) (IC2 唯一真相)。
+    ///
+    /// 只读视图: 所有写路径必须经本 impl, 否则结构与账目立即背离。
     pub tree: BTreeSet<(u64, Pid)>,
     /// 本核 vruntime 下界 (IC3: 单调不减)。字段刻意私有 —— 只允许经
     /// [`Self::floor`] 读、[`Self::advance_floor`] 写, 防止调用点重新引入
     /// "重设"语义。
     min_vruntime: AtomicU64,
-    /// 可运行集权重和 (树上 + 正在本核运行的)
+    /// 可运行集权重和 `W` 的对外缓存 (由账目派生, 只读)。
     pub total_weight: AtomicU64,
+    /// 树账: pid → 记账副本。
+    tree_ledger: BTreeMap<Pid, QueuedTask>,
+    /// 树账权重和。
+    tree_weight: u64,
+    /// 树账加权虚拟时间 `Σ w * vr`。
+    tree_sum_w_vr: u128,
+    /// 运行账: 已被拣出、正在本核运行的任务。
+    running_ledger: BTreeMap<Pid, QueuedTask>,
+    /// 运行账权重和。
+    running_weight: u64,
+    /// 运行账加权虚拟时间 `Σ w * vr`。
+    running_sum_w_vr: u128,
 }
 
 impl Default for CfsRunQueue {
@@ -183,6 +264,12 @@ impl CfsRunQueue {
             tree: BTreeSet::new(),
             min_vruntime: AtomicU64::new(0),
             total_weight: AtomicU64::new(0),
+            tree_ledger: BTreeMap::new(),
+            tree_weight: 0,
+            tree_sum_w_vr: 0,
+            running_ledger: BTreeMap::new(),
+            running_weight: 0,
+            running_sum_w_vr: 0,
         }
     }
 
@@ -213,6 +300,78 @@ impl CfsRunQueue {
         self.tree.len()
     }
 
+    /// 运行账中的任务数 (正在本核运行, 已离树但仍在可运行集)。
+    #[inline]
+    pub fn running_count(&self) -> usize {
+        self.running_ledger.len()
+    }
+
+    /// `pid` 当前是否在树账中。
+    #[inline]
+    pub fn is_on_tree(&self, pid: Pid) -> bool {
+        self.tree_ledger.contains_key(&pid)
+    }
+
+    /// `pid` 当前是否在运行账中。
+    #[inline]
+    pub fn is_running(&self, pid: Pid) -> bool {
+        self.running_ledger.contains_key(&pid)
+    }
+
+    /// 读取 `pid` 的树账副本 (落点 + 记账权重)。
+    #[inline]
+    pub fn tree_task(&self, pid: Pid) -> Option<QueuedTask> {
+        self.tree_ledger.get(&pid).copied()
+    }
+
+    /// 读取 `pid` 的运行账副本 (落点 + 记账权重)。
+    #[inline]
+    pub fn running_task(&self, pid: Pid) -> Option<QueuedTask> {
+        self.running_ledger.get(&pid).copied()
+    }
+
+    /// 树账权重和。
+    #[inline]
+    pub fn tree_weight(&self) -> u64 {
+        self.tree_weight
+    }
+
+    /// 树账加权虚拟时间 `Σ w * vr`。
+    #[inline]
+    pub fn tree_sum_w_vr(&self) -> u128 {
+        self.tree_sum_w_vr
+    }
+
+    /// 运行账权重和。
+    #[inline]
+    pub fn running_weight(&self) -> u64 {
+        self.running_weight
+    }
+
+    /// 运行账加权虚拟时间 `Σ w * vr`。
+    #[inline]
+    pub fn running_sum_w_vr(&self) -> u128 {
+        self.running_sum_w_vr
+    }
+
+    /// 可运行集加权虚拟时间 `S = 树账 + 运行账`。
+    #[inline]
+    pub fn sum_w_vr(&self) -> u128 {
+        self.tree_sum_w_vr.saturating_add(self.running_sum_w_vr)
+    }
+
+    /// 可运行集权重和 `W = 树账 + 运行账` (EEVDF 的派生真值)。
+    #[inline]
+    pub fn runnable_weight(&self) -> u64 {
+        self.tree_weight.saturating_add(self.running_weight)
+    }
+
+    /// 本核加权平均虚拟时间 `V = floor(S / W)`; `W == 0` 时为 0。
+    #[inline]
+    pub fn avg_vruntime(&self) -> u64 {
+        weighted_avg_vruntime(self.runnable_weight(), self.sum_w_vr())
+    }
+
     /// IC1 时基对齐: 把任意 vruntime 收进本队列的单一时间域
     /// `[floor - MIN_GRANULARITY, +∞)`。
     ///
@@ -229,67 +388,217 @@ impl CfsRunQueue {
 
     /// 入队 (**幂等**): 把 `pid` 放到 IC1 钳制后的位置, 返回该位置。
     ///
-    /// `accounted` = 该任务的权重是否已在 `total_weight` 中 (调用方以
-    /// `Process::cfs_on_rq` 承载)。已在队者重复入队只是**移动**其节点 (唤醒重投 /
-    /// 迁移回源), 不二次记账 —— "每睡眠周期净漏 +1"那类记账泄漏由此构造性消灭。
+    /// 记账以**结构真相**为准: 无论 `accounted` 为何, 先按 pid 摘除树账与运行账中
+    /// 的任意既有记录再重投。于是重复唤醒 / 迁移回源只是移动节点, 天然幂等;
+    /// "凭证为 true 但历史记账已漏"的状态也会被这次重投修复。
+    ///
+    /// `accounted` 是调用方持有的 `Process::cfs_on_rq` 凭证, 保留在签名里使调用点
+    /// 的语义显式 (真正的陈旧凭证判定在 [`Self::dequeue`])。
     ///
     /// 调用方**必须**把返回值回写 `Process::cfs_vruntime`, 否则 IC1 不成立。
     pub fn enqueue(&mut self, pid: Pid, vruntime: u64, weight: u64, accounted: bool) -> u64 {
-        self.remove_pid(pid);
+        let _ = accounted;
+        let _ = self.remove_tree_task(pid);
+        let _ = self.remove_running_task(pid);
         let placed = self.placement(vruntime);
-        self.tree.insert((placed, pid));
-        if !accounted {
-            self.total_weight.fetch_add(weight, Ordering::Release);
-        }
+        self.record_tree(QueuedTask {
+            pid,
+            vruntime: placed,
+            weight,
+        });
+        self.sync_total_weight();
         placed
-    }
-
-    /// 把 `pid` 从树上摘除, 返回其原 vruntime; **不动** `total_weight`。
-    ///
-    /// 键含 vruntime 而调用方只知 pid, 故按 pid 线性扫描: 任务上限 255, 且
-    /// 仅发生在入队去重/阻塞/迁移路径 (非 tick 热路), 优于另存一份 pid→键索引
-    /// (那本身就是又一处会背离的记账)。
-    fn remove_pid(&mut self, pid: Pid) -> Option<u64> {
-        let key = self.tree.iter().find(|&&(_, p)| p == pid).copied();
-        match key {
-            Some((vr, _)) => {
-                self.tree.remove(&(vr, pid));
-                Some(vr)
-            }
-            None => None,
-        }
     }
 
     /// 出队: 让 `pid` 离开可运行集 (阻塞 / 退出 / 被拣出但不可调度)。
     ///
-    /// `accounted` 同 [`Self::enqueue`]; 未记账者幂等返回 (不二次扣权重)。
-    /// 返回该 pid 当时是否在树上。
+    /// 扣减量一律取**账目中的权重**; `weight` 参数可能在排队期间因 nice 变更而过期,
+    /// 用过期值扣账正是旧模型 `total_weight` 漂移的来源。返回该 pid 当时是否在树上。
+    ///
+    /// 幂等: 结构上已无可摘除的记录时不二次扣账。`accounted == true` 却查无此人
+    /// 即陈旧凭证 —— 仍按结构真相 no-op, 只把派生缓存重新对齐一次。
     pub fn dequeue(&mut self, pid: Pid, weight: u64, accounted: bool) -> bool {
-        let existed = self.remove_pid(pid).is_some();
+        let _ = weight;
+        let was_on_tree = self.remove_tree_task(pid).is_some();
+        let was_running = self.remove_running_task(pid).is_some();
+        if was_on_tree || was_running {
+            self.sync_total_weight();
+            return was_on_tree;
+        }
         if accounted {
-            let mut prev = self.total_weight.load(Ordering::Acquire);
-            loop {
-                let new = prev.saturating_sub(weight);
-                match self.total_weight.compare_exchange_weak(
-                    prev,
-                    new,
-                    Ordering::Release,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break,
-                    Err(actual) => prev = actual,
+            self.sync_total_weight();
+        }
+        false
+    }
+
+    /// 在 rq 锁内变更排队任务的权重 (E-02 的 `set_nice` 接线入口)。
+    ///
+    /// 只改账目权重, 不改落点与树键 —— 相对次序由 vruntime 决定, 权重只影响后续
+    /// 的 `Δvr` / 切片与 `V`。`pid` 不在可运行集中时返回 `false` (不产生幽灵账)。
+    pub fn reweight(&mut self, pid: Pid, weight: u64) -> bool {
+        if let Some(old) = self.tree_ledger.get(&pid).copied() {
+            self.tree_weight = self
+                .tree_weight
+                .saturating_sub(old.weight)
+                .saturating_add(weight);
+            self.tree_sum_w_vr = self
+                .tree_sum_w_vr
+                .saturating_sub(u128::from(old.weight) * u128::from(old.vruntime))
+                .saturating_add(u128::from(weight) * u128::from(old.vruntime));
+            self.tree_ledger.insert(pid, QueuedTask { weight, ..old });
+            self.sync_total_weight();
+            return true;
+        }
+        if let Some(old) = self.running_ledger.get(&pid).copied() {
+            self.running_weight = self
+                .running_weight
+                .saturating_sub(old.weight)
+                .saturating_add(weight);
+            self.running_sum_w_vr = self
+                .running_sum_w_vr
+                .saturating_sub(u128::from(old.weight) * u128::from(old.vruntime))
+                .saturating_add(u128::from(weight) * u128::from(old.vruntime));
+            self.running_ledger
+                .insert(pid, QueuedTask { weight, ..old });
+            self.sync_total_weight();
+            return true;
+        }
+        false
+    }
+
+    /// 推进运行账中任务的 vruntime (tick 记账入口, E-04 接线)。
+    ///
+    /// 只更新运行账的加权和, `W` 不变。vruntime 回退返回 `false` 且不改任何账目:
+    /// 运行任务的虚拟时间只增不减。
+    pub fn advance_running_vruntime(&mut self, pid: Pid, vruntime: u64) -> bool {
+        let Some(old) = self.running_ledger.get(&pid).copied() else {
+            return false;
+        };
+        if vruntime < old.vruntime {
+            return false;
+        }
+        if vruntime == old.vruntime {
+            return true;
+        }
+        self.running_sum_w_vr = self
+            .running_sum_w_vr
+            .saturating_sub(u128::from(old.weight) * u128::from(old.vruntime))
+            .saturating_add(u128::from(old.weight) * u128::from(vruntime));
+        self.running_ledger
+            .insert(pid, QueuedTask { vruntime, ..old });
+        true
+    }
+
+    /// 拣出最小 vruntime 者。把同一笔账从树账**移入**运行账 (W/S 不变),
+    /// 语义同 Linux 的"当前运行任务仍属可运行集"。
+    pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
+        let pid = self.tree.first()?.1;
+        let task = self.activate_tree_task(pid)?;
+        Some((task.pid, task.vruntime))
+    }
+
+    /// EEVDF 选择 (D7: 单树合格前缀 + 线性 `(vd, pid)` 选择)。
+    ///
+    /// 选择规则 (与 `host-tests/src/eevdf_model.rs` 冻结口径逐项一致):
+    ///
+    /// 1. 由本队列账目算 `W` / `S` / `V = floor(S / W)`。`current` 若**未**在本队列
+    ///    记账 (树账与运行账都没有它), 其 `weight` 与 `weight * vruntime` 临时并入
+    ///    `W` / `S` —— 覆盖 boot 期经 `keep_current` 上核、从未入队的任务。
+    /// 2. 合格集合 = `vr <= V` 的树内前缀 + 合格的 `current`。
+    /// 3. 取 `(vdeadline, pid)` 最小者; 树内任务的截止期由 `vdeadline_of` 提供,
+    ///    缺省 (未建账) 按 `vd = vruntime` 参与选择。
+    /// 4. 无合格者 (账目完备时不可达) 回退: `current.vr <= 树左端` 保持 current,
+    ///    否则拣树左端。
+    ///
+    /// 树内胜者会被移入运行账 (`from_tree == true`); `current` 胜出时只回报, 不动
+    /// 账目 (`from_tree == false`)。调用方在 `from_tree == true` 时必须自行把旧
+    /// `current` 出队或重投 —— 本函数不知道调用方以何种策略处理被切走者。
+    pub fn pick_eevdf(
+        &mut self,
+        current: Option<EevdfTaskView>,
+        mut vdeadline_of: impl FnMut(Pid) -> Option<u64>,
+    ) -> Option<EevdfPick> {
+        let mut weight = self.runnable_weight();
+        let mut weighted_sum = self.sum_w_vr();
+        if let Some(view) = current
+            && !self.tree_ledger.contains_key(&view.pid)
+            && !self.running_ledger.contains_key(&view.pid)
+        {
+            weight = weight.saturating_add(view.weight);
+            weighted_sum =
+                weighted_sum.saturating_add(u128::from(view.weight) * u128::from(view.vruntime));
+        }
+        let avg = weighted_avg_vruntime(weight, weighted_sum);
+
+        // 合格树前缀: vr <= V 即 vr*W <= S (V 是 floor(S/W), 前缀判定无需再乘).
+        let mut best: Option<(u64, Pid)> = None;
+        if weight != 0 {
+            for &(vruntime, pid) in self.tree.range(..=(avg, Pid::MAX)) {
+                let vdeadline = vdeadline_of(pid).unwrap_or(vruntime);
+                let candidate = (vdeadline, pid);
+                if best.is_none_or(|winner| candidate < winner) {
+                    best = Some(candidate);
                 }
             }
         }
-        existed
-    }
+        if let Some(view) = current
+            && !self.tree_ledger.contains_key(&view.pid)
+            && is_eligible(view.vruntime, weight, weighted_sum)
+        {
+            let candidate = (view.vdeadline, view.pid);
+            if best.is_none_or(|winner| candidate < winner) {
+                best = Some(candidate);
+            }
+        }
 
-    /// 拣出最小 vruntime 者。不动记账也不动 floor: 被拣者随即上核运行,
-    /// 仍在可运行集中 (语义同 Linux `deactivate_task` 之外的"当前运行任务")。
-    pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
-        let &(vruntime, pid) = self.tree.first()?;
-        self.tree.remove(&(vruntime, pid));
-        Some((pid, vruntime))
+        if let Some((vdeadline, pid)) = best {
+            if let Some(view) = current
+                && view.pid == pid
+            {
+                return Some(EevdfPick {
+                    pid,
+                    vruntime: view.vruntime,
+                    vdeadline,
+                    from_tree: false,
+                });
+            }
+            let task = self.activate_tree_task(pid)?;
+            return Some(EevdfPick {
+                pid,
+                vruntime: task.vruntime,
+                vdeadline,
+                from_tree: true,
+            });
+        }
+
+        // 防御性回退: 账目完备时合格集合非空 (min(vr) <= V), 故本支只承接空集
+        // 与非法权重 (w == 0) 两种退化状态.
+        let Some((leftmost_vr, leftmost_pid)) = self.tree.first().copied() else {
+            return current.map(|view| EevdfPick {
+                pid: view.pid,
+                vruntime: view.vruntime,
+                vdeadline: view.vdeadline,
+                from_tree: false,
+            });
+        };
+        if let Some(view) = current
+            && view.vruntime <= leftmost_vr
+        {
+            return Some(EevdfPick {
+                pid: view.pid,
+                vruntime: view.vruntime,
+                vdeadline: view.vdeadline,
+                from_tree: false,
+            });
+        }
+        let vdeadline = vdeadline_of(leftmost_pid).unwrap_or(leftmost_vr);
+        let task = self.activate_tree_task(leftmost_pid)?;
+        Some(EevdfPick {
+            pid: leftmost_pid,
+            vruntime: task.vruntime,
+            vdeadline,
+            from_tree: true,
+        })
     }
 
     /// 按 vruntime 升序把至多 `out.len()` 个**在树上的** pid 写入 `out`, 返回个数。
@@ -309,19 +618,15 @@ impl CfsRunQueue {
         n
     }
 
-    /// 按权重占比计算时间片 (tick); 下限为最小粒度
+    /// 按权重占比计算默认真实切片 (tick): `W_inc` 取当前可运行集权重和
+    /// (调用方须保证本任务已计入, 语义同 EEVDF Requeue)。
     pub fn calc_time_slice(&self, weight: u64) -> u64 {
-        let total_w = self.total_weight.load(Ordering::Acquire);
-        if total_w == 0 || weight == 0 {
-            return MIN_GRANULARITY_TICKS;
-        }
-        let slice = TARGET_LATENCY_TICKS.saturating_mul(weight) / total_w;
-        slice.max(MIN_GRANULARITY_TICKS)
+        default_slice_real(weight, self.total_weight.load(Ordering::Acquire))
     }
 
-    /// 读取可运行集权重和 (负载均衡判据)
+    /// 读取可运行集权重和 (负载均衡判据; 由账目派生)。
     pub fn get_weighted_load(&self) -> u64 {
-        self.total_weight.load(Ordering::Acquire)
+        self.runnable_weight()
     }
 
     /// 树上是否无任务 (IC2: 结构即真相)
@@ -331,11 +636,61 @@ impl CfsRunQueue {
         self.tree.is_empty()
     }
 
-    /// 摘出树上 vruntime 最大者 (跨核偷取候选), 返回 (pid, vruntime)
-    pub fn steal_highest_vruntime(&mut self) -> Option<(Pid, u64)> {
-        let &(vruntime, pid) = self.tree.last()?;
-        self.tree.remove(&(vruntime, pid));
-        Some((pid, vruntime))
+    /// 把 `W` 缓存重新对齐到账目真值。
+    fn sync_total_weight(&self) {
+        self.total_weight.store(
+            self.tree_weight.saturating_add(self.running_weight),
+            Ordering::Release,
+        );
+    }
+
+    /// 把一笔账记入树账 (调用方保证该 pid 不在树账/运行账中)。
+    fn record_tree(&mut self, task: QueuedTask) {
+        self.tree.insert((task.vruntime, task.pid));
+        self.tree_weight = self.tree_weight.saturating_add(task.weight);
+        self.tree_sum_w_vr = self
+            .tree_sum_w_vr
+            .saturating_add(u128::from(task.weight) * u128::from(task.vruntime));
+        self.tree_ledger.insert(task.pid, task);
+    }
+
+    /// 把一笔账记入运行账 (调用方保证该 pid 不在运行账中)。
+    fn record_running(&mut self, task: QueuedTask) {
+        self.running_weight = self.running_weight.saturating_add(task.weight);
+        self.running_sum_w_vr = self
+            .running_sum_w_vr
+            .saturating_add(u128::from(task.weight) * u128::from(task.vruntime));
+        self.running_ledger.insert(task.pid, task);
+    }
+
+    /// 按 pid 摘除树账 (节点 + 权重 + 加权和), 返回原账目副本。
+    fn remove_tree_task(&mut self, pid: Pid) -> Option<QueuedTask> {
+        let task = self.tree_ledger.remove(&pid)?;
+        self.tree.remove(&(task.vruntime, pid));
+        self.tree_weight = self.tree_weight.saturating_sub(task.weight);
+        self.tree_sum_w_vr = self
+            .tree_sum_w_vr
+            .saturating_sub(u128::from(task.weight) * u128::from(task.vruntime));
+        Some(task)
+    }
+
+    /// 按 pid 摘除运行账, 返回原账目副本。
+    fn remove_running_task(&mut self, pid: Pid) -> Option<QueuedTask> {
+        let task = self.running_ledger.remove(&pid)?;
+        self.running_weight = self.running_weight.saturating_sub(task.weight);
+        self.running_sum_w_vr = self
+            .running_sum_w_vr
+            .saturating_sub(u128::from(task.weight) * u128::from(task.vruntime));
+        Some(task)
+    }
+
+    /// 拣出树账中的 `pid`: 同一笔账从树移到运行账 (`W` / `S` 不变)。
+    fn activate_tree_task(&mut self, pid: Pid) -> Option<QueuedTask> {
+        let task = self.remove_tree_task(pid)?;
+        let _ = self.remove_running_task(pid);
+        self.record_running(task);
+        self.sync_total_weight();
+        Some(task)
     }
 }
 
@@ -440,6 +795,98 @@ pub fn cfs_should_preempt(curr_vruntime: u64, next_vruntime: u64, weight: u64) -
     let base = MIN_GRANULARITY_TICKS.saturating_mul(NICE0_WEIGHT);
     let threshold = base.checked_div(weight).unwrap_or(base);
     curr_vruntime.saturating_sub(next_vruntime) > threshold
+}
+
+// ============================================================================
+// EEVDF 纯函数 (E-03; 口径冻结于 E-01 参考模型)
+// ============================================================================
+
+/// 单 tick 虚拟时间增量 `Δvr = max(1, (NICE0 << 16) / w)`; `w == 0` 按 NICE0 退化。
+///
+/// 与整数域的 [`calc_vruntime_delta`] 是同一公式的两个量纲: 本函数输出 Q16.16
+/// 定点, 供 EEVDF 的 `vr` / `vd` / `slice_virt` 使用; 整数版仍服务既有 tick 路径,
+/// 待 E-04 切换生产时基后由本函数接管。
+#[inline]
+#[must_use]
+pub fn calc_vruntime_delta_virt(weight: u64) -> u64 {
+    let effective = if weight == 0 { NICE0_WEIGHT } else { weight };
+    ((NICE0_WEIGHT << VIRT_SHIFT) / effective).max(1)
+}
+
+/// 默认真实切片 (tick): `max(MIN, min(TARGET, TARGET * w / W_inc))`。
+///
+/// `W_inc` 必须**已包含本任务** (Wake 用 `W_before + w`, Requeue 用当前已含本任务
+/// 的 `W`); `w == 0` 或 `W_inc == 0` 退化为最小粒度。
+#[inline]
+#[must_use]
+pub fn default_slice_real(weight: u64, weight_incl: u64) -> u64 {
+    if weight == 0 || weight_incl == 0 {
+        return MIN_GRANULARITY_TICKS;
+    }
+    let fair = TARGET_LATENCY_TICKS.saturating_mul(weight) / weight_incl;
+    fair.clamp(MIN_GRANULARITY_TICKS, TARGET_LATENCY_TICKS)
+}
+
+/// 虚拟切片 `slice_virt = Δvr(w) * slice_real` —— 与逐 tick 记账严格对齐
+/// (切片到期时 `vr` 恰好推进一个 `slice_virt`)。
+#[inline]
+#[must_use]
+pub fn slice_virt_of(slice_real: u64, weight: u64) -> u64 {
+    calc_vruntime_delta_virt(weight).saturating_mul(slice_real)
+}
+
+/// D8③ 请求切片统一夹取到 `[MIN_GRANULARITY, TARGET_LATENCY]`。
+#[inline]
+#[must_use]
+pub fn clamp_requested_slice(requested: u64) -> u64 {
+    requested.clamp(MIN_GRANULARITY_TICKS, TARGET_LATENCY_TICKS)
+}
+
+/// 建账时的真实切片: 有请求用请求 (夹取后), 否则用默认公式。
+#[inline]
+#[must_use]
+pub fn effective_slice_real(weight: u64, weight_incl: u64, requested: Option<u64>) -> u64 {
+    requested.map_or_else(
+        || default_slice_real(weight, weight_incl),
+        clamp_requested_slice,
+    )
+}
+
+/// 加权平均虚拟时间 `V = floor(S / W)`; `W == 0` 返回 0, 商溢出饱和到 `u64::MAX`。
+#[inline]
+#[must_use]
+pub fn weighted_avg_vruntime(total_weight: u64, sum_w_vr: u128) -> u64 {
+    if total_weight == 0 {
+        return 0;
+    }
+    u64::try_from(sum_w_vr / u128::from(total_weight)).unwrap_or(u64::MAX)
+}
+
+/// 合格判定 `vr * W <= S` (u128 交叉乘法, 避免除法舍入改变符号)。
+#[inline]
+#[must_use]
+pub fn is_eligible(vr: u64, total_weight: u64, sum_w_vr: u128) -> bool {
+    if total_weight == 0 {
+        return false;
+    }
+    u128::from(vr) * u128::from(total_weight) <= sum_w_vr
+}
+
+/// 虚拟截止期 `vd = vr + slice_virt`。
+#[inline]
+#[must_use]
+pub fn virtual_deadline(vruntime: u64, slice_virt: u64) -> u64 {
+    vruntime.saturating_add(slice_virt)
+}
+
+/// Wake 落点: `max(vr_raw, V_before - slice_virt)`。
+///
+/// 睡眠信用上界恰好一个虚拟切片; `vr_raw > V_before` 时保留负 lag (欠账),
+/// 不为睡眠时间制造信用。
+#[inline]
+#[must_use]
+pub fn wake_vruntime(vr_raw: u64, avg_before: u64, slice_virt: u64) -> u64 {
+    vr_raw.max(avg_before.saturating_sub(slice_virt))
 }
 
 // ============================================================================
@@ -788,5 +1235,202 @@ mod tests {
         assert!(q.pick_next().is_none());
         assert!(q.is_empty());
         assert_eq!(q.len(), 0);
+    }
+
+    /// 12. EEVDF 纯函数: Q16.16 增量 / 切片 / 请求夹取 / 平均 / 合格 / 唤醒钳制.
+    #[test]
+    fn test_sched_eevdf_pure_functions() {
+        // Δvr 全 40 档随权重严格递减, nice0 = 1.0.
+        let mut previous = u64::MAX;
+        for nice in (-20..=19).rev() {
+            let weight = nice_to_weight(nice);
+            let delta = calc_vruntime_delta_virt(weight);
+            assert_eq!(delta, (NICE0_WEIGHT << VIRT_SHIFT) / weight);
+            assert!(delta < previous, "nice {nice} 的 Δvr 未随权重严格递减");
+            previous = delta;
+        }
+        assert_eq!(calc_vruntime_delta_virt(NICE0_WEIGHT), VIRT_ONE);
+        assert_eq!(calc_vruntime_delta_virt(0), VIRT_ONE, "w=0 按 NICE0 退化");
+        assert_eq!(calc_vruntime_delta_virt(u64::MAX), 1, "商为 0 时下限为 1");
+
+        // 默认切片: W_inc 含本任务, 结果落在 [MIN, TARGET].
+        assert_eq!(
+            default_slice_real(NICE0_WEIGHT, NICE0_WEIGHT),
+            TARGET_LATENCY_TICKS
+        );
+        assert_eq!(
+            default_slice_real(NICE0_WEIGHT, 2 * NICE0_WEIGHT),
+            TARGET_LATENCY_TICKS / 2
+        );
+        assert_eq!(
+            default_slice_real(NICE0_WEIGHT, 100 * NICE0_WEIGHT),
+            MIN_GRANULARITY_TICKS
+        );
+        assert_eq!(default_slice_real(0, NICE0_WEIGHT), MIN_GRANULARITY_TICKS);
+        assert_eq!(default_slice_real(NICE0_WEIGHT, 0), MIN_GRANULARITY_TICKS);
+
+        // 请求切片夹取; slice_virt 与逐 tick 记账对齐.
+        assert_eq!(clamp_requested_slice(0), MIN_GRANULARITY_TICKS);
+        assert_eq!(clamp_requested_slice(1000), TARGET_LATENCY_TICKS);
+        assert_eq!(clamp_requested_slice(30), 30);
+        assert_eq!(
+            effective_slice_real(NICE0_WEIGHT, 2 * NICE0_WEIGHT, None),
+            TARGET_LATENCY_TICKS / 2
+        );
+        assert_eq!(
+            effective_slice_real(NICE0_WEIGHT, 2 * NICE0_WEIGHT, Some(2)),
+            MIN_GRANULARITY_TICKS
+        );
+        let requested = clamp_requested_slice(30);
+        let virt = slice_virt_of(requested, NICE0_WEIGHT);
+        assert_eq!(virt, 30 * VIRT_ONE);
+        assert_eq!(virtual_deadline(100, virt), 100 + virt);
+
+        // W/S/V 与合格判定.
+        assert_eq!(weighted_avg_vruntime(0, 0), 0);
+        assert_eq!(weighted_avg_vruntime(2048, u128::from(2048u64) * 100), 100);
+        assert!(!is_eligible(0, 0, 0), "W=0 时无合格者");
+        assert!(is_eligible(100, 2048, u128::from(2048u64) * 100));
+        assert!(!is_eligible(101, 2048, u128::from(2048u64) * 100));
+
+        // Wake 信用钳制: 上界 = 一个 slice_virt; 欠账不补偿.
+        assert_eq!(wake_vruntime(0, 1000, 200), 800);
+        assert_eq!(wake_vruntime(900, 1000, 200), 900);
+    }
+
+    /// 13. EEVDF 账目: 树账/运行账分解, 结构真相与权重守恒.
+    #[test]
+    fn test_sched_cfs_eevdf_ledgers_reconcile() {
+        let mut q = CfsRunQueue::new();
+        q.enqueue(1, 100, 1024, false);
+        q.enqueue(2, 200, 2048, false);
+        assert_eq!(q.tree_weight(), 3072);
+        assert_eq!(q.running_weight(), 0);
+        assert_eq!(q.get_weighted_load(), 3072);
+        // (1024*100 + 2048*200) / 3072 = 166.67 -> 166
+        assert_eq!(q.avg_vruntime(), 166);
+        assert!(q.is_on_tree(1));
+        assert_eq!(
+            q.tree_task(1),
+            Some(QueuedTask {
+                pid: 1,
+                vruntime: 100,
+                weight: 1024
+            })
+        );
+
+        // 拣出 = 同一笔账从树移到运行, W/S 不变.
+        let (pid, vr) = q.pick_next().unwrap();
+        assert_eq!((pid, vr), (1, 100));
+        assert!(q.is_running(1));
+        assert_eq!(q.running_count(), 1);
+        assert_eq!(q.tree_weight(), 2048);
+        assert_eq!(q.running_weight(), 1024);
+        assert_eq!(q.get_weighted_load(), 3072);
+        assert_eq!(
+            q.sum_w_vr(),
+            u128::from(1024u64) * 100 + u128::from(2048u64) * 200
+        );
+
+        // 排队期间权重变更: 只改账, 不改落点.
+        assert!(q.reweight(2, 4096));
+        assert_eq!(q.tree_weight(), 4096);
+        assert_eq!(q.get_weighted_load(), 5120);
+        assert!(!q.reweight(99, 1), "不在可运行集者不得产生幽灵账");
+        assert!(q.reweight(1, 512));
+        assert_eq!(q.running_weight(), 512);
+
+        // 运行账 vruntime 单调推进: sum 随增量同步.
+        let before = q.running_sum_w_vr();
+        assert!(q.advance_running_vruntime(1, 140));
+        assert_eq!(q.running_sum_w_vr(), before + u128::from(512u64) * 40);
+        assert!(
+            !q.advance_running_vruntime(1, 100),
+            "vruntime 回退不得改动账目"
+        );
+
+        // 出队以结构记账为准: 传入陈旧权重不影响扣减量.
+        assert!(!q.dequeue(1, u64::MAX, true), "运行账成员出树 -> false");
+        assert!(q.running_task(1).is_none());
+        assert_eq!(q.running_weight(), 0);
+        assert_eq!(q.get_weighted_load(), 4096);
+        assert!(q.dequeue(2, u64::MAX, true), "树账成员出队 -> true");
+        assert_eq!(q.get_weighted_load(), 0);
+        assert_eq!(q.total_weight.load(Ordering::Acquire), 0);
+    }
+
+    /// 14. EEVDF 选择: 合格前缀 + (vd, pid) 最小, 拣出即入运行账.
+    #[test]
+    fn test_sched_eevdf_pick_eligible_prefix_and_deadline() {
+        let mut q = CfsRunQueue::new();
+        // W = 3072, S = 460800, V = 150; 合格集合 = {1, 3}, pid 2 (vr=200) 不合格.
+        q.enqueue(1, 100, 1024, false);
+        q.enqueue(2, 200, 1024, false);
+        q.enqueue(3, 150, 1024, false);
+        let deadlines = [(1u32, 50u64), (2, 10), (3, 60)];
+        let pick = q
+            .pick_eevdf(None, |pid| {
+                deadlines
+                    .iter()
+                    .find(|&&(candidate, _)| candidate == pid)
+                    .map(|&(_, vd)| vd)
+            })
+            .unwrap();
+        assert_eq!(pick.pid, 1, "合格集合中应取 (vd, pid) 最小者");
+        assert!(pick.from_tree);
+        assert!(q.is_running(1));
+        assert!(!q.is_on_tree(1));
+        assert_eq!(q.tree_weight(), 2048);
+        assert_eq!(q.running_weight(), 1024);
+
+        // 截止期并列时按 pid 决胜.
+        let mut q = CfsRunQueue::new();
+        q.enqueue(4, 100, 1024, false);
+        q.enqueue(3, 100, 1024, false);
+        let pick = q.pick_eevdf(None, |_| Some(10)).unwrap();
+        assert_eq!(pick.pid, 3, "vd 并列必须按 pid 升序决胜");
+    }
+
+    /// 15. EEVDF current-aware: 合格 current 与树候选同台比较; 空集回退.
+    #[test]
+    fn test_sched_eevdf_current_aware_and_fallback() {
+        // current 不合格 (lag < 0) 时, 即使 vd 更小也不得参选.
+        let mut q = CfsRunQueue::new();
+        q.enqueue(2, 200, 1024, false);
+        let current = EevdfTaskView {
+            pid: 9,
+            vruntime: 100,
+            vdeadline: 5,
+            weight: 1024,
+        };
+        // W = 2048, S = 307200, V = 150; 树内 vr=200 在合格前缀之外.
+        let pick = q.pick_eevdf(Some(current), |_| Some(1)).unwrap();
+        assert_eq!(pick.pid, 9, "不合格的 current 不得因 vd 更小而胜出");
+        assert!(!pick.from_tree);
+        assert_eq!(q.running_count(), 0, "current 胜出时不动账目");
+
+        // 两者都合格时按 (vd, pid) 比较, 树候选 vd 更小则切换.
+        let mut q = CfsRunQueue::new();
+        q.enqueue(2, 100, 1024, false);
+        let current = EevdfTaskView {
+            pid: 9,
+            vruntime: 100,
+            vdeadline: 70,
+            weight: 1024,
+        };
+        let pick = q
+            .pick_eevdf(Some(current), |pid| if pid == 2 { Some(50) } else { None })
+            .unwrap();
+        assert_eq!(pick.pid, 2, "合格集合内 (vd, pid) 最小者胜出");
+        assert!(pick.from_tree);
+        assert!(q.is_running(2));
+
+        // 防御性回退: W = 0 时无合格者, 仍须给出确定选择 (vd 缺省取 vr).
+        let mut q = CfsRunQueue::new();
+        q.enqueue(7, 42, 0, false);
+        let pick = q.pick_eevdf(None, |_| None).unwrap();
+        assert_eq!(pick.pid, 7);
+        assert!(pick.from_tree);
+        assert_eq!(pick.vdeadline, 42, "未建账任务按 vd = vr 参与选择");
     }
 }

@@ -150,8 +150,8 @@ fn test_cross_rq_transfer_moves_accounting_exactly_once() {
     dst.enqueue(3, 5, 100, true);
     assert_eq!(dst.total_weight.load(Ordering::Acquire), 100);
 
-    // 反面事实 (归属凭证为何必须与记账同清): 对已不在本树的任务按 accounted=true
-    // 撤账, 权重就被凭空扣掉 —— 正是"陈旧归属再撤一次"的账目后果.
+    // 陈旧凭证不得二次扣账: 第二次 accounted=true 出队按结构真相 no-op ——
+    // E-03 起扣减量取结构记账, 不再按调用方传入的权重执行.
     dst.dequeue(3, 100, true);
     dst.dequeue(3, 100, true);
     assert_eq!(dst.total_weight.load(Ordering::Acquire), 0);

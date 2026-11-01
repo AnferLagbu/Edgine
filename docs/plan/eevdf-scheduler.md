@@ -160,7 +160,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - **E-03. EEVDF 队列机制与纯函数**（先于 E-02 落地，消除账目循环依赖）
   - 描述：为 `CfsRunQueue` 引入树账/运行账分解（`tree_weight`/`tree_sum_w_vr` + 每核 `running_*`）、`V` 计算、合格前缀判定、虚拟截止期与 `pick_eevdf`；把切片计算从「仅测试调用」变为生产切片来源；保留 IC1-IC3 与幂等入队/撤账语义。
   - 方案：先实现不接生产 tick 的纯函数与属性测试（暴力重算/资格集合/无重复节点/权重守恒/运行账并入）；`pick_eevdf` 按 D7 用单树合格前缀 + 线性 `(vd, pid)` 选择；提供 rq 锁内的权重变更入口供 E-02 调用；所有写路径在同一 rq 锁内更新对应账目。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：`CfsRunQueue` 增树账（`tree_ledger` + `tree_weight`/`tree_sum_w_vr`）与运行账（`running_ledger` + `running_weight`/`running_sum_w_vr`），`total_weight` 由两账同步派生；新增 rq 锁内入口 `reweight` / `advance_running_vruntime` 供 E-02/E-04 使用，`pick_eevdf` 按 D7 做单树合格前缀筛选 + current-aware 兜底 + 最小 `(vd, pid)`；9 个纯函数（Q16.16 增量、默认/请求切片、`V`、资格、`vd`、唤醒钳制）落地且全部与 E-01 模型对拍。`Process` 增 `eevdf_vdeadline` / `eevdf_slice_real` / `eevdf_slice_virt` / `eevdf_slice_left` / `eevdf_requested_slice` 五字段（0 = 未构建/无请求）。回归锁：[eevdf_queue_mechanism_test.rs](../../host-tests/tests/eevdf_queue_mechanism_test.rs) 8 项（模型对拍 / 2000 步随机账目暴力对账 / 800 组选择对拍 / 迁移守恒 / 255 边界 / stale 凭证），与 `cfs_single_time_base_test`、`smp_rq_migration_test`、`cfs_btreemap_bench_test` 同树全绿；本阶段不接生产 tick，E-02/E-04 起消费上述入口。
 - **E-04. tick 记账、切片预算与抢占接线**
   - 描述：运行任务的 vruntime 推进时以增量维护本核 `running_weight/running_sum_w_vr`；tick 递减 `eevdf_slice_left` 并在到期时按 `Requeue` 语义重投入树、请求重调度；用 EEVDF 判据替换或收编现有 `should_yield`。
   - 方案：保持 `advance_floor` 与 IC1/IC3；tick 热路径只做 O(1) 运行账增量，不写树账；重调度仍走 `mark_resched_pending_local` / `run_pending_resched`，不在中断上下文直接切换。
@@ -235,3 +236,4 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - 设计口径修正：切片剩余量改为每任务持有；账目拆为树账 + 每核运行账；唤醒落点改用 `V - slice_virt`（floor 不再参与）；三分入队语义 `Wake/Migrate/Requeue`；无合格任务改 current-aware fallback；`steal_locked` 候选收敛到合格前缀。
 - 阶段修正：E-03 前置于 E-02 以消除账目循环依赖；E-05 拆为 E-05a（入队/唤醒/prev 重投）与 E-05b（迁移/负载均衡）；E-08 由「字段机械迁移」改为线程组语义对齐（因多线程 D7 的 Process=每线程 TCB 口径）。
 - E-01 完成：新增 host 参考模型（Q16.16 纯整数）与 14 项对拍测试；冻结 `slice_virt = Δvr * slice_real`、`W_inc` 口径与三分入队语义；修正 IE3 为「信用有界 + 欠账保留」；证明非空可运行集必有合格任务（current-aware fallback 降为防御路径）；§3.8 开放议题全部收口，E-01 状态置 `[X]`。
+- E-03 完成：`CfsRunQueue` 落树账/运行账分解与 `pick_eevdf`（单树合格前缀 + current-aware + 最小 `(vd, pid)`），提供 `reweight` / `advance_running_vruntime` 两个 rq 锁内入口；9 个纯函数与 E-01 模型对拍，`Process` 增五个 EEVDF 字段；本阶段不接生产 tick（切片生效与抢占归 E-04，权重链路归 E-02），状态置 `[X]`。

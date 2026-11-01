@@ -56,6 +56,12 @@ pub const CFS_BOOST_INTERVAL: u64 = 1000;
 /// CFS 默认 nice=0 任务的权重.
 pub const CFS_NICE0_WEIGHT: u64 = 1024;
 
+/// 虚拟时间定点小数位数 (Q16.16, EEVDF D10②).
+pub const CFS_VIRT_SHIFT: u32 = 16;
+
+/// 1.0 的 Q16.16 定点表示 (`1 << CFS_VIRT_SHIFT`).
+pub const CFS_VIRT_ONE: u64 = 1 << CFS_VIRT_SHIFT;
+
 // ============================================================================
 // 截止期调度 (EDF + CBS)
 // ============================================================================

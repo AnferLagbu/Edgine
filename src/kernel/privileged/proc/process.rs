@@ -232,6 +232,17 @@ pub struct Process {
     /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
     pub cfs_on_cpu: AtomicBool,
 
+    /// EEVDF 本轮虚拟截止期 (Q16.16); 0 表示尚未建账.
+    pub eevdf_vdeadline: AtomicU64,
+    /// EEVDF 本轮真实切片 (tick); 0 表示尚未建账.
+    pub eevdf_slice_real: AtomicU64,
+    /// EEVDF 本轮虚拟切片 (Q16.16).
+    pub eevdf_slice_virt: AtomicU64,
+    /// EEVDF 本轮剩余真实切片 (tick).
+    pub eevdf_slice_left: AtomicU64,
+    /// EEVDF 请求切片 (tick); 0 表示未请求, 在下次建账 (Wake/Requeue) 生效 (D8③).
+    pub eevdf_requested_slice: AtomicU64,
+
     /// 截止时间调度 (`SCHED_DEADLINE`) 的每次激活运行时间预算 (纳秒).
     pub dl_runtime: AtomicU64,
     /// 截止时间调度相对截止期 (纳秒).
@@ -429,6 +440,11 @@ impl Process {
             cfs_on_rq: AtomicBool::new(false),
             cfs_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
             cfs_on_cpu: AtomicBool::new(false),
+            eevdf_vdeadline: AtomicU64::new(0),
+            eevdf_slice_real: AtomicU64::new(0),
+            eevdf_slice_virt: AtomicU64::new(0),
+            eevdf_slice_left: AtomicU64::new(0),
+            eevdf_requested_slice: AtomicU64::new(0),
             dl_runtime: AtomicU64::new(0),
             dl_deadline: AtomicU64::new(0),
             dl_period: AtomicU64::new(0),
