@@ -24,7 +24,7 @@ pub fn wasi_fd_close(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
         Ok(entry) => {
             // socket fd 走 SocketHandle 域关闭, 其余走 VFS
             if let Some(handle) = entry.socket {
-                let _ = crate::functions::net::socket::close(handle);
+                let _ = crate::functions::net::close(handle);
             } else if entry.inner_fd >= 0 {
                 let _ = crate::functions::fs::api::vfs_close(entry.inner_fd.cast_unsigned());
             }

@@ -3,7 +3,7 @@
 //! WASI 文件描述符表 (独立于 POSIX fd 表)
 
 use super::errno::WasiErrno;
-use crate::functions::net::socket::SocketHandle;
+use crate::functions::net::SocketHandle;
 use alloc::vec::Vec;
 
 /// WASI 标准 fd 编号

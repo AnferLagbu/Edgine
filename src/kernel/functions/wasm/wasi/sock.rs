@@ -35,7 +35,7 @@ pub fn wasi_sock_accept(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
     };
 
     // 调用 functions::net accept (P-18 单入口: SocketHandle 域)
-    match crate::functions::net::socket::accept(handle) {
+    match crate::functions::net::accept(handle) {
         Ok(new_handle) => {
             // 创建新的 WASI fd 表条目 (无 VFS 后端, 仅持 socket 句柄)
             let new_entry = super::fd_table::WasiFdEntry {
@@ -113,9 +113,9 @@ pub fn wasi_sock_connect(ctx: &mut WasiContext, interp: &mut Interpreter) -> Res
             .unwrap_or(0),
     ];
 
-    let addr = crate::functions::net::socket::SockAddrIn::new(sin_port, sin_addr);
+    let addr = crate::functions::net::SockAddrIn::new(sin_port, sin_addr);
 
-    match crate::functions::net::socket::connect(handle, addr) {
+    match crate::functions::net::connect(handle, addr) {
         Ok(()) => {
             interp.stack.push(Value::I32(wasi_success()))?;
         }
@@ -164,7 +164,7 @@ pub fn wasi_sock_recv(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
         // 分配临时缓冲区接收数据
         let mut buf = alloc::vec![0u8; iov.len as usize];
-        if let Ok(n) = crate::functions::net::socket::recv(handle, &mut buf) {
+        if let Ok(n) = crate::functions::net::recv(handle, &mut buf) {
             // 将数据写回 WASM 线性内存
             if let Some(ref mut mem) = interp.memory {
                 for (i, &byte) in buf[..n].iter().enumerate() {
@@ -229,7 +229,7 @@ pub fn wasi_sock_send(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result
         }
     }
 
-    match crate::functions::net::socket::send(handle, &send_buf) {
+    match crate::functions::net::send(handle, &send_buf) {
         Ok(n) => {
             write_u32_to_memory(
                 interp,

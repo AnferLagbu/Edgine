@@ -94,9 +94,9 @@ pub mod unix;
 pub mod wait_queue;
 
 pub use socket::{
-    Domain, SockAddrIn, SockType, SocketError, SocketResult, accept, bind, close, connect,
-    endpoint_from_str, getsockopt, listen, parse_ipv4, poll_all, recv, recvfrom, send, sendto,
-    setsockopt, socket,
+    Domain, SockAddrIn, SockType, SocketError, SocketHandle, SocketResult, accept, bind, close,
+    connect, endpoint_from_str, getsockopt, listen, parse_ipv4, poll_all, recv, recvfrom, send,
+    sendto, setsockopt, socket,
 };
 
 pub use unix::{
