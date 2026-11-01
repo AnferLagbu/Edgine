@@ -28,6 +28,8 @@
 //! - Wake: `vr = max(vr_raw, V_before - slice_virt)`; 睡眠信用上界 = 一个
 //!   `slice_virt`. 若 `vr_raw > V_before`, 保留负 lag (欠账), 不制造信用.
 //! - Migrate: 原样携带 `vr/slice_real/slice_virt/slice_left/vd`, 不做落点钳制.
+//! - 偷取候选 (E-05b): 合格前缀窗口内取有效 `vd` 最大者 (最不急迫); 欠账任务
+//!   (`lag < 0`) 的额度已用尽, 不参与迁移.
 //! - Requeue: `slice_left > 0` 时原样重投; `slice_left == 0` 时按默认/请求切片
 //!   重新建账并令 `vd = vr + slice_virt`.
 //!
@@ -152,6 +154,27 @@ pub fn is_eligible(vr: u64, total_weight: u64, sum_w_vr: u128) -> bool {
         return false;
     }
     u128::from(vr) * u128::from(total_weight) <= sum_w_vr
+}
+
+/// 有效截止期: 未建账 (`vd == 0`) 或早于 `vr` 的陈旧值按 `vd = vr` 参与比较.
+///
+/// 与生产侧 `Scheduler::effective_deadline` 同口径 (唤醒抢占与偷取候选排序共用).
+#[must_use]
+pub const fn effective_deadline(vdeadline: u64, vruntime: u64) -> u64 {
+    if vdeadline >= vruntime && vdeadline != 0 {
+        vdeadline
+    } else {
+        vruntime
+    }
+}
+
+/// 跨核偷取候选策略 (E-05b 评估).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StealPolicy {
+    /// 合格前缀最左端 (最小 `vr`).
+    Leftmost,
+    /// 合格前缀窗口内最大有效 `vd` (最不急迫).
+    LeastUrgent,
 }
 
 /// 任务在参考模型中的位置.
@@ -547,6 +570,41 @@ impl Model {
             self.requeue_running(cpu);
         }
         Some(TickOutcome { delta, expired })
+    }
+
+    /// 跨核偷取候选 (E-05b): 合格前缀窗口内按策略排序, 元素 = `(pid, vr, 有效 vd)`.
+    ///
+    /// 窗口 = `vr <= V` 的树上任务按 vr 升序取前 `limit` 个 —— 与生产侧
+    /// `CfsRunQueue::eligible_pids` + `LOAD_BALANCE_MAX_MOVE` 同宽; 欠账任务
+    /// (`lag < 0`) 的额度已用尽, 不在候选内。在跑的 current 不在树内, 天然
+    /// 不进候选。
+    ///
+    /// `LeastUrgent` 在窗口内按 `(有效 vd 降序, pid 升序)` 重排, `Leftmost`
+    /// 保留 vr 升序。
+    #[must_use]
+    pub fn steal_candidates(
+        &self,
+        cpu: usize,
+        policy: StealPolicy,
+        limit: usize,
+    ) -> Vec<(u32, u64, u64)> {
+        let Some(rq) = self.rqs.get(cpu) else {
+            return Vec::new();
+        };
+        let avg = rq.avg_vruntime();
+        let mut window: Vec<(u32, u64, u64)> = rq
+            .tree
+            .range(..=(avg, u32::MAX))
+            .filter_map(|&(vr, pid)| {
+                let task = self.tasks.get(&pid)?;
+                Some((pid, vr, effective_deadline(task.vd, task.vr)))
+            })
+            .take(limit)
+            .collect();
+        if policy == StealPolicy::LeastUrgent {
+            window.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+        }
+        window
     }
 
     /// 按 EEVDF 判据选出该核应运行的任务 (含 current-aware 兜底).

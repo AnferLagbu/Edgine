@@ -45,6 +45,7 @@ use std::fs;
 use std::sync::atomic::Ordering;
 
 const SCHED: &str = "../src/kernel/privileged/proc/scheduler.rs";
+const CFS: &str = "../src/kernel/privileged/proc/cfs.rs";
 const PROCESS: &str = "../src/kernel/privileged/proc/process.rs";
 
 // ============================================================================
@@ -113,24 +114,26 @@ fn fn_body<'a>(code: &'a str, sig: &str) -> Option<&'a str> {
 // ============================================================================
 
 #[test]
-fn test_leftmost_pids_ordered_and_bounded() {
+fn test_eligible_pids_is_eligible_prefix_and_bounded() {
     let mut rq = CfsRunQueue::new();
-    rq.enqueue(7, 30, 10, false);
-    rq.enqueue(5, 10, 10, false);
-    rq.enqueue(9, 20, 10, false);
+    // W=400, S=21000 → V=52 ⇒ 合格前缀 = vr <= 52.
+    rq.enqueue(7, 30, 100, false);
+    rq.enqueue(5, 10, 100, false);
+    rq.enqueue(9, 20, 100, false);
+    rq.enqueue(3, 150, 100, false);
 
-    // 缓冲区小于树: 只取 vruntime 升序的前 N 个, 返回实际写入数.
+    // 缓冲区小于合格前缀: 只取 vruntime 升序的前 N 个, 返回实际写入数.
     let mut two = [0u32; 2];
-    assert_eq!(rq.leftmost_pids(&mut two), 2, "候选数未受缓冲区约束");
+    assert_eq!(rq.eligible_pids(&mut two), 2, "候选数未受缓冲区约束");
     assert_eq!(two, [5, 9], "候选未按 vruntime 升序");
 
-    // 缓冲区大于树: 不得越界读, 返回值即树上任务数.
+    // 缓冲区大于合格前缀: 欠账任务 (vr > V) 必须被排除.
     let mut all = [0u32; 8];
-    assert_eq!(rq.leftmost_pids(&mut all), 3);
-    assert_eq!(&all[..3], &[5, 9, 7]);
+    assert_eq!(rq.eligible_pids(&mut all), 3);
+    assert_eq!(&all[..3], &[5, 9, 7], "欠账任务进入了偷取候选");
 
     let mut empty = [0u32; 4];
-    assert_eq!(CfsRunQueue::new().leftmost_pids(&mut empty), 0);
+    assert_eq!(CfsRunQueue::new().eligible_pids(&mut empty), 0);
 }
 
 #[test]
@@ -140,7 +143,8 @@ fn test_cross_rq_transfer_moves_accounting_exactly_once() {
     src.enqueue(4, 6, 50, false);
     assert_eq!(src.total_weight.load(Ordering::Acquire), 150);
 
-    // `steal_locked` 的账目动作: 源撤账摘节点, 目的重新记账投节点.
+    // 跨核搬账的基础动作: 源撤账摘节点, 目的重新记账投节点.
+    // 生产迁移入口 (`Migrate` 原样携带) 的 IE5 用例见 `eevdf_migration_test`.
     src.dequeue(3, 100, true);
     dst.enqueue(3, 5, 100, false);
     assert_eq!(src.total_weight.load(Ordering::Acquire), 50);
@@ -373,8 +377,88 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
         "steal_locked 自行加锁: 锁序前提被绕过"
     );
     assert!(
-        steal.contains("src.dequeue(pid,weight,on_rq);letplaced=dst.enqueue(pid,vr,weight,false);"),
-        "摘源 + 投目的未在同一段持锁期内闭合 (归属真空窗口复活)"
+        steal.contains("src.dequeue(pid,weight,on_rq);letplaced=dst.migrate(pid,vr,weight);"),
+        "摘源 + 原样投目的未在同一段持锁期内闭合 (归属真空窗口或 IE5 守恒被破坏)"
+    );
+    assert!(
+        steal.contains("Self::rank_steal_candidates(src,&mutranked)"),
+        "偷取候选未经合格前缀 + 最不急迫排序 (E-05b)"
+    );
+    assert!(
+        !steal.contains("dst.enqueue(pid,vr,weight"),
+        "迁移仍走 enqueue: 目的核 floor 会改写落点 (IE5 守恒失效)"
+    );
+}
+
+/// E-05b: 偷取候选收敛到合格前缀 + 最不急迫, 迁移走原样携带入口 (IE5).
+#[test]
+fn test_steal_uses_eligible_prefix_and_migrate_entry() {
+    let sched = prod_squashed(SCHED);
+    let steal = fn_body(&sched, "fnsteal_locked(").expect("steal_locked 不存在");
+    assert!(
+        steal.contains("Self::rank_steal_candidates(src,&mutranked)"),
+        "偷取候选未经合格前缀 + 最不急迫排序"
+    );
+    assert!(
+        steal.contains("for&(_,pid)in&ranked[..n]{"),
+        "候选排序结果未进入搬动循环"
+    );
+    assert!(
+        steal.contains("dst.migrate(pid,vr,weight)"),
+        "迁移未走原样携带入口 (IE5 守恒失效)"
+    );
+    assert!(
+        steal.contains("p.eevdf_vdeadline.store(vd,Ordering::Release)"),
+        "迁移未携带虚拟截止期"
+    );
+    assert!(
+        !steal.contains("p.eevdf_slice_real.store(")
+            && !steal.contains("p.eevdf_slice_virt.store("),
+        "迁移重建了切片: Migrate 必须原样携带本轮预算 (IE6)"
+    );
+    assert!(
+        !steal.contains("dst.enqueue(pid,vr,weight"),
+        "迁移仍走 enqueue: 目的核 floor 会改写落点 (IE5 失效)"
+    );
+
+    let rank = fn_body(&sched, "fnrank_steal_candidates(").expect("rank_steal_candidates 不存在");
+    assert!(
+        rank.contains("src.eligible_pids(&mutpids[..limit])"),
+        "候选窗口未收敛到合格前缀"
+    );
+    assert!(
+        rank.contains("Self::effective_deadline(vd,vr)"),
+        "候选排序未使用与唤醒抢占同口径的有效截止期"
+    );
+    assert!(
+        rank.contains("out[..ranked].sort_by(|a,b|b.0.cmp(&a.0).then(a.1.cmp(&b.1)));"),
+        "候选未按有效截止期降序 (最不急迫优先) 且同 vd 未按 pid 定序"
+    );
+
+    let cfs = prod_squashed(CFS);
+    let migrate = fn_body(
+        &cfs,
+        "pubfnmigrate(&mutself,pid:Pid,vruntime:u64,weight:u64)->u64",
+    )
+    .expect("CfsRunQueue::migrate 不存在");
+    assert!(
+        !migrate.contains("placement("),
+        "迁移入口仍做 IC1 落点钳制: 目的核 floor 会凭空改写 S (IE5 失效)"
+    );
+    assert!(
+        migrate.contains("self.record_tree(QueuedTask{pid,vruntime,weight,}"),
+        "迁移入口未按原落点记账"
+    );
+
+    // 负控制: 旧形态必须被同一谓词识别; 真源码必须干净.
+    let old = squash("letmutcands=[0;4];letn=src.leftmost_pids(&mutcands);");
+    assert!(
+        old.contains("leftmost_pids("),
+        "负控制失效: 旧最左端候选形态未被识别"
+    );
+    assert!(
+        !sched.contains("leftmost_pids("),
+        "真源码仍按最左端选偷取候选: 欠账任务会被迁走 (E-05b 合格前缀约束失效)"
     );
 }
 

@@ -128,10 +128,11 @@ impl Drop for RqGuard {
 
 /// Wake: 睡眠信用上界恰为一个虚拟切片, 落点 `V_before - slice_virt`.
 ///
-/// 队列构成: B 运行至 20V (floor=20V), C 在树上位于 50V ⇒ `V_before=35V`.
-/// A 的 raw vr 为 0, 权重 1024, `W_inc=3072` ⇒ `slice_real=20`, `slice_virt=20V`
-/// ⇒ 落点 `35V - 20V = 15V` (高于 IC1 下限 `floor - 8V = 12V`, 故观测量就是
-/// 睡眠信用本身, 不是 floor 钳制).
+/// B 的入队落点记为 `base` (floor 跨用例单调累积, 不能假定为 0). 队列构成:
+/// B 运行至 `base+20V` (floor=`base+20V`), C 在树上位于 `base+50V`
+/// ⇒ `V_before=base+35V`. A 的 raw vr 为 0, 权重 1024, `W_inc=3072`
+/// ⇒ `slice_real=20`, `slice_virt=20V` ⇒ 落点 `base+15V` (高于 IC1 下限
+/// `floor - 8V = base+12V`, 故观测量就是睡眠信用本身, 不是 floor 钳制).
 #[test]
 fn wake_clamps_sleep_credit_to_one_slice() {
     let _serial = lock_rq();
@@ -141,35 +142,48 @@ fn wake_clamps_sleep_credit_to_one_slice() {
     let a = TestProc::new("e05-wake-a");
     let _guard = RqGuard::new(&[b.pid, c.pid, a.pid]);
 
-    // B 上核并推进 20 tick: 运行账 vr=20V, 切片剩 40.
+    // B 上核并推进 20 tick: 运行账 vr=base+20V, 切片剩 40.
     Scheduler::add_to_run_queue(b.pid);
+    // floor 跨用例单调累积 (RqGuard 不清零), 全部期望以队列落点为基准.
+    let base = b.vruntime();
     assert_eq!(b.slice_left(), TARGET_LATENCY_TICKS, "Wake 入队即建好切片");
     Scheduler::set_current(b.pid);
     assert_eq!(Scheduler::schedule(), Some(b.pid));
     for _ in 0..20 {
         Scheduler::tick(0);
     }
-    assert_eq!(b.vruntime(), 20 * VIRT_ONE);
+    assert_eq!(b.vruntime(), base + 20 * VIRT_ONE);
     assert_eq!(b.slice_left(), TARGET_LATENCY_TICKS - 20);
 
-    // C 以 raw=50V 入树: 不触发睡眠信用 (负 lag 保留), 但把 V 抬到 35V.
-    c.with(|p| p.cfs_vruntime.store(50 * VIRT_ONE, Ordering::Release));
+    // C 以 raw=base+50V 入树: 不触发睡眠信用 (负 lag 保留), 但把 V 抬到 base+35V.
+    c.with(|p| {
+        p.cfs_vruntime
+            .store(base + 50 * VIRT_ONE, Ordering::Release);
+    });
     Scheduler::add_to_run_queue(c.pid);
-    assert_eq!(c.vruntime(), 50 * VIRT_ONE, "raw 高于 V 时必须保留欠账");
-    assert_eq!(c.vdeadline(), 80 * VIRT_ONE);
+    assert_eq!(
+        c.vruntime(),
+        base + 50 * VIRT_ONE,
+        "raw 高于 V 时必须保留欠账"
+    );
+    assert_eq!(c.vdeadline(), base + 80 * VIRT_ONE);
 
     // A 睡醒: 信用上界 = 一个虚拟切片.
     a.set_ready();
     Scheduler::unblock(a.pid);
     assert_eq!(
         a.vruntime(),
-        15 * VIRT_ONE,
-        "Wake 落点必须是 V_before(35V) - slice_virt(20V)"
+        base + 15 * VIRT_ONE,
+        "Wake 落点必须是 V_before(base+35V) - slice_virt(20V)"
     );
     assert_eq!(a.slice_real(), 20, "W_inc=3072 时默认真实切片应为 20");
     assert_eq!(a.slice_left(), 20, "Wake 必须当场重建整轮切片");
     assert_eq!(a.slice_virt(), 20 * VIRT_ONE);
-    assert_eq!(a.vdeadline(), 35 * VIRT_ONE, "vd = placed + slice_virt");
+    assert_eq!(
+        a.vdeadline(),
+        base + 35 * VIRT_ONE,
+        "vd = placed + slice_virt"
+    );
     assert!(a.on_rq(), "Wake 成功后必须带记账凭证");
     assert_eq!(a.rq_cpu(), 0);
     assert_eq!(
@@ -193,19 +207,27 @@ fn wake_with_late_deadline_does_not_request_preemption() {
     let _guard = RqGuard::new(&[b.pid, a.pid]);
 
     Scheduler::add_to_run_queue(b.pid);
+    let base = b.vruntime();
     Scheduler::set_current(b.pid);
     assert_eq!(Scheduler::schedule(), Some(b.pid));
 
     // 睡眠欠账远高于 V: Wake 不补偿 (placed = raw), vd 落后于 current.
-    a.with(|p| p.cfs_vruntime.store(500 * VIRT_ONE, Ordering::Release));
+    a.with(|p| {
+        p.cfs_vruntime
+            .store(base + 500 * VIRT_ONE, Ordering::Release);
+    });
     a.set_ready();
     let _ = current_cpu_queue().take_need_reschedule();
     Scheduler::unblock(a.pid);
 
-    assert_eq!(a.vruntime(), 500 * VIRT_ONE, "欠账不得被睡眠时间洗掉");
+    assert_eq!(
+        a.vruntime(),
+        base + 500 * VIRT_ONE,
+        "欠账不得被睡眠时间洗掉"
+    );
     assert_eq!(a.slice_real(), 30, "W_inc=2048 时默认真实切片应为 30");
     assert_eq!(a.slice_left(), 30);
-    assert_eq!(a.vdeadline(), 530 * VIRT_ONE);
+    assert_eq!(a.vdeadline(), base + 530 * VIRT_ONE);
     assert!(a.on_rq(), "不抢占不等于不入队");
     assert!(
         !current_cpu_queue().take_need_reschedule(),
@@ -258,15 +280,18 @@ fn prev_requeue_carries_partial_budget() {
 
     // D 上核后消耗 5 tick.
     Scheduler::add_to_run_queue(d.pid);
+    // floor 是跨用例持久的单调下界 (RqGuard 不清零), 落点从队列真值取基准,
+    // 否则前序用例抬高 floor 后硬编码的 vr 期望会被 IC1 钳制顶偏.
+    let base = d.vruntime();
     Scheduler::set_current(d.pid);
     assert_eq!(Scheduler::schedule(), Some(d.pid));
     for _ in 0..5 {
         Scheduler::tick(0);
     }
-    assert_eq!(d.vruntime(), 5 * VIRT_ONE);
+    assert_eq!(d.vruntime(), base + 5 * VIRT_ONE);
     assert_eq!(d.slice_left(), TARGET_LATENCY_TICKS - 5);
 
-    // E 以请求切片 10 入队: vd=10V 早于 D 的 60V ⇒ 唤醒抢占.
+    // E 以请求切片 10 入队: vd 早于 D 的 base+60V ⇒ 唤醒抢占.
     e.with(|p| p.eevdf_requested_slice.store(10, Ordering::Release));
     e.set_ready();
     Scheduler::unblock(e.pid);
@@ -274,13 +299,21 @@ fn prev_requeue_carries_partial_budget() {
 
     assert_eq!(Scheduler::schedule(), Some(e.pid), "E 应凭更早的 vd 胜出");
     assert_eq!(Scheduler::current(), Some(e.pid));
-    assert_eq!(d.vruntime(), 5 * VIRT_ONE, "Requeue 不得改写已消耗的 vr");
+    assert_eq!(
+        d.vruntime(),
+        base + 5 * VIRT_ONE,
+        "Requeue 不得改写已消耗的 vr"
+    );
     assert_eq!(
         d.slice_left(),
         TARGET_LATENCY_TICKS - 5,
         "Requeue 携带未耗尽切片, 不得重置预算"
     );
-    assert_eq!(d.vdeadline(), 60 * VIRT_ONE, "携带语义下 vd 随 vr 平移");
+    assert_eq!(
+        d.vdeadline(),
+        base + 60 * VIRT_ONE,
+        "携带语义下 vd 随 vr 平移"
+    );
     assert!(d.on_rq(), "prev 收尾后必须回到树账");
     assert_eq!(d.rq_cpu(), 0);
 }
@@ -295,6 +328,8 @@ fn prev_requeue_rebuilds_expired_slice() {
     let _guard = RqGuard::new(&[f.pid, g.pid]);
 
     Scheduler::add_to_run_queue(f.pid);
+    // 同 `prev_requeue_carries_partial_budget`: 落点取队列真值, 避免跨用例 floor 影响.
+    let base = f.vruntime();
     Scheduler::set_current(f.pid);
     assert_eq!(Scheduler::schedule(), Some(f.pid));
     // 模拟本轮已耗尽 (tick 的到期分支之外, prev 收尾同样要补建).
@@ -305,7 +340,7 @@ fn prev_requeue_rebuilds_expired_slice() {
     Scheduler::unblock(g.pid);
     assert_eq!(Scheduler::schedule(), Some(g.pid));
 
-    assert_eq!(f.vruntime(), 0);
+    assert_eq!(f.vruntime(), base);
     assert_eq!(
         f.slice_real(),
         30,
@@ -313,7 +348,11 @@ fn prev_requeue_rebuilds_expired_slice() {
     );
     assert_eq!(f.slice_left(), 30);
     assert_eq!(f.slice_virt(), 30 * VIRT_ONE);
-    assert_eq!(f.vdeadline(), 30 * VIRT_ONE, "重建后 vd = vr + slice_virt");
+    assert_eq!(
+        f.vdeadline(),
+        base + 30 * VIRT_ONE,
+        "重建后 vd = vr + slice_virt"
+    );
     assert!(f.on_rq());
 }
 

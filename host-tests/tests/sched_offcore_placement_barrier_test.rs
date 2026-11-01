@@ -282,6 +282,10 @@ fn steal_refuses_barred_candidate_without_unaccounting() {
         "P-21: 拒搬必须早于'不可调度即撤账摘除'分支 —— 屏障期任务只是暂时不可搬, \
          走摘除分支会把源核的账扣穿"
     );
+    assert!(
+        before(&steal, "if on_cpu {", "src.dequeue("),
+        "IE5: 屏障拒搬必须早于两条撤账分支 —— 先撤账再发现占用等于把源核树账搬空"
+    );
 }
 
 /// prev 落地: 走搬定唯一入口的 `owner_landing` 形态 (凭证 + 去重 + 记账一次闭合).

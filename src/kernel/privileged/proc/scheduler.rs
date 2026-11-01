@@ -1050,6 +1050,18 @@ impl Scheduler {
         }
     }
 
+    /// 有效截止期: 未建账 (`vd == 0`) 或早于 `vr` 的陈旧值按 `vd = vr` 参与比较。
+    ///
+    /// 与 `pick_eevdf` 的兜底同口径; 唤醒抢占与偷取候选排序共用同一判据, 避免
+    /// 两处对"未建账任务"的解释漂移。
+    fn effective_deadline(vdeadline: u64, vruntime: u64) -> u64 {
+        if vdeadline >= vruntime && vdeadline != 0 {
+            vdeadline
+        } else {
+            vruntime
+        }
+    }
+
     /// 唤醒抢占判据 (E-05a, E-01 冻结口径).
     ///
     /// 仅当目的核当前任务是普通 CFS 任务时比较
@@ -1090,11 +1102,7 @@ impl Scheduler {
                 // 未建账的 current (vd == 0 / 早于 vr) 按 `vd = vr` 参与比较,
                 // 与 `pick_eevdf` 的兜底同口径.
                 let effective_deadline =
-                    if current_deadline >= current_runtime && current_deadline != 0 {
-                        current_deadline
-                    } else {
-                        current_runtime
-                    };
+                    Self::effective_deadline(current_deadline, current_runtime);
                 eligible && vdeadline < effective_deadline
             }
             SchedPolicy::Idle => true,
@@ -2636,8 +2644,45 @@ impl Scheduler {
         }
     }
 
+    /// 偷取候选批次 (E-05b): 合格前缀窗口内按**有效截止期降序**排列 `(deadline, pid)`。
+    ///
+    /// 候选窗口 = [`CfsRunQueue::eligible_pids`] 给出的合格前缀, 宽度与本轮搬动
+    /// 上限 [`LOAD_BALANCE_MAX_MOVE`] 相同: 只有 `lag >= 0` 的树上任务才允许迁走
+    /// —— 欠账任务 (`lag < 0`) 的额度已用尽, 偷到别核等于替它逃避本轮约束。
+    ///
+    /// 窗口内优先取有效 `vd` 最大者 (最不急迫): 源核留下更紧迫的合格任务,
+    /// 目的核收到的任务也不易立刻抢占其 current, 迁移扰动最小。同 `vd` 按 pid
+    /// 升序定序, 保证候选次序可复现。
+    ///
+    /// 只由持源/目的双锁的 [`Self::steal_locked`] 调用; 读进程表仍在 rq 锁之后
+    /// (锁序 `cfs_rq -> PROCESS_TABLE`)。
+    fn rank_steal_candidates(src: &CfsRunQueue, out: &mut [(u64, Pid)]) -> usize {
+        let limit = out.len().min(LOAD_BALANCE_MAX_MOVE);
+        let mut pids = [0; LOAD_BALANCE_MAX_MOVE];
+        let n = src.eligible_pids(&mut pids[..limit]);
+        let mut ranked = 0usize;
+        for &pid in &pids[..n] {
+            let Some((vr, vd)) = PROCESS_TABLE.with_process(pid, |p| {
+                (
+                    p.cfs_vruntime.load(Ordering::Acquire),
+                    p.eevdf_vdeadline.load(Ordering::Acquire),
+                )
+            }) else {
+                continue;
+            };
+            out[ranked] = (Self::effective_deadline(vd, vr), pid);
+            ranked += 1;
+        }
+        out[..ranked].sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        ranked
+    }
+
     /// 在同时持有 `src_cpu`/`dst_cpu` 两把 rq 锁的临界区内, 从源队列偷至多
     /// [`LOAD_BALANCE_MAX_MOVE`] 个任务到目的队列; 返回实际搬动数.
+    ///
+    /// 候选取合格前缀内最不急迫者 ([`Self::rank_steal_candidates`]); 搬动走
+    /// `Migrate` 语义: `vr` / 切片 / `vd` 原样携带, 目的核落点不做 IC1 钳制
+    /// (IE5: 两核 `tree_weight`/`tree_sum_w_vr` 变化互为相反数)。
     ///
     /// 只由 [`Self::load_balance`] 按升序双持锁后调用 (锁序前提不在此处重建).
     /// 锁序 `cfs_rq -> PROCESS_TABLE` 与本文件其余调度路径一致.
@@ -2647,10 +2692,10 @@ impl Scheduler {
         src: &mut CfsRunQueue,
         dst: &mut CfsRunQueue,
     ) -> usize {
-        let mut cands: [Pid; LOAD_BALANCE_MAX_MOVE] = [0; LOAD_BALANCE_MAX_MOVE];
-        let n = src.leftmost_pids(&mut cands);
+        let mut ranked: [(u64, Pid); LOAD_BALANCE_MAX_MOVE] = [(0, 0); LOAD_BALANCE_MAX_MOVE];
+        let n = Self::rank_steal_candidates(src, &mut ranked);
         let mut moved = 0usize;
-        for &pid in &cands[..n] {
+        for &(_, pid) in &ranked[..n] {
             // 非阻塞认领: 已被他人认领者直接放过. 等待即死锁 —— 那个认领者正在等的
             // rq 锁就在我们手里.
             let Some(mut claim) = Self::try_claim_rq(pid) else {
@@ -2664,7 +2709,7 @@ impl Scheduler {
             {
                 continue;
             }
-            let (state, policy, vr, weight, on_rq, on_cpu) = PROCESS_TABLE
+            let (state, policy, vr, weight, on_rq, on_cpu, vd) = PROCESS_TABLE
                 .with_process(pid, |p| {
                     (
                         p.get_state(),
@@ -2673,6 +2718,7 @@ impl Scheduler {
                         p.cfs_weight.load(Ordering::Acquire),
                         p.cfs_on_rq.load(Ordering::Acquire),
                         p.cfs_on_cpu.load(Ordering::Acquire),
+                        p.eevdf_vdeadline.load(Ordering::Acquire),
                     )
                 })
                 .unwrap_or((
@@ -2682,6 +2728,7 @@ impl Scheduler {
                     0,
                     false,
                     false,
+                    0,
                 ));
             // 投送屏障 (P-21): 被偷者若仍占用某个核 (上下文未保存完), 搬进本核队列
             // 就等于两核交叠同一块进程内核栈. 与 `place_locked` 同一判据, 不走
@@ -2702,15 +2749,17 @@ impl Scheduler {
                 claim.commit(NO_RQ_CPU);
                 continue;
             }
-            // 跨核迁移 = 记账随任务一起搬走: 源核撤账摘节点, 目的核重新记账投节点,
-            // 两核权重和守恒 (旧实现两边都不动账, 使 `total_weight` 与真实可运行集
-            // 发散, 均衡判定越跑越偏).
+            // 跨核迁移 = 记账随任务一起搬走: 源核撤账摘节点, 目的核按原落点记账,
+            // 两核权重和与加权虚拟时间和守恒 (IE5). 目的核 floor 是另一条时间轴
+            // 的局部下界, 用它改写落点会凭空制造 `w * (placed - vr)` 的 S 漂移.
             src.dequeue(pid, weight, on_rq);
-            let placed = dst.enqueue(pid, vr, weight, false);
+            let placed = dst.migrate(pid, vr, weight);
             PROCESS_TABLE.with_process(pid, |p| {
-                // IC1: 落点回写任务自身 vruntime.
+                // IC1: 落点回写任务自身 vruntime (原样携带, `placed == vr`).
                 p.cfs_vruntime.store(placed, Ordering::Release);
                 p.cfs_on_rq.store(true, Ordering::Release);
+                // Migrate 携带 vd: 不重建本轮切片, 截止期与剩余预算随任务同行.
+                p.eevdf_vdeadline.store(vd, Ordering::Release);
             });
             claim.commit(dst_cpu);
             moved += 1;

@@ -415,6 +415,30 @@ impl CfsRunQueue {
         placed
     }
 
+    /// 跨核迁移的记账入口 (**原样携带**, IE5)。
+    ///
+    /// 与 [`Self::enqueue`] 的唯一差别: 落点**不做** IC1 钳制。迁移不是唤醒 ——
+    /// 目的核 floor 是另一条时间轴的局部下界, 用它改写迁移落点会凭空制造
+    /// `Σ w * vr` 漂移 (`w * (placed - vr)`), 源/目的两核账目变化不再互为相反数,
+    /// IE5 的迁移守恒当场失效。任务的 `vr` 已在源核按同一虚拟时基推进, 原样入驻
+    /// 目的核后由 EEVDF 的 lag 自然补偿 —— 这正是对迁移期间少得服务的偿还。
+    ///
+    /// 迁移只搬树节点 (`steal_locked` 已排除本核 current 与 `cfs_on_cpu` 在位的
+    /// 任务); 幂等性仍以结构真相为准: 先摘除目的核可能残留的任意记录再重投。
+    ///
+    /// 调用方**必须**把返回值回写 `Process::cfs_vruntime` (与 [`Self::enqueue`] 同契约)。
+    pub fn migrate(&mut self, pid: Pid, vruntime: u64, weight: u64) -> u64 {
+        let _ = self.remove_tree_task(pid);
+        let _ = self.remove_running_task(pid);
+        self.record_tree(QueuedTask {
+            pid,
+            vruntime,
+            weight,
+        });
+        self.sync_total_weight();
+        vruntime
+    }
+
     /// 出队: 让 `pid` 离开可运行集 (阻塞 / 退出 / 被拣出但不可调度)。
     ///
     /// 扣减量一律取**账目中的权重**; `weight` 参数可能在排队期间因 nice 变更而过期,
@@ -606,18 +630,25 @@ impl CfsRunQueue {
         })
     }
 
-    /// 按 vruntime 升序把至多 `out.len()` 个**在树上的** pid 写入 `out`, 返回个数。
+    /// 把**合格前缀** (`vr <= V`) 中的至多 `out.len()` 个 pid 按 vruntime 升序
+    /// 写入 `out`, 返回个数。
+    ///
+    /// 跨核偷取的候选集 (E-05b): EEVDF 下只有 `lag >= 0` 的树上任务"应得服务
+    /// 尚未得到"; 把欠账任务 (`lag < 0`) 偷到别核等于替它逃避本轮的额度约束。
+    /// `V` 由整条可运行集 (树账 + 运行账) 计算, 与 [`Self::pick_eevdf`] 同源;
+    /// 在跑的 current 不在树内, 故天然不进候选。
     ///
     /// 不改动树也不动记账 —— 跨核偷取需要"先定候选、逐个认领归属、再在**同一段
     /// 持锁期**里搬移", 而 [`Self::pick_next`] 一拣就离树, 无法表达"认领失败就放过
     /// 它"。调用方必须已持有本队列的锁 (候选在锁内才保持有效)。
-    pub fn leftmost_pids(&self, out: &mut [Pid]) -> usize {
+    pub fn eligible_pids(&self, out: &mut [Pid]) -> usize {
+        let avg = self.avg_vruntime();
         let mut n = 0usize;
-        for key in &self.tree {
+        for &(_, pid) in self.tree.range(..=(avg, Pid::MAX)) {
             if n >= out.len() {
                 break;
             }
-            out[n] = key.1;
+            out[n] = pid;
             n += 1;
         }
         n
@@ -1102,6 +1133,81 @@ mod tests {
         assert_eq!(q.len(), 1);
         assert_eq!(q.total_weight.load(Ordering::Acquire), 1024);
         assert_eq!(q.leftmost_vruntime(), Some(300));
+    }
+
+    /// 6d. IE5: 迁移原样携带落点, 不做 IC1 钳制; 两核账目变化互为相反数.
+    #[test]
+    fn test_sched_cfs_migrate_carries_placement_without_clamp() {
+        let mut src = CfsRunQueue::new();
+        let mut dst = CfsRunQueue::new();
+        let floor = 1000u64 << VIRT_SHIFT;
+        let vr = 45u64;
+        dst.advance_floor(floor);
+        src.enqueue(7, vr, NICE0_WEIGHT, false);
+        let (src_weight, src_sum) = (src.tree_weight(), src.tree_sum_w_vr());
+        let (dst_weight, dst_sum) = (dst.tree_weight(), dst.tree_sum_w_vr());
+
+        assert!(src.dequeue(7, NICE0_WEIGHT, true));
+        let placed = dst.migrate(7, vr, NICE0_WEIGHT);
+        assert_eq!(placed, vr, "迁移不得按目的核 floor 改写落点 (IE5)");
+        // 对照: 同一落点走 `enqueue` 会被 IC1 抬到 floor - MIN_GRANULARITY;
+        // 迁移若走该路径, 全局 S 会凭空增加 w * (placed - vr).
+        assert_eq!(dst.placement(vr), floor - MIN_GRANULARITY_VIRT);
+        assert_eq!(
+            dst.tree_task(7),
+            Some(QueuedTask {
+                pid: 7,
+                vruntime: vr,
+                weight: NICE0_WEIGHT
+            })
+        );
+        assert_eq!(
+            src.tree_weight().saturating_add(dst.tree_weight()),
+            src_weight.saturating_add(dst_weight)
+        );
+        assert_eq!(
+            src.tree_sum_w_vr().saturating_add(dst.tree_sum_w_vr()),
+            src_sum.saturating_add(dst_sum)
+        );
+        assert_eq!(
+            dst.total_weight.load(Ordering::Acquire),
+            dst.runnable_weight()
+        );
+
+        // 幂等: 重复迁移同一节点只移动, 不重复记账.
+        dst.migrate(7, vr, NICE0_WEIGHT);
+        assert_eq!(dst.len(), 1);
+        assert_eq!(dst.tree_weight(), dst_weight.saturating_add(NICE0_WEIGHT));
+        assert_eq!(
+            dst.tree_sum_w_vr(),
+            dst_sum.saturating_add(u128::from(NICE0_WEIGHT) * u128::from(vr))
+        );
+    }
+
+    /// 6e. E-05b: 偷取候选只取合格前缀, `V` 含运行账, 但 current 不进候选.
+    #[test]
+    fn test_sched_eevdf_eligible_pids_uses_full_runnable_set() {
+        let mut q = CfsRunQueue::new();
+        q.enqueue(1, 0, 100, false);
+        q.enqueue(2, 100, 100, false);
+        q.enqueue(3, 200, 100, false);
+        // W=300, S=30000 → V=100 ⇒ 合格前缀 = vr <= 100.
+        assert_eq!(q.avg_vruntime(), 100);
+        let mut out = [0u32; 8];
+        assert_eq!(q.eligible_pids(&mut out), 2);
+        assert_eq!(&out[..2], &[1, 2]);
+        // 缓冲区约束: 只填调用方给的长度.
+        let mut one = [0u32; 1];
+        assert_eq!(q.eligible_pids(&mut one), 1);
+        assert_eq!(one, [1]);
+
+        // 拣出最左端进入运行账: 它的权重仍并入 V, 但 current 不在树内, 不进候选.
+        let (picked, _) = q.pick_next().expect("非空树必有候选");
+        assert_eq!(picked, 1);
+        assert!(q.is_running(1));
+        assert_eq!(q.avg_vruntime(), 100);
+        assert_eq!(q.eligible_pids(&mut out), 1);
+        assert_eq!(out[0], 2, "运行中的 current 不得进入偷取候选");
     }
 
     /// 7. `calc_vruntime_delta_virt`: 权重 0 (非法态) 必须按 NICE0 退化, 不得为 0.

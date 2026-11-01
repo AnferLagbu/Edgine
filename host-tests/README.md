@@ -11,7 +11,7 @@
 | 类型 | 位置 | 入口 |
 |------|------|------|
 | 单元测试 | `host-tests/src/<module>.rs` 内联 `#[cfg(test)] mod tests` | `cargo test -p edgine-host-tests --lib` |
-| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (148 个文件) | `cargo test -p edgine-host-tests --test <name>` |
+| 集成测试 | `host-tests/tests/<scope>_<feature>_<kind>_test.rs` (149 个文件) | `cargo test -p edgine-host-tests --test <name>` |
 | 性能基准 | `host-tests/benches/<scope>_bench.rs` (Cargo 官方, 待迁移) | `cargo bench -p edgine-host-tests` |
 
 > **不要**把单元测试 + 集成测试 + 性能基准混放在一个 `tests/*.rs` 文件, Cargo 自动发现会让 `tests/*.rs` 编译为独立 binary, 极慢.
@@ -182,6 +182,7 @@ criterion_main!(benches);
 | `eevdf_weight_chain_test.rs` | EEVDF 权重链路 (nice→权重→Δvr/切片/vd + syscall 端到端) | E-02 |
 | `eevdf_tick_accounting_test.rs` | EEVDF tick 记账与切片预算 (真实 rq 上 Build/Advance/Expire + 源码契约) | E-04 |
 | `eevdf_wake_requeue_test.rs` | EEVDF 三分入队/唤醒信用/唤醒抢占 (Wake/Requeue 真实 rq + 接线契约) | E-05a |
+| `eevdf_migration_test.rs` | EEVDF 跨核迁移守恒与偷取候选策略 (原样携带/源目的账目/最不急迫 vd) | E-05b |
 
 #### 信号
 
@@ -261,9 +262,9 @@ criterion_main!(benches);
 
 | 类别 | 数量 | 行数 |
 |------|------|------|
-| 集成测试 | 148 文件 | 32,765 |
+| 集成测试 | 149 文件 | 33,104 |
 | 单元测试模块 | 3 (`dma_stream` / `fsx` / `framekernel_bench`) | 1,114 |
-| 公共库代码 | 5 文件 (`lib` / `eevdf_model` / `framekernel_bench` / `fsx` / `dma_stream`) | 3,823 |
+| 公共库代码 | 5 文件 (`lib` / `eevdf_model` / `framekernel_bench` / `fsx` / `dma_stream`) | 3,881 |
 | 性能基准 | 1 bin (`src/bin/framekernel_bench.rs`, 待迁 benches/) | 20 |
 
 **对比规范化前**:

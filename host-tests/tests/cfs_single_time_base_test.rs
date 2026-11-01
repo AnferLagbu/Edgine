@@ -261,8 +261,9 @@ fn load_balance_transfers_accounting() {
     let steal = fn_body(&sched, "fn steal_locked");
     assert!(
         has(&steal, "src.dequeue(pid, weight, on_rq)")
-            && has(&steal, "dst.enqueue(pid, vr, weight, false)"),
-        "IC4: 偷取必须从源核 total_weight 撤账并给目的核记账 (否则两核权重和发散, 均衡判定失真)"
+            && has(&steal, "dst.migrate(pid, vr, weight)"),
+        "IC4/IE5: 偷取必须从源核撤账, 并按原落点给目的核记账 (Migrate 不得套目的核 floor, \
+         否则两核权重和与加权虚拟时间和发散, 均衡判定失真)"
     );
     assert!(
         has(&steal, "claim.commit(dst_cpu)"),

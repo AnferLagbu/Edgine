@@ -124,7 +124,7 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - EEVDF 只替换 `SchedPolicy::Normal` 的 CFS 选择规则；DL → RT → CFS 的类间优先级不变。
 - idle 任务的策略仍为 `SchedPolicy::Idle`，不进入 CFS 选择；boot 期「从未入过 CFS 队列」的 keep-current 路径（[scheduler.rs:1225-1248](../../src/kernel/privileged/proc/scheduler.rs#L1225-L1248)）必须保留，且不得被 EEVDF 的 `V` 计算误判为空闲。
 - 负载均衡的候选选择与搬动记账必须与 EEVDF 账目同源：搬运树内任务时，源/目的两棵树的 `tree_weight`/`tree_sum_w_vr` 与任务自身的 `vr/slice_left/vd` 都要在双锁内同步；运行账不参与偷取（候选只来自树）。
-- 当前 `steal_locked` 以最左端 vr 为候选（[scheduler.rs:2280-2340](../../src/kernel/privileged/proc/scheduler.rs#L2280-L2340)）；EEVDF 下候选集应收敛为「合格前缀」，并在 E-05b 中评估「取最不急迫者（最大 `vd`）」是否比最左端更优。该评估不得改变迁移守恒（IE5）。
+- 当前 `steal_locked` 的候选集已收敛为「合格前缀（`vr <= V`，最多 `LOAD_BALANCE_MAX_MOVE` 个）」，并按「窗口内最大有效 `vd`（最不急迫）」选取（E-05b 评估结论）。两种策略的候选集合相同，故不改变合格性与迁移守恒；差异只在同批次的搬动顺序：最左端 vr 优先搬走源核最急需的任务且忽略截止期，最大 `vd` 则降低迁移对目的核的即时抢占概率、把更紧迫任务留给源核。迁移全程原样携带 `vr/slice/vd`，且不做目的核 floor 钳制（否则会改写全局 `S`）。
 - `cfs_should_preempt` 与 `vr > floor + TARGET_LATENCY_TICKS` 的旧判据由 D6① 直接替换：生产调用点改为 EEVDF 的 `vd`/切片判据后删除函数与对应测试，不保留兼容阈值或二级保险。
 
 ### 3.7 与多线程工程的边界
@@ -176,7 +176,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - **E-05b. 跨核迁移与负载均衡账目**
   - 描述：`RqClaim` + `cfs_on_cpu` 屏障 + 升序双锁下的跨核迁移同步维护源/目的树账；`steal_locked` 候选收敛到合格前缀，并完成「最左端 vr vs 最不急迫 vd」的评估。
   - 方案：迁移全程携带 `vr/slice_virt/slice_left/vd`（`Migrate` 语义）；在 `smp_rq_migration_test` / `sched_offcore_placement_barrier_test` 上扩展 IE5 守恒断言；评估结论落 E-01 参考模型的候选选择对照，不改锁序。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：`CfsRunQueue::migrate` 作为迁移记账入口落地——先撤源树账/摘节点，再按**原落点**记入目的树账并同步权重和，**不做**目的核 IC1 floor 钳制（钳制会凭空制造 `w * (placed - vr)` 的 S 漂移），调用方回写 `cfs_vruntime` 且 `placed == vr`（IE5）。`steal_locked` 改走该入口：`src.dequeue` → `dst.migrate` → 同一 `PROCESS_TABLE` 临界区回写 `cfs_vruntime` / `cfs_on_rq` / `eevdf_vdeadline`，切片三字段不重写（Migrate 携带本轮预算与截止期）；认领、`current`、亲和、屏障与可调度判据全部保持原序，锁序不变。候选来源由 `leftmost_pids` 收敛为 `eligible_pids`（取 `vr <= V` 的合格前缀，最多 `LOAD_BALANCE_MAX_MOVE` 个；`V` 含运行账），再按新增 `effective_deadline`（`vd == 0 || vd < vr` 退化为 `vr`，与 `pick_eevdf` / 唤醒抢占同式）降序取最大者——即窗口内**最不急迫**的合格任务。**评估结论**：最左端 vr 会优先搬走源核最急需执行的任务且完全忽略截止期；在候选集合相同（故合格性与 IE5 不变）的前提下，最大有效 `vd` 只会降低迁移对目的核的即时抢占概率、把更紧迫任务留给源核，故选定后者。回归锁：新增 [eevdf_migration_test.rs](../../host-tests/tests/eevdf_migration_test.rs) 2 项（32 任务随机迁移：原样携带、每次搬动树账全额守恒、重复迁移幂等；400 组模型对照：两策略候选集相同、全部合格、最不急迫者 `vd` 为窗口最大、移出后源核非空时 `V` 不降），`smp_rq_migration_test` 扩为 11 项（合格前缀边界、偷取源码契约、旧 `leftmost_pids` 负控制），`sched_offcore_placement_barrier_test` 增「屏障拒搬早于撤账」断言；`cfs.rs` 内联补 2 项（`migrate` 原样记账、`eligible_pids` 覆盖全可运行集）。
 - **E-06. functions/syscall 面与可观测**
   - 描述：按 D9③ 打通 `nice`/`setpriority`、新增 `sched_setscheduler`/`getscheduler` 与 `sched_setattr`/`getattr`；`sched_setattr` 的请求切片按 D8③ 夹取后经 E-03 入口生效；必要时暴露 `V`/lag/切片统计供测试读取。E-02 审计登记：fork 子进程须按 POSIX 继承父进程 nice/cfs_weight/ProcessPriority（当前 `inherit_parent_state` 未覆盖）。
   - 方案：ABI 常量落 `edgine-abi` 单源；functions 层只调用 privileged 安全 API（F1/F2）；权限与 `SCHED_NORMAL` 之外策略的返回码逐项测试；不在 functions 层复制调度公式；`sched_setattr` 的其他字段（affinity/deadline）明确返回 `EINVAL` 而非静默忽略；fork 继承经 `Process::new` 默认值之上的显式字段复制实现，并补继承语义测试。
@@ -243,3 +244,4 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - E-02 完成：`Scheduler::set_nice` 进入 setpriority/nice 生产路径，按「认领 → rq 锁 → 写 nice/权重 → `reweight` → 重建切片/vd」收口，新增不持锁等待的 `claim_rq_blocking`；functions 侧 `getpriority` 返回真实 nice、负数 nice 误判修复；新增 `Process::get_nice` 与 9 项回归锁。fork 未继承 nice/权重的审计发现登记至 E-06，状态置 `[X]`。
 - E-04 完成：tick CFS 分支收口为 `tick_current_cfs`，在同一 rq 锁内推进 vruntime/运行账/floor，并执行切片 Build/Advance/Expire 状态机；到期按 `Requeue` 原位入树并置 `need_reschedule`，切换仍由中断退出路径执行；Requeue 仅限运行账在册或已在树的任务，boot keep-current 不入树。同批删除 `cfs_should_preempt`、`floor + TARGET_LATENCY_TICKS` 旧判据与 `vr << VIRT_SHIFT` 桥，全链路统一 Q16.16；唤醒抢占归 E-05a。新增 5 项 tick 回归锁，状态置 `[X]`。
 - E-05a 完成：`PlacementKind` 三分入队语义与 `plan_placement` 纯函数落地，`place_locked` 升为唯一投送主体（Wake 睡眠信用上界 + 入队后 `W` 重建切片、Requeue 携带/耗尽重建、重复 Wake 降级、屏障分支在 `PROCESS_TABLE` 同一临界区原子落账）；`unblock`/`add`/`add_to_run_queue` 接 Wake，`requeue_prev`/`reap_off_cpu`/RT 降级接 Requeue；唤醒抢占按入队后资格与 `vd_new < vd_current` 判定且仍只置 `need_reschedule`。Migrate 生产接线与跨核账目守恒留 E-05b。新增 8 项回归锁并同步四份既有契约，状态置 `[X]`。
+- E-05b 完成：`CfsRunQueue::migrate` 落原样迁移入口（撤源账 + 目的按原落点记账，不做目的核 floor 钳制），`steal_locked` 改走 `src.dequeue → dst.migrate` 并在同一临界区回写 vr/`cfs_on_rq`/`vd`，切片预算随任务携带（IE5/IE6）；候选由 `leftmost_pids` 收敛为 `eligible_pids` 合格前缀，再按共享 `effective_deadline` 取窗口内最大 `vd`（最不急迫）。评估结论：同候选集合下，最大 `vd` 相比最左端只把搬动顺序从「源核最急需」改为「目的核最不急迫」，不改变资格与守恒。新增 2 项迁移回归锁 + 2 项 `cfs` 内联用例，`smp_rq_migration_test` 扩为 11 项、屏障契约补撤账次序断言，状态置 `[X]`。
