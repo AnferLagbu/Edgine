@@ -327,11 +327,29 @@ impl MmuArch for Aarch64 {
         crate::privileged::glue::usize_from_u64(mmu::read_far())
     }
 
+    /// 写入 EL0 的 TLS 基址 (`TPIDR_EL0`) + ISB。
+    ///
+    /// `TPIDR_EL1` 已被 KPTI 每核槽占用, `TPIDRRO_EL0` 仅在异常入口瞬用,
+    /// `TPIDR_EL0` 是留给用户态 TLS 的寄存器。
+    #[inline]
+    fn set_user_tls_base(base: u64) {
+        // SAFETY: 内核态写 TPIDR_EL0 (用户态 TLS 基址) + isb 同步流水线;
+        // 仅影响当前 CPU, 用户态在 eret 后才能观察到.
+        unsafe {
+            asm!("msr tpidr_el0, {}", in(reg) base);
+            asm!("isb", options(nomem, nostack));
+        }
+    }
+
     /// `AArch64` 上下文切换 (x19-x30 + SP + TTBR0 + SPSR + ELR)。
+    ///
+    /// `TPIDR_EL0` 不参与切换汇编保存/恢复, 且切换路径不读写该寄存器,
+    /// 故在切换前直接写入即将上核任务的 TLS 基址即可。
     ///
     /// # Safety
     /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
-    unsafe fn context_switch(from: *mut u8, to: *const u8) {
+    unsafe fn context_switch(from: *mut u8, to: *const u8, user_tls_base: u64) {
+        <Self as MmuArch>::set_user_tls_base(user_tls_base);
         // SAFETY: context::switch 是底层上下文切换函数；
         // from/to 由调度器提供保证指向有效 Process。
         unsafe {
@@ -347,7 +365,17 @@ impl MmuArch for Aarch64 {
     ///    就把 280 字节异常帧压入内核栈, 故内核栈顶页必须提前就位;
     /// 3. 跳转到 `.vectors` 内的高半区 trampoline 完成 `TTBR0/TTBR1` 切换后 eret
     ///    (切换必须在高半区执行, 否则切 `TTBR0` 后低半区代码立即 Prefetch Abort).
-    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
+    ///
+    /// `user_tls_base` 在 eret 前写入 `TPIDR_EL0` (0 表示未设置).
+    fn enter_user(
+        entry: usize,
+        stack: usize,
+        arg: usize,
+        user_cr3: u64,
+        kstack: u64,
+        user_tls_base: u64,
+    ) -> ! {
+        <Self as MmuArch>::set_user_tls_base(user_tls_base);
         // SPSR_EL1: EL0t (M[3:0]=0000), D/A/F 屏蔽但 **I 位清零**.
         // 清 I ⇒ EL0 可接收 IRQ (定时器 PPI / 跨核 SGI), 使 aarch64 用户态
         // 可被抢占, 与 x86_64 用户态 `RFLAGS.IF=1` 对齐 (见 arch/x86_64/mod.rs

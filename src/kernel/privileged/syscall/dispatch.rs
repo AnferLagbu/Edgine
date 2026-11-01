@@ -589,16 +589,13 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
 /// 影响面: 依赖 GS 基址或 CPUID 屏蔽语义的用户态程序不可用; 何时需扩展: 引入
 /// per-process `gs_base` 字段与上下文切换恢复后补齐.
 ///
-/// aarch64 侧仅归档 `Process.tls_base` (对应 `tpidr_el0`), 当前不写系统寄存器
-/// (与 `clone(CLONE_SETTLS)` 的既有口径一致).
+/// `ARCH_SET_FS` 同时写 `Process.tls_base` (切换时的权威来源) 与本 CPU 的硬件
+/// 寄存器 (`x86_64`: `IA32_FS_BASE`, aarch64: `TPIDR_EL0`), 当前进程立即生效.
 pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
-    /// `ARCH_SET_FS` 子码 (Linux `x86_64)`: 设置 FS 段基址.
-    const ARCH_SET_FS: u64 = 0x1002;
-    /// `ARCH_GET_FS` 子码 (Linux `x86_64)`: 查询 FS 段基址.
-    const ARCH_GET_FS: u64 = 0x1003;
-    /// `IA32_FS_BASE` MSR 地址 (用户态 FS 段基址).
-    #[cfg(target_arch = "x86_64")]
-    const IA32_FS_BASE: u32 = 0xC000_0100;
+    /// `ARCH_SET_FS` 子码 (Linux `x86_64`): 设置 FS 段基址 (单源 `edgine_abi`).
+    const ARCH_SET_FS: u64 = edgine_abi::arch_prctl::ARCH_SET_FS;
+    /// `ARCH_GET_FS` 子码 (Linux `x86_64`): 查询 FS 段基址 (单源 `edgine_abi`).
+    const ARCH_GET_FS: u64 = edgine_abi::arch_prctl::ARCH_GET_FS;
 
     let pid = match crate::privileged::proc::process_get_current_pid() {
         0 => return Errno::Esrch.as_ret(),
@@ -614,15 +611,8 @@ pub(crate) fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
             {
                 return Errno::Esrch.as_ret();
             }
-            // 当前进程立即生效: 写本 CPU 的 FS 段基址 MSR.
-            #[cfg(target_arch = "x86_64")]
-            {
-                // SAFETY: 内核态执行, IA32_FS_BASE 为用户态 FS 段基址 MSR;
-                // 写入当前 CPU 仅影响当前进程的用户态 TLS 访问.
-                unsafe {
-                    crate::privileged::cpu::msr::write_msr(IA32_FS_BASE, addr);
-                }
-            }
+            // 当前进程立即生效: 写本 CPU 的用户态 TLS 基址寄存器.
+            crate::arch!(set_user_tls_base(addr));
             0
         }
         ARCH_GET_FS => {

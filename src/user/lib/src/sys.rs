@@ -292,6 +292,21 @@ pub fn sync() {
 }
 
 // ============================================================
+// 用户态 TLS 基址 (arch_prctl) — 常量单一权威源 `edgine-abi`
+// ============================================================
+
+pub use edgine_abi::arch_prctl::{ARCH_GET_FS, ARCH_SET_FS, SYS_ARCH_PRCTL};
+
+/// `arch_prctl(code, addr)` — 用户态 TLS 基址读写.
+///
+/// `ARCH_SET_FS` 立即写当前进程的 TLS 基址寄存器 (x86_64 `IA32_FS_BASE` /
+/// aarch64 `TPIDR_EL0`); `ARCH_GET_FS` 把当前基址写入 `addr` 指向的 `u64`.
+#[must_use]
+pub fn arch_prctl(code: u64, addr: u64) -> i64 {
+    unsafe { sys2(SYS_ARCH_PRCTL, code, addr) }
+}
+
+// ============================================================
 // Edgine 兼容 wrapper — 保留原有语义，内部映射到 POSIX/PWM 编号
 // ============================================================
 
@@ -345,6 +360,22 @@ pub fn dup2_fd(oldfd: i32, newfd: i32) -> i32 {
 #[must_use]
 pub fn wait_pid(pid: i32) -> i64 {
     unsafe { sys3(SYS_WAIT4, arg_bits(i64::from(pid)), 0, 0) }
+}
+
+/// `wait4(pid, &status, 0)` — 回收子进程并取回 `wstatus`.
+///
+/// 返回值语义与 [`wait_pid`] 一致 (成功 = 被回收子进程 pid); `status` 由内核
+/// 按 `exit_code << 8` 写入 (无信号位), 判正常退出用 `status == 0`.
+#[must_use]
+pub fn wait_pid_status(pid: i32, status: &mut i32) -> i64 {
+    unsafe {
+        sys3(
+            SYS_WAIT4,
+            arg_bits(i64::from(pid)),
+            core::ptr::from_mut(status) as u64,
+            0,
+        )
+    }
 }
 
 #[must_use]

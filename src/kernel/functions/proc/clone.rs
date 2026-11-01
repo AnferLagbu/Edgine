@@ -250,15 +250,16 @@ fn vm_child_inherit(
     tls: u64,
 ) -> Result<(), i64> {
     // 复制父进程属性
-    let (parent_pwm, parent_sched_policy, parent_rt_priority) =
+    let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base) =
         api::process_with(parent_pid, |p| {
             (
                 p.pwm.load(Ordering::SeqCst),
                 p.sched_policy.load(Ordering::SeqCst),
                 p.rt_priority.load(Ordering::SeqCst),
+                p.tls_base.load(Ordering::Acquire),
             )
         })
-        .unwrap_or((0, 0, 0));
+        .unwrap_or((0, 0, 0, 0));
     child.pwm.store(parent_pwm, Ordering::SeqCst);
     child
         .sched_policy
@@ -266,6 +267,8 @@ fn vm_child_inherit(
     child
         .rt_priority
         .store(parent_rt_priority, Ordering::SeqCst);
+    // 未指定 CLONE_SETTLS 时子线程继承父线程的 TLS 基址 (Linux 语义)
+    child.tls_base.store(parent_tls_base, Ordering::Release);
 
     // 添加到父进程的子进程列表
     api::process_with_mut(parent_pid, |p| {
@@ -342,10 +345,9 @@ fn vm_child_init_context(
         // 对父子线程同值, 无需改写.
     }
 
-    // CLONE_SETTLS: 设置子进程 TLS 基址
-    // 当前仅存储于 Process.tls_base, 切换恢复未实装; x86_64 需在切换时写
-    // MSR_FS_BASE、aarch64 写 tpidr_el0 (无用户态依赖, 为 Linux 线程
-    // 兼容面预留, 待用户态线程库出现时实装)
+    // CLONE_SETTLS: 子线程显式指定的 TLS 基址覆盖上面继承自父线程的值.
+    // 切换恢复已实装: x86_64 由 process_switch_asm 在装载 fs 段后写
+    // IA32_FS_BASE, aarch64 由 context_switch 写 TPIDR_EL0, 取值即本字段.
     if tls != 0 {
         child
             .tls_base

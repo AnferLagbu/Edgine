@@ -194,6 +194,7 @@ pub trait InterruptArch {
 /// - `tlb_flush_page/all` — TLB 管理
 /// - `read/write_page_table_base` — 页表切换
 /// - `read_fault_address` — 页错误诊断
+/// - `set_user_tls_base` — 用户态 TLS 基址寄存器写入
 /// - `context_switch` — 进程上下文切换
 /// - `enter_user` / `return_to_user` — 用户态入口/出口
 pub trait MmuArch {
@@ -207,15 +208,31 @@ pub trait MmuArch {
     fn write_page_table_base(paddr: u64);
     /// 读取触发页错误的地址 (mov cr2 / mrs `FAR_EL1`)。
     fn read_fault_address() -> usize;
-    /// 保存当前上下文到 `from`，从 `to` 恢复上下文。
+    /// 写入当前 CPU 的用户态 TLS 基址寄存器。
+    ///
+    /// `x86_64`: `IA32_FS_BASE`; aarch64: `TPIDR_EL0`。`0` 表示未设置。
+    fn set_user_tls_base(base: u64);
+    /// 保存当前上下文到 `from`，从 `to` 恢复上下文，
+    /// 并把即将上核任务的用户态 TLS 基址恢复为 `user_tls_base`。
+    ///
+    /// x86_64 的 `mov fs, sel` 会把 `IA32_FS_BASE` 重置为描述符基址 (0)，
+    /// 故该值必须由切换汇编在段装载**之后**写 MSR。
     ///
     /// # Safety
     /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
-    unsafe fn context_switch(from: *mut u8, to: *const u8);
+    unsafe fn context_switch(from: *mut u8, to: *const u8, user_tls_base: u64);
     /// 进入用户态执行 (sysret / eret)，此函数不会返回。
     /// `user_cr3` 为用户页表物理地址, 在 iretq 前切换 CR3.
     /// `kstack` 为进程内核栈顶 (高半部分地址), CR3 切换前先切到该栈.
-    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> !;
+    /// `user_tls_base` 为即将执行任务的用户态 TLS 基址 (0 表示未设置).
+    fn enter_user(
+        entry: usize,
+        stack: usize,
+        arg: usize,
+        user_cr3: u64,
+        kstack: u64,
+        user_tls_base: u64,
+    ) -> !;
     /// 从内核态返回到用户态 (iretq / eret)。
     fn return_to_user();
 }
@@ -355,20 +372,31 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     fn read_fault_address() -> usize {
         <Self as MmuArch>::read_fault_address()
     }
+    /// 写入用户态 TLS 基址寄存器 (委托 `MmuArch::set_user_tls_base`)。
+    fn set_user_tls_base(base: u64) {
+        <Self as MmuArch>::set_user_tls_base(base);
+    }
     /// 保存当前上下文到 `from`, 从 `to` 恢复 (委托 `MmuArch::context_switch`)。
     ///
     /// # Safety
     /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
-    unsafe fn context_switch(from: *mut u8, to: *const u8) {
+    unsafe fn context_switch(from: *mut u8, to: *const u8, user_tls_base: u64) {
         // SAFETY: 由本函数的安全契约保证 from/to 指向有效 ProcessContext,
         // 原样传递给 MmuArch::context_switch.
         unsafe {
-            <Self as MmuArch>::context_switch(from, to);
+            <Self as MmuArch>::context_switch(from, to, user_tls_base);
         }
     }
     /// 进入用户态执行, 不返回 (委托 `MmuArch::enter_user`)。
-    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
-        <Self as MmuArch>::enter_user(entry, stack, arg, user_cr3, kstack)
+    fn enter_user(
+        entry: usize,
+        stack: usize,
+        arg: usize,
+        user_cr3: u64,
+        kstack: u64,
+        user_tls_base: u64,
+    ) -> ! {
+        <Self as MmuArch>::enter_user(entry, stack, arg, user_cr3, kstack, user_tls_base)
     }
     /// 从内核态返回用户态 (委托 `MmuArch::return_to_user`)。
     fn return_to_user() {

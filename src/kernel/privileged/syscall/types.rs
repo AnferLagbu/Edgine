@@ -524,7 +524,9 @@ pub const SYS_SECCOMP: u64 = 317;
 /// `SYS_PRCTL` — 进程控制操作
 pub const SYS_PRCTL: u64 = 157;
 /// `SYS_ARCH_PRCTL` — 架构相关进程控制 (x86_64 TLS 等)
-pub const SYS_ARCH_PRCTL: u64 = 158;
+///
+/// 单一权威源 `edgine_abi::arch_prctl` (用户态 wrapper 引用同源).
+pub const SYS_ARCH_PRCTL: u64 = edgine_abi::arch_prctl::SYS_ARCH_PRCTL;
 
 // 安全 / 权限 (Linux x86_64 标准编号)
 /// `SYS_CAPGET` — 获取进程能力集

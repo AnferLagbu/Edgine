@@ -211,6 +211,13 @@ pub(crate) mod raw {
             unsafe { (*self.0).process().kernel_stack.load(Ordering::SeqCst) }
         }
 
+        /// 访问用户态 TLS 基址 (委托到 Process)
+        #[inline]
+        pub fn load_tls_base(&self) -> u64 {
+            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            unsafe { (*self.0).process().tls_base.load(Ordering::Acquire) }
+        }
+
         #[inline]
         pub fn store_kernel_stack(&self, v: u64) {
             // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
@@ -1104,6 +1111,9 @@ impl UserProcManager {
         let rip_val = proc_ref.entry();
         let rsp_initial = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
+        // 首次进入用户态同样要装载 TLS 基址 (x86_64 由 enter_user_asm 在
+        // `mov fs` 之后写 IA32_FS_BASE; aarch64 写 TPIDR_EL0).
+        let tls_base = proc_ref.load_tls_base();
 
         // 调试日志: 追踪 kstack 值
         crate::klog_boot_info!(
@@ -1164,7 +1174,8 @@ impl UserProcManager {
             crate::privileged::glue::usize_from_u64(rsp_initial),
             0,
             cr3,
-            kstack
+            kstack,
+            tls_base
         ));
     }
 

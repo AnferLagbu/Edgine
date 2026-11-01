@@ -16,9 +16,11 @@ extern SELECTOR_USER_CODE
 ; 在切 CR3 前后构建/读取 iretq 帧.
 TRAMPOLINE_TOP_OFF equ 32
 
-; void process_switch_asm(ProcessContext* prev, const ProcessContext* next);
+; void process_switch_asm(ProcessContext* prev, const ProcessContext* next,
+;                         u64 user_tls_base);
 ; RDI = *mut ProcessContext (save current register state here)
 ; RSI = *const ProcessContext (load next register state from here)
+; RDX = next 的用户态 TLS 基址 (x86_64: IA32_FS_BASE)
 ;
 ; ProcessContext layout (each field 8 bytes):
 ;   +0:   r15
@@ -131,6 +133,16 @@ process_switch_asm:
     mov es, ax
     mov ax, [rsi + 112]
     mov fs, ax
+
+    ; ── 恢复 next 的用户态 TLS 基址 (IA32_FS_BASE) ────────────────────
+    ; `mov fs, ax` 已把 FS 基址重置为该描述符的基址 (0), 故必须在段装载
+    ; **之后**写 MSR; 内核线程 (cs=0x08) 不进入用户态, 写 0 无副作用.
+    ; rdx = 第三参数 user_tls_base. 此后 rax 由下方 lea 重载, rcx/rdx 在
+    ; 用户分支由 extra_regs 恢复, 内核分支不依赖 caller-saved 寄存器.
+    mov rax, rdx
+    mov rcx, 0xC0000100         ; IA32_FS_BASE
+    shr rdx, 32
+    wrmsr
 
     ; Restore FPU/SSE state (fxrstor requires 16-byte aligned memory)
     ; fpu_state is at offset 144 (17 fields + 1 padding = 18 * 8 = 144 bytes)

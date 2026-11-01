@@ -3,11 +3,13 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::AtomicU64;
 use userlib::sys::{
-    AF_INET, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
-    SockaddrIn, TCP_NODELAY, Timespec, accept, bind, close_socket, fork, fs_close, fs_read,
-    fs_write, getsockopt, listen, nanosleep, pipe_create, poll, proc_exit, recv, send, setsockopt,
-    shutdown, socket, wait_pid,
+    AF_INET, ARCH_GET_FS, ARCH_SET_FS, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR,
+    SOCK_STREAM, SOL_SOCKET, SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind,
+    close_socket, fork, fs_close, fs_read, fs_write, getsockopt, listen, nanosleep, pipe_create,
+    poll, proc_exit, recv, sched_yield, send, setsockopt, shutdown, socket, wait_pid,
+    wait_pid_status,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -93,6 +95,11 @@ pub extern "C" fn _start() -> ! {
         print_dec(i64::from(probe_pid));
         println(")");
     }
+
+    // ── K-00: 用户态 TLS 基址随切换恢复 ─────────────────────────────────
+    // 必须在 busy 忙等子进程 fork 之前同步完成: 本探针依赖父子进程交替让出
+    // CPU 观察切换恢复, 忙等子进程独占次核会降低交替机会.
+    tls_probe();
 
     // ── APS-05: 双核并发 EL0 验证 ─────────────────────────────────────────
     // fork 一个**不 yield** 的忙等子进程: 父子各自长期占用一核并停留在 EL0
@@ -188,6 +195,142 @@ fn pipe_probe() {
         print_dec(i64::from(close_w));
         print_char(b'\n');
     }
+}
+
+// ============================================================
+// K-00: 用户态 TLS 基址探针
+// ============================================================
+
+/// TLS 探针 magic A (父进程) / B (子进程): 值本身无意义, 只用于区分
+/// `FS`/`TPIDR_EL0` 当前指向哪一个静态块.
+const TLS_MAGIC_A: u64 = 0x544C_5341_0000_0001;
+const TLS_MAGIC_B: u64 = 0x544C_5342_0000_0002;
+
+/// TLS 数据块 A — 父进程基址.
+///
+/// 用 `AtomicU64` 而非可变静态: 块内容恒定, 只需一段 8 字节对齐的可读用户内存;
+/// 原子类型同时避免 `static mut` 的引用未定义行为.
+static TLS_BLOCK_A: AtomicU64 = AtomicU64::new(TLS_MAGIC_A);
+/// TLS 数据块 B — 子进程基址.
+static TLS_BLOCK_B: AtomicU64 = AtomicU64::new(TLS_MAGIC_B);
+
+/// 父子交替让出 CPU 并校验 TLS 的轮数.
+const TLS_SWITCH_ROUNDS: u32 = 64;
+
+fn tls_addr(block: &AtomicU64) -> u64 {
+    core::ptr::from_ref(block) as u64
+}
+
+fn tls_set(addr: u64) -> bool {
+    arch_prctl(ARCH_SET_FS, addr) == 0
+}
+
+fn tls_get() -> Option<u64> {
+    let mut base = 0u64;
+    if arch_prctl(ARCH_GET_FS, core::ptr::from_mut(&mut base) as u64) == 0 {
+        Some(base)
+    } else {
+        None
+    }
+}
+
+/// 经硬件 TLS 基址读取偏移 0 的 8 字节 (x86_64: `fs:[0]`).
+#[cfg(target_arch = "x86_64")]
+fn tls_read_word() -> u64 {
+    let word: u64;
+    // SAFETY: FS 基址由 arch_prctl 指向本进程的探针静态块 (8 字节对齐),
+    // 读取偏移 0 的 8 字节不越界; 不使用栈.
+    unsafe {
+        core::arch::asm!("mov {}, qword ptr fs:[0]", out(reg) word, options(nostack, preserves_flags));
+    }
+    word
+}
+
+/// 经硬件 TLS 基址读取偏移 0 的 8 字节 (aarch64: 先取 `TPIDR_EL0` 再解引用).
+#[cfg(target_arch = "aarch64")]
+fn tls_read_word() -> u64 {
+    let base: u64;
+    // SAFETY: `mrs` 只读 TPIDR_EL0 (EL0 可读), 不访问内存.
+    unsafe {
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) base, options(nomem, nostack));
+    }
+    // SAFETY: base 由 arch_prctl 指向本进程 8 字节对齐的探针静态块, 只读一次.
+    unsafe { core::ptr::read_volatile(base as *const u64) }
+}
+
+/// 用户态 TLS 基址随上下文切换恢复探针 (K-00).
+///
+/// 覆盖三个运行时判据:
+/// 1. `arch_prctl(ARCH_SET_FS)` 立即生效 —— 硬件视图 (`fs:[0]` / `TPIDR_EL0`
+///    解引用) 与内核字段回读 (`ARCH_GET_FS`) 同步指向新基址;
+/// 2. `fork` 子进程继承父进程 TLS 基址;
+/// 3. 父子进程各持不同基址并交替 `sched_yield`, 每次重新被调度后读回的仍是
+///    自己的 magic —— 切换漏恢复即读到对方的块 (或基址 0).
+///
+/// `execve` 清零路径不在本探针内: 默认启动环境只加载内嵌 init 一个 ELF
+/// (未启用 initramfs), 无法构造成功的 `execve` 目标; 该路径由 host 侧源码
+/// 契约测试 (`host-tests/tests/tls_base_restore_test.rs`) 锁定.
+fn tls_probe() {
+    let addr_a = tls_addr(&TLS_BLOCK_A);
+    let addr_b = tls_addr(&TLS_BLOCK_B);
+    if !tls_set(addr_a) || tls_read_word() != TLS_MAGIC_A || tls_get() != Some(addr_a) {
+        println("[TLS] FAIL: arch_prctl(ARCH_SET_FS) 未立即生效");
+        return;
+    }
+    println("[TLS] SET/GET ok (hardware base effective immediately)");
+
+    let child = fork();
+    if child == 0 {
+        tls_child_probe(addr_a, addr_b);
+    }
+    let Ok(child_pid) = i32::try_from(child) else {
+        println("[TLS] FAIL: fork 返回值超出 i32");
+        return;
+    };
+
+    let mut parent_ok = true;
+    for _ in 0..TLS_SWITCH_ROUNDS {
+        sched_yield();
+        if tls_read_word() != TLS_MAGIC_A || tls_get() != Some(addr_a) {
+            parent_ok = false;
+            break;
+        }
+    }
+    let mut status = 0i32;
+    let reaped = wait_pid_status(child_pid, &mut status);
+    let child_ok = reaped == i64::from(child_pid) && status == 0;
+    if parent_ok && child_ok {
+        println("[TLS] PASS: fork inherit + cross-process switch isolation");
+    } else {
+        print("[TLS] FAIL: parent_ok=");
+        print_dec(i64::from(parent_ok));
+        print(" reaped=");
+        print_dec(reaped);
+        print(" status=");
+        print_dec(i64::from(status));
+        print_char(b'\n');
+    }
+}
+
+/// 子进程侧: 校验 fork 继承 → 切换到自己的基址 → 与父进程交替后仍稳定.
+fn tls_child_probe(addr_a: u64, addr_b: u64) -> ! {
+    if tls_read_word() != TLS_MAGIC_A || tls_get() != Some(addr_a) {
+        println("[TLS] FAIL: fork 子进程未继承父进程 TLS");
+        proc_exit(2);
+    }
+    if !tls_set(addr_b) || tls_read_word() != TLS_MAGIC_B || tls_get() != Some(addr_b) {
+        println("[TLS] FAIL: 子进程切换 TLS 基址未生效");
+        proc_exit(3);
+    }
+    for _ in 0..TLS_SWITCH_ROUNDS {
+        sched_yield();
+        if tls_read_word() != TLS_MAGIC_B || tls_get() != Some(addr_b) {
+            println("[TLS] FAIL: 子进程 TLS 在上下文切换后被覆盖");
+            proc_exit(4);
+        }
+    }
+    println("[TLS] child B base stable across context switches");
+    proc_exit(0);
 }
 
 /// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).

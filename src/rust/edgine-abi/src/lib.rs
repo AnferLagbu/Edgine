@@ -14,4 +14,5 @@
 #![no_std]
 #![deny(missing_docs)]
 
+pub mod arch_prctl;
 pub mod socket;

@@ -1381,6 +1381,15 @@ impl Scheduler {
             unsafe { (&raw mut (*p).context).cast::<Mutex<ProcessContext>>() }
         });
 
+        // 切换目标的用户态 TLS 基址: 由切换汇编在装载 fs 段选择子之后写入
+        // IA32_FS_BASE (aarch64 侧在切换前写 TPIDR_EL0). 读取发生在中断关闭的
+        // 调度器临界区内, 目标任务此刻不在任何 CPU 上运行, 原子读取无竞争.
+        let next_tls_base = next_ptr.map_or(0, |p| {
+            // SAFETY: next_ptr 来自 PROCESS_TABLE.get(), 指向活动 Process;
+            // 本函数运行在 cli 临界区, 该条目不参与并发卸载.
+            unsafe { (*p).tls_base.load(Ordering::Acquire) }
+        });
+
         // `context_switch` 会在**本任务稍后被重新调度上核时返回** —— 恢复点即
         // 其后代码, 且执行时用的是本任务自身的栈上局部变量 (`next`/`current_pid`
         // 均为本次切换的陈旧值). 故**不能**以"执行到切换段之后"推断未发生切换;
@@ -1399,7 +1408,11 @@ impl Scheduler {
             unsafe {
                 let prev_ctx = core::ptr::addr_of_mut!(*((&mut *prev_ctx_ptr).get_mut_unchecked()));
                 let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
-                crate::arch!(context_switch(prev_ctx.cast::<u8>(), next_ctx.cast::<u8>()));
+                crate::arch!(context_switch(
+                    prev_ctx.cast::<u8>(),
+                    next_ctx.cast::<u8>(),
+                    next_tls_base
+                ));
             }
             // 恢复路径: 本任务已被重新调度上核, 本次切换早已由"切走本任务的那次
             // schedule()"完成. 仅做 RCU 收尾并按原语义返回 (返回值调用方不依赖).
@@ -1428,12 +1441,18 @@ impl Scheduler {
         // SAFETY: next_ptr 来自 PROCESS_TABLE.get(next) 且上面已判非 None; 单核 +
         // 本函数开头 cli 排他, 切换期间无并发访问. scratch 为本 CPU 私有槽, 仅
         // 承接被丢弃的 prev 寄存器 (其内容不会被读回).
+        let next_tls_base = next_ptr.map_or(0, |p| {
+            // SAFETY: next_ptr 来自 PROCESS_TABLE.get(), 指向活动 Process;
+            // 本函数运行在 cli 临界区, 该条目不参与并发卸载.
+            unsafe { (*p).tls_base.load(Ordering::Acquire) }
+        });
         unsafe {
             let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
             let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));
             crate::arch!(context_switch(
                 scratch_ctx.cast::<u8>(),
-                next_ctx.cast::<u8>()
+                next_ctx.cast::<u8>(),
+                next_tls_base
             ));
         }
         // context_switch 永不返回; 以下仅为类型收尾.

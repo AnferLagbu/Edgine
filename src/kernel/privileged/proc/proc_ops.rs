@@ -520,6 +520,13 @@ pub extern "C" fn proc_exec_replace(
     // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
     crate::privileged::fs::current_vfs_ops().close_cloexec_fds();
 
+    // 5c. execve 后旧映像的 TLS 基址不保留: 新映像从 0 开始,
+    // 硬件寄存器同步清除 (随后经 `user_proc_enter_by_pid` 的入口参数再次装载).
+    let _ = PROCESS_TABLE.with_process(current_pid, |p| {
+        p.tls_base.store(0, Ordering::Release);
+    });
+    crate::arch!(set_user_tls_base(0));
+
     // 6. 同步当前进程信息
     C_CURRENT_PROCESS.map_mut(|p| {
         p.pid = u64::from(current_pid);
@@ -817,6 +824,12 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
         PROCESS_TABLE.with_process(parent_pid, |p| p.cgroup_id.load(Ordering::Acquire))
     {
         child.cgroup_id.store(cg, Ordering::Release);
+    }
+    // TLS 基址: fork 子进程继承父进程的用户态 TLS 指针 (POSIX fork 语义)
+    if let Some(tls) =
+        PROCESS_TABLE.with_process(parent_pid, |p| p.tls_base.load(Ordering::Acquire))
+    {
+        child.tls_base.store(tls, Ordering::Release);
     }
 }
 

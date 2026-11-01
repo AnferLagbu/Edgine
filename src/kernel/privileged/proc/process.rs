@@ -353,11 +353,12 @@ pub struct Process {
     /// Per-process SUID 提权栈深度 (P2-I-30)
     pub session_elev_depth: AtomicIsize,
 
-    /// Per-process TLS 基址 (`x86_64`: `MSR_FS_BASE`, aarch64: `tpidr_el0`)
+    /// Per-process TLS 基址 (`x86_64`: `IA32_FS_BASE`, aarch64: `TPIDR_EL0`)
     ///
-    /// `clone(CLONE_SETTLS)` 设置. 当前仅存储, 切换恢复未实装; x86_64 需在
-    /// 切换时写 `MSR_FS_BASE、aarch64` 写 `tpidr_el0` (待用户态线程库出现时实装).
-    /// 0 表示未设置.
+    /// 权威来源: `arch_prctl(ARCH_SET_FS)` / `clone(CLONE_SETTLS)` 写入,
+    /// `fork` / 未指定 `CLONE_SETTLS` 的 `clone` 从父进程继承, `execve` 清零.
+    /// 调度切换与用户态入口按本字段恢复硬件寄存器 (x86_64 在 `mov fs` 之后写
+    /// MSR). 0 表示未设置.
     pub tls_base: AtomicU64,
 
     /// `CLONE_CHILD_CLEARTID` 登记的清除地址

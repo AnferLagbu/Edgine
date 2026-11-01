@@ -395,29 +395,52 @@ impl MmuArch for X8664 {
         crate::privileged::glue::usize_from_u64(cr2)
     }
 
+    /// 写入当前 CPU 的用户态 FS 段基址 (`IA32_FS_BASE`)。
+    #[inline]
+    fn set_user_tls_base(base: u64) {
+        // host-test 无硬件 MSR 语义, 与 context_switch 的桩化同模式.
+        #[cfg(feature = "host-test")]
+        {
+            let _ = base;
+        }
+        #[cfg(not(feature = "host-test"))]
+        {
+            /// `IA32_FS_BASE` MSR 地址 (用户态 FS 段基址).
+            const IA32_FS_BASE: u32 = 0xC000_0100;
+            // SAFETY: 内核态 (CPL=0) 写 IA32_FS_BASE; 仅影响当前 CPU 用户态 FS 基址,
+            // 内核自身不使用 FS.
+            unsafe {
+                crate::privileged::cpu::msr::write_msr(IA32_FS_BASE, base);
+            }
+        }
+    }
+
     /// 进程上下文切换 (`process_switch_asm`)。
+    ///
+    /// `user_tls_base` 由汇编在装载 `fs` 段选择子**之后**写入 `IA32_FS_BASE` ——
+    /// `mov fs, sel` 会把基址重置为描述符基址 (0), 故只能在段装载后写。
     ///
     /// # Safety
     /// `from` 和 `to` 必须指向有效的 `ProcessContext` 内存。
     #[inline]
-    unsafe fn context_switch(from: *mut u8, to: *const u8) {
+    unsafe fn context_switch(from: *mut u8, to: *const u8, user_tls_base: u64) {
         // E-04 (2026-09-06): 测试运行器双端适配 — host-test (std) 下无裸机上下文切换.
         // process_switch_asm 由 proc/switch.asm 在裸机构建时汇编链接, host 无此符号,
         // 直接 extern 调用会链接报 undefined symbol. 桩化为 no-op (host 无硬件切换语义,
         // 与 B08-14 IrqSpinLock 中断桩化同模式). 仅 host-test feature 生效, kernel_test 不变.
         #[cfg(feature = "host-test")]
         {
-            let _ = (from, to);
+            let _ = (from, to, user_tls_base);
         }
         #[cfg(not(feature = "host-test"))]
         {
             // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
             unsafe extern "C" {
-                fn process_switch_asm(prev: *mut u8, next: *const u8);
+                fn process_switch_asm(prev: *mut u8, next: *const u8, user_tls_base: u64);
             }
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             unsafe {
-                process_switch_asm(from, to);
+                process_switch_asm(from, to, user_tls_base);
             }
         }
     }
@@ -434,13 +457,21 @@ impl MmuArch for X8664 {
     /// - rdx = arg (用户态参数，当前未使用)
     /// - rcx = `user_cr3` (用户页表物理地址)
     /// - r8 = kstack (内核栈高半区地址)
+    /// - r9 = `user_tls_base` (用户态 FS 段基址)
     #[inline(never)]
-    fn enter_user(entry: usize, stack: usize, arg: usize, user_cr3: u64, kstack: u64) -> ! {
+    fn enter_user(
+        entry: usize,
+        stack: usize,
+        arg: usize,
+        user_cr3: u64,
+        kstack: u64,
+        user_tls_base: u64,
+    ) -> ! {
         // SAFETY: 调用方保证 entry/stack/user_cr3/kstack 有效。
         // 通过 FFI 调用汇编实现的 enter_user_asm。
         unsafe {
             // SAFETY: enter_user_asm 由 global_asm! 定义于 .kpti_trampoline section,
-            // 参数 (entry/stack/user_cr3/kstack) 有效性由上方 SAFETY 保证.
+            // 参数 (entry/stack/user_cr3/kstack/user_tls_base) 有效性由上方 SAFETY 保证.
             unsafe extern "C" {
                 fn enter_user_asm(
                     entry: usize,
@@ -448,9 +479,10 @@ impl MmuArch for X8664 {
                     arg: usize,
                     user_cr3: u64,
                     kstack: u64,
+                    user_tls_base: u64,
                 ) -> !;
             }
-            enter_user_asm(entry, stack, arg, user_cr3, kstack)
+            enter_user_asm(entry, stack, arg, user_cr3, kstack, user_tls_base)
         }
     }
 
@@ -503,7 +535,7 @@ core::arch::global_asm!(
     .extern SELECTOR_USER_DATA
     .extern SELECTOR_USER_CODE
 enter_user_asm:
-    // 参数: rdi=entry, rsi=stack, rdx=arg, rcx=user_cr3, r8=kstack
+    // 参数: rdi=entry, rsi=stack, rdx=arg, rcx=user_cr3, r8=kstack, r9=tls_base
     cli
 
     // 保存 user_cr3 到 rax (在清除寄存器前)
@@ -511,6 +543,9 @@ enter_user_asm:
 
     // 保存 entry 到 r12 (在清除寄存器前)
     mov r12, rdi
+
+    // 保存 tls_base 到 r13 (r13 不在下方清零列表内, 直到段装载后才用)
+    mov r13, r9
 
     // 清除寄存器 (防止泄露内核信息到用户态)
     // 注意：rax 保存 user_cr3，稍后用于切换 CR3
@@ -589,6 +624,21 @@ enter_user_asm:
 
     mov gs, cx
     
+
+    // ── 用户态 TLS 基址 (IA32_FS_BASE) ────────────────────────────────
+    // `mov fs` 会把 FS 基址重置为描述符基址 (0), 故必须在段装载之后写 MSR.
+    // r13 = tls_base; rax 此时仍持有 user_cr3, 借 r8/r9 暂存 rax/rdx.
+    mov r8, rax
+    mov r9, rdx
+    mov rax, r13
+    mov rdx, r13
+    shr rdx, 32
+    mov ecx, 0xC0000100
+    wrmsr
+    mov rax, r8
+    mov rdx, r9
+    xor r8d, r8d
+    xor r9d, r9d
 
     // ⚠ 关键修复 (TRACK-INIT-RING3):
     // 直接 fall-through 到 trampoline 后续代码.

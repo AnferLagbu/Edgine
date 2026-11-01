@@ -632,6 +632,15 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # K-00: 用户态 TLS 基址随切换恢复 —— arch_prctl 立即生效 + fork 继承
+            # + 父子进程交替让出 CPU 后各自 magic 不变. 探针任一判据失败不打印
+            # PASS 行 (只打印 [TLS] FAIL), 故缺失即回归 (fail-closed).
+            if grep -q "\[TLS\] PASS: fork inherit + cross-process switch isolation" "$X64_LOG"; then
+                ok "[x86_64] 用户态 TLS 切换恢复通过 (K-00)"
+            else
+                warn "[x86_64] 未观察到用户态 TLS 切换恢复断言 (K-00)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
             # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
             # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
@@ -788,6 +797,14 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] KPTI 隔离断言通过: EL0 读内核高半区被内核终止 (KPTI-09)"
             else
                 warn "[aarch64] 未观察到 KPTI EL0 隔离断言 (KPTI-09)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # K-00: 用户态 TLS 基址随切换恢复 (与 x86_64 分支同断言).
+            # aarch64 侧 arch_prctl 写 TPIDR_EL0, 切换路径同源恢复.
+            if grep -q "\[TLS\] PASS: fork inherit + cross-process switch isolation" "$A64_LOG"; then
+                ok "[aarch64] 用户态 TLS 切换恢复通过 (K-00)"
+            else
+                warn "[aarch64] 未观察到用户态 TLS 切换恢复断言 (K-00)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).

@@ -42,6 +42,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
         crate::privileged::glue::usize_from_u64(ctx.rdi), // arg0 (x86_64 calling convention)
         vmspace.pt_root().0,                              // user_cr3
         0, // kstack: 由 user_proc 直接调用 enter_user 时传入
+        0, // TLS: 该底层入口不绑定进程, 基址由调用方经 arch_prctl 预置
     )
 }
 
@@ -57,6 +58,7 @@ pub unsafe fn enter_user_mode(vmspace: &VmSpace, ctx: &UserContext) -> ! {
         crate::privileged::glue::usize_from_u64(ctx.x0),      // arg0 (aarch64 calling convention)
         vmspace.pt_root().0,                                  // user_cr3 (TTBR0)
         0,                                                    // kstack: aarch64 不需要
+        0, // TLS: 该底层入口不绑定进程, 基址由调用方经 arch_prctl 预置
     )
 }
 
