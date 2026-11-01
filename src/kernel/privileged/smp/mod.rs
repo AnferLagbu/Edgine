@@ -58,13 +58,20 @@ pub fn get_cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Acquire)
 }
 
-/// 返回当前 CPU 的**逻辑索引** (`[0, get_cpu_count())`)。
+/// 返回当前 CPU 的**逻辑索引** (`[0, get_cpu_count())`).
 ///
-/// 读取本核硬件 id (`arch::cpu_id()`) 后在 `CPU_HW_IDS` 的已登记前缀内线性
-/// 扫描反查; 未命中 (例如极早期调用, 槽位尚未登记) 回退 BSP (0), 保证返回值
+/// 快路径: 架构提供 GS/TLS 缓存时 (x86_64 `gs:[64]`, 启动期一次性写入) 单条读
+/// 返回, **不触及 LAPIC MMIO**; 缓存未就绪 (BSP `gdt_init` 之前 / host-test) 或
+/// 架构无缓存时回落下方慢路径。
+///
+/// 慢路径: 读取本核硬件 id (`arch::cpu_id()`) 后在 `CPU_HW_IDS` 的已登记前缀内
+/// 线性扫描反查; 未命中 (例如极早期调用, 槽位尚未登记) 回退 BSP (0), 保证返回值
 /// 恒为有效索引。核数上限 [`crate::privileged::config::MAX_CPUS`] 有界, 扫描
 /// 成本可接受且为纯读, 可在中断上下文调用。
 pub fn current_cpu_index() -> u32 {
+    if let Some(idx) = crate::arch!(cached_cpu_index()) {
+        return idx;
+    }
     let hw_id = crate::arch!(cpu_id());
     let count = get_cpu_count();
     let mut i = 0u32;

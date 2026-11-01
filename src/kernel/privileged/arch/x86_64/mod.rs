@@ -62,6 +62,12 @@ impl CoreArch for X8664 {
         }
     }
 
+    /// 获取当前 CPU 逻辑索引的 GS 缓存 (热路径单条 `gs:[64]` 读)。
+    #[inline]
+    fn cached_cpu_index() -> Option<u32> {
+        crate::privileged::arch::x86_64::gdt::cached_cpu_index()
+    }
+
     /// 获取高精度时间戳 (rdtsc)。
     #[inline]
     fn timestamp() -> u64 {

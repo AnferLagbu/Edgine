@@ -122,6 +122,16 @@ pub trait CoreArch {
     fn timestamp_serialized() -> u64 {
         Self::timestamp()
     }
+    /// 获取当前 CPU 逻辑索引的架构缓存 (若本架构已建立)。
+    ///
+    /// `smp::current_cpu_index` 优先取本值, 避开热路径上的硬件 id 读与线性反查。
+    /// 默认无缓存返回 `None`; x86_64 在 GS 基址就绪后经 `gs:[64]` 单条读返回
+    /// (LAPIC MMIO 不在热路径上); aarch64 的 `MPIDR_EL1` 本就是系统寄存器读,
+    /// 不构成 MMIO 开销, 故不设缓存。
+    #[must_use]
+    fn cached_cpu_index() -> Option<u32> {
+        None
+    }
     /// 暂停 CPU 直到下一次中断 (hlt / wfi)。
     fn halt();
     /// 全内存屏障 (mfence / dsb sy)。
@@ -254,6 +264,11 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     #[must_use]
     fn timestamp() -> u64 {
         <Self as CoreArch>::timestamp()
+    }
+    /// 当前 CPU 逻辑索引的架构缓存 (委托 `CoreArch::cached_cpu_index`)。
+    #[must_use]
+    fn cached_cpu_index() -> Option<u32> {
+        <Self as CoreArch>::cached_cpu_index()
     }
     /// 序列化时间戳读取, 确保先前指令全部完成 (委托 `CoreArch::timestamp_serialized`)。
     #[must_use]

@@ -31,7 +31,7 @@
 
 #![deny(missing_docs)]
 
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use crate::privileged::racy_cell::RacyCell;
 
@@ -343,6 +343,7 @@ pub struct GdtPtr {
 /// | 40   | `scratch_r12` | `SCRATCH_R12_OFF`   |
 /// | 48   | `scratch_r14` | `SCRATCH_R14_OFF`   |
 /// | 56   | `scratch_r15` | `SCRATCH_R15_OFF`   |
+/// | 64   | `cpu_index`   | `CPU_INDEX_OFFSET` (仅 Rust 快路径读, 汇编不用) |
 ///
 /// `user_rsp` (TRACK-INIT-RING3-SYSCALL-RET): syscall 入口保存当前用户 RSP,
 /// 供 iretq 帧的 RSP 槽位使用. 与 `kernel_rsp` 分离, 避免覆盖 (原实现复用
@@ -376,6 +377,78 @@ pub struct SyscallPerCpu {
     pub scratch_r14: u64,
     /// r15 暂存 (KPTI 切 CR3 窗口)
     pub scratch_r15: u64,
+    /// 本 CPU 的**逻辑索引** (`smp::current_cpu_index` 快路径经 `gs:[64]` 直读)。
+    ///
+    /// 启动期一次性写入 (`gdt_init` 写 0 / `gdt_init_ap` 写传入索引), 运行期只读;
+    /// 缓存的是逻辑索引而非硬件 id, 使热路径免去 LAPIC MMIO 读与 `CPU_HW_IDS` 扫描。
+    pub cpu_index: u64,
+}
+
+/// `SyscallPerCpu.cpu_index` 的字节偏移 — 与 [`cached_cpu_index`] 内联汇编的
+/// `gs:[64]` 位移**同源**; 偏移漂移由模块级 const 断言在编译期拦截.
+pub const CPU_INDEX_OFFSET: usize = 64;
+
+const _: () = assert!(
+    core::mem::offset_of!(SyscallPerCpu, cpu_index) == CPU_INDEX_OFFSET,
+    "SyscallPerCpu.cpu_index 偏移必须与 cached_cpu_index 的 gs:[64] 一致"
+);
+
+/// GS 基址是否已指向本 CPU 已初始化的 `SyscallPerCpu` (快路径可用性闸门)。
+///
+/// BSP 在 `gdt_init` 写完 `IA32_GS_BASE` 后置位; AP 的 GS 基址由 `gdt_init_ap`
+/// 建立, 且 `ap_entry` 在该点之前不调用 `current_cpu_index` (见 `ap_entry`
+/// 调用序), 故全局置位对 AP 同样成立.
+static CACHED_CPU_INDEX_READY: AtomicBool = AtomicBool::new(false);
+
+/// 经 GS 基址读取本 CPU 缓存逻辑索引的快路径。
+///
+/// 返回 `None` 表示缓存不可用 (BSP `gdt_init` 之前 / host-test 无 GS 上下文),
+/// 调用方应回落硬件 id 反查。就绪标志置位后单次调用 = 一条 `gs:[64]` 读,
+/// 不触及 LAPIC MMIO, 也不做 `CPU_HW_IDS` 线性扫描。
+#[inline]
+#[must_use]
+pub fn cached_cpu_index() -> Option<u32> {
+    #[cfg(feature = "host-test")]
+    {
+        // host 侧无 GS 基址 (无内核上下文), 恒走回落路径.
+        None
+    }
+    #[cfg(not(feature = "host-test"))]
+    {
+        if !CACHED_CPU_INDEX_READY.load(Ordering::Acquire) {
+            return None;
+        }
+        let idx: u64;
+        // SAFETY: 就绪标志仅在 GS 基址指向本 CPU 已初始化 SyscallPerCpu 之后置位;
+        // gs:[CPU_INDEX_OFFSET] 落在该结构体内 (上方 const 断言锁偏移), 只读无副作用.
+        unsafe {
+            core::arch::asm!(
+                "mov {}, gs:[64]",
+                out(reg) idx,
+                options(nostack, readonly, preserves_flags)
+            );
+        }
+        Some(crate::privileged::glue::low_u32_from_u64(idx))
+    }
+}
+
+/// 快路径逐核自校验: 比对 GS 缓存值与期望逻辑索引。
+///
+/// 不一致说明汇编位移/布局契约破裂 — 关闭全局快路径并告警, 让全部核回落
+/// 硬件 id 反查 (正确性不降级), 而非带着错索引继续运行。
+fn verify_cached_cpu_index(expected: u32) {
+    if let Some(idx) = cached_cpu_index()
+        && idx == expected
+    {
+        crate::klog_boot_info!("[GDT] cpu_index fast path armed: cpu={}", idx);
+        return;
+    }
+    CACHED_CPU_INDEX_READY.store(false, Ordering::Release);
+    crate::klog_err!(
+        Boot,
+        "[GDT] cached cpu_index self-check FAILED (expect {}, disables fast path)",
+        expected
+    );
 }
 
 /// 每个 CPU 独立的 syscall 内核栈大小 (64KB, syscall 入口与调度切换共用).
@@ -437,6 +510,7 @@ static BSP_GDT: RacyCell<PerCpuGdt> = RacyCell::new(PerCpuGdt {
         scratch_r12: 0,
         scratch_r14: 0,
         scratch_r15: 0,
+        cpu_index: 0,
     },
     syscall_stack: [0u8; PER_CPU_SYSCALL_STACK_SIZE],
     ist0: AlignedStack([0u8; PER_CPU_IST_SIZE]),
@@ -681,6 +755,9 @@ pub fn gdt_init() -> i32 {
             + gdt.syscall_stack.as_ptr() as u64
             + gdt.syscall_stack.len() as u64;
 
+        // 本核逻辑索引 0 (BSP): 热路径经 gs:[CPU_INDEX_OFFSET] 直读.
+        gdt.syscall.cpu_index = 0;
+
         // 读取当前 CR3 作为 PML4 初始值
         // KPTI 激活后, kernel_pml4/user_pml4 已由 kpti_init 通过
         // gdt_set_kpti_pml4 正确设置 (含 PCID 编码), 不应覆盖.
@@ -704,6 +781,11 @@ pub fn gdt_init() -> i32 {
         // 用户态执行 syscall 时, syscall_entry 的 swapgs 将其换回 per_cpu_addr.
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &raw const gdt.syscall as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
+
+        // GS 基址已就位: 解锁快路径并自校验一条 gs:[64] 读, 偏移/布局破裂时
+        // verify 会关闭全局快路径并告警 (全部核回落硬件 id 反查).
+        CACHED_CPU_INDEX_READY.store(true, Ordering::Release);
+        verify_cached_cpu_index(0);
 
         // 诊断: 验证 write_msr 后 IA32_GS_BASE 的实际值
         let gs_base_readback = crate::privileged::cpu::msr::read_msr(IA32_GS_BASE);
@@ -844,6 +926,9 @@ pub fn gdt_init_ap(cpu_index: u32) {
             ap.syscall.user_pml4 = current_cr3;
         }
 
+        // 本核逻辑索引: 与 `register_cpu` 的稠密分配一致 (调用方传入).
+        ap.syscall.cpu_index = u64::from(cpu_index);
+
         // 内核态 GS 基址约定与 BSP `gdt_init` 完全一致 (见该处注释):
         //   内核态: IA32_GS_BASE = per_cpu_addr, IA32_KERNEL_GS_BASE = 0
         //   用户态: IA32_GS_BASE = 0,            IA32_KERNEL_GS_BASE = per_cpu_addr
@@ -853,6 +938,9 @@ pub fn gdt_init_ap(cpu_index: u32) {
         // #PF → #DF); 且用户态 syscall 的 swapgs 也拿不到 per-CPU 基址。
         crate::privileged::cpu::msr::write_msr(IA32_GS_BASE, &raw const ap.syscall as u64);
         crate::privileged::cpu::msr::write_msr(IA32_KERNEL_GS_BASE, 0);
+
+        // 逐核自校验: 本核 gs:[64] 必须读回传入的逻辑索引.
+        verify_cached_cpu_index(cpu_index);
     }
 }
 
@@ -1088,5 +1176,46 @@ mod tests {
         assert_eq!(SELECTOR_USER_DATA, 0x18);
         assert_eq!(SELECTOR_USER_CODE, 0x20);
         assert_eq!(SELECTOR_TSS, 0x28);
+    }
+
+    /// `SyscallPerCpu` 布局 = 汇编 `[gs:OFF]` 常量 + 快路径 `gs:[64]` 的共同来源.
+    #[test]
+    fn syscall_per_cpu_layout_matches_asm_offsets() {
+        use core::mem::offset_of;
+        assert_eq!(offset_of!(SyscallPerCpu, kernel_rsp), 0, "KERNEL_RSP_OFF");
+        assert_eq!(offset_of!(SyscallPerCpu, kernel_pml4), 8, "KERNEL_PML4_OFF");
+        assert_eq!(offset_of!(SyscallPerCpu, user_pml4), 16, "USER_PML4_OFF");
+        assert_eq!(offset_of!(SyscallPerCpu, user_rsp), 24, "USER_RSP_OFF");
+        assert_eq!(
+            offset_of!(SyscallPerCpu, trampoline_top),
+            32,
+            "TRAMPOLINE_TOP_OFF"
+        );
+        assert_eq!(
+            offset_of!(SyscallPerCpu, scratch_r12),
+            40,
+            "SCRATCH_R12_OFF"
+        );
+        assert_eq!(
+            offset_of!(SyscallPerCpu, scratch_r14),
+            48,
+            "SCRATCH_R14_OFF"
+        );
+        assert_eq!(
+            offset_of!(SyscallPerCpu, scratch_r15),
+            56,
+            "SCRATCH_R15_OFF"
+        );
+        assert_eq!(
+            offset_of!(SyscallPerCpu, cpu_index),
+            CPU_INDEX_OFFSET,
+            "快路径 gs:[64] 位移"
+        );
+    }
+
+    /// host 侧无 GS 基址: 快路径必须自报不可用, 让调用方回落慢路径.
+    #[test]
+    fn cached_cpu_index_unavailable_without_gs_context() {
+        assert_eq!(cached_cpu_index(), None, "host-test 下不得尝试读 gs:[64]");
     }
 }
