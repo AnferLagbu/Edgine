@@ -1,6 +1,7 @@
 #![deny(missing_docs)]
 use super::rlimit::RlimitTable;
 use super::scheduler::SchedPolicy;
+use super::thread_group::ThreadGroup;
 use super::types::{
     BlockReason, KERNEL_STACK_SIZE, MAX_PROCESSES, Pid, ProcessContext, ProcessFlags, ProcessId,
     ProcessPriority, ProcessState,
@@ -9,6 +10,7 @@ use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE, USER_ADDR_FLOOR};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
@@ -169,6 +171,11 @@ pub struct Process {
     pub parent: Option<ProcessId>,
     /// 子进程 PID 列表 (受锁保护).
     pub children: Mutex<Vec<ProcessId>>,
+    /// 所属线程组 (K-01): `tgid` 与成员账的唯一权威.
+    ///
+    /// 单线程进程由 [`Process::new`] 自建单成员组 (`tgid == pid`); 组内线程共享
+    /// 同一个 `Arc`, 最后一个 TCB 释放时组内存随之回收.
+    pub thread_group: Arc<ThreadGroup>,
 
     /// 保存/恢复的 CPU 上下文 (寄存器快照, 受锁保护).
     pub context: Mutex<ProcessContext>,
@@ -422,6 +429,7 @@ impl Process {
             name: Mutex::new(String::from(name)),
             parent,
             children: Mutex::new(Vec::new()),
+            thread_group: Arc::new(ThreadGroup::new_leader(pid)),
             context: Mutex::new(ProcessContext::new()),
             cr3: AtomicU64::new(0),
             kernel_stack: AtomicU64::new(0),
@@ -655,6 +663,17 @@ impl Process {
     /// 读取进程优先级.
     pub fn get_priority(&self) -> ProcessPriority {
         ProcessPriority::from_u32(self.priority.load(Ordering::SeqCst))
+    }
+
+    /// 读取线程组 ID (tgid); 单线程进程等于本 TCB 的 `pid`.
+    pub fn tgid(&self) -> Pid {
+        self.thread_group.tgid()
+    }
+
+    /// 读取所属线程组 (共享身份与成员账).
+    #[must_use]
+    pub fn group(&self) -> &Arc<ThreadGroup> {
+        &self.thread_group
     }
 
     /// 设置进程优先级.

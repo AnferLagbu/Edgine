@@ -13,6 +13,7 @@
 //! privileged/proc/  (TCB 进程管理)
 //! ├── types.rs          核心数据结构 (Process/Thread/Task/Pid/Tid 等)
 //! ├── process.rs        进程表 (PCB/进程 CRUD/状态机)
+//! ├── thread_group.rs   线程组 (tgid/成员账/组退出状态, K-01)
 //! ├── session.rs        会话/进程组/凭证
 //! ├── elf.rs            ELF 二进制解析 (TCB 原始)
 //! ├── api.rs            C ↔ Rust 桥接 (兼容层)
@@ -70,6 +71,8 @@ pub mod seccomp;
 pub mod session;
 pub mod signal;
 pub mod signal_trait;
+/// 线程组: tgid、成员账与组退出状态 (K-01)
+pub mod thread_group;
 pub mod types;
 /// 用户进程 — 创建 / 地址空间装载 / 进入 Ring 3 与销毁
 pub mod user_proc;
@@ -89,6 +92,7 @@ pub use scheduler::*;
 pub use session::*;
 pub use signal::*;
 pub use signal_trait::*;
+pub use thread_group::ThreadGroup;
 pub use types::*;
 pub use user_proc::*;
 

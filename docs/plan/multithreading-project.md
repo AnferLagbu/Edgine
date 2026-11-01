@@ -95,7 +95,8 @@
 - **K-01. 线程组基础结构（tgid/ThreadGroup）**
   - 描述：`Process` 增加 `tgid` 与组引用；新增显式 `ThreadGroup`（tgid、成员、共享资源句柄、退出状态）；`getpid` 返回 tgid、`gettid` 返回 TID；组长 = 首个线程。
   - 方案：组对象放 privileged（生命周期与引用计数需原子/锁）；`Process::new` 默认自建单线程组；组销毁由最后一个线程退出触发；父子关系仍以组为单位。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：`privileged/proc/thread_group.rs` 落 `ThreadGroup`（`tgid` / `members: IrqSpinLock<Vec<Pid>>` / 退出态与退出码），`Process::thread_group: Arc<ThreadGroup>` 是组身份的唯一权威（不另建重复 `tgid` 字段），`Process::new` 自建单成员组（`tgid == pid`）。`getpid` 改经 `process_get_current_tgid()` 返回 tgid，`gettid` 仍返回 TCB 的 `pid`；`Scheduler::exit` 在进程表锁临界区内移除成员（层级 7 → 9），最后成员离开时置组退出状态（首个退出码生效），组内存随最后一个 TCB 的 `Arc` 引用消失回收。成员表只存 TID、不持 `Process` 引用，避免组与回收协议成环。**共享资源句柄（fd/信号/FS）与父子关系的组级归一按 K-02/K-03 推进，本阶段不建占位字段**（无读者字段会被 F9 判死）。同批修掉 `Scheduler::create_process` 插入失败时裸 `dealloc` 绕过析构的泄漏（含新 `Arc`）。验证：`thread_group` 内联单测 4 例 + `host-tests/tests/thread_group_k01_test.rs` 6 例（单成员组 / 组私有性 / 离开幂等与首退出码 / getpid-gettid 接线 / 退出路径锁域）；`docs/explain/ref-lock-order.md` 层级 9 与退出路径示例同步。门槛读数：`./ci/build.sh all` 6/6 通过（仅上游 `core`/`sha2` future-incompat 元信息）；`bash ci/audit.sh full` EXIT=0（审计腿 19/19、存量腿 9/9、Lockbud 4/4 crate 零发现、QEMU 2/2 + P-62 4/4，x86_64 TCP 回显 e2e 通过）；`make test-host` 1207 passed / 0 failed；`make test-kernel-host` 1101 passed / 0 failed；`make -f Makefile.ci ci-rustdoc` 两架构各 exit 0（0 源码级 link 错误）。
 - **K-02. CLONE_THREAD 语义实现（线程创建接线）**
   - 描述：`clone_vm_path` 拆分为「入组」与「独立进程共享 VM」两条：带 `CLONE_THREAD` 时共享 tgid、加入线程组、分配独立 TID/内核栈/上下文；不带 `CLONE_THREAD` 时仍是共享地址空间的独立进程。
   - 方案：以现 `functions/proc/clone.rs` 的 `clone_vm_path` 为基础（不存在 `create_thread`）；线程不得推入 `parent.children`；补齐 `CLONE_SETTLS`/`PARENT_SETTID`/`CHILD_SETTID`/`CHILD_CLEARTID`；新组走 fd/安全状态继承，新线程共享组资源。
@@ -160,6 +161,7 @@ K-00 → K-01 → K-02 → K-03 ─┐
 - 用户认可实体重解释：新增 D7「Process = 每线程 TCB（PID=TID），ThreadGroup 独立」，K-04 由调度字段迁移改为语义收口，K-05 由 owner 重写改为审计；新增 K-00 TLS 生命周期为 Phase 0。
 - 现状调研重写：移除已删除的 `scheduler_ex.rs`/`thread.rs`/`privileged/syscall/clone.rs` 引用，改按现树（`functions/proc/clone.rs`、`functions/proc/info.rs`、`functions/proc/signal.rs`、`functions/proc/wait4.rs`、`functions/fs/vfs_manager.rs`）登记；补充 CLONE_VM 伪线程、TLS 未恢复、全局 cwd、PID 复用四项缺口。
 - 阶段与门槛修正：新增 K-00，K-02 改按 `clone_vm_path` 拆分入组/独立进程共享 VM，K-03 纳入 exec 组语义与每线程信号状态，K-06 引用改为现 `dispatch.rs`；验证门槛补齐 §2.3 六条与 TLS/线程组专项。
+- **2026-11-01**：K-01 闭（`[X]`）。落 `ThreadGroup`（tgid/成员账/退出状态）与 `Process::thread_group: Arc<ThreadGroup>`；`Process::new` 自建单成员组；`getpid` 返回 tgid、`gettid` 返回 TID；`Scheduler::exit` 在进程表锁内移除成员并在最后一个成员离开时置组退出状态。共享资源句柄按 K-03、线程入组按 K-02 推进，K-01 不建占位字段。
 
 ## 8. 并发安全能力现状与缺口（登记）
 

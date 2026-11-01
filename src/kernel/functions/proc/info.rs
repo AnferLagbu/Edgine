@@ -39,13 +39,13 @@ struct Utsname {
 // 进程/线程 ID
 // ============================================================================
 
-/// getpid — 返回当前进程 PID (恒成功)
+/// getpid — 返回当前线程组 ID (tgid; 单线程进程等于 PID) (恒成功)
 #[must_use]
 pub fn getpid_syscall() -> usize {
-    api::process_get_current_pid() as usize
+    api::process_get_current_tgid() as usize
 }
 
-/// gettid — 返回当前线程 TID (线程与进程 ID 共享, 等同 getpid)
+/// gettid — 返回当前线程 TID (即本 TCB 的 pid) (恒成功)
 #[must_use]
 pub fn gettid_syscall() -> usize {
     api::process_get_current_pid() as usize

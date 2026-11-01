@@ -221,6 +221,16 @@ pub extern "C" fn process_get_current_pid() -> u32 {
     Scheduler::current().unwrap_or(0)
 }
 
+/// 返回当前调度进程的 TGID (线程组 ID, 无则返回 0).
+///
+/// 单线程进程的 TGID 等于其 PID; 组内各线程返回同一值 (`getpid` 语义).
+#[must_use]
+pub fn process_get_current_tgid() -> u32 {
+    Scheduler::current()
+        .and_then(|pid| PROCESS_TABLE.with_process(pid, super::process::Process::tgid))
+        .unwrap_or(0)
+}
+
 /// 检查指定 PID 的进程是否存在.
 #[inline]
 pub fn process_exists(pid: u32) -> bool {

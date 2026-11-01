@@ -40,7 +40,8 @@
   PER_CPU_SCHED[idx] 锁, CFS/RT/DL 队列锁
 
 层级 9: 进程属性
-  sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy, children
+  sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy, children,
+  thread_group.members（线程组成员账）
 
 层级 10: POSIX Timer
   TIMER_MANAGER 锁
@@ -134,6 +135,14 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 层级 13: 网卡中断 → spin_lock_irqsave  →  设备锁
 层级 12: NET_LOCK.lock()                →  协议栈处理
 层级 12: socket.lock()                  →  投递到 socket buffer
+```
+
+### 进程退出（Exit）
+
+```
+层级 7: PROCESS_TABLE.with_process()     →  退出引用 / 置 exiting
+层级 9: thread_group.members.lock()      →  移除本 TID; 组空则置退出状态
+层级 7: PROCESS_TABLE.with_process()     →  置 Zombie / 处理子进程
 ```
 
 ### 跨核搬动（负载均衡 / 唤醒投送）

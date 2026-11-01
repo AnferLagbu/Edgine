@@ -537,13 +537,9 @@ impl Scheduler {
         let process_ptr = alloc::boxed::Box::into_raw(process);
 
         if !PROCESS_TABLE.insert(process_ptr) {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-            unsafe {
-                alloc::alloc::dealloc(
-                    process_ptr.cast::<u8>(),
-                    alloc::alloc::Layout::new::<Process>(),
-                );
-            };
+            // 走 Box 析构而非裸 dealloc: K-01 起 PCB 内含 `Arc<ThreadGroup>`,
+            // 绕过析构会泄漏组内存 (及其成员账 Vec).
+            crate::privileged::proc::raw::drop_boxed_process(process_ptr);
             return None;
         }
 
@@ -2029,6 +2025,14 @@ impl Scheduler {
             PROCESS_TABLE.with_process(pid, |proc| {
                 if proc.try_inc_ref() {
                     proc.exiting.store(true, Ordering::Release);
+                }
+            });
+            // K-01: 退出即退出线程组. 最后一个成员离开时置组退出状态 (首个退出码
+            // 生效); 组内存本身由最后一个 TCB 的 `Arc` 引用消失释放, 不在此回收.
+            // 取锁方向 7 → 9 (进程表 → 成员账), 与 `ref-lock-order.md` 层级一致.
+            PROCESS_TABLE.with_process(pid, |proc| {
+                if proc.thread_group.leave(pid) {
+                    proc.thread_group.mark_exited(exit_code);
                 }
             });
             // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的

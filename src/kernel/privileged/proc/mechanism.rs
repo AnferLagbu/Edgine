@@ -72,6 +72,7 @@ pub use super::proc_ops::proc_alloc_pid;
 pub use super::proc_ops::process_get_by_pid;
 pub use super::proc_ops::process_get_current_pid;
 pub use super::proc_ops::process_get_current_pwm;
+pub use super::proc_ops::process_get_current_tgid;
 pub use super::proc_ops::process_get_pwm_by_pid;
 pub use super::proc_ops::update_current_process_ptr;
 
