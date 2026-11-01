@@ -187,7 +187,7 @@ fn queue_ledgers_match_bruteforce_under_random_operations() {
                 queue.dequeue(pid, lcg_next(&mut state) % 200_000, accounted);
             }
             3 => {
-                let _ = queue.pick_next();
+                let _ = queue.pick_eevdf(None, |_| None);
             }
             4 => {
                 let _ = queue.reweight(pid, weight);
@@ -259,7 +259,10 @@ fn build_current_case(
     let current_task = *model.task(CURRENT_PID).expect("current 必已登记");
     assert_eq!(model.schedule(0), Some(CURRENT_PID));
     queue.enqueue(CURRENT_PID, current_task.vr, current_task.weight, false);
-    assert_eq!(queue.pick_next(), Some((CURRENT_PID, current_task.vr)));
+    let pick = queue
+        .pick_eevdf(None, |_| None)
+        .expect("current 入树后必被拣出");
+    assert_eq!((pick.pid, pick.vruntime), (CURRENT_PID, current_task.vr));
     deadlines.insert(CURRENT_PID, current_task.vd);
 
     for index in 0..tasks {
@@ -365,7 +368,7 @@ fn max_tasks_boundary_preserves_ledgers() {
 
     let mut picked = BTreeSet::new();
     for _ in 0..count {
-        let (pid, _) = queue.pick_next().expect("仍有树内任务");
+        let pid = queue.pick_eevdf(None, |_| None).expect("仍有树内任务").pid;
         assert!(picked.insert(pid), "拣出 pid {pid} 重复");
     }
     assert!(queue.tree.is_empty());

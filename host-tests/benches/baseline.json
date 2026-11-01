@@ -1,141 +1,148 @@
 {
   "version": 1,
-  "machine": "x86_64-Linux-7.2.5-200.fc44.x86_64",
-  "python": "3.14.7",
-  "recorded_at": "2026-09-25T13:04:15Z",
+  "machine": "x86_64-Linux-7.2.11-200.fc44.x86_64",
+  "python": "3.14.8",
+  "recorded_at": "2026-11-01T12:53:33Z",
   "results": [
     {
       "name": "page_flags_bits",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 1.251,
-      "ps_per_op": 1251
+      "ns_per_op_frac": 1.24,
+      "ps_per_op": 1240
     },
     {
       "name": "pte_set_flags",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 3.606,
-      "ps_per_op": 3606
+      "ns_per_op_frac": 4.366,
+      "ps_per_op": 4366
     },
     {
       "name": "iomem_alias_check",
       "category": "iomem",
       "iterations": 100000,
-      "ns_per_op_frac": 54.204,
-      "ps_per_op": 54204
+      "ns_per_op_frac": 53.067,
+      "ps_per_op": 53067
     },
     {
       "name": "capability_check",
       "category": "sgeg",
       "iterations": 100000,
-      "ns_per_op_frac": 2.231,
-      "ps_per_op": 2231
+      "ns_per_op_frac": 2.359,
+      "ps_per_op": 2359
     },
     {
       "name": "dma_state_machine",
       "category": "dma",
       "iterations": 100000,
-      "ns_per_op_frac": 0.297,
-      "ps_per_op": 297
+      "ns_per_op_frac": 0.295,
+      "ps_per_op": 295
     },
     {
       "name": "sha256_block",
       "category": "sgeg",
       "iterations": 1000,
-      "ns_per_op_frac": 454.409,
-      "ps_per_op": 454409
+      "ns_per_op_frac": 465.29,
+      "ps_per_op": 465290
     },
     {
       "name": "attribution_classify",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 4.859,
-      "ps_per_op": 4859
+      "ns_per_op_frac": 5.088,
+      "ps_per_op": 5088
     },
     {
       "name": "recovery_decide",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 72.963,
-      "ps_per_op": 72963
+      "ns_per_op_frac": 69.846,
+      "ps_per_op": 69846
     },
     {
       "name": "bitmap_scan",
       "category": "pmm",
       "iterations": 100000,
-      "ns_per_op_frac": 442.648,
-      "ps_per_op": 442648
+      "ns_per_op_frac": 459.257,
+      "ps_per_op": 459257
+    },
+    {
+      "name": "eevdf_pick_requeue",
+      "category": "sched",
+      "iterations": 10000,
+      "ns_per_op_frac": 550.367,
+      "ps_per_op": 550367
     },
     {
       "name": "socket_wait_queue",
       "category": "net",
       "iterations": 10000,
-      "ns_per_op_frac": 32.547,
-      "ps_per_op": 32547
+      "ns_per_op_frac": 32.619,
+      "ps_per_op": 32619
     },
     {
       "name": "virtio_blk_io",
       "category": "storage",
       "iterations": 10000,
-      "ns_per_op_frac": 29.935,
-      "ps_per_op": 29935
+      "ns_per_op_frac": 35.145,
+      "ps_per_op": 35145
     },
     {
       "name": "bpf_verifier_dispatch",
       "category": "ebpf",
       "iterations": 100000,
-      "ns_per_op_frac": 10.362,
-      "ps_per_op": 10362
+      "ns_per_op_frac": 12.736,
+      "ps_per_op": 12736
     },
     {
       "name": "sysctl_rw",
       "category": "config",
       "iterations": 10000,
-      "ns_per_op_frac": 29.535,
-      "ps_per_op": 29535
+      "ns_per_op_frac": 29.7,
+      "ps_per_op": 29700
     },
     {
       "name": "blk_dev_dispatch",
       "category": "block",
       "iterations": 100000,
-      "ns_per_op_frac": 26.613,
-      "ps_per_op": 26613
+      "ns_per_op_frac": 29.407,
+      "ps_per_op": 29407
     },
     {
       "name": "vfs_poll_dispatch",
       "category": "epoll",
       "iterations": 100000,
-      "ns_per_op_frac": 1.553,
-      "ps_per_op": 1553
+      "ns_per_op_frac": 2.257,
+      "ps_per_op": 2257
     },
     {
       "name": "zap_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 163.399,
-      "ps_per_op": 163399
+      "ns_per_op_frac": 171.554,
+      "ps_per_op": 171554
     },
     {
       "name": "txg_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 27.44,
-      "ps_per_op": 27440
+      "ns_per_op_frac": 31.241,
+      "ps_per_op": 31241
     },
     {
       "name": "dmu_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 189.741,
-      "ps_per_op": 189741
+      "ns_per_op_frac": 189.871,
+      "ps_per_op": 189871
     },
     {
       "name": "spa_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 11.886,
-      "ps_per_op": 11886
+      "ns_per_op_frac": 11.885,
+      "ps_per_op": 11885
     },
     {
       "name": "raidz_dispatch",
@@ -148,22 +155,22 @@
       "name": "arc_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 66.048,
-      "ps_per_op": 66048
+      "ns_per_op_frac": 67.283,
+      "ps_per_op": 67283
     },
     {
       "name": "zil_log_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 18.59,
-      "ps_per_op": 18590
+      "ns_per_op_frac": 21.74,
+      "ps_per_op": 21740
     },
     {
       "name": "zil_persist_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 7331.145,
-      "ps_per_op": 7331145
+      "ns_per_op_frac": 7325.615,
+      "ps_per_op": 7325615
     }
   ]
 }

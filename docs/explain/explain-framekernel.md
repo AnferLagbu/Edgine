@@ -46,7 +46,7 @@ privileged 必须同时满足 4 条准则：(1) Soundness 安全性：任何用 
 
 ### 模块归属决策
 
-新增代码应放 privileged 还是 functions。放 functions（策略）：算法选择（CFS 权重/buddy 阶数）/ 数据结构管理（VMA 合并/调度队列）/ 策略参数（rlimit/时间片/OOM 评分）/ 协议逻辑（信号投递/seccomp 过滤链）/ 格式解析（ELF 验证/cpio 解包）；放 privileged（机制）：硬件操作（CR3 切换/页表写入/上下文切换）/ unsafe 内存操作（copy_from/to_user/物理页操作）/ 原子指令/内存屏障 / 中断控制器编程（APIC/GIC）/ 寄存器读写/MMIO；不为将来可能用到预留章节（准则 §0）。
+新增代码应放 privileged 还是 functions。放 functions（策略）：算法选择（buddy 阶数）/ 数据结构管理（VMA 合并）/ 策略参数（rlimit/时间片/OOM 评分）/ 调度 syscall 属性（sched_setscheduler/setattr 参数校验与亲和性）/ 协议逻辑（信号投递/seccomp 过滤链）/ 格式解析（ELF 验证/cpio 解包）；放 privileged（机制）：硬件操作（CR3 切换/页表写入/上下文切换）/ unsafe 内存操作（copy_from/to_user/物理页操作）/ 原子指令/内存屏障 / 中断控制器编程（APIC/GIC）/ 寄存器读写/MMIO / EEVDF 运行队列（`CfsRunQueue` 与调度器/进程表共享锁，DECISION-J 归属反转后留 privileged）；不为将来可能用到预留章节（准则 §0）。
 
 **归属决策树（2026-09-11 依 Asterinas 标准补全 Q2/Q3，修正"要 unsafe → privileged"的片面理解）**：
 

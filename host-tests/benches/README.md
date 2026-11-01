@@ -4,20 +4,34 @@
 
 为框内核 (framekernel) 的关键路径建立性能基线, 在 CI 中持续检测回归.
 
-涵盖 10 个关键路径:
+涵盖 24 个关键路径:
 
 | 名称                  | 分类    | 来源                                |
 |----------------------|--------|------------------------------------|
 | page_flags_bits      | mm     | privileged/mm PageFlags 位运算      |
 | pte_set_flags        | mm     | privileged/mm PTE 标志位操作          |
 | iomem_alias_check    | iomem  | privileged/iomem AliasRegistry 冲突检查 |
-| capability_check     | sgeg  | privileged/sgeg 能力位检查           |
+| capability_check     | sgeg   | privileged/sgeg 能力位检查           |
 | dma_state_machine    | dma    | privileged/dma_buf SyncState 转换    |
-| sha256_block         | sgeg  | privileged/sgeg/sha256 块压缩        |
-| attribution_classify | freg| functions/freg/attribution 分类   |
-| recovery_decide      | freg| functions/freg/recovery_policy 决策|
-| bitmap_scan          | pmm    | 物理页分配 (Bitmap)                 |
-| btree_id_lookup      | proc   | 进程表 PID 查找                     |
+| sha256_block         | sgeg   | privileged/sgeg/sha256 块压缩        |
+| attribution_classify | freg   | functions/freg/attribution 分类      |
+| recovery_decide      | freg   | functions/freg/recovery_policy 决策  |
+| bitmap_scan          | pmm    | 物理页分配 (Bitmap)                  |
+| eevdf_pick_requeue   | sched  | privileged/proc CfsRunQueue 选择路径 (E-07) |
+| socket_wait_queue    | net    | net 等待队列唤醒与移除                |
+| virtio_blk_io        | storage| virtio 块设备队列操作                |
+| bpf_verifier_dispatch| ebpf   | eBPF 验证器 trait 派发               |
+| sysctl_rw            | config | sysctl 注册/写入                    |
+| blk_dev_dispatch     | block  | BlockDevice trait 派发              |
+| vfs_poll_dispatch    | epoll  | VfsPollPolicy 派发                  |
+| zap_dispatch         | egfs   | EGFS ZAP 派发                       |
+| txg_dispatch         | egfs   | EGFS TXG 派发                       |
+| dmu_dispatch         | egfs   | EGFS DMU 派发                       |
+| spa_dispatch         | egfs   | EGFS SPA 派发                       |
+| raidz_dispatch       | egfs   | EGFS RAID-Z 几何查询                 |
+| arc_dispatch         | egfs   | EGFS ARC 缓存                       |
+| zil_log_dispatch     | egfs   | EGFS ZIL 日志                       |
+| zil_persist_dispatch | egfs   | EGFS ZIL 持久化                     |
 
 ## 编译与运行
 
@@ -80,7 +94,7 @@ python3 scripts/check_bench_regression.py
 
 ## 文件
 
-- `baseline.json` — 当前基线 (机器 / 编译器 / 时间戳 + 10 条 ns_per_op_frac)
-- `../src/framekernel_bench.rs` — bench 实现 + 11 个单元测试
+- `baseline.json` — 当前基线 (机器 / 编译器 / 时间戳 + 24 条 ns_per_op_frac)
+- `../src/framekernel_bench.rs` — bench 实现 + 78 个单元测试
 - `../../scripts/record_bench_baseline.py` — 记录基线
 - `../../scripts/check_bench_regression.py` — 回归检查

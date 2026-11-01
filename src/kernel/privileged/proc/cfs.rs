@@ -212,7 +212,7 @@ pub struct EevdfPick {
 /// 可运行集拆成两份**互斥**账目:
 ///
 /// - **树账**: 在 [`Self::tree`] 上等待的任务; `tree_weight` / `tree_sum_w_vr`;
-/// - **运行账**: 已被 [`Self::pick_next`] / [`Self::pick_eevdf`] 拣出、正在本核
+/// - **运行账**: 已被 [`Self::pick_eevdf`] 拣出、正在本核
 ///   运行的任务; `running_weight` / `running_sum_w_vr`。
 ///
 /// 由此得到 EEVDF 的两个对账量: `W = tree_weight + running_weight`,
@@ -287,7 +287,7 @@ impl CfsRunQueue {
         self.min_vruntime.fetch_max(vr, Ordering::AcqRel);
     }
 
-    /// 树上最小 vruntime (即下一次 [`Self::pick_next`] 的候选)。
+    /// 树上最小 vruntime (诊断入口)。
     ///
     /// E-04 起生产 tick / 选择路径改由切片与 [`Self::pick_eevdf`] 判定, 本访问器
     /// 保留为队列结构断言与诊断入口 (不承载抢占判据)。
@@ -518,14 +518,6 @@ impl CfsRunQueue {
         true
     }
 
-    /// 拣出最小 vruntime 者。把同一笔账从树账**移入**运行账 (W/S 不变),
-    /// 语义同 Linux 的"当前运行任务仍属可运行集"。
-    pub fn pick_next(&mut self) -> Option<(Pid, u64)> {
-        let pid = self.tree.first()?.1;
-        let task = self.activate_tree_task(pid)?;
-        Some((task.pid, task.vruntime))
-    }
-
     /// EEVDF 选择 (D7: 单树合格前缀 + 线性 `(vd, pid)` 选择)。
     ///
     /// 选择规则 (与 `host-tests/src/eevdf_model.rs` 冻结口径逐项一致):
@@ -639,7 +631,7 @@ impl CfsRunQueue {
     /// 在跑的 current 不在树内, 故天然不进候选。
     ///
     /// 不改动树也不动记账 —— 跨核偷取需要"先定候选、逐个认领归属、再在**同一段
-    /// 持锁期**里搬移", 而 [`Self::pick_next`] 一拣就离树, 无法表达"认领失败就放过
+    /// 持锁期**里搬移", 而 [`Self::pick_eevdf`] 一拣就离树, 无法表达"认领失败就放过
     /// 它"。调用方必须已持有本队列的锁 (候选在锁内才保持有效)。
     pub fn eligible_pids(&self, out: &mut [Pid]) -> usize {
         let avg = self.avg_vruntime();
@@ -980,7 +972,7 @@ pub fn plan_placement(
 // - nice_to_weight / weight_to_nice: NICE 双向转换 (含 -20..19 边界 + clamp)
 // - mlfq_level_to_nice: 层级 → nice
 // - DeadlineParams 校验: is_valid + utilization_pct
-// - CfsRunQueue: enqueue/dequeue/pick_next + EEVDF 账目/选择
+// - CfsRunQueue: enqueue/dequeue + EEVDF 账目/选择
 // - EEVDF 纯函数: Q16.16 增量 / 切片 / V / 合格 / vd / Wake 钳制
 
 #[cfg(test)]
@@ -1080,10 +1072,11 @@ mod tests {
         assert_eq!(q.enqueue(3, 200, 1024, false), 200);
         assert_eq!(q.len(), 3);
         assert_eq!(q.total_weight.load(Ordering::Acquire), 3 * 1024);
-        // pick_next: 最小 vruntime 是 100 (PID 1)
-        let (pid, vr) = q.pick_next().unwrap();
-        assert_eq!(pid, 1);
-        assert_eq!(vr, 100);
+        // pick_eevdf: 最小 vruntime 是 100 (PID 1)
+        let pick = q.pick_eevdf(None, |_| None).unwrap();
+        assert_eq!(pick.pid, 1);
+        assert_eq!(pick.vruntime, 100);
+        assert!(pick.from_tree);
         // 拣出即离开树 (len 随之下降), 但不动记账: 被拣者随即上核运行,
         // 仍在可运行集中 (IC1: 与队列同域).
         assert_eq!(q.len(), 2);
@@ -1111,7 +1104,8 @@ mod tests {
             let pid = 10 + i;
             q.enqueue(pid, 0, 1024, false);
             assert!(!q.is_empty());
-            let (picked, _vr) = q.pick_next().unwrap();
+            let pick = q.pick_eevdf(None, |_| None).unwrap();
+            let picked = pick.pid;
             assert_eq!(picked, pid);
             // 该任务上核跑完后阻塞离开: 拣出已使它离树, 故此处只撤账
             // (返回 false = 树上无此节点), 权重恰一次性扣回.
@@ -1202,8 +1196,8 @@ mod tests {
         assert_eq!(one, [1]);
 
         // 拣出最左端进入运行账: 它的权重仍并入 V, 但 current 不在树内, 不进候选.
-        let (picked, _) = q.pick_next().expect("非空树必有候选");
-        assert_eq!(picked, 1);
+        let pick = q.pick_eevdf(None, |_| None).expect("非空树必有候选");
+        assert_eq!(pick.pid, 1);
         assert!(q.is_running(1));
         assert_eq!(q.avg_vruntime(), 100);
         assert_eq!(q.eligible_pids(&mut out), 1);
@@ -1261,7 +1255,7 @@ mod tests {
         assert_eq!(q.placement(far), far);
         // 唤醒者落在队列最前 → 下一个拣出点即选中它 (有界延迟).
         assert_eq!(q.leftmost_vruntime(), Some(placed));
-        assert_eq!(q.pick_next().unwrap().0, 10);
+        assert_eq!(q.pick_eevdf(None, |_| None).unwrap().pid, 10);
     }
 
     /// 8b. EEVDF 选择必须在同一时基内比较 (旧模型下差值恒 0).
@@ -1398,16 +1392,12 @@ mod tests {
         q.enqueue(40, 200, 1024, false);
         assert_eq!(q.total_weight.load(Ordering::Acquire), 1024 * 3 + 2048);
         // 按 vruntime 顺序调度
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 10); // vruntime=100
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 20); // vruntime=150
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 40); // vruntime=200
-        let (pid, _) = q.pick_next().unwrap();
-        assert_eq!(pid, 30); // vruntime=250
+        assert_eq!(q.pick_eevdf(None, |_| None).unwrap().pid, 10); // vruntime=100
+        assert_eq!(q.pick_eevdf(None, |_| None).unwrap().pid, 20); // vruntime=150
+        assert_eq!(q.pick_eevdf(None, |_| None).unwrap().pid, 40); // vruntime=200
+        assert_eq!(q.pick_eevdf(None, |_| None).unwrap().pid, 30); // vruntime=250
         // IC2: 队列空以树为准 —— 拣完即为空, 不残留任何平行计数.
-        assert!(q.pick_next().is_none());
+        assert!(q.pick_eevdf(None, |_| None).is_none());
         assert!(q.is_empty());
         assert_eq!(q.len(), 0);
     }
@@ -1495,8 +1485,8 @@ mod tests {
         );
 
         // 拣出 = 同一笔账从树移到运行, W/S 不变.
-        let (pid, vr) = q.pick_next().unwrap();
-        assert_eq!((pid, vr), (1, 100));
+        let pick = q.pick_eevdf(None, |_| None).unwrap();
+        assert_eq!((pick.pid, pick.vruntime), (1, 100));
         assert!(q.is_running(1));
         assert_eq!(q.running_count(), 1);
         assert_eq!(q.tree_weight(), 2048);

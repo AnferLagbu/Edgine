@@ -34,11 +34,11 @@ privileged 代码的硬约束。I1 内核态 CPU 状态不可被 functions 篡�
 
 ### 5 项 TCB 维护原则
 
-TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub fn 返回 &T/&mut T/UFrame/Frame，不返回裸指针；(2) 机制与策略分离 调度器（上下文切换=机制，CFS 算法=策略）/ 帧分配器（页表映射=机制，伙伴系统=策略）/ 网络协议栈（网卡寄存器=机制，TCP 状态机=策略）策略部分应提取到 functions 通过 trait 注入；(3) 第三方库的 TCB 影响评估 引入第三方库到 privileged 前，评估 unsafe？代码量？替代方案？；(4) TCB 度量纳入 CI 每次 PR 报告 TCB 占比变化，上升需在 PR 描述说明原因；(5) 逐步提取，不做大爆炸重构 渐进式工作，每次提取一个子系统，确保功能不变 + TCB 占比下降 + 6 安全不变式仍然满足。
+TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub fn 返回 &T/&mut T/UFrame/Frame，不返回裸指针；(2) 机制与策略分离 调度器（上下文切换=机制，EEVDF 选路/权重=策略）/ 帧分配器（页表映射=机制，伙伴系统=策略）/ 网络协议栈（网卡寄存器=机制，TCP 状态机=策略）策略部分应提取到 functions 通过 trait 注入（调度策略因 `CfsRunQueue` 与进程表/调度器共享锁，按 DECISION-J 归属反转留 privileged，不重复提取）；(3) 第三方库的 TCB 影响评估 引入第三方库到 privileged 前，评估 unsafe？代码量？替代方案？；(4) TCB 度量纳入 CI 每次 PR 报告 TCB 占比变化，上升需在 PR 描述说明原因；(5) 逐步提取，不做大爆炸重构 渐进式工作，每次提取一个子系统，确保功能不变 + TCB 占比下降 + 6 安全不变式仍然满足。
 
 ### 常见子系统归属示例
 
-8 个常见子系统。进程管理（机制：上下文切换/页表切换 privileged；策略：CFS/MLFQ 调度 functions）/ 内存管理（机制：物理页分配/页表映射 privileged；策略：VMA 合并/页面回收 functions）/ 中断处理（机制：IDT/中断控制器 privileged；策略：路由/分发 functions）/ 文件系统（机制：inode 操作表 privileged；策略：VFS 后端/RamFS/EGFS functions）/ 设备驱动（机制：iomem/ioport 代理 privileged；策略：设备行为 functions）/ 网络协议栈（机制：smoltcp 接口 privileged；策略：TCP 状态机/DHCP functions）/ 同步原语（机制：SpinLock/Mutex privileged；策略：锁顺序/Lockdep functions）/ 凭据安全（机制：creds/pwm 校验 privileged；策略：会话/授权 functions）。
+8 个常见子系统。进程管理（机制：上下文切换/页表切换/EEVDF 运行队列 privileged；策略：调度 syscall 属性与亲和性 functions）/ 内存管理（机制：物理页分配/页表映射 privileged；策略：VMA 合并/页面回收 functions）/ 中断处理（机制：IDT/中断控制器 privileged；策略：路由/分发 functions）/ 文件系统（机制：inode 操作表 privileged；策略：VFS 后端/RamFS/EGFS functions）/ 设备驱动（机制：iomem/ioport 代理 privileged；策略：设备行为 functions）/ 网络协议栈（机制：smoltcp 接口 privileged；策略：TCP 状态机/DHCP functions）/ 同步原语（机制：SpinLock/Mutex privileged；策略：锁顺序/Lockdep functions）/ 凭据安全（机制：creds/pwm 校验 privileged；策略：会话/授权 functions）。
 
 ## 工作原理
 
@@ -74,7 +74,7 @@ TCB 内部细节不能绕过顶层 API。例如 privileged::sync::raw / privileg
 
 ### 策略提取优先于机制重构
 
-TCB 缩减最稳妥路径。优先提取明显策略（调度/帧分配/Slab/网络/VFS）→ 通过 trait 注入到 functions；机制（CR3 切换/中断控制器）重构风险大收益小，延后。
+TCB 缩减最稳妥路径。优先提取明显策略（帧分配/Slab/网络/VFS）→ 通过 trait 注入到 functions；调度策略已随运行队列按 DECISION-J 留在 privileged，机制（CR3 切换/中断控制器）重构风险大收益小，延后。
 
 ### 新增框架抽象严格按 OSTD 四准则评审
 

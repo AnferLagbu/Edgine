@@ -25,7 +25,7 @@
 - **COW 实现**：简化为全局 BTreeMap 跟踪引用计数，不引入 Linux 的 per-VMA anon_vma + rmap 反向映射
 - **Page Cache**：固定大小哈希表（64 桶 x 16 条目），不引入 Linux 的 xarray/radix tree
 - **Swap**：固定数组 LRU，不引入 Linux 的 zone-based multi-LRU
-- **CFS 调度器**：保留 vruntime + BTreeMap + 权重表核心算法，不引入 load_weight/load_avg 等复杂度
+- **EEVDF 调度器**：保留 vruntime + BTreeSet/BTreeMap + 权重表核心机制，在 CFS 之上加合格前缀与虚拟截止期（`vd = vr + slice`），不引入 load_weight/load_avg 等复杂度
 - **同步原语**：自研 SpinLock/Mutex/RwLock/RCU，不直接复制 Linux 的 locking 原语
 
 **理由**：Linux 内部实现为大规模生产环境优化，复杂度极高。Edgine 作为学习/验证项目，应选择更简洁的实现，在保证功能正确的前提下降低维护成本。
@@ -34,7 +34,7 @@
 
 Linux 验证过的成熟算法和设计模式可以在 Edgine 中使用：
 
-- **CFS 调度算法**：vruntime 公平调度是经过 Linux 十几年验证的成熟方案
+- **EEVDF 调度算法**：在 CFS vruntime 公平调度之上增加合格前缀筛选与虚拟截止期（Linux 6.6 起用于替换 CFS），是经过验证的成熟方案
 - **Tickless NO_HZ_IDLE**：空闲时停止 tick 是经过验证的省电技术
 - **伙伴分配器**：经典的物理内存管理算法
 - **Slab 分配器**：经典的内核对象缓存算法
@@ -56,7 +56,7 @@ Linux 验证过的成熟算法和设计模式可以在 Edgine 中使用：
 
 | 类型 | 决策 | 示例 |
 |------|------|------|
-| 经典算法 | ✅ 直接借鉴核心思想 | CFS vruntime、伙伴分配、Slab、COW |
+| 经典算法 | ✅ 直接借鉴核心思想 | EEVDF（继承 CFS vruntime + 权重表）、伙伴分配、Slab、COW |
 | Linux 高级优化 | ❌ 不引入 | load_weight、rmap 反向映射、zone-based LRU |
 | 硬件相关算法 | ⚠️ 借鉴但简化 | IOMMU 映射（保留核心，简化 cache flush） |
 
@@ -64,7 +64,7 @@ Linux 验证过的成熟算法和设计模式可以在 Edgine 中使用：
 
 | 类型 | 决策 | 示例 |
 |------|------|------|
-| 已实现的 Linux 功能 | ✅ 保留 | CFS、epoll、futex、namespace |
+| 已实现的 Linux 功能 | ✅ 保留 | EEVDF、epoll、futex、namespace |
 | 定义但未实现的标志位 | ❌ 移除 | MADV_COLD、MADV_SOFT_OFFLINE、MADV_MERGEABLE |
 | 定义但未实现的接口 | ❌ 移除或返回 EINVAL | MADV_DONTFORK、MADV_POPULATE_READ/WRITE |
 

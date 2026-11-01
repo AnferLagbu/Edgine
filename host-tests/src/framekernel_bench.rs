@@ -76,6 +76,7 @@ use edgine::kernel::functions::sgeg::policy::{
 use edgine::kernel::privileged::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
 use edgine::kernel::privileged::iomem::IoMem;
 use edgine::kernel::privileged::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
+use edgine::kernel::privileged::proc::cfs::{CfsRunQueue, VIRT_ONE, nice_to_weight};
 
 // ====== C 类: 内核真实实现直引 (G-07 遗留项: egfs / egdf / epoll 策略面) ======
 //
@@ -1314,6 +1315,61 @@ pub fn zil_persist_dispatch_bench(iters: u64) -> u128 {
     elapsed.saturating_mul(1_000) / u128::from(iters)
 }
 
+// ====== 队列选择路径 (EEVDF, E-07) ======
+
+/// 稳态可运行任务数 = 内核单核可运行集上限 (进程表 `MAX_TASKS`).
+const EEVDF_BENCH_TASKS: u32 = 255;
+
+fn eevdf_bench_weight(pid: u32) -> u64 {
+    let nice_index = u8::try_from((pid - 1) % 40).expect("nice 索引必在 u8 内");
+    let nice = i8::try_from(i32::from(nice_index) - 20).expect("nice 必在 -20..=19");
+    nice_to_weight(nice)
+}
+
+/// 内核真实队列的稳态选择成本: 每次迭代计一次 `pick_eevdf` + `Requeue` 重投.
+///
+/// 与 `tests/cfs_btreemap_bench_test.rs` 的手工 `BTreeMap` 基准不同, 本 bench
+/// 覆盖生产 `CfsRunQueue` 的账目维护 (树账/运行账)、合格前缀筛选与
+/// `(vd, pid)` 选择, 作为 E-07 的性能回归锚点.
+///
+/// # Panics
+///
+/// 仅当内部常量索引越界或队列意外为空时 panic (构建期常量保证不会发生).
+#[must_use]
+pub fn eevdf_pick_requeue_bench(iters: u64) -> u128 {
+    let mut queue = CfsRunQueue::new();
+    let weights: Vec<u64> = (0..EEVDF_BENCH_TASKS)
+        .map(|index| eevdf_bench_weight(index + 1))
+        .collect();
+    for index in 0..EEVDF_BENCH_TASKS {
+        let pid = index + 1;
+        let vruntime = u64::from(index) << 16;
+        let _ = queue.enqueue(
+            pid,
+            vruntime,
+            weights[usize::try_from(index).expect("索引必在 usize 内")],
+            false,
+        );
+    }
+
+    let start = Instant::now();
+    let mut sink = 0u64;
+    for _ in 0..iters {
+        let pick = queue.pick_eevdf(None, |_| None).expect("稳态队列非空");
+        sink ^= u64::from(pick.pid);
+        let weight = weights[usize::try_from(pick.pid - 1).expect("pid 必在表内")];
+        let _ = queue.enqueue(
+            pick.pid,
+            pick.vruntime.saturating_add(VIRT_ONE),
+            weight,
+            true,
+        );
+    }
+    let elapsed = start.elapsed().as_nanos();
+    std::hint::black_box(sink);
+    elapsed.saturating_mul(1_000) / u128::from(iters)
+}
+
 // ====== 编排器 ======
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -1407,6 +1463,13 @@ pub fn run_all() -> BenchReport {
         recovery_decide_bench,
     ));
     results.push(measure("bitmap_scan", "pmm", 100_000, bitmap_scan_bench));
+    // E-07: 内核 EEVDF 队列选择路径 (255 任务稳态 pick + Requeue)
+    results.push(measure(
+        "eevdf_pick_requeue",
+        "sched",
+        10_000,
+        eevdf_pick_requeue_bench,
+    ));
     results.push(measure(
         "socket_wait_queue",
         "net",

@@ -1560,7 +1560,7 @@ impl Scheduler {
             }
         }
 
-        // 3. CFS (vruntime 最小) —— 取代 MLFQ 用于 SCHED_NORMAL
+        // 3. CFS (EEVDF: 合格前缀 + 最小 `(vd, pid)`) —— 取代 MLFQ 用于 SCHED_NORMAL
         if next_pid.is_none() {
             next_pid = Self::pick_cfs_task();
         }

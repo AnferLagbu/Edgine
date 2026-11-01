@@ -294,10 +294,41 @@ fn queue_api_requires_accounting_credential() {
         ),
         "dequeue 必须收 accounted 以保证撤账幂等"
     );
-    let pick = fn_body(&cfs, "pub fn pick_next(&mut self)");
+    let pick = fn_body(&cfs, "pub fn pick_eevdf(");
     assert!(
-        !pick.contains("total_weight"),
-        "pick_next 只做树内移动, 不得动记账 (被拣者随即上核, 仍属可运行集)"
+        !pick.contains("total_weight") && !pick.contains("dequeue(") && !pick.contains("reweight("),
+        "pick_eevdf 只做树账->运行账的移动, 不得撤账或改权重 (被拣者随即上核, 仍属可运行集)"
+    );
+    assert!(
+        pick.contains("activate_tree_task"),
+        "拣出必须经统一激活路径同步两账"
+    );
+}
+
+/// D6① 旧路径退役: CFS 队列只保留 EEVDF 选择器, 生产选路经 `pick_eevdf`.
+#[test]
+fn cfs_legacy_selector_is_retired() {
+    let cfs = code_only(&read_src(CFS));
+    assert!(
+        !cfs.contains("let pid = self.tree.first()?.1;"),
+        "D6①: CfsRunQueue::pick_next (最小 vruntime 选择器) 已删除, 不得复活"
+    );
+    assert!(cfs.contains("pub fn pick_eevdf("), "EEVDF 选择器必须存在");
+
+    let sched = code_only(&read_src(SCHED));
+    let pick_task = fn_body(&sched, "fn pick_next_task(");
+    assert!(
+        pick_task.contains("Self::pick_cfs_task()"),
+        "CFS 分支必须经 pick_cfs_task"
+    );
+    let pick_cfs = fn_body(&sched, "fn pick_cfs_task(");
+    assert!(
+        pick_cfs.contains("pick_eevdf"),
+        "生产选路必须经 CfsRunQueue::pick_eevdf"
+    );
+    assert!(
+        !pick_cfs.contains(".pick_next("),
+        "生产选路不得回退到旧 CfsRunQueue::pick_next"
     );
 }
 
