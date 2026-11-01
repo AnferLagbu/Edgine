@@ -463,6 +463,18 @@ pub fn us_to_ticks(us: u64) -> u64 {
     us.saturating_mul(freq).div_ceil(1_000_000)
 }
 
+/// 将纳秒转换为 ticks (向上取整)
+#[inline]
+#[must_use]
+pub fn ns_to_ticks(ns: u64) -> u64 {
+    let freq = u64::from(get_frequency());
+    if freq == 0 {
+        return ns;
+    }
+    // 同 ms_to_ticks/us_to_ticks: saturating_mul 防纳秒值过大时溢出.
+    ns.saturating_mul(freq).div_ceil(1_000_000_000)
+}
+
 /// 使用预计算的常量进行快速转换 (性能关键路径)
 #[inline]
 pub fn ticks_to_ms_fast(ticks: u64) -> u64 {

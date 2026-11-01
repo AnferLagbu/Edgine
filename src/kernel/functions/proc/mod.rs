@@ -42,6 +42,8 @@ pub mod proc_mgmt;
 pub mod process_vm;
 pub mod rlimit;
 pub mod sched;
+/// 调度策略与属性 — sched_setscheduler / getscheduler / setattr / getattr
+pub mod sched_attr;
 /// D3: CFS 调度策略 (权重表 + vruntime + 时间片 + CFS/DL 运行队列)
 pub mod sched_policy;
 pub mod seccomp;

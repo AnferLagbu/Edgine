@@ -528,6 +528,27 @@ pub const SYS_PRCTL: u64 = 157;
 /// 单一权威源 `edgine_abi::arch_prctl` (用户态 wrapper 引用同源).
 pub const SYS_ARCH_PRCTL: u64 = edgine_abi::arch_prctl::SYS_ARCH_PRCTL;
 
+// 调度策略与属性 (Linux x86_64 标准编号)
+/// `SYS_SCHED_SETSCHEDULER` — 设置调度策略与参数
+///
+/// 单一权威源 `edgine_abi::sched` (用户态常量引用同源).
+pub const SYS_SCHED_SETSCHEDULER: u64 = edgine_abi::sched::SYS_SCHED_SETSCHEDULER;
+/// `SYS_SCHED_GETSCHEDULER` — 查询调度策略
+pub const SYS_SCHED_GETSCHEDULER: u64 = edgine_abi::sched::SYS_SCHED_GETSCHEDULER;
+/// `SYS_SCHED_SETATTR` — 设置调度属性 (nice / 请求切片)
+pub const SYS_SCHED_SETATTR: u64 = edgine_abi::sched::SYS_SCHED_SETATTR;
+/// `SYS_SCHED_GETATTR` — 查询调度属性
+pub const SYS_SCHED_GETATTR: u64 = edgine_abi::sched::SYS_SCHED_GETATTR;
+
+/// 调度策略属性 ABI — 单一权威源 `edgine_abi::sched` 的经 privileged 出口.
+///
+/// functions 层不直连 `edgine-abi` crate, 经 `functions::syscall::types` 的
+/// glob re-export 消费同一套结构布局与常量 (F2: functions→privileged 合法方向).
+pub use edgine_abi::sched::{
+    MAX_NICE, MIN_NICE, SCHED_ATTR_SIZE_VER0, SCHED_BATCH, SCHED_DEADLINE, SCHED_FIFO, SCHED_IDLE,
+    SCHED_OTHER, SCHED_RESET_ON_FORK, SCHED_RR, SchedAttr, SchedParam,
+};
+
 // 安全 / 权限 (Linux x86_64 标准编号)
 /// `SYS_CAPGET` — 获取进程能力集
 pub const SYS_CAPGET: u64 = 125;
@@ -982,6 +1003,10 @@ const _: () = {
         SYS_FUTEX,
         SYS_SCHED_SETAFFINITY,
         SYS_SCHED_GETAFFINITY,
+        SYS_SCHED_SETSCHEDULER,
+        SYS_SCHED_GETSCHEDULER,
+        SYS_SCHED_SETATTR,
+        SYS_SCHED_GETATTR,
         SYS_EPOLL_CREATE,
         SYS_EPOLL_CTL,
         SYS_EPOLL_WAIT,

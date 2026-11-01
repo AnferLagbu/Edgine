@@ -31,8 +31,8 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use super::cfs::{
     CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
     LOAD_BALANCE_THRESHOLD, PlacementKind, PlacementLedger, PlacementPlan,
-    calc_vruntime_delta_virt, effective_slice_real, is_eligible, nice_to_weight, plan_placement,
-    slice_virt_of, virtual_deadline,
+    calc_vruntime_delta_virt, clamp_requested_slice, effective_slice_real, is_eligible,
+    nice_to_weight, plan_placement, slice_virt_of, virtual_deadline,
 };
 use super::process::{MIGRATE_PENDING, NO_RQ_CPU, PROCESS_TABLE, Process};
 use super::types::{BlockReason, Pid, ProcessContext, ProcessId, ProcessPriority, ProcessState};
@@ -666,6 +666,47 @@ impl Scheduler {
         }
         if rq.reweight(pid, new_weight) {
             Self::rebuild_eevdf_round(&rq, pid, new_weight);
+        }
+        claim.commit(src_cpu);
+        true
+    }
+
+    /// 设置请求切片并按 D8③ 夹取后生效.
+    ///
+    /// `requested == 0` 表示**清除**请求、回到动态默认切片；非 0 值在
+    /// `[MIN_GRANULARITY, TARGET_LATENCY]` 内夹取后写入 `eevdf_requested_slice`。
+    /// 任务已在树账/运行账时，在同一 rq 锁内以当前权重重建本轮切片与 `vd`
+    /// (与 [`Self::set_nice`] 同口径)；尚未入账者只记录请求，由下一次建账消费。
+    ///
+    /// 返回 `false` = 进程不存在。归属认领期间等待迁移完成, 调用方不得持有 rq 锁.
+    pub fn set_requested_slice(pid: Pid, requested: u64) -> bool {
+        let stored = if requested == 0 {
+            0
+        } else {
+            clamp_requested_slice(requested)
+        };
+
+        let Some(mut claim) = Self::claim_rq_blocking(pid) else {
+            return false;
+        };
+        let src_cpu = claim.prev_cpu;
+        if src_cpu == NO_RQ_CPU {
+            return PROCESS_TABLE
+                .with_process(pid, |proc| {
+                    proc.eevdf_requested_slice.store(stored, Ordering::Release);
+                })
+                .is_some();
+        }
+
+        let rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        let Some(weight) = PROCESS_TABLE.with_process(pid, |proc| {
+            proc.eevdf_requested_slice.store(stored, Ordering::Release);
+            proc.cfs_weight.load(Ordering::Acquire)
+        }) else {
+            return false;
+        };
+        if rq.is_on_tree(pid) || rq.is_running(pid) {
+            Self::rebuild_eevdf_round(&rq, pid, weight);
         }
         claim.commit(src_cpu);
         true

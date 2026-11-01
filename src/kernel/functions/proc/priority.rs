@@ -100,7 +100,9 @@ fn resolve_pid(who: u32) -> Option<u32> {
 }
 
 /// 夹取 nice 后经调度器写入 nice/权重, 并同步粗粒度优先级.
-fn setpriority_for_pid(pid: u32, prio: i32) -> i64 {
+///
+/// `sched_setattr` 的 `sched_nice` 复用本入口，保证 nice 只有一个写路径.
+pub(crate) fn setpriority_for_pid(pid: u32, prio: i32) -> i64 {
     let clamped = prio.clamp(-20, 19);
     if !Scheduler::set_nice(pid, crate::functions::intcast::low_i8_from_i32(clamped)) {
         return Errno::Esrch.as_ret();

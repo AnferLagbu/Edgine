@@ -727,9 +727,11 @@ fn dispatch_proc_ns_signal(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程优先级与 CPU 亲和性系统调用
 fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_GETPRIORITY, SYS_NICE, SYS_SCHED_GETAFFINITY, SYS_SCHED_SETAFFINITY, SYS_SETPRIORITY,
+        SYS_GETPRIORITY, SYS_NICE, SYS_SCHED_GETAFFINITY, SYS_SCHED_GETATTR,
+        SYS_SCHED_GETSCHEDULER, SYS_SCHED_SETAFFINITY, SYS_SCHED_SETATTR, SYS_SCHED_SETSCHEDULER,
+        SYS_SETPRIORITY,
     };
-    let [a0, a1, a2, _a3, _a4, _a5] = args;
+    let [a0, a1, a2, a3, _a4, _a5] = args;
 
     Some(match num {
         // 进程优先级
@@ -756,6 +758,27 @@ fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_i32_from_u64(a0),
             crate::functions::intcast::low_u32_from_u64(a1),
             a2,
+        ),
+
+        // 调度策略与属性 (E-06 / D9③)
+        SYS_SCHED_SETSCHEDULER => crate::functions::proc::sched_attr::sched_setscheduler_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+        ),
+        SYS_SCHED_GETSCHEDULER => crate::functions::proc::sched_attr::sched_getscheduler_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_SCHED_SETATTR => crate::functions::proc::sched_attr::sched_setattr_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+        ),
+        SYS_SCHED_GETATTR => crate::functions::proc::sched_attr::sched_getattr_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+            crate::functions::intcast::low_u32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
         ),
 
         _ => return None,
