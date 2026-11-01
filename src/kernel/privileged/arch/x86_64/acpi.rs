@@ -353,6 +353,9 @@ struct MadtIso {
 // ============================================================================
 
 /// 解析 ACPI MADT 表, 填充 AP 与 IOAPIC 信息; 成功返回 true。
+///
+/// 启动路径改用 [`parse_all_tables`] 单次遍历 (内含 MADT); 本函数保留为
+/// 独立 MADT 入口与 C ABI [`acpi_parse_madt`] 的转发目标。
 pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -715,7 +718,17 @@ struct Fadt {
     x_pm1b_cnt_blk: [u8; 12],
 }
 
+/// ACPI 1.0 FADT 最小长度: 覆盖到 `flags` 末尾 (`reset_reg` 起始处).
+///
+/// QEMU i440fx 发布 116 字节的 ACPI 1.0 FADT; 用 `size_of::<Fadt>()` 作闸门
+/// 会把合法短表整张拒掉, 电源管理发现面又会退回空值.
+const FADT_MIN_LEN: usize = core::mem::offset_of!(Fadt, reset_reg);
+
+/// 读取 ACPI 2.0+ 复位寄存器所需最小长度: 覆盖 `reset_reg` + `reset_value`.
+const FADT_RESET_MIN_LEN: usize = core::mem::offset_of!(Fadt, reset_value) + 1;
+
 static FADT_ADDR: AtomicU64 = AtomicU64::new(0);
+static FADT_LEN: AtomicU32 = AtomicU32::new(0);
 static FADT_FOUND: AtomicBool = AtomicBool::new(false);
 
 /// 是否已解析 FADT (B04-21)
@@ -726,10 +739,14 @@ pub fn has_fadt() -> bool {
 }
 
 /// FADT 解析
-fn parse_fadt(fadt_ptr: u64) {
-    // SAFETY: `fadt_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(Fadt)); 只读访问
+///
+/// 只读取 `FADT_MIN_LEN` 覆盖的前缀字段, 故 ACPI 1.0 短表 (116 字节) 亦合法.
+fn parse_fadt(fadt_ptr: u64, table_len: usize) {
+    debug_assert!(table_len >= FADT_MIN_LEN);
+    // SAFETY: `fadt_ptr` 指向长度 ≥ FADT_MIN_LEN 的 ACPI 表; 此处只读前缀字段
     let fadt = unsafe { &*(fadt_ptr as *const Fadt) };
     FADT_ADDR.store(fadt_ptr, Ordering::Release);
+    FADT_LEN.store(fadt.header.length, Ordering::Release);
     FADT_FOUND.store(true, Ordering::Release);
 
     let pm1a = fadt.pm1a_evt_blk;
@@ -803,31 +820,36 @@ pub fn acpi_shutdown() -> ! {
 /// ACPI 重启
 pub fn acpi_reboot() -> ! {
     if FADT_FOUND.load(Ordering::Acquire) {
-        // SAFETY: `const` 指向 ACPI/BIOS 探测过的物理地址; 只读访问
-        let fadt = unsafe { &*(FADT_ADDR.load(Ordering::Acquire) as *const Fadt) };
+        let fadt_ptr = FADT_ADDR.load(Ordering::Acquire);
+        let fadt_len = FADT_LEN.load(Ordering::Acquire) as usize;
 
-        // 方式1: 通过 Reset Register (ACPI 2.0+)
-        let reset_reg_space = fadt.reset_reg[0];
-        let reset_reg_addr = u32::from_le_bytes([
-            fadt.reset_reg[4],
-            fadt.reset_reg[5],
-            fadt.reset_reg[6],
-            fadt.reset_reg[7],
-        ]);
-        let reset_val = fadt.reset_value;
+        // 方式1: 通过 Reset Register (ACPI 2.0+; ACPI 1.0 短表无该字段)
+        if fadt_len >= FADT_RESET_MIN_LEN {
+            // SAFETY: `fadt_ptr` 指向长度 ≥ FADT_RESET_MIN_LEN 的 ACPI 表; 只读访问
+            let fadt = unsafe { &*(fadt_ptr as *const Fadt) };
 
-        if reset_reg_space == 1 {
-            // I/O 端口空间
+            let reset_reg_space = fadt.reset_reg[0];
+            let reset_reg_addr = u32::from_le_bytes([
+                fadt.reset_reg[4],
+                fadt.reset_reg[5],
+                fadt.reset_reg[6],
+                fadt.reset_reg[7],
+            ]);
+            let reset_val = fadt.reset_value;
 
-            crate::arch!(outb(
-                crate::privileged::glue::low_u16_from_u32(reset_reg_addr),
-                reset_val
-            ));
-        }
-        // 方式2: MMIO 空间 (reset_reg_space == 0)
-        else if reset_reg_space == 0 && reset_reg_addr != 0 {
-            unsafe {
-                core::ptr::write_volatile(reset_reg_addr as *mut u8, reset_val);
+            if reset_reg_space == 1 {
+                // I/O 端口空间
+
+                crate::arch!(outb(
+                    crate::privileged::glue::low_u16_from_u32(reset_reg_addr),
+                    reset_val
+                ));
+            }
+            // 方式2: MMIO 空间 (reset_reg_space == 0)
+            else if reset_reg_space == 0 && reset_reg_addr != 0 {
+                unsafe {
+                    core::ptr::write_volatile(reset_reg_addr as *mut u8, reset_val);
+                }
             }
         }
     }
@@ -853,14 +875,33 @@ pub fn acpi_reboot() -> ! {
 struct HpetTable {
     header: SdtHeader,
     _hardware_rev_id: u8,
-    comparator_count: u8,
-    counter_size: u8,
-    _reserved1: u8,
+    /// 位域字节: bit[4:0] = 比较器数量-1, bit5 = 计数器位宽, bit7 = legacy 替换能力.
+    caps: u8,
     _pci_vendor_id: u16,
     address: [u8; 12], // 通用地址结构 (Generic Address Structure)
     hpet_number: u8,
     _min_tick: u16,
     _page_protection: u8,
+}
+
+// ACPI 6.x HPET 表固定 56 字节; 位域字节与 GAS 偏移一旦漂移, 解析值即失真.
+const _: () = {
+    assert!(core::mem::offset_of!(HpetTable, caps) == 37);
+    assert!(core::mem::offset_of!(HpetTable, address) == 40);
+    assert!(core::mem::offset_of!(HpetTable, hpet_number) == 52);
+    assert!(core::mem::size_of::<HpetTable>() == 56);
+};
+
+/// 解码 HPET 位域中的比较器数量 (`bit[4:0]` 编码值为数量-1).
+#[inline]
+fn hpet_comparator_count(caps: u8) -> u8 {
+    (caps & 0x1F) + 1
+}
+
+/// 解码 HPET 位域中的计数器位宽 (`bit5`: 0 = 32 位, 1 = 64 位).
+#[inline]
+fn hpet_counter_size(caps: u8) -> u8 {
+    (caps >> 5) & 0x01
 }
 
 /// HPET 信息
@@ -882,23 +923,23 @@ fn parse_hpet(hpet_ptr: u64) {
     // SAFETY: `hpet_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(HpetTable)); 只读访问
     let hpet = unsafe { &*(hpet_ptr as *const HpetTable) };
 
-    // 通用地址结构: [0]=space_id, [4..8]=address
+    // 通用地址结构: [0]=space_id, [4..12]=64 位基址 (低 32 位非零的机器亦正确)
     let base_addr = u64::from_le_bytes([
         hpet.address[4],
         hpet.address[5],
         hpet.address[6],
         hpet.address[7],
-        0,
-        0,
-        0,
-        0,
+        hpet.address[8],
+        hpet.address[9],
+        hpet.address[10],
+        hpet.address[11],
     ]);
 
     let info = HpetInfo {
         base_addr,
         hpet_number: hpet.hpet_number,
-        comparator_count: hpet.comparator_count,
-        counter_size: hpet.counter_size,
+        comparator_count: hpet_comparator_count(hpet.caps),
+        counter_size: hpet_counter_size(hpet.caps),
     };
 
     crate::klog_info!(
@@ -959,10 +1000,12 @@ pub struct DmarDrhdInfo {
 
 static DMAR_DRHD_LIST: IrqSpinLock<Vec<DmarDrhdInfo>> = IrqSpinLock::new(Vec::new());
 static DMAR_HOST_ADDR_WIDTH: IrqSpinLock<u8> = IrqSpinLock::new(0);
+static DMAR_FOUND: AtomicBool = AtomicBool::new(false);
 
 fn parse_dmar(dmar_ptr: u64) {
     // SAFETY: `dmar_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(DmarTable)); 只读访问
     let dmar = unsafe { &*(dmar_ptr as *const DmarTable) };
+    DMAR_FOUND.store(true, Ordering::Release);
     *DMAR_HOST_ADDR_WIDTH.lock() = dmar.host_addr_width;
 
     let entries_start =
@@ -1021,13 +1064,21 @@ pub fn get_dmar_host_addr_width() -> u8 {
     *DMAR_HOST_ADDR_WIDTH.lock()
 }
 
+/// 是否已发现并解析 DMAR 表 (表存在即真, 与 DRHD 条目数无关).
+#[inline]
+#[must_use]
+pub fn has_dmar() -> bool {
+    DMAR_FOUND.load(Ordering::Acquire)
+}
+
 // ============================================================================
 // 统一 SDT 遍历 — 发现所有表
 // ============================================================================
 
 /// 解析所有 ACPI 表 (MADT + FADT + HPET + DMAR)
 ///
-/// 在内核启动时调用, 替代仅解析 MADT 的 `parse_madt`.
+/// 启动期由 `smp_init::init` 调用: 单次 RSDT/XSDT 遍历完成全部四类表的发现与解析,
+/// 避免先 `parse_madt` 再补扫造成的重复遍历与列表重复登记.
 pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
     let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
         crate::klog_warn!(Acpi, "[ACPI] RSDP not found");
@@ -1075,17 +1126,45 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
 
         // SAFETY: `table_ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(SdtHeader)); 只读访问
         let header = unsafe { &*(table_ptr as *const SdtHeader) };
+        let table_len = header.length as usize;
 
         if header.signature == *b"APIC" {
             parse_madt_entries(table_ptr);
             MADT_BASE.store(table_ptr, Ordering::Release);
             MADT_FOUND.store(true, Ordering::Release);
         } else if header.signature == *b"FACP" {
-            parse_fadt(table_ptr);
+            if table_len < FADT_MIN_LEN {
+                crate::klog_warn!(
+                    Acpi,
+                    "[ACPI] FADT too short ({} < {}), skipped",
+                    table_len,
+                    FADT_MIN_LEN
+                );
+            } else {
+                parse_fadt(table_ptr, table_len);
+            }
         } else if header.signature == *b"HPET" {
-            parse_hpet(table_ptr);
+            if table_len < core::mem::size_of::<HpetTable>() {
+                crate::klog_warn!(
+                    Acpi,
+                    "[ACPI] HPET too short ({} < {}), skipped",
+                    table_len,
+                    core::mem::size_of::<HpetTable>()
+                );
+            } else {
+                parse_hpet(table_ptr);
+            }
         } else if header.signature == *b"DMAR" {
-            parse_dmar(table_ptr);
+            if table_len < core::mem::size_of::<DmarTable>() {
+                crate::klog_warn!(
+                    Acpi,
+                    "[ACPI] DMAR too short ({} < {}), skipped",
+                    table_len,
+                    core::mem::size_of::<DmarTable>()
+                );
+            } else {
+                parse_dmar(table_ptr);
+            }
         }
     }
 
@@ -1136,6 +1215,25 @@ mod tests {
 
     fn flags_of(raw: u16) -> IsoFlags {
         decode_iso_flags(raw)
+    }
+
+    #[test]
+    fn hpet_caps_decode_matches_acpi_bitfields() {
+        // QEMU i440fx: 3 comparators (编码 2) + 64 位计数器 (bit5) + legacy 能力 (bit7)
+        let caps = 0xA2;
+        assert_eq!(hpet_comparator_count(caps), 3);
+        assert_eq!(hpet_counter_size(caps), 1);
+        // 1 comparator (编码 0) + 32 位计数器
+        assert_eq!(hpet_comparator_count(0x00), 1);
+        assert_eq!(hpet_counter_size(0x00), 0);
+    }
+
+    #[test]
+    fn fadt_length_tiers_match_acpi_1_0_and_2_0_offsets() {
+        // ACPI 1.0 FADT 到 flags 末尾为 116 字节; 复位字段在其后的 ACPI 2.0+ 扩展区
+        assert_eq!(FADT_MIN_LEN, 116);
+        assert_eq!(FADT_RESET_MIN_LEN, 129);
+        assert!(FADT_RESET_MIN_LEN <= core::mem::size_of::<Fadt>());
     }
 
     #[test]

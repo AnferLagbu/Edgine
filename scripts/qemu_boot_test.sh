@@ -584,6 +584,23 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到 e1000 初始化完成 (默认 NIC 未挂载或驱动回归)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # P-77: 启动期必须完成全量 ACPI 表遍历 —— QEMU i440fx 必有 FACP,
+            # `parse_all_tables` 未接线时 FADT 日志整行缺失 (MADT 仍由旧入口解析,
+            # 故不能用 MADT 里程碑替代). -a 防日志 NUL 字节使 grep 误判二进制.
+            if grep -aq "\[ACPI\] FADT: PM1a_EVT=" "$X64_LOG"; then
+                ok "[x86_64] ACPI FADT 已解析 (P-77 全表遍历接线)"
+            else
+                warn "[x86_64] 未观察到 FADT 解析日志 (P-77 接线回归)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # HPET 表布局回归: QEMU 固定 HPET 基址 0xFED00000; 旧布局把 GAS
+            # 从偏移 40 读成 42, 实测只输出 0xFED0 (高位字节错位).
+            if grep -aq "\[ACPI\] HPET: base=0xFED00000" "$X64_LOG"; then
+                ok "[x86_64] ACPI HPET 基址解析正确 (GAS 偏移 40)"
+            else
+                warn "[x86_64] HPET 基址非 0xFED00000 (表布局回归?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # DHCP 租约里程碑 (默认 e1000 + user netdev 自带 slirp DHCP 服务).
             # 修复 RX 描述符回收 off-by-one (RDT 误设为 tail+1 致 RDT==RDH,
             # 硬件可用描述符归零, 后续帧被静默丢弃) 后应拿到租约; 回落

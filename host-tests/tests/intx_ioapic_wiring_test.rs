@@ -114,10 +114,10 @@ fn ioapic_initialized_before_device_wiring() {
     assert!(
         before(
             &smp,
-            "super::acpi::parse_madt(0)",
+            "super::acpi::parse_all_tables(0)",
             "super::ioapic::init_from_acpi()"
         ),
-        "IOAPIC 初始化必须晚于 MADT 解析 (依赖枚举结果)"
+        "IOAPIC 初始化必须晚于 ACPI 表解析 (parse_all_tables 内含 MADT)"
     );
     assert!(
         before(&smp, "super::ioapic::init_from_acpi()", "if ap_count <= 1"),

@@ -11,7 +11,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 /// Trampoline 代码位于 0x8000 物理地址，由 BSP 在启动前拷贝。
 ///
 /// 流程:
-///   1. `parse_madt()` — 解析 ACPI MADT 获取 AP 列表
+///   1. `parse_all_tables()` — 单次 SDT 遍历: 解析 MADT 获取 AP 列表, 并一并填充 FADT/HPET/DMAR
 ///   2. `copy_trampoline()` — 拷贝 trampoline 到 0x8000
 ///   3. `start_ap()` — 对每个 AP 发送 INIT-SIPI 序列
 ///   4. `ap_entry()` — AP 进入 64-bit 后调用的 Rust 入口
@@ -114,7 +114,10 @@ pub extern "C" fn smp_get_ap_count() -> u32 {
 /// 初始化 SMP: 解析 MADT 并启动所有 AP; 单核时直接标记完成。
 #[inline(never)]
 pub fn init() {
-    super::acpi::parse_madt(0);
+    // 单次 SDT 遍历: `parse_all_tables` 内含 MADT 解析 (LAPIC/IOAPIC/ISO),
+    // 并同时填充 FADT/HPET/DMAR. 不要另调 `parse_madt` —— 它只扫 MADT,
+    // 再调一次会让 AP/IOAPIC 列表重复登记 (P-77).
+    super::acpi::parse_all_tables(0);
     // MADT 解析完成后立即初始化 IOAPIC: 设备 INTx 接线 (net 探测) 依赖
     // `gsi_to_ioapic` 的区间信息, 而区间上界只能读 IOAPICVER 回填.
     // 必须在 `ap_count <= 1` 提前返回之前执行 (单核同样需要中断路由).

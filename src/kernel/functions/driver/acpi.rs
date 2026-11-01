@@ -55,8 +55,7 @@ pub fn has_hpet() -> bool {
 #[inline]
 #[must_use]
 pub fn has_dmar() -> bool {
-    // 简化: DMAR 解析与启动日志挂钩, 当前仅返回 false 占位
-    false
+    crate::privileged::arch::acpi::has_dmar()
 }
 
 // ============================================================================
