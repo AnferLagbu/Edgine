@@ -23,7 +23,7 @@
 | D9 syscall 面 | **③ 全通：`nice`/`setpriority` + `sched_setscheduler`/`getscheduler` + `sched_setattr`/`getattr`** | 用户已裁定；先修「nice 不改变 CFS 权重」的断链，再补策略查询与请求切片 |
 | D10 虚拟时间精度 | **② Q16.16 定点** | 用户已裁定；`vr` 以 `1/65536` tick 为单位，增量 `((NICE0_WEIGHT << 16) / w).max(1)`，floor/阈值/测试断言全域同步换算。现行整数路径 `(NICE0_WEIGHT / w).max(1)` 对**所有 `w >= NICE0_WEIGHT`（nice ≤ 0）**都产出 1，nice -20 与 nice 0 在 vruntime 上完全同速；这不是仅 `w > NICE0_WEIGHT` 的边界 |
 
-> D4-D10 已由用户裁定（见 §8 变更历史），本工程进入 E-01 口径冻结；D7 的备选（双索引）仅在 E-03 基准证明单树前缀扫描不可接受时另开决策，实现中不得私自改道。
+> D4-D10 已由用户裁定（见 §8 变更历史），E-01 已把 §3 公式冻结为 [host-tests/src/eevdf_model.rs](../../host-tests/src/eevdf_model.rs) 可执行参考模型（配套 `tests/eevdf_reference_model_test.rs`），E-03 起实现只许按模型口径落地；D7 的备选（双索引）仅在 E-03 基准证明单树前缀扫描不可接受时另开决策，实现中不得私自改道。
 
 ## 2. 调研结论（源码依据）
 
@@ -40,9 +40,9 @@
 - **线程维度尚未存在**：`privileged/proc/thread.rs` 与 `privileged/syscall/clone.rs` 均已不在现树，`CLONE_THREAD` 只在 functions 层校验标志（[clone.rs:24-47](../../src/kernel/functions/proc/clone.rs#L24-L47)）。多线程工程 K-04 未实施，本工程不得假设线程级调度字段已就位。
 - **现有回归与基准锚点**：`host-tests/tests/cfs_single_time_base_test.rs`（IC1/IC2/IC3）、`smp_rq_migration_test.rs`（RqClaim/单树/屏障）、`sched_offcore_placement_barrier_test.rs`（P-21 接线）、`sched_current_type_consistency_test.rs`、`td10_utime_stime_test.rs`；性能基准 `host-tests/tests/cfs_btreemap_bench_test.rs` 只测模拟 `BTreeMap`，尚未覆盖内核队列的选择路径。
 
-## 3. 设计模型与开放议题
+## 3. 设计模型与冻结口径
 
-> 本节是 E-01 的输入草案，不是已定稿设计。所有公式与阈值须在 E-01 中逐项评审并由用户裁定 D4-D10 后固化。
+> 本节是 E-01 冻结口径（D4-D10 已裁定）。所有公式、舍入方向与阈值以 [host-tests/src/eevdf_model.rs](../../host-tests/src/eevdf_model.rs) 为可执行单源；实现与文档出现分歧时以模型 + 对拍测试为准，改口径必须同批改模型、测试与本节。
 
 ### 3.1 每任务状态
 
@@ -55,7 +55,7 @@
 EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）：
 
 - `eevdf_vdeadline`：本轮的虚拟截止期 `vd = vr + slice_virt`，用于跨任务比较与唤醒抢占。
-- `eevdf_slice_virt`：本任务本轮的虚拟切片；默认由 rq 总权重动态计算，`sched_setattr` 路线下按 D8③ 覆盖。
+- `eevdf_slice_virt`：本任务本轮的虚拟切片 `Δvr(w) * slice_real`；默认真实切片由 rq 总权重动态计算（§3.3），`sched_setattr` 路线下按 D8③ 覆盖。
 - `eevdf_slice_left`：本轮剩余的**真实切片**（tick）。
 
 切片剩余量**必须落在任务自身**，不得由每核 `PerCpuSched` 的当前槽位持有：任务在 `Migrate`（跨核迁移）与 `Requeue`（被抢占后重投）时要携带预算，放在核槽位会在迁移/换出时丢失且引入跨核写同一字段的竞态。睡眠唤醒（`Wake`）时预算重置，睡眠不累积切片。
@@ -77,26 +77,27 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 
 - **IE1 同域**：`V`、`vr`、`floor`、`vd`、`slice_virt` 全部使用 Q16.16 同一虚拟时间单位与同一时基。
 - **IE2 账目完备**：每个 `cfs_on_rq == true` 的任务恰好被计入一次——在树上的计入 `tree_*`，在本核运行的计入 `running_*`；`W`/`S` 等于可运行集的全量。`total_weight` 若保留为派生读取，必须与 `W` 恒等。
-- **IE3 有界欠账**：`Wake` 入队把 `vr` 钳到 `V - slice_virt`，故 `lag = V - vr ∈ [0, slice_virt]`；睡眠不产生无界信用。
+- **IE3 有界信用 + 欠账保留**：`Wake` 后恒有 `lag = V_before - vr <= slice_virt`；若 `vr_raw <= V_before` 则 `lag >= 0`（睡眠信用有界），若 `vr_raw > V_before` 则 `lag < 0`（保留欠账，不补偿、不制造信用）。睡眠不产生无界信用，也不清空既有欠账。
 - **IE4 floor 单调**：`min_vruntime` 仍只增不减（IC3 不因 EEVDF 改变），但 `V` 不要求单调（低 vr 任务入队会拉低平均）。
 - **IE5 迁移守恒**：跨核迁移在源/目的双持锁内完成「源撤账 + 目的记账」，两核的 `tree_weight`/`tree_sum_w_vr` 变化量互为相反数；`Migrate` 原样携带 `vr`、`slice_virt`、`slice_left`、`vd`，不得重算落点。
 - **IE6 切片生命周期**：`Wake` 重置预算，`Migrate` 携带预算，`Requeue` 仅在预算耗尽时补充；三种入队语义不得混用。
 
-### 3.3 核心公式（提案）
+### 3.3 核心公式（E-01 冻结）
 
-- 单位：`F = 16`，所有虚拟时间量 `X_v = X_real << 16`；下文公式省略 `<<16` 的书写，但实现与断言一律用定点整数。
-- 虚拟时间推进：`Δvr = max(1, (NICE0_WEIGHT << 16) / w)`（`w == 0` 按 `NICE0_WEIGHT` 退化，沿用现状）；`vr' = vr + Δvr`。
-- 加权平均：`W = tree_weight + running_weight`，`S = tree_sum_w_vr + running_sum_w_vr`，`V = S / W`。
-- 欠账：`lag_i = V - vr_i`；**合格** ⇔ `lag_i >= 0` ⇔ `vr_i * W <= S`（交叉乘法，u128）。
-- 虚拟截止期：`vd_i = vr_i + slice_virt_i`。
-- 默认虚拟切片：`slice_virt = max((MIN_GRANULARITY << 16) * NICE0 / w_i, (TARGET_LATENCY << 16) * NICE0 / W)`；对应真实切片 `slice_real = slice_virt * w_i / NICE0`，等价于现 `calc_time_slice = max(MIN_GRANULARITY, TARGET_LATENCY * w_i / W)`。
-- D8③ 请求切片：`sched_runtime`（ns）先换算真实 tick 并夹取到 `[MIN_GRANULARITY, TARGET_LATENCY]`，再换算为 `slice_virt = slice_real * NICE0 / w_i`；请求只覆盖默认值，不改变选择规则。
-- 选择：在树内合格前缀中取 `(vd, pid)` 最小者；若无合格任务，取 `(vr, pid)` 最小者为候选，并与当前运行任务比较——若 `current.vr <= candidate.vr` 则保持当前，否则选候选（**current-aware fallback**，避免全体 lag 为负时无意义抖动）。
+- 单位：`F = 16`，所有虚拟时间量 `X_v = X_real << 16`；`Δvr`、`vr`、`V`、`vd`、`slice_virt` 一律为 Q16.16 整数，除法运算一律向下取整。
+- 虚拟时间推进：`Δvr = max(1, (NICE0_WEIGHT << 16) / w)`（`w == 0` 按 `NICE0_WEIGHT` 退化）；`vr' = vr + Δvr`。nice -20..19 全 40 档的 `Δvr` 从 756 到 4_473_924 随权重严格递减，不再出现「nice ≤ 0 全为 1」的截断。
+- 加权平均：`W = tree_weight + running_weight`，`S = tree_sum_w_vr + running_sum_w_vr`，`V = S / W`（`W == 0` 时 `V = 0`；商溢出饱和到 `u64`）。
+- 欠账：`lag_i = V - vr_i`；**合格** ⇔ `lag_i >= 0` ⇔ `vr_i * W <= S`（u128 交叉乘法；不用除法比较，避免 floor 改变符号）。
+- 默认真实切片：`slice_real = max(MIN_GRANULARITY, min(TARGET_LATENCY, TARGET_LATENCY * w_i / W_inc))`，其中 `W_inc` 是**把本任务计入后**的可运行集权重和——`Wake` 用 `W_before + w_i`，`Requeue` 用当前已含本任务的 `W`。
+- 虚拟切片：`slice_virt = Δvr(w_i) * slice_real`。该式与逐 tick 记账严格对齐：切片耗尽时 `vr` 恰好推进一个 `slice_virt`。**不采用** `slice_virt = slice_real * NICE0 / w_i` 的连续比值——它与整数 `Δvr` 的 floor 不同源，会产生约一个虚拟 tick 的漂移。
+- 虚拟截止期：`vd_i = vr_i + slice_virt_i`，在建账时写入；运行期间 `vd` 固定，恒有 `vd_i - vr_i = Δvr(w_i) * slice_left_i`（IE6 的联合检查式）。
+- D8③ 请求切片：`sched_runtime`（ns）先换算真实 tick 并夹取到 `[MIN_GRANULARITY, TARGET_LATENCY]`，再按同一 `slice_virt = Δvr * slice_real` 换算；请求只在下次建账（`Wake`，或切片耗尽后的 `Requeue`）生效，不打断当前切片；清除请求后回到默认值。
+- 选择：合格集合 = 树内合格前缀（`vr <= V`）+ 合格 current，取 `(vd, pid)` 最小者；无合格者时回退 `(vr, pid)` 最小并与 current 比较（`current.vr <= candidate.vr` 时保持 current，**current-aware fallback**）。
 - 入队三分语义：
-  - `Wake`：`vr = max(vr_raw, V - slice_virt)`，重算 `slice_virt/slice_real`，`slice_left = slice_real`，`vd = vr + slice_virt`。
-  - `Migrate`：原样携带 `vr/slice_virt/slice_left/vd`，不套用任何落点钳制（迁移不得奖励 vr，也不得重算切片）。
-  - `Requeue`：保留 `vr` 与预算；仅当 `slice_left == 0`（切片耗尽/被抢占）时重算 `slice_virt/slice_real` 并令 `vd = vr + slice_virt`。
-- 唤醒抢占：仅当新任务合格、当前任务是 CFS 且 `vd_new < vd_current` 时请求重调度；当前任务非 CFS 或 `slice_left == 0` 时按类间/切片规则处理。唤醒路径不再使用 floor 或固定 vr 差值。
+  - `Wake`：重算 `slice_real/slice_virt`，`vr = max(vr_raw, V_before - slice_virt)`，`slice_left = slice_real`，`vd = vr + slice_virt`。睡眠信用上界为一个 `slice_virt`；`vr_raw > V_before` 时保留负 lag（欠账），不制造信用。
+  - `Migrate`：原样携带 `vr/slice_real/slice_virt/slice_left/vd`，不套用任何落点钳制（迁移不得奖励 vr，也不得重算切片）。
+  - `Requeue`：`slice_left > 0` 时原样重投，保留 `vr` 与预算；仅当 `slice_left == 0`（切片耗尽/被抢占）时重算 `slice_real/slice_virt` 并令 `vd = vr + slice_virt`，不改 `vr`。
+- 唤醒抢占：入队成功与抢占请求是两件事；仅当新任务合格、当前任务是 CFS 且 `vd_new < vd_current` 时请求重调度，无 current 时直接请求。当前任务非 CFS 时按类间优先级处理。唤醒路径不再使用 floor 或固定 vr 差值。
 
 ### 3.4 选择路径与 current
 
@@ -107,6 +108,8 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - **当前任务兜底**：`pick_next_task` 的 CFS 分支由 `pick_eevdf` 替换；无合格任务时，树内最小 vr 候选必须与 current 比较，current 更靠前则保持 current。boot 期「从未入过 CFS 队列」的 keep-current 路径保持原样。
 
 `pick_eevdf` 的输入是「树 + 当前运行任务」的合并可运行集：当前任务在树外，但通过 `running_*` 账目参与 `V` 与兜底比较；它若在切片到期后被 `Requeue` 入树，则回到正常选择路径。
+
+**E-01 数学结论**：只要可运行集非空且 IE2 账目完备，就有 `min(vr) <= S / W`，故 `min(vr) <= floor(S / W) = V`，即合格集合恒非空，「全体 lag < 0」不可达。current-aware fallback 因此只是防御性路径；必须锁死的是**账目完备**——运行任务一旦漏出 `W/S`，该证明立即失效。
 
 ### 3.5 时基、溢出与精度
 
@@ -131,24 +134,25 @@ EEVDF 新增字段（D10② 后所有虚拟时间字段均为 Q16.16 定点）�
 - 若后续改变实体口径（例如引入独立 Thread 结构），才需要把字段搬到新实体；该变更必须另立决策，不能由实现顺手完成。
 - 本工程**不新增**「调度实体 trait」抽象来同时适配 Process/Thread；那是为假想未来预留的复杂度，按 §11.3 简约原则由 D5 裁定后直接落字段。
 
-### 3.8 开放议题（E-01 必须逐项给出结论）
+### 3.8 E-01 结论（原开放议题收口）
 
-- **睡眠欠账上界**：已定为一个 `slice_virt`（`Wake` 落点钳制），由 D8① 默认值或 D8③ 请求值决定；E-01 用随机序列验证 `lag ∈ [0, slice_virt]`。
+- **睡眠欠账上界**：结论为一个 `slice_virt`（`Wake` 落点钳制），由 D8① 默认值或 D8③ 请求值决定；信用与欠账两侧均已由随机序列（2_000 轮）验证：`lag <= slice_virt` 恒成立，`lag >= 0` 当且仅当 `vr_raw <= V_before`，负 lag 作为欠账原样保留。
 - **新 fork 任务的初始 vr**：走 `Wake` 入队钳制（继承父 vr，但在 `V - slice_virt` 之上），不单独设计「初始 vr」分支；exec 保持当前调度实体与 vr（同一任务继续执行）。
-- **低/高权重切片上下限**：真实切片夹在 `[MIN_GRANULARITY, TARGET_LATENCY]`；虚拟切片按 `slice_real * NICE0 / w` 换算，E-01 固定舍入方向并覆盖 nice -20..19 全档。
-- **饥饿证明**：无合格任务时用 current-aware fallback；E-01 需给出「全体 lag < 0 + 连续唤醒」 adversarial 序列下的服务推进断言，不能只靠直觉。
-- **抢占延迟**：唤醒抢占只比较 `vd`；E-01 用「高权重短切片任务频繁唤醒」序列测量其获得 CPU 的上界，并记录阈值。
+- **低/高权重切片上下限**：真实切片恒在 `[MIN_GRANULARITY, TARGET_LATENCY]`；虚拟切片一律 `Δvr * slice_real`。E-01 已覆盖 nice -20..19 全 40 档与单任务/多任务边界，舍入方向固定为 floor。
+- **饥饿证明**：数学上非空可运行集必有合格任务（`min(vr) <= V`），全体 lag < 0 不可达；current-aware fallback 仅防御。adversarial「全体树任务欠账 + 探针每 7 tick 连续唤醒」序列下，基础任务首次服务均 < 1000 tick 且全部获得服务。
+- **抢占延迟**：频繁唤醒的高权重短切片任务每周期最多消费一个请求切片，份额被限制在 750..850‰，不能按权重垄断 CPU；CPU-bound 高权重任务的长期份额贴近权重比（约 98%），不会因真实切片上限而被人为压低。用户可感知的抢占间隔上界为一个切片（默认或请求值）。
 - **`cfs_should_preempt` 的关系**：D6① 直接替换，生产调用点改完后删除，不保留兼容阈值。
 - **`V` 的表示**：内部 Q16.16 字段 + 测试/调试访问器，本工程不新增 procfs 暴露。
 - **回退**：D6① 不设回退开关；若未来需要回退，另立工程并走真实可达路径，不得以死代码或 `cfg` 空壳保留。
-- **E-01 剩余交付**：Q16.16 参考模型、三类入队语义表、IE1-IE6 属性测试、切片边界表与上述 adversarial 序列结论。
+- **E-01 交付物**：[host-tests/src/eevdf_model.rs](../../host-tests/src/eevdf_model.rs) 参考模型 + [tests/eevdf_reference_model_test.rs](../../host-tests/tests/eevdf_reference_model_test.rs) 14 项对拍，覆盖常量单源、40 档 `Δvr`、切片/请求夹取、IE3/IE4/IE5/IE6、255 边界、合格集合、adversarial 序列与随机序列暴力对账。生产实现不得自行改公式；口径变更必须同批修改模型、测试与本节。
 
 ## 4. 实施阶段（循序渐进，每阶段 = 状态 [X] + 验证门槛）
 
 - **E-01. 设计与口径定稿**
   - 描述：D4-D10 已裁定；把 §3 的 Q16.16 单位、树账/运行账分解、`Wake/Migrate/Requeue` 三分入队、合格/截止期/切片公式、current-aware fallback 与唤醒抢占判据固化为参考模型与属性测试；本阶段不改生产代码。
   - 方案：host 侧纯函数模型（Q16.16 整数运算）+ 随机操作序列与暴力重算对账（`W`/`S`/`V`/资格/切片/迁移守恒）+ 边界表（255 任务、nice -20..19、切片上下限、全体 lag 为负）；参考模型输出作为 E-02 起实现的唯一口径。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：参考模型落 `host-tests/src/eevdf_model.rs`，对拍落 `host-tests/tests/eevdf_reference_model_test.rs`（14 项全绿）；冻结结论见 §3.3 与 §3.8。修正点：`slice_virt = Δvr * slice_real`（不再用连续比值）、IE3 改为「信用有界 + 欠账保留」、证明非空可运行集必有合格任务（fallback 降为防御路径）。
 - **E-02. 权重链路打通与调度字段审计**（依赖 E-03 的账目入口）
   - 描述：修复 `nice`/`setpriority` 只写 `ProcessPriority`、不写 `nice`/`cfs_weight` 的既有缺口；让 `Scheduler::set_nice` 进入生产调用路径；核对 `Process::new` / init 默认值（[process.rs:424-430](../../src/kernel/privileged/proc/process.rs#L424-L430)）。
   - 方案：在 functions 层经 privileged 安全 API 更新 `nice` + `cfs_weight`；任务在 rq 上时，经 E-03 提供的权重变更入口在**同一 rq 锁内**先撤旧账（旧 `w` 与旧 `w*vr`）再按新 `w` 记入，并重算 `slice_virt/vd`；不新增锁、不改锁序。补 nice → weight → Q16.16 增量的全 40 档单测与负控制。
@@ -200,7 +204,7 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - 调度专项回归：`cfs_single_time_base_test`、`smp_rq_migration_test`、`sched_offcore_placement_barrier_test`、`sched_current_type_consistency_test`、`td10_utime_stime_test` 全绿。
 - 新增属性测试至少覆盖：树账/运行账与暴力重算一致、合格集合与 lag 符号一致、无重复节点、权重守恒、迁移前后两核账目守恒（IE5）、`Wake` 欠账有界、切片到期必请求重调度、三分入队语义不混用（IE6）。
 - Q16.16 专项：nice -20..19 全 40 档的 `Δvr` 严格随权重递减（不再全为 1）；所有阈值/floor/切片断言使用同一单位；参考模型与生产实现逐用例对拍。
-- 选择专项：全体 lag 为负时 current-aware fallback 不抖动；唤醒抢占只在 `vd_new < vd_current` 时发生；`Migrate` 不改变 `vr`/预算。
+- 选择专项：非空可运行集必有合格任务（`min(vr) <= V`）且 `pick_eevdf` 结果等于合格集合最小 `(vd, pid)`；current-aware fallback 仅为防御路径；唤醒抢占只在 `vd_new < vd_current` 时发生；`Migrate` 不改变 `vr`/预算。
 - 旧判据退役：`cfs_should_preempt` 与 `vr > floor + TARGET_LATENCY_TICKS` 的调用点全部改完后，函数与测试删除，无死代码抑制。
 - 网络 e2e：沿用 `E2E_REPEATS`（[qemu_boot_test.sh:43](../../scripts/qemu_boot_test.sh#L43)）与 [qemu_liveness_probe.sh](../../scripts/qemu_liveness_probe.sh) 的既有回归；如需 1000-boot soak，按 P-29/P-30 的手工复跑方式执行并把读数落档，不把未落脚本的流程写成现成门禁。
 - 性能：E-03 建立队列选择基准，E-07 与基线对照；任何回退必须给出根因与后续计划，不得静默放宽。
@@ -230,3 +234,4 @@ E-01 → E-03 → E-02 → E-04 → E-05a → E-05b → E-06 → E-07 → E-08
 - 记录 D4-D10 裁定：D4=B / D5=① / D6=① / D7=混合单树资格前缀 / D8=①+③ / D9=③ / D10=② Q16.16；修正 D10 截断口径为「所有 `w >= NICE0_WEIGHT` 均退化为 1」。
 - 设计口径修正：切片剩余量改为每任务持有；账目拆为树账 + 每核运行账；唤醒落点改用 `V - slice_virt`（floor 不再参与）；三分入队语义 `Wake/Migrate/Requeue`；无合格任务改 current-aware fallback；`steal_locked` 候选收敛到合格前缀。
 - 阶段修正：E-03 前置于 E-02 以消除账目循环依赖；E-05 拆为 E-05a（入队/唤醒/prev 重投）与 E-05b（迁移/负载均衡）；E-08 由「字段机械迁移」改为线程组语义对齐（因多线程 D7 的 Process=每线程 TCB 口径）。
+- E-01 完成：新增 host 参考模型（Q16.16 纯整数）与 14 项对拍测试；冻结 `slice_virt = Δvr * slice_real`、`W_inc` 口径与三分入队语义；修正 IE3 为「信用有界 + 欠账保留」；证明非空可运行集必有合格任务（current-aware fallback 降为防御路径）；§3.8 开放议题全部收口，E-01 状态置 `[X]`。
