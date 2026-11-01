@@ -28,6 +28,13 @@ use crate::functions::fs::vfs_types::{
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
 
+// 路径上限必须与进程 FS 上下文缓冲同宽: 双方经 `root_into` / `cwd_into`
+// 直接交换定长数组, 宽度漂移会静默截断根前缀.
+const _: () = assert!(
+    VFS_MAX_PATH == crate::privileged::proc::fs_context::FS_MAX_PATH,
+    "VFS_MAX_PATH 与 FS_MAX_PATH 必须一致"
+);
+
 /// 单个挂载点条目 (路径 + 文件系统标识)
 pub struct VfsMount {
     /// 挂载点在真实路径空间中的位置 (NUL 结尾)
@@ -152,6 +159,8 @@ struct VfsSnapshot {
     mounts: [VfsMount; VFS_MAX_MOUNTS],
     cwd: [u8; VFS_MAX_PATH],
     root: [u8; VFS_MAX_PATH],
+    /// 捕获时的进程 FS 上下文 `(cwd, root)`; 无进程上下文为 `None`.
+    process_fs: Option<([u8; VFS_MAX_PATH], [u8; VFS_MAX_PATH])>,
 }
 
 /// 返回无尾斜杠路径 `s` 的父路径长度; 根之下统一收敛到 1 ("/")
@@ -372,6 +381,8 @@ impl VfsManager {
     }
 
     /// 设置当前工作目录 (视图路径; 超长部分截断)
+    ///
+    /// 写全局缺省; 有进程上下文时用 [`VfsManager::set_current_cwd`].
     pub fn set_cwd(&self, path: &str) {
         let mut cwd = self.cwd.lock();
         let bytes = path.as_bytes();
@@ -381,6 +392,8 @@ impl VfsManager {
     }
 
     /// 读取当前工作目录 (视图路径)
+    ///
+    /// 读全局缺省; 有进程上下文时用 [`VfsManager::current_cwd`].
     pub fn get_cwd(&self) -> String {
         let cwd = self.cwd.lock();
         let end = cwd.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
@@ -388,10 +401,55 @@ impl VfsManager {
     }
 
     /// 读取当前根前缀 (真实路径; 默认 "/")
+    ///
+    /// 读全局缺省; 有进程上下文时用 [`VfsManager::current_root_string`].
     pub fn get_root(&self) -> String {
         let root = self.root.lock();
         let end = root.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
         String::from(core::str::from_utf8(&root[..end]).unwrap_or("/"))
+    }
+
+    /// 读取**当前进程**的工作目录; 无进程上下文时回落全局缺省.
+    pub fn current_cwd(&self) -> String {
+        crate::privileged::proc::with_current_fs_context(
+            crate::privileged::proc::FsContext::cwd_string,
+        )
+        .unwrap_or_else(|| self.get_cwd())
+    }
+
+    /// 读取**当前进程**的根前缀 (真实路径); 无进程上下文时回落全局缺省.
+    pub fn current_root_string(&self) -> String {
+        crate::privileged::proc::with_current_fs_context(
+            crate::privileged::proc::FsContext::root_string,
+        )
+        .unwrap_or_else(|| self.get_root())
+    }
+
+    /// 读取当前进程根前缀的定长快照 (NUL 结尾); 无进程上下文时回落全局缺省.
+    fn current_root_bytes(&self) -> [u8; VFS_MAX_PATH] {
+        crate::privileged::proc::with_current_fs_context(|ctx| {
+            let mut buf = [0u8; VFS_MAX_PATH];
+            let _ = ctx.root_into(&mut buf);
+            buf
+        })
+        .unwrap_or_else(|| *self.root.lock())
+    }
+
+    /// 设置**当前进程**的工作目录 (视图路径); 无进程上下文时写全局缺省.
+    pub fn set_current_cwd(&self, path: &str) {
+        if crate::privileged::proc::with_current_fs_context(|ctx| ctx.set_cwd(path)).is_none() {
+            self.set_cwd(path);
+        }
+    }
+
+    /// 设置**当前进程**的根前缀 (真实路径); 无进程上下文时写全局缺省.
+    ///
+    /// 语义同 [`VfsManager::set_root`]: 切根后工作目录重置为视图根 "/".
+    pub fn set_current_root(&self, real_root: &str) {
+        if crate::privileged::proc::with_current_fs_context(|ctx| ctx.set_root(real_root)).is_none()
+        {
+            self.set_root(real_root);
+        }
     }
 
     /// 设置根前缀 (`chroot` / `pivot_root` 机制)
@@ -433,7 +491,7 @@ impl VfsManager {
             out[0] = b'/';
             1
         } else {
-            let cwd = self.get_cwd();
+            let cwd = self.current_cwd();
             let b = cwd.as_bytes();
             if b.first() == Some(&b'/') {
                 let mut n = b.len().min(VFS_MAX_PATH - 1);
@@ -509,7 +567,7 @@ impl VfsManager {
         let mut view = [0u8; VFS_MAX_PATH];
         let view_len = self.normalize_view_path_into(path, &mut view)?;
 
-        let root = *self.root.lock();
+        let root = self.current_root_bytes();
         let root_len = root.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
 
         // 默认根: 视图路径即真实路径 (无额外分配/拷贝语义变化)
@@ -546,19 +604,43 @@ impl VfsManager {
         };
         let cwd_data = *self.cwd.lock();
         let root_data = *self.root.lock();
+        // K-03: 进程 FS 上下文存在时单独快照 —— 它才是路径解析的权威来源.
+        let process_fs = crate::privileged::proc::with_current_fs_context(|ctx| {
+            let mut cwd = [0u8; VFS_MAX_PATH];
+            let mut root = [0u8; VFS_MAX_PATH];
+            let _ = ctx.cwd_into(&mut cwd);
+            let _ = ctx.root_into(&mut root);
+            (cwd, root)
+        });
         *self.snapshot.lock() = Some(VfsSnapshot {
             mounts: mounts_data,
             cwd: cwd_data,
             root: root_data,
+            process_fs,
         });
     }
 
     /// 从最近一次快照恢复挂载表 / cwd / 根前缀 (无快照时为空操作)
     pub fn restore_from_snapshot(&self) {
-        if let Some(ref snap) = *self.snapshot.lock() {
-            self.mounts.lock().clone_from(&snap.mounts);
-            *self.cwd.lock() = snap.cwd;
-            *self.root.lock() = snap.root;
+        // 快照锁内只做克隆: 后续进程 FS 恢复会触达进程表 (层级 7), 不得在
+        // VFS 域锁内按 11 → 7 反向取锁.
+        let Some(snap) = self.snapshot.lock().clone() else {
+            return;
+        };
+        self.mounts.lock().clone_from(&snap.mounts);
+        *self.cwd.lock() = snap.cwd;
+        *self.root.lock() = snap.root;
+        // K-03: 有进程 FS 快照时同步回滚; 先恢复根 (其内部重置 cwd)
+        // 再恢复 cwd, 顺序不可颠倒.
+        if let Some((cwd_bytes, root_bytes)) = snap.process_fs {
+            let len_of =
+                |buf: &[u8; VFS_MAX_PATH]| buf.iter().position(|&b| b == 0).unwrap_or(VFS_MAX_PATH);
+            let cwd = core::str::from_utf8(&cwd_bytes[..len_of(&cwd_bytes)]).unwrap_or("/");
+            let root = core::str::from_utf8(&root_bytes[..len_of(&root_bytes)]).unwrap_or("/");
+            let _ = crate::privileged::proc::with_current_fs_context(|ctx| {
+                ctx.set_root(root);
+                ctx.set_cwd(cwd);
+            });
         }
     }
 }

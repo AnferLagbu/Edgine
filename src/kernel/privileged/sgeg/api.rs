@@ -426,22 +426,8 @@ pub extern "C" fn pwm_set_modified() {
 }
 
 // ============================================================================
-// 文件创建掩码 umask (单一全局值)
+// 文件创建掩码 umask — K-03 起归进程 FS 上下文 (Process::fs_context)
 // ============================================================================
-
-use core::sync::atomic::{AtomicU32, Ordering};
-
-static UMASK: AtomicU32 = AtomicU32::new(0o022);
-
-/// 设置进程 umask, 返回旧值
-pub fn umask_set(new_mask: u32) -> u32 {
-    UMASK.swap(new_mask & 0o777, Ordering::SeqCst)
-}
-
-/// 取当前 umask
-pub fn umask_get() -> u32 {
-    UMASK.load(Ordering::SeqCst)
-}
 
 /// 按动作编号写入一条 PWM 审计记录
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

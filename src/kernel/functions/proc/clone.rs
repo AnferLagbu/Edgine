@@ -21,6 +21,8 @@ use core::sync::atomic::Ordering;
 // clone 标志位 — 仅保留本模块实际消费项; 完整集合见 Linux `<linux/sched.h>`,
 // 其余标志当前无实现路径 (F9 死代码零容忍, 不预留).
 const CLONE_VM: u64 = 0x0000_0100; // 共享地址空间 (线程)
+const CLONE_FS: u64 = 0x0000_0200; // 共享 cwd / 根前缀 / umask
+const CLONE_FILES: u64 = 0x0000_0400; // 共享 fd 表
 const CLONE_SIGHAND: u64 = 0x0000_0800; // 共享信号处理
 const CLONE_THREAD: u64 = 0x0001_0000; // 同一线程组
 const CLONE_PARENT_SETTID: u64 = 0x0010_0000; // 写 TID 到 parent tidptr
@@ -53,6 +55,19 @@ pub fn clone_syscall(
     // CLONE_THREAD 必须同时共享地址空间 (Linux: SIGHAND 又要求 VM 同时置位).
     // 缺 VM 时无法表达同一地址空间内的线程, 按非法组合拒绝而非静默走 fork 路径.
     if (flags & CLONE_THREAD) != 0 && (flags & CLONE_VM) == 0 {
+        return Err(Errno::Einval);
+    }
+
+    // 共享信号动作表以共享地址空间为前提 (Linux: SIGHAND ⇒ VM).
+    if (flags & CLONE_SIGHAND) != 0 && (flags & CLONE_VM) == 0 {
+        return Err(Errno::Einval);
+    }
+
+    // SIMPLIFIED: CLONE_FILES / CLONE_FS 仅接受线程 (CLONE_THREAD).
+    // 影响面: 非线程 clone/fork 无法共享 fd 表或 FS 上下文 (Linux 允许);
+    // 何时需扩展: K-06 实装 exec 的 unshare 与 de_thread 后再放开 —— 独立
+    // 进程共享时 exec 须能从共享表拆出私有副本, 本阶段无拆卸机制.
+    if (flags & (CLONE_FILES | CLONE_FS)) != 0 && (flags & CLONE_THREAD) == 0 {
         return Err(Errno::Einval);
     }
 
@@ -413,6 +428,9 @@ fn vm_child_register(
         });
     }
 
+    // K-03: 登记成功后才改写资源归属 —— 此前任何失败路径都无需回滚共享计数.
+    vm_child_adopt_resources(flags, child, parent_pid);
+
     // CLONE_PARENT_SETTID
     if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
         let tid: i32 = child_pid.cast_signed();
@@ -436,6 +454,40 @@ fn vm_child_register(
     let _ = child.set_state_safe(ProcessState::Ready);
     api::scheduler_add_to_run_queue(child_pid);
     Ok(())
+}
+
+/// 接管或复制父线程的组共享资源 (K-03).
+///
+/// - `CLONE_SIGHAND` / `CLONE_FILES` / `CLONE_FS` 置位时与父线程共享同一实例;
+/// - 未置位时按 fork 语义深拷贝快照 (fd 表逐句柄递增 `OpenFile` 引用).
+///
+/// 调用点在子 TCB 登记成功之后、置 `Ready` 之前: 子进程已可被进程表查到, 但
+/// 尚未进入运行队列, 资源归属改写无并发读者; 此调用之后无失败路径, 不需要
+/// 回滚已递增的共享计数.
+fn vm_child_adopt_resources(
+    flags: u64,
+    child: &mut crate::privileged::proc::Process,
+    parent_pid: u32,
+) {
+    let _ = api::process_with(parent_pid, |p| {
+        if flags & CLONE_SIGHAND != 0 {
+            child.share_signal_actions(&p.sigaction_table);
+        } else {
+            child.copy_signal_actions_from(&p.sigaction_table);
+        }
+        if flags & CLONE_FILES != 0 {
+            child.share_fd_table(&p.fd_table);
+        } else {
+            // 递增必须在持源表锁期间完成, 否则并发 close 可先释放该句柄.
+            let ops = crate::privileged::fs::current_vfs_ops();
+            child.copy_fd_table_from(&p.fd_table, |handle| ops.inc_open_file_ref(handle));
+        }
+        if flags & CLONE_FS != 0 {
+            child.share_fs_context(&p.fs_context);
+        } else {
+            child.copy_fs_context_from(&p.fs_context);
+        }
+    });
 }
 
 /// `set_robust_list(head, len)` 策略 — 登记当前进程的 robust futex 链表头

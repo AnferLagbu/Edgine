@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+use super::fs_context::FsContext;
 use super::rlimit::RlimitTable;
 use super::scheduler::SchedPolicy;
 use super::thread_group::ThreadGroup;
@@ -266,8 +267,8 @@ pub struct Process {
     pub session_id: AtomicU64,
     /// POSIX 进程组 ID (pgid); 0 表示未初始化 (实际默认为 pid).
     pub pgid: AtomicU32,
-    /// 本进程的文件描述符表.
-    pub fd_table: FdTable,
+    /// 本进程的文件描述符表 (K-03: 线程可经 `CLONE_FILES` 共享同一实例).
+    pub fd_table: Arc<FdTable>,
 
     /// CPU 亲和性掩码 (C2 完整实现):
     ///   bit i (i < `MAX_CPUS`) 置位 = 允许在 CPU i 上运行
@@ -302,7 +303,13 @@ pub struct Process {
 
     /// 信号处理动作表 (索引 0..=63 对应 SIGHUP(1)..SIGRTMAX(64); B05-34 RT 信号扩展)
     /// 每项: 0 = `SIG_DFL`, 1 = `SIG_IGN`, 其他 = 用户态 handler 地址
-    pub sigaction_table: Mutex<[u64; 64]>,
+    /// K-03: `CLONE_SIGHAND` 的线程共享同一实例.
+    pub sigaction_table: Arc<Mutex<[u64; 64]>>,
+
+    /// 进程文件系统上下文 (cwd / 根前缀 / umask, K-03)
+    ///
+    /// `CLONE_FS` 的线程共享同一实例; fork 与非共享 clone 各自深拷贝.
+    pub fs_context: Arc<FsContext>,
 
     /// 信号替换栈 (sigaltstack), 0 = 未设置
     pub sigaltstack_addr: AtomicU64,
@@ -461,7 +468,7 @@ impl Process {
             dl_remaining: AtomicU64::new(0),
             session_id: AtomicU64::new(0),
             pgid: AtomicU32::new(0),
-            fd_table: FdTable::new(),
+            fd_table: Arc::new(FdTable::new()),
             // C2 CPU 亲和性: 默认所有 CPU (前 64 个) 都允许
             cpuset_allowed: AtomicU64::new(u64::MAX),
             sleep_until: AtomicU64::new(0),
@@ -470,7 +477,8 @@ impl Process {
             exiting: AtomicBool::new(false),
             pending_signals: AtomicU64::new(0),
             blocked_mask: AtomicU64::new(0),
-            sigaction_table: Mutex::new([0u64; 64]),
+            sigaction_table: Arc::new(Mutex::new([0u64; 64])),
+            fs_context: Arc::new(FsContext::new_default()),
             sigaltstack_addr: AtomicU64::new(0),
             sigaltstack_size: AtomicU64::new(0),
             sigaltstack_flags: AtomicU32::new(0),
@@ -683,6 +691,54 @@ impl Process {
     pub fn join_thread_group(&mut self, group: Arc<ThreadGroup>) {
         group.join(self.pid.0);
         self.thread_group = group;
+    }
+
+    // ========================================================================
+    // 组共享资源接管 (K-03)
+    // ========================================================================
+    //
+    // 每个字段二选一: 共享 (`CLONE_*` 置位, 接管父线程的同一 `Arc`) 或复制
+    // (fork / 未置位, 深拷贝为独立实例). `Process::new` 先给出独立默认实例,
+    // 接线方在子 TCB 登记成功后才改写 —— 登记失败时 PCB 自带实例随 Drop 释放,
+    // 无需回滚共享计数.
+
+    /// 接管父线程的 fd 表 (`CLONE_FILES`): 递增共享计数后共享同一实例.
+    pub fn share_fd_table(&mut self, table: &Arc<FdTable>) {
+        table.add_user();
+        self.fd_table = Arc::clone(table);
+    }
+
+    /// 复制父进程 fd 表映射 (fork / 未置 `CLONE_FILES`).
+    ///
+    /// `on_handle` 在源表锁内逐句柄回调, 调用方负责增加底层 `OpenFile` 引用.
+    pub fn copy_fd_table_from<F>(&mut self, src: &FdTable, on_handle: F)
+    where
+        F: FnMut(u32),
+    {
+        self.fd_table.copy_from(src, on_handle);
+    }
+
+    /// 共享父线程的信号处理动作表 (`CLONE_SIGHAND`).
+    pub fn share_signal_actions(&mut self, table: &Arc<Mutex<[u64; 64]>>) {
+        self.sigaction_table = Arc::clone(table);
+    }
+
+    /// 复制信号处理动作表 (fork / 未置 `CLONE_SIGHAND`).
+    ///
+    /// 先快照源表再写本表, 不在同一临界区嵌套两把同层锁.
+    pub fn copy_signal_actions_from(&mut self, src: &Mutex<[u64; 64]>) {
+        let snapshot = *src.lock();
+        *self.sigaction_table.lock() = snapshot;
+    }
+
+    /// 共享父线程的文件系统上下文 (`CLONE_FS`).
+    pub fn share_fs_context(&mut self, ctx: &Arc<FsContext>) {
+        self.fs_context = Arc::clone(ctx);
+    }
+
+    /// 复制文件系统上下文 (fork / 未置 `CLONE_FS`).
+    pub fn copy_fs_context_from(&mut self, src: &FsContext) {
+        self.fs_context.copy_from(src);
     }
 
     /// 设置进程优先级.

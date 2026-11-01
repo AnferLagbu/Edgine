@@ -65,6 +65,17 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
         }
     }
 
+    // SIMPLIFIED: 多线程 exec 直接拒绝 (EINVAL) —— de_thread 与共享表拆卸归 K-06;
+    // 影响面: 线程组成员数 >1 的进程无法 execve/execveat, 单线程进程不受影响;
+    // 何时需扩展: K-06 实装终止兄弟线程 / 组长接管与 fd / FS / sigaction unshare.
+    let current_pid = crate::privileged::proc::api::process_get_current_pid();
+    let group_members =
+        crate::privileged::proc::api::process_with(current_pid, |p| p.group().member_count())
+            .unwrap_or(0);
+    if group_members > 1 {
+        return Err(Errno::Einval);
+    }
+
     // SUID 处理: 可执行文件带 setuid 位且属主非 root 时提权
     let mut st = crate::functions::fs::VfsStat::default();
     let current_pwm = crate::privileged::sgeg::get_current_pwm();

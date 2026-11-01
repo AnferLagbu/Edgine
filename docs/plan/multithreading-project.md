@@ -60,7 +60,7 @@
 - **CLONE_SIGHAND**：sigaction 表共享；待处理信号与屏蔽字为**每线程**状态；组定向信号选择一个未屏蔽目标线程投递，无可投递线程时挂到组级待处理集。
 - **CLONE_FS**：新增 FS 状态对象（cwd/root/umask）并引用计数；`fork` 复制、线程共享；`chdir` 只影响本组。当前全局 `VFS_MANAGER.cwd` 必须先改为按组/FS 对象访问，否则 CLONE_FS 无法表达。
 - **CLONE_SETTLS**：TLS 基址随 TCB 保存与切换恢复（K-00）；`tls != 0` 写子线程，`CLONE_VM` 且 `tls == 0` 时继承父线程。
-- **创建语义**：新线程组（fork）继承父进程的 fd/安全状态；新线程加入已有组并共享组资源；当前 `clone_vm_path` 既不继承 fd/安全状态，也不区分建组与入组，K-02/K-03 必须拆开。
+- **创建语义**：新线程组（fork）继承父进程的 fd/安全状态；新线程加入已有组并共享组资源；当前 `clone_vm_path` 既不继承 fd/安全状态，也不区分建组与入组，K-02/K-03a 必须拆开。
 - **exec**：终止组内其他线程、成为组长、解除 fd 表共享并按 `CLOEXEC` 关闭；当前事务式 `proc_exec_replace` 只替换地址空间，需补组语义。
 
 ### 3.4 同步原语迁移（D2）
@@ -102,10 +102,11 @@
   - 方案：以现 `functions/proc/clone.rs` 的 `clone_vm_path` 为基础（不存在 `create_thread`）；线程不得推入 `parent.children`；补齐 `CLONE_SETTLS`/`PARENT_SETTID`/`CHILD_SETTID`/`CHILD_CLEARTID`；新组走 fd/安全状态继承，新线程共享组资源。
   - 状态：[X]
   - 详情：`clone_syscall` 增 `CLONE_THREAD` ⇒ `CLONE_VM` 校验（缺 VM 按非法组合返回 `EINVAL`，不静默走 fork）。`clone_vm_path` 以 `joins_group = flags & CLONE_THREAD != 0` 拆两路：线程的 `parent` 置 `None`（`vm_child_alloc`），`vm_child_register` 先取父线程组 `Arc` 入组（`Process::join_thread_group` / `ThreadGroup::join` 登记 TID）再插进程表，保证 `getpid` 首次上核即读到 tgid；独立 CLONE_VM 进程在登记成功后挂入 `parent.children`，线程不入 `children`。任一步失败回滚组成员身份 + 释放 PCB（含共享 cr3 引用），父组缺失返回 `ESRCH`、进程表满返回 `ENOMEM`。`vm_child_inherit` 收为 5 参（`child_ptr`/`child_pid`/`joins_group` 由 `child` 与登记阶段派生），内核栈分配失败与父上下文缺失两处改为释放半成品 PCB（原泄漏）。`CLONE_SETTLS` 沿用 K-00 的入参语义（`tls` 非零即覆盖继承值），`CLONE_PARENT_SETTID`/`CLONE_CHILD_SETTID`/`CLONE_CHILD_CLEARTID` 在共享 VM 路径写入，fork 路径维持不写 `CLONE_CHILD_SETTID`。**线程退出语义（`exit`/`exit_group` 分离、组收割）按 K-06，本阶段不越界**；共享 fd/信号/FS 句柄按 K-03。验证：`clone.rs` 内联单测 3 例 + `host-tests/tests/thread_group_k02_test.rs` 5 例（THREAD⇒VM 校验 / 入组先于登记与失败回滚 / 线程不挂父账 / 组身份共享）。门槛读数：`./ci/build.sh all` 6/6 通过（仅上游 `core`/`sha2` future-incompat 元信息）；`bash ci/audit.sh full` EXIT=0（审计腿 19/19、存量腿 9/9、Lockbud 4/4 crate 零发现、QEMU 2/2 + P-62 4/4，x86_64/aarch64 TCP 回显 e2e 各 3 轮通过）；`make test-host` 1212 passed / 0 failed；`make test-kernel-host` 1105 passed / 0 failed；`make -f Makefile.ci ci-rustdoc` 两架构各 exit 0（0 源码级 link 错误）。
-- **K-03. 共享资源语义（CLONE_FILES/SIGHAND/FS）**
-  - 描述：线程共享 fd 表/信号处理/FS 状态；待处理信号与屏蔽字保持每线程；`exec` 终止组内其他线程、成为组长、解除 fd 表共享并关闭 `CLOEXEC`。
-  - 方案：fd 表与 FS 对象引用计数；`process_exit` 的 fd 全关改为按引用计数/最后线程收口；全局 `VFS_MANAGER.cwd` 改为按组 FS 对象访问；信号组定向投递选择目标线程，无目标时挂组级待处理集。
-  - 状态：[]
+- **K-03a. 共享资源语义（CLONE_FILES/SIGHAND/FS，第一批）**
+  - 描述：线程共享 fd 表/信号处理/FS 状态；待处理信号与屏蔽字保持每线程；`exec` 在组成员数 >1 时 fail-fast（`EINVAL`），de_thread（终止兄弟线程、组长接管）与共享表拆卸移入 K-06。
+  - 方案：fd 表、信号动作表、FS 上下文改 `Arc` 持有，clone 置位共享、未置位深拷贝；fd 表以显式持有者计数决定最后关闭者；`process_exit` 的 fd 全关改为最后持有者收口；全局 `VFS_MANAGER.cwd` 降级为无进程缺省，路径解析改按进程 FS 上下文；信号组定向投递与组级待处理集按 K-06。
+  - 状态：[X]
+  - 详情：用户裁定「A 拆两批」——本阶段只做共享语义与生命周期，exec 的组语义（de_thread / 组长接管 / unshare）并入 K-06。`FdTable` 增显式 `users: AtomicU32`（构造即 1，`add_user` / `release_user() -> bool`）：不用 `Arc::strong_count` 是因为瞬时借用会放大持有者数、使「最后用户」判定失真。`FdTable::copy_from(src, on_handle)` 在**持源表锁期间**逐句柄回调，fork/clone 回调用 `inc_open_file_ref` —— 先快照再放锁再 inc 会被并发 `close` 击穿（句柄已释放，inc 复活/误用槽位）。`Process` 三字段改 `pub fd_table: Arc<FdTable>` / `pub sigaction_table: Arc<Mutex<[u64; 64]>>` / `pub fs_context: Arc<FsContext>`，新增 `share_fd_table` / `copy_fd_table_from` / `share_signal_actions` / `copy_signal_actions_from` / `share_fs_context` / `copy_fs_context_from`；共享路径先 `add_user` 再换 `Arc`，复制路径先快照源锁再写本表（不嵌套两把同层锁）。`clone_vm_path` 在进程表登记成功后调用 `vm_child_adopt_resources` 分流共享/深拷贝，此前任何失败路径都无需回滚共享计数、之后无失败路径；`CLONE_FILES` / `CLONE_FS` 仅接受 `CLONE_THREAD`（否则 `EINVAL`，SIMPLIFIED：独立进程共享无拆卸机制，待 K-06 实装 exec unshare 后放开），`CLONE_SIGHAND` 以 `CLONE_VM` 为前提。fork 侧 `inherit_parent_fds` 走同一回调，新增 `VfsOps::dec_open_file_ref` 与 `release_inherited_fd_refs` 覆盖进程表登记失败 / UserProc 注册失败两条回滚；`inherit_parent_state` 深拷贝信号动作表与 FS 上下文。`process_exit` 仅当 `release_user()` 判为最后持有者才 `close_all_fds`（`release_pid_locks` 仍按 TID，组语义归 K-06）。exec：成员数 >1 直接 `EINVAL`（SIMPLIFIED），单线程路径先换新 `Arc<sigaction_table>` 再 `reset_signal_state_on_exec`，不清零潜在共享实例。新增 `privileged/proc/fs_context.rs`（cwd / 根前缀 / umask，`FS_MAX_PATH` 与 `VFS_MAX_PATH` 编译期断言绑定，`set_root` 重置 cwd）；`VFS_MANAGER` 增 `current_cwd` / `current_root_string` / `current_root_bytes` / `set_current_cwd` / `set_current_root`，有进程上下文时以进程为准、全局仅作无进程缺省；`chdir` / `getcwd` / `chroot` / `pivot_root` / `umask` 全部改走进程 FS 上下文；freg 快照增 `process_fs` 并在回滚时先恢复根再恢复 cwd。**每线程屏蔽字与组定向信号投递按 K-06**，本阶段不越界。验证：`fd_table` 内联单测 3 例 + `fs_context` 内联单测 4 例 + `host-tests/tests/thread_group_k03_test.rs` 13 例（clone 共享/复制分流与登记顺序、users 计数、源锁内 inc、exit 最后用户、fork 回滚、exec 守卫与换表、路径/umask 接线、fd/信号/FS 共享与副本解耦）。fork 另补内核栈分配失败路径的 `free_pid`（原 PID 位图泄漏）；`host-tests/tests/kpti_x86_user_table_test.rs` 的插入锚点由整条语句放宽为插入调用本身（外层现为 fail-closed 守卫），顺序与回滚断言不变。门槛读数：`./ci/build.sh all` 6/6 通过（仅上游 `core`/`sha2` future-incompat 元信息）；`bash ci/audit.sh full` EXIT=0（审计腿 19/19、存量腿 9/9、Lockbud 4/4 crate 零发现、QEMU 2/2 + P-62 4/4、本轮未执行腿 0）；`make test-host` 1225 passed / 0 failed（156 套）；`make test-kernel-host` 1111 passed / 0 failed；`make -f Makefile.ci ci-rustdoc` 两架构各 exit 0（0 源码级 link 错误）。
 - **K-04. 调度语义收口（D1 + D7）**
   - 描述：确认每线程 TCB 即调度实体，**不做字段结构迁移**；审计并修正所有“一个进程只有一个执行流”的隐含假设。
   - 方案：逐项核对 `parent.children`/`wait4`、`process_exit`、信号投递、cwd、session/pgid、exec；tick/current/负载均衡仍走单一进程级实现，以 TID 为键；`SCHEDULER_EX` 已删除，无合并工作。
@@ -116,8 +117,8 @@
   - 方案：若审计证明存活线程内 PID 唯一且回收协议已封死误判，保持数值 PID；否则改为 TCB 指针或带代号的 ID。同步更新 `mutex_reentrant` 与多线程互斥用例；不改锁序。
   - 状态：[]
 - **K-06. 线程组语义系统调用**
-  - 描述：`exit` 与 `exit_group` 分离；`tgkill` 按 tgid 归属校验；`kill(tgid)` 组定向；`wait4` 只收割线程组；`gettid`/`getpid` 修正；`clear_child_tid` 与 futex 唤醒按线程收口。
-  - 方案：按 P1-A（code-audit:3826）方案实装；`dispatch.rs` 不再把 `SYS_EXIT | SYS_EXIT_GROUP` 合并；`wait4.find_waitable_child` 只看组长；信号投递遵守每线程屏蔽字。
+  - 描述：`exit` 与 `exit_group` 分离；`tgkill` 按 tgid 归属校验；`kill(tgid)` 组定向；`wait4` 只收割线程组；`gettid`/`getpid` 修正；`clear_child_tid` 与 futex 唤醒按线程收口；**并入 K-03b**：多线程 `exec` 的 de_thread（终止兄弟线程、组长接管）与共享表拆卸（fd/FS/sigaction unshare、`CLOEXEC` 关闭）。
+  - 方案：按 P1-A（code-audit:3826）方案实装；`dispatch.rs` 不再把 `SYS_EXIT | SYS_EXIT_GROUP` 合并；`wait4.find_waitable_child` 只看组长；信号投递遵守每线程屏蔽字。exec 在 `proc_exec_replace` 之前完成 de_thread 与组长身份迁移，再从共享表拆出私有副本（复用 K-03a 的 `copy_*` 路径）并解除 K-03a 对 `CLONE_FILES`/`CLONE_FS` 的 `CLONE_THREAD` 限制。
   - 状态：[]
 - **K-07. 测试与验证收口**
   - 描述：TLS 切换/继承/exec 重置；线程创建/共享/exit_group/信号定向/组收割；多线程压力与 G-17 场景；双架构 QEMU 回归。
@@ -127,24 +128,24 @@
 ### 依赖关系
 
 ```
-K-00 → K-01 → K-02 → K-03 ─┐
-                 │          ├→ K-06 → K-07
+K-00 → K-01 → K-02 → K-03a ─┐
+                 │           ├→ K-06 → K-07
                  └→ K-04 → K-05 ┘
 ```
 
 - K-00 先独立完成：TLS 是线程/进程切换正确性的前置，且可先于线程组落地。
-- K-01/K-02 可先行（不依赖调度收口）；K-03 依赖 K-02 的组结构。
+- K-01/K-02 可先行（不依赖调度收口）；K-03a 依赖 K-02 的组结构；K-03b（exec de_thread/组长接管/unshare）并入 K-06。
 - K-04 是语义审计而非结构迁移；K-05 依赖 K-04 的线程身份结论。
-- K-06 依赖 K-01~K-04；K-07 最后做全量收口。
+- K-06 依赖 K-01~K-04 与 K-03a；K-07 最后做全量收口。
 
 ## 5. 验证门槛（每阶段不可豁免）
 
 - §2.3 六条门槛全量通过：双架构 `./ci/build.sh all` 0w0e、clippy/fmt、核心审计 F1-F9（含 `audit_deadlock_matrix` 锁顺序）、host-tests、QEMU、host 侧内核单元测试；审计档位显式 `full`。
 - K-00（已闭）：QEMU 用户态 TLS 用例（切换保持 / fork 继承）双架构通过；exec 重置与 `CLONE_SETTLS` 接线由 host 侧源码契约测试覆盖（启动环境无第二个可执行 ELF）。
-- K-02/K-03：线程创建与组生命周期、共享 fd/cwd、信号共享与每线程屏蔽字、exec 组语义用例通过。
+- K-02/K-03a：线程创建与组生命周期、共享 fd/cwd、信号共享与 fork 深拷贝语义用例通过；exec 多线程守卫（`EINVAL`）与单线程换表清零由 host 侧契约锁定。
 - K-04 调度语义收口后：现有单进程调度用例全绿，且 `wait4` 不把线程当子进程。
 - K-05 owner 审计：mutex_reentrant + 多线程并发互斥 + PID 复用窗口负控制通过。
-- K-06：exit/exit_group、tgkill/kill、wait4 组收割、clear_child_tid/futex 唤醒逐项用例通过。
+- K-06：exit/exit_group、tgkill/kill、wait4 组收割、exec de_thread/组长接管/共享表拆卸、clear_child_tid/futex 唤醒逐项用例通过。
 - K-07：多线程压力测试在双架构 QEMU 上稳定；与 EEVDF 的调度回归（IC1-IC3/IE1-IE6）交叉验证。
 
 ## 6. 关联与风险
@@ -152,8 +153,8 @@ K-00 → K-01 → K-02 → K-03 ─┐
 - **G-17**：本工程子项（K-05）。D7 口径下每线程 PID 唯一，现有 owner 比较对存活线程自洽；K-05 先审计 PID 复用与退出清理，再决定是否升级为 TCB 指针/代号。
 - **风险（实体口径）**：Process=每线程 TCB 避免了结构迁移，但把线程语义隐含在既有结构里；必须逐项审计进程级捷径（children/wait、fd 关闭、cwd、信号、exec），否则多线程下会出现静默错误。
 - **风险（共享资源）**：fd 表/FS/sigaction 的引用计数与并发访问是本工程最重的改动面；必须与 `fd_alloc`、信号子系统、VFS 交互逐项设计，不能只加锁了事。
-- **风险（exec）**：多线程 exec 需要终止兄弟线程并解除共享，当前事务式 `proc_exec_replace` 未覆盖；K-03/K-06 必须联合验证。
-- **风险（TCB 内重构）**：调度器/同步原语改动需完整回归 + 压力测试；分阶段降险（K-00~03 先做线程与 TLS，K-04 再收口调度语义）。
+- **风险（exec）**：多线程 exec 需要终止兄弟线程并解除共享，当前事务式 `proc_exec_replace` 未覆盖；K-03a 以成员数 >1 fail-fast（`EINVAL`）拦住，de_thread / 组长接管 / unshare 按 K-06 实装，并与 K-03a 的共享资源引用计数联合验证。
+- **风险（TCB 内重构）**：调度器/同步原语改动需完整回归 + 压力测试；分阶段降险（K-00~03a 先做线程与 TLS，K-04 再收口调度语义）。
 - **依赖**：无外部依赖；可独立启动；与 EEVDF 工程按 D5① 并行，K-04/E-08 为交接点。
 
 ## 7. 变更历史
@@ -164,6 +165,7 @@ K-00 → K-01 → K-02 → K-03 ─┐
 - 阶段与门槛修正：新增 K-00，K-02 改按 `clone_vm_path` 拆分入组/独立进程共享 VM，K-03 纳入 exec 组语义与每线程信号状态，K-06 引用改为现 `dispatch.rs`；验证门槛补齐 §2.3 六条与 TLS/线程组专项。
 - **2026-11-01**：K-01 闭（`[X]`）。落 `ThreadGroup`（tgid/成员账/退出状态）与 `Process::thread_group: Arc<ThreadGroup>`；`Process::new` 自建单成员组；`getpid` 返回 tgid、`gettid` 返回 TID；`Scheduler::exit` 在进程表锁内移除成员并在最后一个成员离开时置组退出状态。共享资源句柄按 K-03、线程入组按 K-02 推进，K-01 不建占位字段。
 - **2026-11-01**：K-02 闭（`[X]`）。`clone_vm_path` 按 `CLONE_THREAD` 拆「入组」与「独立进程共享 VM」：线程 `parent=None`、不入 `parent.children`，`ThreadGroup::join` 在进程表登记前登记 TID 并带回滚；`CLONE_THREAD` 缺 `CLONE_VM` 返回 `EINVAL`；顺带修掉 `vm_child_inherit` 两处失败路径的 PCB 泄漏。线程退出语义与组收割按 K-06 推进。
+- **2026-11-01**：K-03a 闭（`[X]`）。用户裁定「A 拆两批」：本批只做共享资源语义与生命周期，`exec` 的 de_thread/组长接管/unshare 并入 K-06（K-03b）。落 `Arc<FdTable>`（显式 `users` 计数 + 源锁内 `inc_open_file_ref` 回调）、`Arc<FsContext>`（cwd/根前缀/umask）、`Arc<sigaction_table>`；clone 置位共享、未置位深拷贝，接管点在进程表登记成功之后；`CLONE_FILES`/`CLONE_FS` 仅接受 `CLONE_THREAD`，`CLONE_SIGHAND` 以 `CLONE_VM` 为前提；`process_exit` 由最后持有者关闭 fd 表；fork 两处失败路径经 `dec_open_file_ref` 回滚；exec 成员数 >1 fail-fast（`EINVAL`）+ 单线程先换新信号表再清零；`VFS_MANAGER` 全局 cwd/root 降级为无进程缺省，`chdir`/`getcwd`/`chroot`/`pivot_root`/`umask` 走进程 FS 上下文，freg 快照含进程 cwd/root。验证：`host-tests/tests/thread_group_k03_test.rs` 13 例 + `fd_table`/`fs_context` 内联单测 7 例；`docs/explain/ref-lock-order.md` 层级 9 同步新增锁域；A-6 闭。剩余缺口（每线程屏蔽字、组定向信号投递、exec 组语义）按 K-06。
 
 ## 8. 并发安全能力现状与缺口（登记）
 
@@ -192,4 +194,5 @@ K-00 → K-01 → K-02 → K-03 ─┐
 - **A-6. 全局 cwd 的多线程/多进程语义缺口**
   - 描述：`VFS_MANAGER.cwd` 是全局单例（[vfs_manager.rs:136](../../src/kernel/functions/fs/vfs_manager.rs#L136)），`chdir` 直接改全局（[vfs_path.rs:163-172](../../src/kernel/functions/fs/vfs_path.rs#L163-L172)）。当前所有进程共享同一 cwd，CLONE_FS 无法表达；线程组共享 cwd 时也没有独立对象可引用。并发访问由全局锁串行化，不存在数据竞争，但语义错误且会成为线程组共享资源的单点。
   - 方案：K-03 引入按 FS 对象/线程组持有的 cwd，`fork` 复制、线程共享；保留内核线程的默认全局 cwd 作为缺省值。
-  - 状态：[]
+  - 状态：[X]
+  - 详情：K-03a 落 `privileged/proc/fs_context.rs`（cwd / 根前缀 / umask）与 `Process::fs_context: Arc<FsContext>`；`CLONE_FS` 线程共享同一 `Arc`，fork / 未置位 clone 深拷贝。`VFS_MANAGER` 的 `current_cwd` / `current_root_string` / `current_root_bytes` / `set_current_cwd` / `set_current_root` 在有进程上下文时以进程 FS 上下文为准，全局 cwd/root 仅作无进程缺省；`chdir` / `getcwd` / `chroot` / `pivot_root` / `umask` 已全部接线；freg 快照包含进程 cwd/root 并在回滚时先根后 cwd。锁域登记在 `ref-lock-order.md` 层级 9。剩余项：组定向信号投递与每线程屏蔽字属 K-06，不在本条射程。

@@ -353,8 +353,9 @@ fn test_sys_fork_registers_child_in_user_proc_manager() {
         .unwrap_or(after.len());
     let body = &after[..end];
 
+    // 只锚定插入调用本身: 外层可带 fail-closed 守卫 (K-03a 登记失败回滚), 顺序断言见下.
     let insert = body
-        .find("PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut());")
+        .find("PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut())")
         .expect("sys_fork 必须把子进程插入进程表");
     let clone = body
         .find("user_proc_clone(parent_pid, child_pid)")

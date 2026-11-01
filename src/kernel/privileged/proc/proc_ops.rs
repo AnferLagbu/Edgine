@@ -336,6 +336,24 @@ where
     Some(f(&proc.fd_table))
 }
 
+/// 对当前进程的 FS 上下文 (cwd / 根前缀 / umask) 执行闭包操作.
+///
+/// 返回 `None` 表示当前无进程上下文 (内核早期启动阶段 / host 侧单元测试),
+/// 调用方此时回落到全局缺省 (见 `functions::fs::VfsManager`).
+///
+/// 取指针方式与 [`with_current_fd_table`] 相同: 仅取裸指针后在闭包内使用,
+/// 不长持进程表锁.
+pub fn with_current_fs_context<F, R>(f: F) -> Option<R>
+where
+    F: FnOnce(&super::fs_context::FsContext) -> R,
+{
+    let ptr = Scheduler::get_current_process()?;
+    // SAFETY: 同 `with_current_fd_table`: ptr 指向已注册的当前进程 PCB,
+    // 当前进程在本次调用期间不会被释放.
+    let proc = unsafe { &*ptr };
+    Some(f(&proc.fs_context))
+}
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 /// 按 PID 返回进程表项地址 (0 = 未找到); 命中当前进程时返回缓存指针.
@@ -383,8 +401,14 @@ pub extern "C" fn process_exit(exit_code: u32) {
 
         // B-9.5: 关闭该进程 fd 表全部 fd — 递减 OpenFile 引用并触发 pcache
         // 失效 / inotify / fd 通知, 避免全局 OPEN_FILE_TABLE 槽位泄漏。
-        // (先例: 上方 release_pid_locks 同为 proc → fs 经 VfsOps 契约接线)
-        crate::privileged::fs::current_vfs_ops().close_all_fds();
+        // K-03: 表可被同组线程共享 (CLONE_FILES); 只有最后一个持有者退出才关闭,
+        // 先退出的线程不得截断其余线程仍在使用的句柄.
+        let last_fd_user = PROCESS_TABLE
+            .with_process(current_pid, |p| p.fd_table.release_user())
+            .unwrap_or(false);
+        if last_fd_user {
+            crate::privileged::fs::current_vfs_ops().close_all_fds();
+        }
 
         // T1-G2: robust futex 遍历 + CLONE_CHILD_CLEARTID 清零.
         // 必须在切换内核页表/销毁用户地址空间之前执行 (用户内存仍可访问).
@@ -525,6 +549,13 @@ pub extern "C" fn proc_exec_replace(
     }
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
+    //
+    // K-03: 先换新 Arc 再清零 —— exec 后动作表必须是本进程独有实例, 清零
+    // 不会波及潜在共享者 (当前多线程 exec 已在 functions 侧 fail-fast 拒绝).
+    PROCESS_TABLE.with_process_mut(current_pid, |p| {
+        p.sigaction_table =
+            alloc::sync::Arc::new(crate::privileged::sync::IrqSpinLock::new([0u64; 64]));
+    });
     crate::privileged::proc::reset_signal_state_on_exec(current_pid);
 
     // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
@@ -694,6 +725,7 @@ pub extern "C" fn sys_fork() -> Pid {
     // 内核栈
     if !child.allocate_kernel_stack() {
         raw::drop_boxed_process(child_ptr);
+        PROCESS_TABLE.free_pid(child_pid);
         return 0;
     }
     if let Some(parent_kstack) =
@@ -756,7 +788,13 @@ pub extern "C" fn sys_fork() -> Pid {
     // description, offset/flags 共享; 父进程 fd 表不受影响, 各自退出时递减)。
     // 非 CLONE_FILES 语义, 仅复制句柄映射 (K-03 待办)。
     inherit_parent_fds(child, parent_pid);
-    PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut());
+    if !PROCESS_TABLE.insert(core::ptr::from_ref::<Process>(child).cast_mut()) {
+        // 登记失败: 撤销 fd 继承取得的 OpenFile 引用, 再释放半成品 PCB 与 PID.
+        release_inherited_fd_refs(child);
+        raw::drop_boxed_process(child_ptr);
+        PROCESS_TABLE.free_pid(child_pid);
+        return 0;
+    }
     // 为子进程创建 UserProc 镜像记录, 使 fork 子进程与父进程同源注册.
     //
     // 该注册是调度切换路径装配 per-CPU 用户 CR3 与"任务内核栈顶页"的前置条件:
@@ -767,6 +805,8 @@ pub extern "C" fn sys_fork() -> Pid {
     // 在 4557cd30 重写 `sys_fork` (COW 崩溃临时改用共享页表) 时被附带删除.
     // fail-closed: 注册失败 (内核堆 OOM) 时子进程不可投运, 回滚进程表条目.
     if USER_PROC_MANAGER.get(parent_pid).is_some() && user_proc_clone(parent_pid, child_pid) < 0 {
+        // PCB 即将被回收, 先撤销 fd 继承取得的 OpenFile 引用, 避免全局句柄泄漏.
+        release_inherited_fd_refs(child);
         PROCESS_TABLE.remove_and_free(child_pid);
         return 0;
     }
@@ -842,6 +882,12 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
     {
         child.tls_base.store(tls, Ordering::Release);
     }
+    // K-03: 信号动作表与 FS 上下文按 fork 语义深拷贝 —— fork 出的子进程此后
+    // 与父进程各自独立 (CLONE_SIGHAND / CLONE_FS 的共享只在 clone 线程路径).
+    let _ = PROCESS_TABLE.with_process(parent_pid, |p| {
+        child.copy_signal_actions_from(&p.sigaction_table);
+        child.copy_fs_context_from(&p.fs_context);
+    });
     // 调度权重链路: POSIX fork 继承父进程 nice / cfs_weight / ProcessPriority.
     // nice 与其派生权重成对复制, 避免子进程以默认权重起算拉低父进程份额.
     // 每轮 EEVDF 账目 (vruntime / vd / 切片余额) 与请求切片不继承 —— 子进程
@@ -928,18 +974,23 @@ mod tests {
 }
 
 /// fork: 子进程复制父进程 fd 表, 并对复制出的每个句柄递增 `OpenFile` 引用.
+///
+/// 递增在 `FdTable::copy_from` 的源表锁内完成, 与并发 close 互斥.
 fn inherit_parent_fds(child: &mut Process, parent_pid: Pid) {
-    if let Some(handles) = PROCESS_TABLE.with_process(parent_pid, |p| {
-        child.fd_table.copy_from(&p.fd_table);
-        p.fd_table
-            .get_all_fds()
-            .into_iter()
-            .map(|(_, hid)| hid)
-            .collect::<alloc::vec::Vec<u32>>()
-    }) {
-        for hid in handles {
-            crate::privileged::fs::current_vfs_ops().inc_open_file_ref(hid);
-        }
+    let ops = crate::privileged::fs::current_vfs_ops();
+    let _ = PROCESS_TABLE.with_process(parent_pid, |p| {
+        child.copy_fd_table_from(&p.fd_table, |handle| ops.inc_open_file_ref(handle));
+    });
+}
+
+/// 撤销 [`inherit_parent_fds`] 取得的 `OpenFile` 引用 (fork 失败回滚).
+///
+/// 子进程从未投运, 其 fd 表条目未暴露给用户, 故只递减引用计数, 不触发
+/// pcache 失效 / inotify / fd 通知等关闭副作用.
+fn release_inherited_fd_refs(child: &Process) {
+    let ops = crate::privileged::fs::current_vfs_ops();
+    for (_, handle) in child.fd_table.get_all_fds() {
+        ops.dec_open_file_ref(handle);
     }
 }
 

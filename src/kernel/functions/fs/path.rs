@@ -121,9 +121,11 @@ fn require_directory(ptr: u64, pwm: u64) -> Result<(), Errno> {
 
 /// chroot(path) — 切换进程视图根.
 ///
-// SIMPLIFIED: 根前缀为全局 VFS 状态, 非 per-process root; 影响面: `chroot` 影响
-// 全系统视图 (其他进程亦受新根约束); 何时需扩展: 引入 per-process root 或 mount
-// namespace 时改为进程级根字段.
+/// K-03: 根前缀存于进程 FS 上下文 (`CLONE_FS` 线程共享), 只影响本进程.
+///
+// SIMPLIFIED: 仅切根 + 重置 cwd, 不做挂载表/已打开 fd 的根可达性校验 (Linux
+// 亦不强制); 影响面: 已打开 fd 仍可访问旧根之外的对象; 何时需扩展: 需要
+// Linux `pivot_root` 的 "旧根不可达" 强语义时补充 fd 遍历校验.
 ///
 /// # Errors
 /// 指针为空/越界返回 `EFAULT`; 缺少 `CAP_SYS_ADMIN` 返回 `EACCES`;
@@ -137,7 +139,7 @@ pub fn chroot_syscall(path_ptr: u64) -> Result<usize, Errno> {
     let Some(real_root) = VFS_MANAGER.resolve_user_path(path, &mut buf) else {
         return Err(Errno::Enametoolong);
     };
-    VFS_MANAGER.set_root(real_root);
+    VFS_MANAGER.set_current_root(real_root);
     Ok(0)
 }
 
@@ -181,6 +183,8 @@ fn is_strictly_under(child: &str, parent: &str) -> bool {
 
 /// `pivot_root(new_root`, `put_old`) — 替换视图根。
 ///
+/// K-03: 根前缀存于进程 FS 上下文 (`CLONE_FS` 线程共享), 只影响本进程.
+///
 // SIMPLIFIED: 仅切换根前缀, 不摘除旧根挂载点 (无 per-process mount namespace
 // 可摘); 影响面: `put_old` 仅参与关系校验, 旧根经绝对路径仍可达; 何时需扩展:
 // 需要 Linux "旧根不可达" 强语义时, 在 `VfsManager` 摘除旧根挂载点.
@@ -205,8 +209,8 @@ pub fn pivot_root_syscall(new_root_ptr: u64, put_old_ptr: u64) -> Result<usize, 
         return Err(Errno::Enametoolong);
     };
 
-    let current_root = VFS_MANAGER.get_root();
+    let current_root = VFS_MANAGER.current_root_string();
     pivot_root_plan(new_real, old_real, &current_root)?;
-    VFS_MANAGER.set_root(new_real);
+    VFS_MANAGER.set_current_root(new_real);
     Ok(0)
 }

@@ -388,9 +388,10 @@ fn fd_table_reserves_standard_streams() {
 fn fork_inherits_pipe_fds_via_open_file_ref() {
     let src = read_src("src/kernel/privileged/proc/proc_ops.rs");
     assert!(
-        src.contains("child.fd_table.copy_from(&p.fd_table)")
-            && src.contains("inc_open_file_ref(hid)"),
-        "fork 必须复制 fd 表并递增 OpenFile 引用 (管道端点继承共享)"
+        src.contains(
+            "child.copy_fd_table_from(&p.fd_table, |handle| ops.inc_open_file_ref(handle))"
+        ),
+        "fork 必须复制 fd 表并在源表锁内递增 OpenFile 引用 (管道端点继承共享)"
     );
 }
 

@@ -7,13 +7,21 @@
 //! - 委托 `privileged/fs/vfs::api` 完成
 
 use crate::functions::fs::api as fw;
+use crate::privileged::proc::DEFAULT_UMASK;
 use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 // ============================================================================
 // umask
 // ============================================================================
+
+/// 无进程上下文 (host 单测 / 早期启动) 时的 umask 缺省.
+///
+/// 有进程上下文时权威值在 `Process::fs_context` (K-03: `CLONE_FS` 线程共享);
+/// 无进程上下文时回落本全局值, 与历史单全局语义等价.
+static FALLBACK_UMASK: AtomicU32 = AtomicU32::new(DEFAULT_UMASK);
 
 /// umask(mask) — 设置文件创建掩码,返回旧值
 ///
@@ -26,7 +34,9 @@ pub fn umask_syscall(mask: u32) -> Result<usize, Errno> {
     if mask > 0o777 {
         return Err(Errno::Einval);
     }
-    Ok(crate::privileged::sgeg::api::umask_set(mask) as usize)
+    let old = crate::privileged::proc::with_current_fs_context(|ctx| ctx.set_umask(mask))
+        .unwrap_or_else(|| FALLBACK_UMASK.swap(mask, Ordering::SeqCst));
+    Ok(old as usize)
 }
 
 // ============================================================================

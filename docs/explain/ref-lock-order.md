@@ -41,7 +41,8 @@
 
 层级 9: 进程属性
   sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy, children,
-  thread_group.members（线程组成员账）
+  thread_group.members（线程组成员账）, fd_table.entries / fd_table.cloexec（fd 表）,
+  fs_context.cwd / fs_context.root（进程 FS 上下文; umask 为原子量）
 
 层级 10: POSIX Timer
   TIMER_MANAGER 锁
@@ -141,6 +142,8 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 
 ```
 层级 7: PROCESS_TABLE.with_process()     →  退出引用 / 置 exiting
+层级 9: fd_table.release_user()          →  最后持有者判定 (K-03a)
+层级 11: close_all_fds()                 →  逐句柄递减 OpenFile 引用 (仅最后持有者)
 层级 9: thread_group.members.lock()      →  移除本 TID; 组空则置退出状态
 层级 7: PROCESS_TABLE.with_process()     →  置 Zombie / 处理子进程
 ```

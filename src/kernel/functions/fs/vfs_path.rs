@@ -169,7 +169,7 @@ pub extern "C" fn vfs_set_cwd_internal(path: *const u8) {
     // 可上报; 影响面: `chdir` 失败对用户不可见; 何时需扩展: 需要 ENAMETOOLONG
     // 上报时改签名为 i32.
     if let Some(view) = VFS_MANAGER.resolve_view_path(path, &mut pbuf) {
-        VFS_MANAGER.set_cwd(view);
+        VFS_MANAGER.set_current_cwd(view);
     }
 }
 
@@ -180,7 +180,7 @@ pub extern "C" fn vfs_get_cwd_internal(buf: *mut u8, size: u32) -> i32 {
     if buf.is_null() || size == 0 {
         return -1;
     }
-    let cwd = VFS_MANAGER.get_cwd();
+    let cwd = VFS_MANAGER.current_cwd();
     let bytes = cwd.as_bytes();
     let len = bytes.len().min((size - 1) as usize);
     // I4: 用户内存经 privileged 安全代理 (范围校验后构造可写视图)

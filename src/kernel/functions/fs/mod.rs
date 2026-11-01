@@ -161,6 +161,10 @@ impl crate::privileged::fs::VfsOps for FunctionsVfsOps {
         OPEN_FILE_TABLE.inc_ref(handle_id);
     }
 
+    fn dec_open_file_ref(&self, handle_id: u32) {
+        OPEN_FILE_TABLE.dec_ref(handle_id);
+    }
+
     fn fd_file_type(&self, fd: i32) -> Option<u8> {
         let handle_id = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
         OPEN_FILE_TABLE.with_file(handle_id, |of| of.file_type)

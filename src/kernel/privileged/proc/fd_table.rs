@@ -19,6 +19,8 @@
 //! 旧: entries`[`i`]` = `global_fd` (i32)
 //! 新: entries`[`i`]` = `handle_id` (u32) → `OpenFile` (共享 offset)
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::privileged::sync::IrqSpinLock;
 
 /// 每进程 FD 表上限
@@ -37,16 +39,40 @@ pub struct FdTable {
     entries: IrqSpinLock<[u32; MAX_FDS_PER_PROCESS]>,
     /// CLOEXEC 标志 (per-FD, 不随 dup 共享)
     cloexec: IrqSpinLock<[bool; MAX_FDS_PER_PROCESS]>,
+    /// 持有本表的 TCB 数 (`CLONE_FILES` 共享计数, K-03)
+    ///
+    /// 每个 `Process` 持有一个 `Arc<FdTable>` 并对应表内一个用户; 只有
+    /// 计数归零 (最后持有者退出) 才允许关闭表内全部 fd. 用显式计数而非
+    /// `Arc::strong_count`: 后者会被瞬时借用放大, 让"最后用户"判定失真.
+    users: AtomicU32,
 }
 
 impl FdTable {
-    /// 创建未初始化的 `FdTable`
+    /// 创建未初始化的 `FdTable`.
+    ///
+    /// `users` 初始为 1: 构造方 (第一个 `Process`) 即首个持有者.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             entries: IrqSpinLock::new([u32::MAX; MAX_FDS_PER_PROCESS]),
             cloexec: IrqSpinLock::new([false; MAX_FDS_PER_PROCESS]),
+            users: AtomicU32::new(1),
         }
+    }
+
+    /// 登记一个共享本表的 TCB (`CLONE_FILES`).
+    pub fn add_user(&self) {
+        self.users.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// 释放一个 TCB 对本表的引用; 返回是否已无其余持有者.
+    ///
+    /// 仅在该 TCB 退出/放弃共享时调用一次. `users` 归零表示本表可关闭.
+    #[must_use]
+    pub fn release_user(&self) -> bool {
+        let prev = self.users.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(prev > 0, "FdTable::release_user 不得在计数为零时调用");
+        prev == 1
     }
 
     /// 初始化 FD 表 (清空所有 slot)
@@ -120,15 +146,27 @@ impl FdTable {
         if prev == u32::MAX { None } else { Some(prev) }
     }
 
-    /// 从 `src` 复制全部条目 (fork 子进程复制父进程 fd 表).
+    /// 从 `src` 复制全部条目 (fork / 非共享 clone 复制父进程 fd 表).
+    ///
+    /// `on_handle` 对每个已占用槽位的 `handle_id` 调用一次, 用于在**持源表锁
+    /// 期间**增加 `OpenFile` 引用计数: 若先快照再放锁再 inc, 并发的
+    /// `close` 可能已把该句柄释放, inc 会复活/误用槽位.
     ///
     /// 先快照 `src` (锁作用域内拷贝到栈数组), 再写入自身, 避免同时持有两个
-    /// `FdTable` 的锁. 调用方负责对复制出的每个 `handle_id` 增加 `OpenFile`
-    /// 引用计数 (子进程新增引用). 前置条件: `src` 与 `self` 非同一实例.
-    pub fn copy_from(&self, src: &FdTable) {
+    /// `FdTable` 的锁. 前置条件: `src` 与 `self` 非同一实例; `on_handle`
+    /// 不得回调本表 (会自死锁). 本表 `users` 不变 (调用方仍是唯一持有者).
+    pub fn copy_from<F>(&self, src: &FdTable, mut on_handle: F)
+    where
+        F: FnMut(u32),
+    {
         let (src_entries, src_cloexec) = {
             let e = src.entries.lock();
             let c = src.cloexec.lock();
+            for &handle_id in e.iter() {
+                if handle_id != u32::MAX {
+                    on_handle(handle_id);
+                }
+            }
             (*e, *c)
         };
         {
@@ -244,6 +282,36 @@ mod tests {
             table.get_handle_id(dup_fd.unwrap()),
             table.get_handle_id(fd3.unwrap()),
             "dup 出的两个 fd 应共享同一 handle"
+        );
+    }
+
+    /// K-03: 显式用户计数决定"最后持有者才关闭 fd 表"
+    #[test]
+    fn test_fd_table_user_counting() {
+        let table = FdTable::new();
+        table.add_user();
+        assert!(!table.release_user(), "双持有者时不应判定为最后用户");
+        assert!(table.release_user(), "计数归零应判定为最后用户");
+    }
+
+    /// K-03: fork 复制在持源表锁期间逐句柄回调, 且槽位/cloexec 原样复制
+    #[test]
+    fn test_fd_table_copy_from_with_handle_callback() {
+        let parent = FdTable::new();
+        let fd_a = parent.alloc_fd(11, false).unwrap();
+        let fd_b = parent.alloc_fd(12, true).unwrap();
+        let child = FdTable::new();
+
+        let mut seen = alloc::vec::Vec::new();
+        child.copy_from(&parent, |handle_id| seen.push(handle_id));
+
+        seen.sort_unstable();
+        assert_eq!(seen, alloc::vec![11, 12], "每个占用槽位必须回调一次");
+        assert_eq!(child.get_entry(fd_a), Some((11, false)));
+        assert_eq!(child.get_entry(fd_b), Some((12, true)));
+        assert!(
+            child.release_user(),
+            "复制不改写目标表用户计数 (仍只有一个持有者)"
         );
     }
 }

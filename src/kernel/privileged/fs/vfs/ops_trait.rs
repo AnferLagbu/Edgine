@@ -33,6 +33,12 @@ pub trait VfsOps: Send + Sync {
     /// 递增指定 `OpenFile` handle 的引用计数 (fork 继承路径).
     fn inc_open_file_ref(&self, handle_id: u32);
 
+    /// 递减指定 `OpenFile` handle 的引用计数 (fork 失败回滚路径).
+    ///
+    /// 仅用于撤销 [`VfsOps::inc_open_file_ref`] 的增量: 此时 fd 从未暴露给
+    /// 用户, 无需 pcache 失效 / inotify / fd 通知等关闭副作用.
+    fn dec_open_file_ref(&self, handle_id: u32);
+
     /// 查询 fd 对应的 VFS 文件类型.
     ///
     /// 返回 `None` 表示 fd 非法或未映射; `Some(ft)` 为 `VfsFileType` 原始字节.
@@ -60,8 +66,8 @@ pub trait VfsOps: Send + Sync {
 ///
 /// 早期启动阶段早于任何 fd / 文件锁 / mmap 使用, 消费点仅可能在
 /// `functions::fs::init` 前被调用:
-/// - `release_pid_locks` / `close_all_fds` / `close_cloexec_fds` / `inc_open_file_ref`:
-///   此时无进程持有 fd 或锁, no-op 语义正确.
+/// - `release_pid_locks` / `close_all_fds` / `close_cloexec_fds` /
+///   `inc_open_file_ref` / `dec_open_file_ref`: 此时无进程持有 fd 或锁, no-op 语义正确.
 /// - `fd_file_type`: 返回 `None` 表示 fd 非法, 消费点 (`epoll`) 会走错误分支.
 /// - `pread_inode`: 返回 `0`, 消费点 (`mm/page_fault`) 依 `n > 0` 判定成功,
 ///   `n <= 0` 保持零页填充, 语义安全.
@@ -77,6 +83,8 @@ impl VfsOps for FallbackVfsOps {
     fn close_cloexec_fds(&self) {}
 
     fn inc_open_file_ref(&self, _handle_id: u32) {}
+
+    fn dec_open_file_ref(&self, _handle_id: u32) {}
 
     fn fd_file_type(&self, _fd: i32) -> Option<u8> {
         None
