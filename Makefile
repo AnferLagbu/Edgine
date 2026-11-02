@@ -152,6 +152,13 @@ USER_FBTERM_ELF = $(RUST_USER_TARGET)/fbterm
 USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 
+# initramfs 载体归档 (K-07b): 由 scripts/make_initramfs_cpio.py 从本架构 user/*.bin
+# 打包成 cpio(newc); 内核 `initramfs` feature 编译期 include_bytes! 它. 归档恒生成
+# (feature 关闭时不嵌入, 镜像不受影响), 使 feature 腿与默认腿共用同一条依赖链,
+# 不会出现"开了 feature 才发现归档缺失".
+USER_CPIO = $(USER_BUILD_DIR)/initramfs.cpio
+MK_CPIO_PY = scripts/make_initramfs_cpio.py
+
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/edgine.img
 
@@ -181,14 +188,11 @@ $(shell mkdir -p $(LOG_DIR) $(ARCH_BUILD_DIR))
 
 # ====== x86_64 Rust user programs ======
 ifeq ($(ARCH),x86_64)
-user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF)
-	@mkdir -p $(USER_BUILD_DIR)
-	@cp $(USER_INIT_ELF) $(USER_BUILD_DIR)/init.bin
-	@cp $(USER_SHELL_ELF) $(USER_BUILD_DIR)/eash.bin
-	@cp $(USER_INSTALL_ELF) $(USER_BUILD_DIR)/install.bin
-	@cp $(USER_FBTERM_ELF) $(USER_BUILD_DIR)/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) $(USER_BUILD_DIR)/httpsrv.bin
-	@cp $(USER_TEST_ELF) $(USER_BUILD_DIR)/proctest.bin
+# `user` 的产物拷贝由下方 $(USER_BUILD_DIR)/%.bin 文件规则承担 (原 phony recipe 内联
+# cp 无法被 make 排序: cpio 需按 .bin 产物建依赖, 内联 cp 会让归档静默少产物).
+user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
+      $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
+      $(USER_BUILD_DIR)/proctest.bin $(USER_CPIO)
 	@echo "User programs built successfully (Rust)"
 
 $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
@@ -214,6 +218,10 @@ $(USER_BUILD_DIR)/fbterm.bin: $(USER_FBTERM_ELF)
 $(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
+
+$(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
 endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
@@ -237,16 +245,14 @@ endif
 
 # AArch64 用户程序: 使用 Cargo 编译 Rust 用户程序
 ifeq ($(ARCH),aarch64)
-user: $(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF)
-	@mkdir -p $(USER_BUILD_DIR)
-	@cp $(USER_INIT_ELF) $(USER_BUILD_DIR)/init.bin
-	@cp $(USER_SHELL_ELF) $(USER_BUILD_DIR)/eash.bin
-	@cp $(USER_INSTALL_ELF) $(USER_BUILD_DIR)/install.bin
-	@cp $(USER_FBTERM_ELF) $(USER_BUILD_DIR)/fbterm.bin
-	@cp $(USER_HTTPSRV_ELF) $(USER_BUILD_DIR)/httpsrv.bin
+# 与 x86_64 侧同形: 产物拷贝走 $(USER_BUILD_DIR)/%.bin 文件规则, 便于 cpio 建依赖.
+# aarch64 也产出 proctest.bin —— 两架构的 initramfs 载体内容集需一致.
+user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
+      $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
+      $(USER_BUILD_DIR)/proctest.bin $(USER_CPIO)
 	@echo "User programs built (Rust aarch64)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
@@ -254,20 +260,49 @@ $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
+$(USER_BUILD_DIR)/eash.bin: $(USER_SHELL_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_BUILD_DIR)/install.bin: $(USER_INSTALL_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_BUILD_DIR)/fbterm.bin: $(USER_FBTERM_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
 # 末尾 $(if ...) = P-62 甲 的 feature 戳记: 仅当 KERNEL_FEATURES 值变化时才挂前置.
-$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
+$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
+$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif
+
+# initramfs 载体归档 (K-07b): 两架构共用一条规则, 归档名按本架构目录落盘, 与内核
+# `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
+$(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
+              $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
+              $(USER_BUILD_DIR)/proctest.bin $(MK_CPIO_PY)
+	@mkdir -p $(USER_BUILD_DIR)
+	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
+
 
 # RUST_LIB_TEST 需源文件前置依赖 (kernel 源码经 #[path="../../kernel"] 引入, 须一并搜索):
 # 否则 .a 已存在时 make 跳过 cargo 重建, kernel_test.bin 长期使用陈旧二进制 (E-06 验证踩坑, 2026-09-07)

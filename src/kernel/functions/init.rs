@@ -48,6 +48,65 @@ pub fn is_init_running() -> bool {
 }
 
 // ============================================================================
+// initramfs 载体装载 (K-07b: 用户态程序经文件系统进入, 双架构共用)
+// ============================================================================
+
+/// 把本架构的 initramfs cpio 归档编进镜像 (`feature = "initramfs"`).
+///
+/// 路径按**本编译目标架构**取 `other/build/<arch>/user/initramfs.cpio` (与 S-6
+/// 三条防线同口径: 产物按架构分目录, 两架构互不覆盖).
+///
+/// host target 取空切片: 判据用 `target_os` 而非 feature —— host 侧 lint 维
+/// (host-test / kernel_test) 与 host-tests 都会编译本块, 不桩化即让 host 编译硬
+/// 依赖 `other/build/` 下的裸机产物 (该目录仅由 make 生成且不入版本库).
+#[cfg(all(feature = "initramfs", target_os = "none", target_arch = "x86_64"))]
+const INITRAMFS_CPIO: &[u8] = include_bytes!("../../../other/build/x86_64/user/initramfs.cpio");
+#[cfg(all(feature = "initramfs", target_os = "none", target_arch = "aarch64"))]
+const INITRAMFS_CPIO: &[u8] = include_bytes!("../../../other/build/aarch64/user/initramfs.cpio");
+#[cfg(all(feature = "initramfs", not(target_os = "none")))]
+const INITRAMFS_CPIO: &[u8] = &[];
+
+/// 解压 initramfs 并把归档里的 `/init` 载入为 PID 1, 返回其 pid.
+///
+/// 返回 `<= 0` 表示载体不可用 (归档为空 / 解压失败 / 读不到 `/init` / ELF 装载
+/// 失败), 调用方应回退到内嵌 `init.bin`. 本函数**不**切入用户态: 进入方式与失败
+/// 兜底按架构不同 (x86_64 `qemu_exit` / aarch64 `halt` 循环), 由调用方决定.
+///
+/// 与内嵌路径的分工: 内嵌 `init.bin` 是出货路径 (feature 关闭), 载体路径让 PID 1
+/// 经 VFS 读出 → `prepare_elf_image` → 纯机制装载, 即 `execve` 同款取镜像链路,
+/// 是 K-07b 用户态运行射程的入口.
+#[cfg(feature = "initramfs")]
+fn load_init_from_initramfs() -> i32 {
+    if INITRAMFS_CPIO.is_empty() {
+        crate::klog_boot_info!("[USER] initramfs archive is empty");
+        return -1;
+    }
+    let count = match crate::functions::fs::initramfs::unpack(INITRAMFS_CPIO) {
+        Ok(count) => count,
+        Err(e) => {
+            crate::klog_boot_info!("[USER] initramfs unpack failed: {}", e);
+            return -2;
+        }
+    };
+    crate::klog_boot_info!("[USER] initramfs: {} files unpacked", count);
+    crate::privileged::proc::set_init_status(INIT_STATUS_LOADING);
+
+    let Some(mut elf) = crate::functions::fs::api::read_file_kernel(
+        "/init",
+        0,
+        crate::functions::proc::exec::ELF_MAX_SIZE,
+    ) else {
+        return -3;
+    };
+    crate::privileged::proc::elf::prepare_elf_image(&mut elf);
+    crate::privileged::proc::mechanism::user_proc_load_elf_from_memory(
+        elf.as_ptr(),
+        elf.len() as u64,
+        0,
+    )
+}
+
+// ============================================================================
 // boot 启动编排 (阶段 4b: 自 privileged::proc::launch_first_user_process 下沉)
 // ============================================================================
 
@@ -77,45 +136,13 @@ pub fn launch_first_user_process() -> ! {
     {
         #[cfg(feature = "initramfs")]
         {
-            let initramfs = include_bytes!("../../../other/build/x86_64/user/initramfs.cpio");
-            if !initramfs.is_empty() {
-                match crate::functions::fs::initramfs::unpack(initramfs) {
-                    Ok(count) => {
-                        crate::klog_boot_info!("[USER] initramfs: {} files unpacked", count);
-                        crate::privileged::proc::set_init_status(INIT_STATUS_LOADING);
-                        // 加载 /init: VFS 读文件 + PT_INTERP 改写 + privileged 纯机制加载
-                        let pid = match crate::functions::fs::api::read_file_to_vec(
-                            b"/init\0".as_ptr(),
-                            0,
-                            crate::functions::proc::exec::ELF_MAX_SIZE,
-                        ) {
-                            Some(mut elf) => {
-                                crate::privileged::proc::elf::prepare_elf_image(&mut elf);
-                                crate::privileged::proc::mechanism::user_proc_load_elf_from_memory(
-                                    elf.as_ptr(),
-                                    elf.len() as u64,
-                                    0,
-                                )
-                            }
-                            None => -1,
-                        };
-                        if pid > 0 {
-                            crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
-                            crate::klog_boot_info!(
-                                "[USER] Entering Ring 3 (init from /init, pid={})...",
-                                pid
-                            );
-                            crate::privileged::proc::mechanism::enter_user_process(
-                                pid.cast_unsigned(),
-                            );
-                        }
-                        crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
-                    }
-                    Err(e) => {
-                        crate::klog_boot_info!("[USER] initramfs unpack failed: {}", e);
-                    }
-                }
+            let pid = load_init_from_initramfs();
+            if pid > 0 {
+                crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
+                crate::klog_boot_info!("[USER] Entering Ring 3 (init from /init, pid={})...", pid);
+                crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
             }
+            crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
         }
 
         // 回退: 直接加载内嵌的 init.bin.
@@ -156,6 +183,19 @@ pub fn launch_first_user_process() -> ! {
         // 进入 EL0 的 PSTATE 由 enter_user 写入 SPSR_EL1 (I 位清零 ⇒ EL0 可被抢占),
         // 与本处 EL1 侧的中断屏蔽状态无关, 故无需恢复.
         let _saved = crate::arch!(interrupt_disable());
+
+        // initramfs 载体路径 (与 x86_64 同一份 `load_init_from_initramfs`): 成功即
+        // 切入 EL0 不返回; 失败/无 `/init` 才落到下方内嵌 `init.bin` 回退.
+        #[cfg(feature = "initramfs")]
+        {
+            let pid = load_init_from_initramfs();
+            if pid > 0 {
+                crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
+                crate::klog_boot_info!("[USER] Entering EL0 (init from /init, pid={})...", pid);
+                crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
+            }
+            crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
+        }
 
         let bin = include_bytes!("../../../other/build/aarch64/user/init.bin");
         let bin_size = bin.len() as u64;

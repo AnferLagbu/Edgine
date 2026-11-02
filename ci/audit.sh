@@ -904,6 +904,23 @@ if [ "$MODE" = "full" ]; then
         else
             err "线程组多轮压力失败 (exit=$STRESS_RC, 见 scripts/thread_stress_test.sh 输出)"
         fi
+
+        # K-07b 批1: initramfs 载体专项 feature 腿 (scripts/initramfs_boot_test.sh).
+        # initramfs 是**默认关闭**的 feature —— 上面两子腿跑的都是内嵌 init.bin 镜像,
+        # 载体链 (cpio → ramfs → VFS 读 /init → ELF 装载) 在默认门禁里一行都不执行.
+        # 与 P-62 甲 同形: 真构建 (KERNEL_FEATURES=initramfs) + 真启动 + 断言里程碑,
+        # 脚本尾部自行复原默认构建, 故排在本步骤最后, 不污染后续腿的镜像口径.
+        # 依赖 python3 (verify_image_arch.py), 与上一子腿同样已在 QEMU 可用分支内.
+        set +e
+        CPIO_OUT=$("$PROJECT_ROOT/scripts/initramfs_boot_test.sh" all 2>&1)
+        CPIO_RC=$?
+        set -e
+        printf '%s\n' "$CPIO_OUT" | tail -8
+        if [ "$CPIO_RC" -eq 0 ]; then
+            ok "initramfs 载体双架构启动: PID 1 由 /init 加载并通过 (K-07b 批1)"
+        else
+            err "initramfs 载体启动失败 (exit=$CPIO_RC, 见 scripts/initramfs_boot_test.sh 输出)"
+        fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi

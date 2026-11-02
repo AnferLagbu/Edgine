@@ -5,6 +5,7 @@
 //! (DECISION-H15: 不再生成全 0 占位符, 以免遮蔽真实产物缺失状态); 并对两者发出
 //! **绝对路径**的 `cargo:rerun-if-changed` —— cargo 以包根 `src/kernel` 解析相对
 //! 路径, 而 `include_bytes!` 以源文件为基准, 两者不同源时该指令会静默失效.
+//! `feature = "initramfs"` 点亮时另按本架构检查 `user/initramfs.cpio` 载体 (K-07b).
 //! host target (host-tests 触发) 不做上述检查, 避免干净 checkout 形成隐式 `make` 依赖.
 
 use std::path::Path;
@@ -61,5 +62,23 @@ fn main() {
             println!("cargo:rerun-if-changed={}", stage1.display());
         }
         println!("cargo:rerun-if-changed={}", init_bin.display());
+        // K-07b: initramfs 载体归档按**本架构**目录检查, 与 `functions/init.rs` 的
+        // `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
+        // 仅在 feature 点亮时要求: 默认构建不嵌归档, 不该被它的存在性绑住.
+        // rerun-if-changed 同样只给绝对路径 (同 init.bin 的 S-6 防线③理由).
+        if std::env::var("CARGO_FEATURE_INITRAMFS").is_ok() {
+            let cpio = base
+                .join("other/build")
+                .join(&target_arch)
+                .join("user/initramfs.cpio");
+            assert!(
+                cpio.exists(),
+                "initramfs 载体缺失: {} — 请先运行 `make ARCH={} user` \
+                 (由 scripts/make_initramfs_cpio.py 生成)",
+                cpio.display(),
+                target_arch
+            );
+            println!("cargo:rerun-if-changed={}", cpio.display());
+        }
     }
 }
