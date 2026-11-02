@@ -253,14 +253,16 @@ fn wait4_reads_group_children_and_group_pgid() {
     assert!(
         has(
             &find,
-            "let children = api::process_with(parent_pid, |p| p.group().children()).unwrap_or_default();"
+            "let (children, caller_pgid) =
+                 api::process_with(parent_pid, |p| (p.group().children(), p.group().pgid()))
+                     .unwrap_or_default();"
         ),
-        "K-04: wait4 的子进程账必须来自线程组"
+        "K-04: wait4 的子进程账与调用方进程组必须来自线程组"
     );
     assert!(
         has(
             &find,
-            "let pgid = api::process_with(child_pid, |p| p.group().pgid()).unwrap_or(0);"
+            "let pgid = api::process_with(child_tgid, |p| p.group().pgid()).unwrap_or(0);"
         ),
         "K-04: wait4 的进程组匹配必须读子线程组"
     );
@@ -310,10 +312,10 @@ fn exit_teardown_is_gated_on_last_group_member() {
         "K-04: 退出时改挂的是子进程组账"
     );
     assert!(
-        has(&body, "if child.thread_group.has_exited()")
-            && has(&body, "child.group().set_parent(1);")
+        has(&body, "if !PROCESS_TABLE.reap_zombie_group(child_tgid) {")
+            && has(&body, "child.group().set_parent(1)")
             && has(&body, "proc.group().clear_children()"),
-        "K-04: 子组已退出则回收, 否则改挂 pid 1; 全部处理后清空组子账"
+        "K-04/K-06: 子组已整体退出则整组回收, 否则改挂 pid 1; 全部处理后清空组子账"
     );
 
     assert!(
@@ -325,9 +327,11 @@ fn exit_teardown_is_gated_on_last_group_member() {
         "K-04: 父组唤醒目标必须取线程组父字段"
     );
     assert!(
-        has(&body, "proc.exit_code.store(exit_code, Ordering::SeqCst);")
-            && has(&body, "set_state_safe(ProcessState::Zombie)"),
-        "K-04: 每个 TCB 仍各自置退出码与 Zombie"
+        has(
+            &body,
+            "proc.exit_code.store(effective_code, Ordering::SeqCst);"
+        ) && has(&body, "set_state_safe(ProcessState::Zombie)"),
+        "K-06: 每个 TCB 记录组有效退出码, 并各自置 Zombie"
     );
     assert!(
         has(&body, "itimer_real_release_pid(pid);") && has(&body, "posix_timer_release_pid(pid);"),
@@ -342,12 +346,8 @@ fn zombie_reaper_reads_group_parent() {
     assert!(
         has(
             &body,
-            "if p.get_state() == ProcessState::Zombie {
-                 let parent = p.group().parent();
-                 Some((parent != 0).then_some(ProcessId(parent)))
-             } else {
-                 None
-             }"
+            "(p.get_state() == ProcessState::Zombie)
+                 .then(|| (p.thread_group.tgid(), p.group().parent()))"
         ),
         "K-04: 周期僵尸回收的父存活判定必须读线程组"
     );
@@ -357,15 +357,27 @@ fn zombie_reaper_reads_group_parent() {
 fn signal_broadcasts_read_group_pgid() {
     let signal = code_only(&read_src(SIGNAL_SRC));
     assert!(
-        has(&signal, ".map_or(0, |p| unsafe { (&*p).group().pgid() });"),
+        has(
+            &signal,
+            "let current_pgid = PROCESS_TABLE
+                 .with_process(current, |p| p.group().pgid())
+                 .unwrap_or(0);"
+        ),
         "K-04: 组广播的当前 pgid 必须读线程组"
+    );
+    assert_eq!(
+        signal
+            .matches("collect_matching_tgids(|proc| proc.group().pgid() == target_pgid)")
+            .count(),
+        2,
+        "K-04: kill(0) / kill(-pgid) 的进程组匹配必须读线程组"
     );
     assert_eq!(
         signal
             .matches("let effective_pgid = proc.group().pgid();")
             .count(),
-        3,
-        "K-04: kill(0) / kill(-pgid) 的进程组匹配必须读线程组"
+        1,
+        "K-04: sig=0 存在性探测的进程组匹配必须读线程组"
     );
 }
 
@@ -492,7 +504,10 @@ fn joined_thread_shares_group_identity() {
     group.set_pgid(0x4D22);
 
     let mut thread = Process::new(0x4D23, "k04-thread", None);
-    thread.join_thread_group(Arc::clone(&group));
+    assert!(
+        thread.join_thread_group(Arc::clone(&group)),
+        "K-06: 非 exec de_thread 状态下入组必须成功"
+    );
 
     assert_eq!(thread.tgid(), 0x4D20, "入组后 getpid 必须读组长 tgid");
     assert!(

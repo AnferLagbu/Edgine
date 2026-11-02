@@ -1688,28 +1688,34 @@ impl Scheduler {
 
     /// 更新切换目标的用户页表与内核栈顶页 (KPTI-08), 使 syscall/中断返回用户态时
     /// 从 [`gs:USER_PML4_OFF`] 读取到正确的进程用户页表.
+    ///
+    /// K-06: 页表权威来源是 `Process.cr3`。`CLONE_THREAD` 线程没有
+    /// `UserProcess` 镜像, 旧实现以镜像存在为门条件, 切到线程时会沿用上一个
+    /// 任务的 cr3; 镜像现仅作 `current` 查询缓存, 缺失即置 `None`
+    /// (唯一消费方 `try_expand_user_stack` 按"无当前镜像" fail-closed)。
     fn update_user_context(next: Pid, next_kernel_stack: u64) {
-        if let Some(user_proc) = super::user_proc::USER_PROC_MANAGER.get(next) {
-            super::user_proc::USER_PROC_MANAGER.set_current(Some(user_proc));
-            // SAFETY: user_proc 来自 PROCESS_TABLE, 通过 process() 访问权威 Process;
-            // 当前在调度器持锁上下文, 独占访问 per-CPU 数据.
-            unsafe {
-                let user_cr3 = (*user_proc).process().cr3.load(Ordering::SeqCst);
-                #[cfg(target_arch = "x86_64")]
-                {
-                    crate::privileged::arch::gdt::gdt_set_user_cr3(user_cr3);
-                    // KPTI-08: 切换目标的用户页表必须含其内核栈顶页 ——
-                    // 该页随任务变化, 不在 `assemble_kernel_half` 的统一装配面内,
-                    // 故在此 (上下文切换) 按目标任务追加. COW fork 出的子进程页表
-                    // 只经 `assemble_kernel_half` 装配, 必须靠此处补齐.
-                    // SAFETY: user_cr3 是目标进程有效用户页表 PML4 物理地址;
-                    // next_kernel_stack 是该进程内核栈顶高半区 VA (页对齐);
-                    // 该 VA 在目标页表内 PTE 值恒定 (见 map_rsp0_page 文档).
-                    crate::privileged::mm::map_rsp0_page(user_cr3, next_kernel_stack);
-                }
-                let _ = (user_cr3, next_kernel_stack);
-            }
+        super::user_proc::USER_PROC_MANAGER
+            .set_current(super::user_proc::USER_PROC_MANAGER.get(next));
+        let user_cr3 = PROCESS_TABLE
+            .with_process(next, |p| p.cr3.load(Ordering::SeqCst))
+            .unwrap_or(0);
+        if user_cr3 == 0 {
+            return;
         }
+        // SAFETY: user_cr3 来自 PROCESS_TABLE 的权威 Process, 是目标进程有效
+        // 用户页表 PML4 物理地址; next_kernel_stack 是该进程内核栈顶高半区 VA
+        // (页对齐), 该 VA 在目标页表内 PTE 值恒定 (见 map_rsp0_page 文档);
+        // 当前处于调度器临界区, 独占访问本核 per-CPU 数据.
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            crate::privileged::arch::gdt::gdt_set_user_cr3(user_cr3);
+            // KPTI-08: 切换目标的用户页表必须含其内核栈顶页 ——
+            // 该页随任务变化, 不在 `assemble_kernel_half` 的统一装配面内,
+            // 故在此 (上下文切换) 按目标任务追加. COW fork 出的子进程页表
+            // 只经 `assemble_kernel_half` 装配, 必须靠此处补齐.
+            crate::privileged::mm::map_rsp0_page(user_cr3, next_kernel_stack);
+        }
+        let _ = (user_cr3, next_kernel_stack);
     }
 
     /// 上下文切换收尾: 切到 `next`, 或在本核无可保存 prev 时单向切换保活.
@@ -2030,21 +2036,28 @@ impl Scheduler {
             // K-01/K-04: 退出即退出线程组. 最后一个成员离开时置组退出状态 (首个
             // 退出码生效); 组内存本身由最后一个 TCB 的 `Arc` 引用消失释放.
             // 取锁方向 7 → 9 (进程表 → 成员账), 与 `ref-lock-order.md` 层级一致.
-            let last_member = PROCESS_TABLE
+            // K-06: 组退出码以 `exit_group` / 致命信号的请求值为权威; 无请求时取
+            // 本线程退出码, 组内全部 TCB 的 `exit_code` 记录同一有效值.
+            let (effective_code, last_member) = PROCESS_TABLE
                 .with_process(pid, |proc| {
-                    if proc.thread_group.leave(pid) {
-                        proc.thread_group.mark_exited(exit_code);
-                        true
+                    let group = proc.group();
+                    let code = if group.exit_requested() {
+                        group.requested_exit_code()
                     } else {
-                        false
+                        exit_code
+                    };
+                    let last = group.leave(pid);
+                    if last {
+                        group.mark_exited(code);
                     }
+                    (code, last)
                 })
-                .unwrap_or(false);
+                .unwrap_or((exit_code, false));
             // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
             // 上游分位 —— 与 `vmm_x86_64.rs` 的 `destroy_page_table` 埋点配对, 可区分
             // "子进程根本没跑到 exit" 与 "已退出成 zombie 但无人回收 (无 wait4 ⇒ 无人调
             // `remove_and_free` ⇒ `Process::drop` 不运行 ⇒ 页表不销毁)" 两种情形.
-            crate::klog_info!(Process, "exit: pid={} code={}", pid, exit_code);
+            crate::klog_info!(Process, "exit: pid={} code={}", pid, effective_code);
             // K-04: 会话属线程组; 仅组最后成员退出时释放控制终端.
             if last_member {
                 crate::privileged::proc::session_leader_exit(pid);
@@ -2060,7 +2073,7 @@ impl Scheduler {
             let parent_tgid = PROCESS_TABLE
                 .with_process(pid, |proc| {
                     let pwm = proc.get_pwm();
-                    proc.exit_code.store(exit_code, Ordering::SeqCst);
+                    proc.exit_code.store(effective_code, Ordering::SeqCst);
                     let _ = proc.set_state_safe(ProcessState::Zombie);
                     // K-04: 进程级计数按线程组收口, 非最后成员退出不得撤销
                     // 整个组的计数 (组长创建时已计一次, 组退出时只减一次).
@@ -2094,23 +2107,11 @@ impl Scheduler {
                     .with_process(pid, |proc| proc.group().children())
                     .unwrap_or_default();
                 for child_tgid in children {
-                    // 子组已整体退出 → 回收组长 TCB; 否则把子组改挂到 pid 1.
-                    // K-06 的组收割会接管子组内其余僵尸 TCB 的回收.
-                    let child_exited = PROCESS_TABLE
-                        .with_process(child_tgid, |child| {
-                            if child.thread_group.has_exited() {
-                                if child.get_state() == ProcessState::Zombie {
-                                    let _ = child.set_state_safe(ProcessState::Terminated);
-                                }
-                                true
-                            } else {
-                                child.group().set_parent(1);
-                                false
-                            }
-                        })
-                        .unwrap_or(false);
-                    if child_exited {
-                        PROCESS_TABLE.remove_and_free(child_tgid);
+                    // K-06: 子组已整体退出 → 以组为单位回收全部僵尸 TCB; 未退出
+                    // 或仍有成员退出途中 → 改挂 pid 1, 由 tick / 新父 wait4 收口.
+                    // K-04 只回收组长 TCB 会把组内其余线程留成无人认领的僵尸.
+                    if !PROCESS_TABLE.reap_zombie_group(child_tgid) {
+                        PROCESS_TABLE.with_process(child_tgid, |child| child.group().set_parent(1));
                     }
                 }
                 let _ = PROCESS_TABLE.with_process(pid, |proc| proc.group().clear_children());
@@ -2135,6 +2136,21 @@ impl Scheduler {
 
     /// 主动让出 CPU 并立即重调度
     pub fn yield_current() {
+        // K-06: 组退出 / exec de_thread 已登记且本线程收到 SIGKILL 时立即退出,
+        // 不等待返回用户态. 内核内等待循环 (futex / pipe / 轮询重试) 不在信号
+        // 投递点上, 不在此处收口会让 `exit_group` 与 de_thread 的等待方永久
+        // 等待. SIGKILL 不可捕获/屏蔽, 提前退出不改变用户可见语义.
+        let kill_requested = Self::current()
+            .and_then(|pid| {
+                PROCESS_TABLE.with_process(pid, |p| {
+                    p.signal_pending_get() & (1u64 << super::signal::SIGKILL) != 0
+                        && (p.group().exit_requested() || p.group().exec_de_thread())
+                })
+            })
+            .unwrap_or(false);
+        if kill_requested {
+            crate::privileged::proc::process_exit(u32::from(super::signal::SIGKILL) << 8 | 0x7f);
+        }
         per_cpu().need_reschedule.store(true, Ordering::SeqCst);
         Self::schedule();
     }
@@ -2480,41 +2496,44 @@ impl Scheduler {
                     break;
                 }
                 if let Some(_proc) = PROCESS_TABLE.get(pid) {
-                    // 单次加锁取本进程状态与父组 tgid, 父存活另起一次加锁查询.
-                    // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process`
-                    // 会同核自死锁 (本轮 hang 根因). K-04: 父进程关系归线程组.
-                    let zombie_parent = PROCESS_TABLE
+                    // 单次加锁取本 TCB 状态、所属 tgid 与父组 tgid, 父存活/组就绪
+                    // 另起加锁查询. `processes` 为不可重入锁, 在持锁闭包内再次
+                    // `with_process` 会同核自死锁 (本轮 hang 根因). K-04: 父进程
+                    // 关系归线程组.
+                    let zombie_info = PROCESS_TABLE
                         .with_process(pid, |p| {
-                            if p.get_state() == ProcessState::Zombie {
-                                let parent = p.group().parent();
-                                Some((parent != 0).then_some(ProcessId(parent)))
-                            } else {
-                                None
-                            }
+                            (p.get_state() == ProcessState::Zombie)
+                                .then(|| (p.thread_group.tgid(), p.group().parent()))
                         })
                         .flatten();
-                    let is_zombie = zombie_parent.is_some_and(|parent| {
-                        let parent_alive = parent.is_none_or(|ppid| {
-                            PROCESS_TABLE
-                                .with_process(ppid.0, |pp| {
-                                    let s = pp.get_state();
-                                    s != ProcessState::Zombie && s != ProcessState::Terminated
-                                })
-                                .unwrap_or(false)
-                        });
-                        !parent_alive || parent == Some(ProcessId(1))
-                    });
-                    if is_zombie {
-                        to_reap[reap_count] = pid;
+                    let Some((tgid, parent)) = zombie_info else {
+                        continue;
+                    };
+                    // K-06: 回收以线程组为单位, 同组多个僵尸 TCB 只入列一次;
+                    // 组长身份用于组就绪判定, 非组长僵尸随整组一并回收.
+                    if to_reap[..reap_count].contains(&tgid) {
+                        continue;
+                    }
+                    let parent_alive = parent != 0
+                        && PROCESS_TABLE
+                            .with_process(parent, |pp| {
+                                let s = pp.get_state();
+                                s != ProcessState::Zombie && s != ProcessState::Terminated
+                            })
+                            .unwrap_or(false);
+                    // 父已死或父为 pid 1 才由 tick 兜底; 父存活时归其 wait4 收割.
+                    // 组未整体退出或仍有成员退出途中时 `group_zombie_exit_code`
+                    // 返回 `None`, 本 TCB 留待下一轮 (父仍死则届时整组回收).
+                    let orphaned = parent == 1 || (parent != 0 && !parent_alive);
+                    if orphaned && PROCESS_TABLE.group_zombie_exit_code(tgid).is_some() {
+                        to_reap[reap_count] = tgid;
                         reap_count += 1;
                     }
                 }
             }
-            for &pid in &to_reap[..reap_count] {
-                PROCESS_TABLE.with_process(pid, |p| {
-                    let _ = p.set_state_safe(ProcessState::Terminated);
-                });
-                PROCESS_TABLE.remove_and_free(pid);
+            for &tgid in &to_reap[..reap_count] {
+                // 认领 CAS 防双回收: 并发 `wait4` 可能已抢先收割同一组.
+                PROCESS_TABLE.reap_zombie_group(tgid);
             }
         }
     }

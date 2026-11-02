@@ -519,14 +519,9 @@ pub fn kill_syscall(pid: i32, sig: i32) -> Result<usize, crate::privileged::sysc
 
 /// `tgkill(tgid, tid, sig)` 策略 — 向进程内指定线程发送信号
 ///
-/// 校验链: 参数范围 → 目标存在性 → tgid/tid 归属关系 → 投递.
-/// `sig == 0` 为存在性探测 (不投递, 合法返回 0).
-///
-// SIMPLIFIED: 当前无线程组模型 (tid == pid, 每个进程即自身线程组), 以
-// `tgid == tid` 等价校验替代 Linux "tid 必须属于 tgid 线程组" 判定;
-// 影响面: 多线程进程内定向投递暂不可用 (线程组到来前无此语义);
-// 何时需扩展: multithreading-project K-06 引入线程组后改为查询 tid
-// 所属进程的 tgid 字段比对.
+/// 校验链: 参数范围 → 目标存在性 → tgid/tid 归属关系 → 线程定向投递.
+/// `sig == 0` 为存在性探测 (不投递, 合法返回 0). 归属判定查询目标 TID
+/// 所属线程组的 tgid (K-06), 不再是 `tid == tgid` 的单线程等价.
 ///
 /// # Errors
 ///
@@ -546,23 +541,23 @@ pub fn tgkill_syscall(
         return Err(Errno::Einval);
     }
 
-    // 目标存在性校验 (tid 在当前模型下即 pid)
-    let target = crate::privileged::proc::api::process_with(thread_id.cast_unsigned(), |p| p.pid)
+    let target_tid = thread_id.cast_unsigned();
+    let owner_group = crate::privileged::proc::api::process_with(target_tid, |p| p.group().tgid())
         .ok_or(Errno::Esrch)?;
-    if target.0 != tgid.cast_unsigned() {
-        // 无线程组模型下 tid 所属进程的 tgid 即其 pid
+    if owner_group != tgid.cast_unsigned() {
         return Err(Errno::Esrch);
     }
     if sig == 0 {
         return Ok(0);
     }
 
-    let ret = crate::privileged::syscall::api::sys_kill(thread_id, sig);
-    if ret < 0 {
-        Err(Errno::from_ret(ret))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(ret))
-    }
+    crate::privileged::proc::do_signal_send(target_tid, crate::privileged::glue::u8_from_i32(sig))
+        .map_err(|ret| match ret {
+            -1 => Errno::Einval,
+            -2 | -3 => Errno::Esrch,
+            _ => Errno::Eperm,
+        })?;
+    Ok(0)
 }
 
 /// `rt_sigaction` 系统调用安全代理

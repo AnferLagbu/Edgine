@@ -7,11 +7,11 @@
 //! - clone 置位时共享同一 `Arc`, 未置位时 fork 语义深拷贝;
 //! - fd 表按显式 `users` 计数, 只有最后持有者退出才关闭句柄;
 //! - fork 复制 fd 表时在源表锁内递增 `OpenFile` 引用, 失败路径撤销;
-//! - exec 在成员数 >1 时 fail-fast, 并换新信号动作表后清零;
+//! - exec 换新信号动作表后再清零;
 //! - 路径解析 / chroot / umask 走进程 FS 上下文, 全局量仅作无进程缺省.
 //!
 //! 线程退出语义 (`exit` / `exit_group`) 与 exec 的 `de_thread` 归 K-06,
-//! 本文件不越界锁定.
+//! 本文件不越界锁定; 多线程 exec 自 K-06 起由 `de_thread` 接管, 不再拒绝.
 
 use std::fs;
 use std::path::PathBuf;
@@ -84,7 +84,7 @@ fn index_of(haystack: &str, needle: &str) -> usize {
 }
 
 #[test]
-fn clone_files_and_fs_require_thread_flag() {
+fn clone_files_requires_thread_and_fs_requires_shared_vm() {
     let src = code_only(&read_src(CLONE_SRC));
     assert!(
         has(&src, "const CLONE_FS: u64 = 0x0000_0200;"),
@@ -99,11 +99,20 @@ fn clone_files_and_fs_require_thread_flag() {
     assert!(
         has(
             &body,
-            "if (flags & (CLONE_FILES | CLONE_FS)) != 0 && (flags & CLONE_THREAD) == 0 {
+            "if (flags & CLONE_FILES) != 0 && (flags & CLONE_THREAD) == 0 {
                  return Err(Errno::Einval);
              }"
         ),
-        "K-03a: 独立进程共享 fd 表/FS 上下文尚无拆卸机制, 必须拒绝"
+        "K-03a/K-06: fd 表 unshare 未实装, 非线程共享仍须拒绝"
+    );
+    assert!(
+        has(
+            &body,
+            "if (flags & CLONE_FS) != 0 && (flags & CLONE_VM) == 0 {
+                 return Err(Errno::Einval);
+             }"
+        ),
+        "K-06: CLONE_FS 共享以共享地址空间为前提"
     );
     assert!(
         has(
@@ -117,8 +126,12 @@ fn clone_files_and_fs_require_thread_flag() {
 
     let raw = read_src(CLONE_SRC);
     assert!(
-        raw.contains("SIMPLIFIED: CLONE_FILES / CLONE_FS 仅接受线程"),
-        "K-03a: 拒绝路径必须带 SIMPLIFIED 说明与扩展时点"
+        raw.contains("SIMPLIFIED: CLONE_FILES 仅接受线程"),
+        "K-03a: fd 表拒绝路径必须带 SIMPLIFIED 说明与扩展时点"
+    );
+    assert!(
+        raw.contains("SIMPLIFIED: fork 路径 (无 CLONE_VM) 不接受 CLONE_FS"),
+        "K-06: CLONE_FS 拒绝路径必须带 SIMPLIFIED 说明"
     );
 }
 
@@ -294,33 +307,13 @@ fn fork_copies_fd_and_signal_and_fs_and_rolls_back_refs() {
 }
 
 #[test]
-fn exec_rejects_multithread_group_and_resets_signal_table_safely() {
-    let raw = read_src(EXEC_SRC);
+fn exec_swaps_signal_table_before_reset() {
+    // K-06: 多线程 exec 改由 privileged de_thread 接管, functions 层不再拒绝.
+    let exec_src = code_only(&read_src(EXEC_SRC));
+    let execve = fn_body(&exec_src, "pub fn execve_syscall");
     assert!(
-        raw.contains("SIMPLIFIED: 多线程 exec 直接拒绝"),
-        "K-03a: 多线程 exec 拒绝路径必须带 SIMPLIFIED 说明"
-    );
-
-    let src = code_only(&raw);
-    let body = fn_body(&src, "pub fn execve_syscall");
-    let guard_at = index_of(&body, "if group_members > 1 {");
-    assert!(
-        has(
-            &body,
-            "let group_members =
-                 crate::privileged::proc::api::process_with(current_pid, |p| p.group().member_count())
-                     .unwrap_or(0);"
-        ),
-        "K-03a: 守卫必须读取线程组成员数"
-    );
-    assert!(
-        has(&body, "return Err(Errno::Einval);"),
-        "K-03a: 多线程 exec 必须 fail-fast"
-    );
-    let replace_at = index_of(&body, "proc_exec_replace(");
-    assert!(
-        guard_at < replace_at,
-        "K-03a: 守卫必须在任何进程替换之前执行"
+        !execve.contains("member_count") && !execve.contains("group_members"),
+        "K-06: functions exec 不得重新引入多线程拒绝守卫 (de_thread 已接管)"
     );
 
     let proc_ops = code_only(&read_src(PROC_OPS_SRC));

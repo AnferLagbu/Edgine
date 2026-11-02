@@ -17,10 +17,17 @@ pub fn fork_syscall() -> i64 {
     i64::from(crate::privileged::proc::sys_fork())
 }
 
-/// exit(status) 策略
+/// exit(status) 策略 — 仅结束调用线程 (非组长时组内其余线程继续运行)
 #[must_use]
 pub fn exit_syscall(status: i32) -> i64 {
     crate::privileged::proc::process_exit(status.cast_unsigned());
+    0
+}
+
+/// `exit_group(status)` 策略 — 终止整个线程组, 组退出码以本值统一收口
+#[must_use]
+pub fn exit_group_syscall(status: i32) -> i64 {
+    crate::privileged::proc::process_exit_group(status.cast_unsigned());
     0
 }
 

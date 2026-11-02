@@ -254,11 +254,10 @@ pub fn do_signal_send(pid: Pid, sig: u8) -> Result<(), i32> {
     // 设置 pending 位
     proc.signal_pending_set(u32::from(sig));
 
-    // 唤醒目标进程 (如果处于可中断睡眠)
-    if state == ProcessState::Blocked as u32 {
-        proc.state
-            .store(ProcessState::Ready as u32, Ordering::Release);
-    }
+    // 唤醒目标进程 (如果处于可中断睡眠). 必须经调度器入队: 直接改状态为
+    // Ready 只会让它脱离睡眠原因, 却不在任何运行队列上, 形成永久丢唤醒.
+    // 调度器按状态判定, Running / Zombie / Created 调用为空操作.
+    super::scheduler::Scheduler::unblock(pid);
 
     Ok(())
 }
@@ -292,68 +291,37 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
 
     match pid {
         p if p > 0 => {
-            // 单进程
-            if do_signal_send_inner(p.cast_unsigned(), sig).is_ok() {
-                Ok(1)
-            } else {
-                Err(-2)
-            }
+            // kill(tid) 按 Linux 语义作用于该 TID 所属线程组: 组内择一线程接收.
+            let target = p.cast_unsigned();
+            let tgid = PROCESS_TABLE
+                .with_process(target, |proc| proc.thread_group.tgid())
+                .ok_or(-2)?;
+            do_signal_send_group(tgid, sig)
         }
         0 => {
-            // 广播到同进程组
+            // 广播到同进程组 (每个线程组只投一次)
             let current = super::scheduler::Scheduler::current().unwrap_or(0);
             let current_pgid = PROCESS_TABLE
-                .get(current)
-                // SAFETY: PROCESS_TABLE 保证指针有效, 进程在表中期间不会释放; 只读 pgid
-                .map_or(0, |p| unsafe { (&*p).group().pgid() });
+                .with_process(current, |p| p.group().pgid())
+                .unwrap_or(0);
             let target_pgid = if current_pgid == 0 {
                 current
             } else {
                 current_pgid
             };
-            let mut count = 0usize;
-            PROCESS_TABLE.for_each(|proc| {
-                let effective_pgid = proc.group().pgid();
-                if effective_pgid == target_pgid {
-                    // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
-                    if do_signal_send_process(proc, sig).is_ok() {
-                        count += 1;
-                    }
-                }
-                true
-            });
-            if count > 0 { Ok(count) } else { Err(-2) }
+            let tgids = collect_matching_tgids(|proc| proc.group().pgid() == target_pgid);
+            deliver_to_groups(&tgids, sig)
         }
         -1 => {
             // 广播到所有进程 (除 init pid=1)
-            let mut count = 0usize;
-            PROCESS_TABLE.for_each(|proc| {
-                if proc.pid.0 == 1 {
-                    return true; // 跳过 init
-                }
-                // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
-                if do_signal_send_process(proc, sig).is_ok() {
-                    count += 1;
-                }
-                true
-            });
-            if count > 0 { Ok(count) } else { Err(-2) }
+            let tgids = collect_matching_tgids(|proc| proc.pid.0 != 1);
+            deliver_to_groups(&tgids, sig)
         }
         p if p < -1 => {
             // 广播到 |pid| 进程组
             let target_pgid = (-p).cast_unsigned();
-            let mut count = 0usize;
-            PROCESS_TABLE.for_each(|proc| {
-                let effective_pgid = proc.group().pgid();
-                if effective_pgid == target_pgid {
-                    // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
-                    if do_signal_send_process(proc, sig).is_ok() {
-                        count += 1;
-                    }
-                }
-                true
-            });
-            if count > 0 { Ok(count) } else { Err(-2) }
+            let tgids = collect_matching_tgids(|proc| proc.group().pgid() == target_pgid);
+            deliver_to_groups(&tgids, sig)
         }
         _ => Err(-2),
     }
@@ -407,36 +375,128 @@ fn signal_send_presence(pid: i32) -> Result<usize, i32> {
     }
 }
 
-/// `do_signal_send_inner` — 单进程信号发送 (不检查 `SIG_IGN`, 适用于广播).
+/// 组定向投递 (`kill(2)` 语义): 在线程组内选一个可接收的成员.
 ///
-/// I-52: 与 `do_signal_send` 一致, Zombie 状态不投递 (返回 -3).
-/// 广播场景: 即使多数目标正常, 遇到 Zombie 也跳过, 不影响其他目标.
-fn do_signal_send_inner(pid: u32, sig: u8) -> Result<(), i32> {
-    let proc_ptr = PROCESS_TABLE.get(pid).ok_or(-2)?;
-    // SAFETY: 进程在表中期间不会释放
-    let proc = unsafe { &*proc_ptr };
-    do_signal_send_process(proc, sig)
-}
-
-/// 进程表内直接投递 (供 `for_each` 广播回调使用).
+/// 选择规则 (对齐 Linux `group_send_sig_info` 的组内择线程):
+/// - 不可捕获信号 (`SIGKILL`/`SIGSTOP`) 无视屏蔽与忽略, 投给首个存活成员;
+/// - 可捕获信号优先投给"未屏蔽且未显式忽略"的存活成员并唤醒它;
+/// - 若没有这样的成员, 把信号挂到首个"屏蔽但未忽略"的成员上 (不唤醒,
+///   待其解除屏蔽后由 `do_signal_deliver` 消费);
+/// - 存活成员全部显式忽略时成功返回但不置位 (POSIX: kill 不算失败).
 ///
-/// G-11 (2026-09-07): 原广播路径在 `for_each` 回调内调用 `do_signal_send_inner`,
-/// 其内部 `PROCESS_TABLE.get(pid)` 会对同一进程表 Mutex 重入加锁 — 该 Mutex
-/// 并非真递归 (`raw_lock` 无 owner 重入检测), 持锁回调内重入 → 无限自旋死锁.
-/// 影响面: `kill(0/-1/-pgid, sig)` syscall (dispatch.rs) 与 session 前台组广播
-/// (functions/proc/session.rs) 在生产环境同样会死锁; 由 `kernel_test` 扩容后首次暴露.
-fn do_signal_send_process(proc: &super::process::Process, sig: u8) -> Result<(), i32> {
-    // I-52: 显式跳过 Zombie (与 do_signal_send 对齐)
-    let state = proc.state.load(Ordering::Acquire);
-    if state == ProcessState::Zombie as u32 {
+/// # Returns
+/// - `Ok(1)`: 组内至少有一个存活成员 (已投递, 或按上述规则挂起/忽略);
+/// - `Err(-2)`: 目标线程组不存在;
+/// - `Err(-3)`: 组内所有成员均已退出 (Zombie/Terminated).
+///
+/// # Errors
+/// 同 `Returns`; 另外 `sig` 不在 `1..=63` 时返回 `Err(-1)`.
+pub fn do_signal_send_group(tgid: Pid, sig: u8) -> Result<usize, i32> {
+    if sig == 0 {
+        return if PROCESS_TABLE.get(tgid).is_some() {
+            Ok(1)
+        } else {
+            Err(-2)
+        };
+    }
+    if !(1..=63).contains(&sig) {
+        return Err(-1);
+    }
+    let Some(group) = PROCESS_TABLE.with_process(tgid, |p| alloc::sync::Arc::clone(p.group()))
+    else {
+        return Err(-2);
+    };
+    let members = group.members();
+    if members.is_empty() {
         return Err(-3);
     }
-    proc.signal_pending_set(u32::from(sig));
-    if state == ProcessState::Blocked as u32 {
-        proc.state
-            .store(ProcessState::Ready as u32, Ordering::Release);
+    let bit = 1u64 << u64::from(sig);
+    let uncatchable = is_uncatchable(sig);
+    // 组内择线程结果: 0 = 已退出成员, 1 = 直接投递, 2 = 显式忽略,
+    // 3 = 被屏蔽 (可挂起候选).
+    let mut blocked_candidate: Option<Pid> = None;
+    let mut saw_live = false;
+    for tid in members {
+        let pick = PROCESS_TABLE.with_process(tid, |proc| {
+            let state = proc.get_state();
+            if state == ProcessState::Zombie || state == ProcessState::Terminated {
+                return 0u8;
+            }
+            if uncatchable {
+                return 1u8;
+            }
+            let ignored = proc.sigaction_table.lock()[(sig - 1) as usize] == SIG_IGN;
+            if ignored {
+                2u8
+            } else if proc.blocked_mask.load(Ordering::Acquire) & bit != 0 {
+                3u8
+            } else {
+                1u8
+            }
+        });
+        match pick {
+            Some(1) => {
+                let _ = PROCESS_TABLE.with_process(tid, |proc| {
+                    proc.signal_pending_set(u32::from(sig));
+                });
+                // 已唤醒/已运行的判定与入队由调度器统一收口 (Blocked 才搬运).
+                super::scheduler::Scheduler::unblock(tid);
+                return Ok(1);
+            }
+            Some(2) => saw_live = true,
+            Some(3) => {
+                saw_live = true;
+                if blocked_candidate.is_none() {
+                    blocked_candidate = Some(tid);
+                }
+            }
+            _ => {}
+        }
     }
-    Ok(())
+    if !saw_live {
+        return Err(-3);
+    }
+    if let Some(tid) = blocked_candidate {
+        // 全体存活成员都屏蔽该信号: 挂起到首个未忽略者, 不唤醒 (POSIX 要求
+        // 信号在解除屏蔽后才可见).
+        let _ = PROCESS_TABLE.with_process(tid, |proc| {
+            proc.signal_pending_set(u32::from(sig));
+        });
+    }
+    Ok(1)
+}
+
+/// 进程表锁内快照匹配进程的线程组 tgid (去重), 供锁外逐组投递.
+///
+/// G-11: `for_each` 回调已持进程表锁, 回调内不得调用会再次 `with_process`
+/// 的投递函数 (非递归锁 → 自旋死锁); 因此只收集 tgid, 投递在锁外进行.
+/// 按 tgid 去重保证组内线程只被信号命中一次, 而非每个 TCB 各投一次.
+fn collect_matching_tgids(
+    mut matches: impl FnMut(&super::process::Process) -> bool,
+) -> alloc::vec::Vec<Pid> {
+    let mut tgids: alloc::vec::Vec<Pid> = alloc::vec::Vec::new();
+    PROCESS_TABLE.for_each(|proc| {
+        if matches(proc) {
+            let tgid = proc.thread_group.tgid();
+            if !tgids.contains(&tgid) {
+                tgids.push(tgid);
+            }
+        }
+        true
+    });
+    tgids
+}
+
+/// 对快照出的线程组逐个投递; 至少一组存活时返回命中的组数.
+fn deliver_to_groups(tgids: &[Pid], sig: u8) -> Result<usize, i32> {
+    let mut count = 0usize;
+    for &tgid in tgids {
+        // 快照与投递之间组可能消失 (-2) 或全员退出 (-3); 跳过, 不影响其他组.
+        if do_signal_send_group(tgid, sig).is_ok() {
+            count += 1;
+        }
+    }
+    if count > 0 { Ok(count) } else { Err(-2) }
 }
 
 // ============================================================================
@@ -483,25 +543,28 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
         SignalDefaultAction::Core => {
             // 生成 core dump (策略实现在 functions, 经 CoredumpSink 注入)
             super::coredump_trait::current_coredump_sink().coredump(pid, sig, frame_addr);
-            if let Some(proc_ptr) = PROCESS_TABLE.get(pid) {
-                // SAFETY: `proc_ptr` 由调用方保证为有效指针; 只读访问
-                let proc = unsafe { &*proc_ptr };
-                proc.exit_code
-                    .store(u32::from(sig) << 8 | 0x7f, Ordering::Release);
-                proc.state
-                    .store(ProcessState::Zombie as u32, Ordering::Release);
-            }
+            terminate_from_fatal_signal(pid, sig);
         }
-        SignalDefaultAction::Term => {
-            if let Some(proc_ptr) = PROCESS_TABLE.get(pid) {
-                // SAFETY: `proc_ptr` 由调用方保证为有效指针; 只读访问
-                let proc = unsafe { &*proc_ptr };
-                proc.exit_code
-                    .store(u32::from(sig) << 8 | 0x7f, Ordering::Release);
-                proc.state
-                    .store(ProcessState::Zombie as u32, Ordering::Release);
-            }
-        }
+        SignalDefaultAction::Term => terminate_from_fatal_signal(pid, sig),
+    }
+}
+
+/// 致命信号的终止路径: 默认动作 `Term`/`Core` 统一进入调度器退出流程.
+///
+/// K-06 修正: 旧实现只把当前 TCB 置 `Zombie` 后从信号投递路径返回用户态,
+/// 僵尸线程会继续执行用户代码. 组定向语义下默认动作终止整个线程组;
+/// 例外是 `exec` `de_thread` 期间兄弟线程收到的 `SIGKILL` — 只结束该线程,
+/// 否则会把正在执行 exec 的调用线程一并带走.
+fn terminate_from_fatal_signal(pid: Pid, sig: u8) {
+    // 与 Linux 的用户可见形态一致: 信号致死的退出码为 128 + signum.
+    let code = u32::from(sig) << 8 | 0x7f;
+    let exec_de_thread = PROCESS_TABLE
+        .with_process(pid, |proc| proc.group().exec_de_thread())
+        .unwrap_or(false);
+    if exec_de_thread {
+        crate::privileged::proc::process_exit(code);
+    } else {
+        crate::privileged::proc::process_exit_group(code);
     }
 }
 

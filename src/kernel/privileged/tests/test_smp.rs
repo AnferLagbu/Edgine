@@ -192,17 +192,17 @@ fn test_kernel_pml4_stable() -> TestResult {
     TestResult::Pass
 }
 
-fn test_user_proc_manager_destroy_no_kstack() -> TestResult {
+fn test_user_proc_manager_destroy_missing_pid() -> TestResult {
     use crate::privileged::proc::user_proc::USER_PROC_MANAGER;
 
-    // 2026-07-02 分析: 本测试验证 USER_PROC_MANAGER.destroy_by_pid_no_kstack() 的
-    // 基本契约 — 对不存在的 PID 调用应无副作用 (不 panic).
+    // 本测试验证 USER_PROC_MANAGER.destroy_by_pid() 的基本契约 — 对不存在的 PID
+    // 调用应无副作用 (不 panic).
     //
     // 无法测试真实用户进程销毁路径 (需要完整调度器 + 页表 + 内核栈上下文),
     // 该路径由 host-tests 集成测试覆盖. kernel_test 模式下仅验证 API 可安全调用.
     //
     // 使用 PID = 99999 (确保不存在), 验证函数正常返回 (不 panic).
-    USER_PROC_MANAGER.destroy_by_pid_no_kstack(99999);
+    USER_PROC_MANAGER.destroy_by_pid(99999);
     TestResult::Pass
 }
 
@@ -310,7 +310,7 @@ pub fn register_smp_tests() {
         "proc_exit": {
             "kernel_pml4_exists": test_kernel_pml4_exists,
             "kernel_pml4_stable": test_kernel_pml4_stable,
-            "destroy_no_kstack": test_user_proc_manager_destroy_no_kstack,
+            "destroy_missing_pid": test_user_proc_manager_destroy_missing_pid,
         },
         "softirq": {
             "vec_enum_values": test_softirq_vec_enum_values,

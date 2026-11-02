@@ -20,9 +20,6 @@
 //! - pid == -1: 等待任意子进程 (POSIX `wait()`)
 //! - pid < -1: 等待进程组 |pid| 内的任意子进程
 
-use core::sync::atomic::Ordering;
-
-use crate::privileged::proc::ProcessState;
 use crate::privileged::proc::api;
 use crate::privileged::syscall::Errno;
 
@@ -66,94 +63,88 @@ pub enum WaitOutcome {
 ///
 /// `non_blocking`: true 时子进程未退出立即返回 `Running`.
 /// `keep_zombie`: true 时读取退出码后保留子进程 Zombie 状态 (WNOWAIT 语义).
+#[must_use]
 pub fn wait_reap(target_pid: i32, non_blocking: bool, keep_zombie: bool) -> WaitOutcome {
     let current_pid = api::process_get_current_pid();
     if current_pid == 0 {
         return WaitOutcome::NoChild;
     }
 
-    let Some(child_pid) = find_waitable_child(current_pid, target_pid) else {
+    let Some(child_tgid) = find_waitable_child(current_pid, target_pid) else {
         return WaitOutcome::NoChild;
     };
 
-    let state = api::process_with(
-        child_pid,
-        crate::privileged::proc::process::Process::get_state,
-    )
-    .unwrap_or(ProcessState::Terminated);
-
-    if state != ProcessState::Zombie {
+    // K-06: 收割单位是线程组 — 就绪条件 = 组已整体退出且全部 TCB 落 Zombie.
+    // 组长 TCB 在整组被收割前始终留在表中, 其存在性即"子组仍可等待".
+    loop {
+        let exit_code = api::process_group_exit_code(child_tgid);
+        if exit_code >= 0 {
+            return reap_group(
+                child_tgid,
+                crate::functions::intcast::low_u32_from_i64(exit_code),
+                keep_zombie,
+            );
+        }
+        if api::process_with(child_tgid, |p| p.group().tgid()).is_none() {
+            // 组已被并发等待者抢先回收: 对本调用而言已无匹配子进程.
+            return WaitOutcome::NoChild;
+        }
         if non_blocking {
             return WaitOutcome::Running;
         }
         // SIMPLIFIED: 阻塞等待用轮询 + scheduler_yield, 无专用等待队列/唤醒；
         // 影响面: 忙轮询带来额外调度开销, 无法精确唤醒; 何时需扩展: 引入进程级
         // wait_queue 后改为事件驱动唤醒.
-        loop {
-            let state = api::process_with(
-                child_pid,
-                crate::privileged::proc::process::Process::get_state,
-            )
-            .unwrap_or(ProcessState::Terminated);
-            if state == ProcessState::Zombie {
-                return reap_zombie(child_pid, keep_zombie);
-            }
-            crate::privileged::proc::scheduler_yield();
-        }
+        crate::privileged::proc::scheduler_yield();
     }
-
-    reap_zombie(child_pid, keep_zombie)
 }
 
-/// 收割 Zombie 子进程: 读取退出码, 按 `keep_zombie` 决定是否释放 PCB
-fn reap_zombie(child_pid: u32, keep_zombie: bool) -> WaitOutcome {
-    let exit_code =
-        api::process_with(child_pid, |p| p.exit_code.load(Ordering::SeqCst)).unwrap_or(0);
-    if !keep_zombie {
-        api::process_remove_and_free(child_pid);
+/// 收割已就绪的线程组: 按 `keep_zombie` 决定是否释放组内全部僵尸 TCB.
+fn reap_group(child_tgid: u32, exit_code: u32, keep_zombie: bool) -> WaitOutcome {
+    if !keep_zombie && !api::process_reap_group(child_tgid) {
+        // 认领 CAS 失败 = 另一等待者已完成回收 (多线程 wait4 同一子组).
+        return WaitOutcome::NoChild;
     }
     WaitOutcome::Reaped(WaitInfo {
-        pid: child_pid,
+        pid: child_tgid,
         exit_code,
     })
 }
 
-/// 查找可等待的子进程
+/// 查找可等待的子线程组
 ///
-/// 根据 pid 参数匹配, 返回 PID 或 None.
+/// 根据 pid 参数匹配子组 tgid, 返回 tgid 或 None。子进程账挂在线程组上,
+/// 组内任一线程调用 wait4 看到同一份账; 非组长 TID 不是可等待对象.
 fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
-    // K-04: 子进程账挂在线程组上, 组内任一线程调用 wait4 看到同一份账.
-    let children = api::process_with(parent_pid, |p| p.group().children()).unwrap_or_default();
+    let (children, caller_pgid) =
+        api::process_with(parent_pid, |p| (p.group().children(), p.group().pgid()))
+            .unwrap_or_default();
 
-    for &child_pid in &children {
-        let state = api::process_with(
-            child_pid,
-            crate::privileged::proc::process::Process::get_state,
-        )
-        .unwrap_or(ProcessState::Terminated);
-
-        // 只匹配未结束的子进程 (或 Zombie 用于收割)
-        if state == ProcessState::Terminated {
+    for &child_tgid in &children {
+        // 已被并发等待者回收的组不再可等待.
+        if api::process_with(child_tgid, |p| p.group().tgid()).is_none() {
             continue;
         }
 
         // pid 匹配规则
         if target_pid == -1 {
-            return Some(child_pid);
+            return Some(child_tgid);
         } else if target_pid > 0 {
-            if child_pid == target_pid.cast_unsigned() {
-                return Some(child_pid);
+            if child_tgid == target_pid.cast_unsigned() {
+                return Some(child_tgid);
             }
         } else if target_pid == 0 {
-            // 同进程组 (SIMPLIFIED: 简化为总是匹配; 影响面: 不同进程组子进程也会被
-            // 纳入; 何时需扩展: 引入 pgid 相等判定)
-            return Some(child_pid);
+            // 同进程组: 与调用线程组 pgid 相等
+            let pgid = api::process_with(child_tgid, |p| p.group().pgid()).unwrap_or(0);
+            if pgid == caller_pgid {
+                return Some(child_tgid);
+            }
         } else {
             // target_pid < -1: 进程组 ID = |target_pid|
             let want_pgid = target_pid.unsigned_abs();
-            let pgid = api::process_with(child_pid, |p| p.group().pgid()).unwrap_or(0);
+            let pgid = api::process_with(child_tgid, |p| p.group().pgid()).unwrap_or(0);
             if pgid == want_pgid {
-                return Some(child_pid);
+                return Some(child_tgid);
             }
         }
     }

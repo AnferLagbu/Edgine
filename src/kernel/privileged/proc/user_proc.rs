@@ -107,9 +107,10 @@ pub struct UserProcInfo {
 pub(crate) mod raw {
     use super::{
         AtomicU32, AtomicU64, KERNEL_BASE, NonNull, Ordering, PAGE_SIZE, PageFlags, Process,
-        ProcessId, ProcessState, UserProcess, kmalloc, memcpy, memset, pmm_alloc_page_phys,
-        pmm_alloc_pages_phys, raw, vmm_create_user_page_table, vmm_destroy_page_table,
-        vmm_ensure_path_user, vmm_get_physical_in_table, vmm_map_page, vmm_map_page_in_table,
+        ProcessId, ProcessState, USER_KSTACK_SIZE, UserProcess, kmalloc, memcpy, memset,
+        pmm_alloc_page_phys, pmm_alloc_pages_phys, raw, vmm_create_user_page_table,
+        vmm_destroy_page_table, vmm_ensure_path_user, vmm_get_physical_in_table, vmm_map_page,
+        vmm_map_page_in_table,
     };
 
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
@@ -336,19 +337,11 @@ pub(crate) mod raw {
     /// 分配多页连续物理页。
     ///
     /// # Safety (内部)
-    /// - 调用方负责通过 `free_phys_pages` 释放。
+    /// - 调用方负责归还; 内核栈页由权威 `Process` 的 `Drop` 统一释放。
     #[track_caller]
     pub fn alloc_phys_pages(count: u64) -> *mut u8 {
         pmm_alloc_pages_phys(usize::try_from(count).unwrap_or(usize::MAX))
             .map_or(core::ptr::null_mut(), |addr| addr.0 as *mut u8)
-    }
-
-    /// 释放多页连续物理页。
-    #[track_caller]
-    pub fn free_phys_pages(pages: *mut u8, count: u64) {
-        for i in 0..count {
-            raw::free_phys_page((pages as u64 + i * PAGE_SIZE) as *mut u8);
-        }
     }
 
     /// 分配一页物理页。
@@ -614,6 +607,14 @@ pub(crate) mod raw {
             );
             core::ptr::write(&raw mut (*kproc_ptr).cr3, AtomicU64::new(cr3));
             core::ptr::write(&raw mut (*kproc_ptr).kernel_stack, AtomicU64::new(kstack));
+            // 本路径的内核栈由 `create` 按 USER_KSTACK_SIZE 分配, 释放页数必须
+            // 与之同源, 否则 `Process::drop` 会按错误尺寸归还连续页.
+            core::ptr::write(
+                &raw mut (*kproc_ptr).kstack_pages,
+                AtomicU32::new(crate::privileged::glue::low_u32_from_usize(
+                    crate::privileged::glue::usize_from_u64(USER_KSTACK_SIZE / PAGE_SIZE),
+                )),
+            );
             core::ptr::write(&raw mut (*kproc_ptr).user_stack, AtomicU64::new(ustack));
         }
     }
@@ -736,7 +737,7 @@ impl UserProcManager {
     /// 初始化占位 (`const` 构造已完成全部初始化, 此处无额外动作)
     pub fn init() {}
 
-    fn destroy(&self, proc: NonNull<UserProcess>, keep_kstack: bool) {
+    fn destroy(&self, proc: NonNull<UserProcess>) {
         // SAFETY: proc 是 NonNull<UserProcess>, 由 kmalloc 分配并插入
         // BTreeMap, 在 destroy 前始终有效.
         let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
@@ -767,14 +768,8 @@ impl UserProcManager {
         {
             raw::destroy_user_page_table(cr3);
         }
-        if !keep_kstack {
-            let kstack = proc_ref.load_kernel_stack();
-            if kstack != 0 {
-                let kstack_base_virt = kstack - USER_KSTACK_SIZE;
-                let kstack_base_phys = kstack_base_virt - KERNEL_BASE;
-                raw::free_phys_pages(kstack_base_phys as *mut u8, USER_KSTACK_SIZE / PAGE_SIZE);
-            }
-        }
+        // K-06: 内核栈不在此处释放 — 所有权归权威 `Process`, 由其 `Drop` 按
+        // 分配时记录的页数单点归还 (线程 TCB 没有镜像, 镜像路径无法覆盖).
         let pid = proc_ref.pid();
         self.processes.lock().remove(&pid);
     }
@@ -832,21 +827,7 @@ impl UserProcManager {
             let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
             // 仅销毁非运行状态的进程 (Zombie/Terminated)
             if !proc_ref.is_running() {
-                self.destroy(proc, false);
-            }
-        }
-    }
-
-    /// 销毁指定 pid 已退出的进程并保留内核栈 (fork 失败回滚路径)
-    pub fn destroy_by_pid_no_kstack(&self, pid: u32) {
-        // 同 destroy_by_pid: 取句柄与 destroy 的锁必须分离, 避免同锁自锁死.
-        let proc = self.processes.lock().get(&pid).copied();
-        if let Some(proc) = proc {
-            // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
-            let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
-            // 仅销毁已退出的进程
-            if proc_ref.is_exited() {
-                self.destroy(proc, true);
+                self.destroy(proc);
             }
         }
     }
@@ -856,6 +837,12 @@ impl UserProcManager {
     /// 销毁旧页表 (旧用户栈页作为 USER leaf 由其单源归还), 然后将
     /// `CR3/entry/user_stack/stack_bottom` 更新为新值. 不移除 `BTreeMap` 条目,
     /// 不释放内核栈, 不改变 PID — 保持 POSIX execve 语义 (PID 不变).
+    ///
+    /// K-06: 调用线程可能没有镜像 (`CLONE_THREAD` 线程不建 `UserProcess`),
+    /// 此时先按权威 `Process` 补建镜像再替换 —— 否则替换被静默跳过, 旧地址
+    /// 空间照用且新映像泄漏, 随后的 `enter` 也找不到入口. 返回 `false` 表示
+    /// 进程不在表中或镜像补建失败 (调用方保留原映像并回滚临时进程).
+    #[must_use]
     pub fn replace_user_space(
         &self,
         pid: u32,
@@ -863,9 +850,34 @@ impl UserProcManager {
         new_entry: u64,
         new_user_stack: u64,
         new_stack_bottom: u64,
-    ) {
-        let Some(proc) = self.processes.lock().get(&pid).copied() else {
-            return;
+    ) -> bool {
+        let Some(kproc) = PROCESS_TABLE.get(pid) else {
+            return false;
+        };
+        // SAFETY: PROCESS_TABLE.get 只返回有效条目的非空指针.
+        let kproc_nn = unsafe { NonNull::new_unchecked(kproc) };
+
+        // 取句柄与补建分成独立语句: 锁守卫随本语句结束释放, 补建分支内再次
+        // 取同一把锁不会自锁死 (`if let` 直接把 `lock()` 写在 scrutinee 中的
+        // 写法依赖 edition 2024 的临时量丢弃顺序, 这里不押注该细节).
+        let existing = self.processes.lock().get(&pid).copied();
+        let proc = if let Some(proc) = existing {
+            proc
+        } else {
+            // 镜像的 pid/pwm/cr3/kernel_stack/state 均委托权威 Process,
+            // 这里只初始化镜像独占字段; 分配失败按 fail-closed 返回.
+            let Some(proc_ptr) = raw::alloc_user_process(kproc_nn) else {
+                return false;
+            };
+            // SAFETY: alloc_user_process 仅在分配成功时返回非空指针.
+            let proc_nn = unsafe { NonNull::new_unchecked(proc_ptr) };
+            let adopted = raw::new_proc_ref(proc_ptr);
+            adopted.set_entry(new_entry);
+            adopted.store_user_stack(new_user_stack);
+            adopted.store_stack_bottom(new_stack_bottom);
+            adopted.set_create_time(crate::privileged::timer::get_ticks());
+            self.processes.lock().insert(pid, proc_nn);
+            proc_nn
         };
         // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc.as_ptr()) };
@@ -887,6 +899,7 @@ impl UserProcManager {
         proc_ref.set_entry(new_entry);
         proc_ref.store_user_stack(new_user_stack);
         proc_ref.store_stack_bottom(new_stack_bottom);
+        true
     }
 
     /// 从管理器中移除进程索引但不释放任何资源.
@@ -2046,10 +2059,18 @@ pub extern "C" fn proc_alloc_pid() -> u32 {
 
 /// 克隆父进程的 `UserProcess` 给子进程（供 `sys_fork` 使用）
 /// 子进程的 CR3 和内核栈已在 `sys_fork` 中分配好，此处仅创建 `UserProcess` 记录
+///
+/// K-06: 父进程是 `CLONE_THREAD` 线程时自身没有镜像; fork 的子进程与父线程
+/// 共享同一用户映像, 故以同组组长的镜像为继承源 (组长 TCB 在整组收割前始终
+/// 留在进程表中, 镜像与之同寿命). 两处都取不到时返回 -1, 由调用方 fail-closed.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn user_proc_clone(parent_pid: u32, child_pid: u32) -> i32 {
-    let Some(parent_proc) = USER_PROC_MANAGER.get(parent_pid) else {
+    let parent_proc = USER_PROC_MANAGER.get(parent_pid).or_else(|| {
+        let tgid = PROCESS_TABLE.with_process(parent_pid, |p| p.group().tgid())?;
+        USER_PROC_MANAGER.get(tgid)
+    });
+    let Some(parent_proc) = parent_proc else {
         return -1;
     };
 

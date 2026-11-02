@@ -162,7 +162,7 @@ fn thread_registration_joins_group_before_insert_and_rolls_back() {
     let src = code_only(&read_src(CLONE_SRC));
     let body = fn_body(&src, "fn vm_child_register");
 
-    let join_at = index_of(&body, "child.join_thread_group(group);");
+    let join_at = index_of(&body, "if !child.join_thread_group(group) {");
     let insert_at = index_of(&body, "api::process_insert(");
     assert!(
         join_at < insert_at,
@@ -202,7 +202,10 @@ fn join_thread_group_shares_identity_and_registers_member() {
     let group = Arc::clone(leader.group());
     assert!(!Arc::ptr_eq(thread.group(), &group), "入组前线程自建独立组");
 
-    thread.join_thread_group(Arc::clone(&group));
+    assert!(
+        thread.join_thread_group(Arc::clone(&group)),
+        "K-02/K-06: 非 exec de_thread 状态下入组必须成功"
+    );
 
     assert_eq!(thread.tgid(), 0x4C01, "线程 tgid 必须取目标组组长");
     assert!(Arc::ptr_eq(thread.group(), &group), "线程必须共享组 Arc");

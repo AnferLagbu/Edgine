@@ -5,7 +5,7 @@ use super::scheduler::SchedPolicy;
 use super::thread_group::ThreadGroup;
 use super::types::{
     BlockReason, KERNEL_STACK_SIZE, MAX_PROCESSES, Pid, ProcessContext, ProcessFlags, ProcessId,
-    ProcessPriority, ProcessState,
+    ProcessPriority, ProcessState, USER_KSTACK_SIZE,
 };
 use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE, USER_ADDR_FLOOR};
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -179,6 +179,12 @@ pub struct Process {
     pub cr3: AtomicU64,
     /// 内核栈顶高半区虚拟地址; 0 表示未分配.
     pub kernel_stack: AtomicU64,
+    /// 内核栈占用页数; 0 表示未分配. 分配时写入, `Process::drop` 据此归还.
+    ///
+    /// 用户 TCB 用 `USER_KSTACK_SIZE` (16 KiB), 内核线程 (idle) 用
+    /// `KERNEL_STACK_SIZE` (64 KiB); 两条分配路径的尺寸不同, 释放必须以
+    /// 分配时记录的页数为准.
+    pub kstack_pages: AtomicU32,
     /// 用户栈顶虚拟地址 (fork/exec 初始化时使用).
     pub user_stack: AtomicU64,
 
@@ -435,6 +441,7 @@ impl Process {
             context: Mutex::new(ProcessContext::new()),
             cr3: AtomicU64::new(0),
             kernel_stack: AtomicU64::new(0),
+            kstack_pages: AtomicU32::new(0),
             user_stack: AtomicU64::new(0),
             exit_code: AtomicU32::new(0),
             cpu_time: AtomicU64::new(0),
@@ -503,19 +510,37 @@ impl Process {
     }
 
     /// 从物理页分配器取一段内核栈并写入栈顶 canary; 分配失败返回 false.
+    ///
+    /// 内核线程 (idle) 路径, 栈尺寸为 `KERNEL_STACK_SIZE`.
     pub fn allocate_kernel_stack(&self) -> bool {
+        self.allocate_kernel_stack_sized(KERNEL_STACK_SIZE)
+    }
+
+    /// 为用户 TCB (fork / clone 产物) 分配内核栈, 尺寸为 `USER_KSTACK_SIZE`.
+    ///
+    /// 用户 TCB 的栈尺寸必须与 `UserProcManager::create` 的创建路径一致 ——
+    /// 后者按 `USER_KSTACK_SIZE` 分配, 而 fork/clone 的内核栈复制也以该尺寸为准.
+    pub fn allocate_user_kernel_stack(&self) -> bool {
+        self.allocate_kernel_stack_sized(crate::privileged::glue::usize_from_u64(USER_KSTACK_SIZE))
+    }
+
+    /// 按给定字节数分配内核栈; 记录页数供 [`Drop`] 单点归还.
+    fn allocate_kernel_stack_sized(&self, size: usize) -> bool {
+        let pages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe {
-            let stack = pmm_alloc_pages(
-                (KERNEL_STACK_SIZE / crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64,
-            );
+            let stack = pmm_alloc_pages(pages as u64);
             if stack.is_null() {
                 return false;
             }
             // 将物理地址转换为高半段虚拟地址, 以便在用户页表加载时
             // 仍能访问 TSS RSP0.
-            let stack_top = stack as u64 + KERNEL_BASE + KERNEL_STACK_SIZE as u64;
+            let stack_top = stack as u64 + KERNEL_BASE + size as u64;
             self.kernel_stack.store(stack_top, Ordering::SeqCst);
+            self.kstack_pages.store(
+                crate::privileged::glue::low_u32_from_usize(pages),
+                Ordering::SeqCst,
+            );
             kernel_stack_write_canary(stack_top);
             true
         }
@@ -680,10 +705,16 @@ impl Process {
     /// 加入既有线程组 (K-02): 登记本 TCB 为成员并共享组身份.
     ///
     /// 替换 `Process::new` 自建的单线程组; 该新 TCB 的 `pid` 即组内 TID,
-    /// `tgid` 取自目标组的组长.
-    pub fn join_thread_group(&mut self, group: Arc<ThreadGroup>) {
-        group.join(self.pid.0);
+    /// `tgid` 取自目标组的组长. 返回 `false` 表示该组正在 `exec` `de_thread`
+    /// 或已发起组退出 (`exit_group` / 致命信号), 本 TCB 未入组
+    /// (调用方须回滚, 不得继续登记进程表).
+    #[must_use]
+    pub fn join_thread_group(&mut self, group: Arc<ThreadGroup>) -> bool {
+        if !group.join(self.pid.0) {
+            return false;
+        }
         self.thread_group = group;
+        true
     }
 
     // ========================================================================
@@ -838,6 +869,18 @@ impl Drop for Process {
                     vmm_destroy_page_table(cr3);
                 }
             }
+        }
+        // K-06: 内核栈所有权单点归还. 用户 TCB (`USER_KSTACK_SIZE`) 与内核线程
+        // (`KERNEL_STACK_SIZE`) 尺寸不同, 释放页数取分配时记录值, 不能按固定
+        // 常量推断 —— 线程 TCB 没有 `UserProcess` 镜像, 此处是唯一的归还点.
+        let kstack = self.kernel_stack.load(Ordering::SeqCst);
+        let pages = self.kstack_pages.load(Ordering::Acquire);
+        if kstack != 0 && pages != 0 {
+            let base_phys = kstack - u64::from(pages) * PAGE_SIZE - KERNEL_BASE;
+            crate::privileged::mm::pmm_free_pages_phys(
+                crate::privileged::mm::PhysAddr(base_phys),
+                crate::privileged::glue::usize_from_u64(u64::from(pages)),
+            );
         }
     }
 }
@@ -1050,6 +1093,69 @@ impl ProcessTable {
                 self.free_pid(pid);
             }
         }
+    }
+
+    /// 返回线程组已整体退出且全部 TCB 均已落 Zombie 时的组退出码.
+    ///
+    /// `None` 表示尚不可收割: 组未退出、组长 TCB 已不在表中, 或仍有成员处于
+    /// 退出途中 (未落 Zombie). 复用于 `wait4`/`waitid` 的就绪判定与周期回收.
+    #[must_use]
+    pub fn group_zombie_exit_code(&self, tgid: Pid) -> Option<u32> {
+        let group = self.with_process(tgid, |p| Arc::clone(p.group()))?;
+        if !group.has_exited() {
+            return None;
+        }
+        let mut all_zombie = true;
+        self.for_each(|p| {
+            if p.thread_group.tgid() == tgid && p.get_state() != ProcessState::Zombie {
+                all_zombie = false;
+                return false;
+            }
+            true
+        });
+        all_zombie.then(|| group.exit_code())
+    }
+
+    /// 收割一个已整体退出的线程组: 回收其全部僵尸 TCB 与 TID.
+    ///
+    /// 返回 `false` 表示本次未回收 (组未退出 / 仍有成员退出途中 / 已被其他
+    /// 等待者认领). 只有认领成功者才执行 `remove_and_free` — 同一 TCB 被两方
+    /// 回收会重复递减引用计数并提前释放 PCB.
+    pub fn reap_zombie_group(&self, tgid: Pid) -> bool {
+        let Some(group) = self.with_process(tgid, |p| Arc::clone(p.group())) else {
+            return false;
+        };
+        if !group.has_exited() {
+            return false;
+        }
+        let mut tids: alloc::vec::Vec<Pid> = alloc::vec::Vec::new();
+        let mut all_zombie = true;
+        self.for_each(|p| {
+            if p.thread_group.tgid() == tgid {
+                if p.get_state() == ProcessState::Zombie {
+                    tids.push(p.pid.0);
+                } else {
+                    all_zombie = false;
+                }
+            }
+            true
+        });
+        if !all_zombie || tids.is_empty() || !group.claim_reap() {
+            return false;
+        }
+        // 先从父组子账摘除再释放 TCB: 释放后 tgid 可被复用, 迟到的摘除会误删
+        // 同值的"新"子组条目 (父组看到的账是 tgid 列表, 无代号可区分).
+        let parent = group.parent();
+        if parent != 0 {
+            let _ = self.with_process(parent, |p| p.group().remove_child(tgid));
+        }
+        for tid in tids {
+            self.with_process(tid, |p| {
+                let _ = p.set_state_safe(ProcessState::Terminated);
+            });
+            self.remove_and_free(tid);
+        }
+        true
     }
 
     /// 遍历所有进程 (回调返回 false 时提前终止)

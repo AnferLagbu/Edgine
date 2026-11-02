@@ -136,7 +136,10 @@ fn mutex_owner_is_tid_and_reentrant_only_for_same_tid() {
     let _leader = TableProc::insert_owned(leader);
 
     let mut thread = Process::new(b_pid, "k05-thread", None);
-    thread.join_thread_group(Arc::clone(&group));
+    assert!(
+        thread.join_thread_group(Arc::clone(&group)),
+        "K-06: 非 exec de_thread 状态下入组必须成功"
+    );
     let _thread = TableProc::insert_owned(thread);
 
     assert_eq!(

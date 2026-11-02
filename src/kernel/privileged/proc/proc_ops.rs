@@ -12,6 +12,8 @@
 
 use core::sync::atomic::Ordering;
 
+use alloc::sync::Arc;
+
 use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::{SCHEDULER, Scheduler};
 use super::types::{Pid, ProcessId, ProcessState};
@@ -420,10 +422,68 @@ pub extern "C" fn process_exit(exit_code: u32) {
             raw::switch_page_table(kernel_cr3);
         }
         // 用户地址空间的释放在 `SCHEDULER.exit` 内置 Zombie 之后执行 (见该处 D4 注)。
-        // 此处不可调用: 彼时 state 仍为 Running, `destroy_by_pid_no_kstack` 的
-        // is_exited() 守卫不满足, 会空转返回并使页表永不销毁。
+        // 此处不可调用: 彼时 state 仍为 Running, `destroy_by_pid` 的
+        // is_running() 守卫会空转返回并使页表永不销毁。
     }
     SCHEDULER.exit(exit_code);
+}
+
+/// 终止整个线程组: 登记组退出码, 强制其余线程退出, 再让当前线程退出.
+///
+/// `exit_group(2)` 与致命信号默认动作的统一入口. 兄弟线程收到不可屏蔽的
+/// `SIGKILL` 后在返回用户态前走组退出路径; 正在睡眠的线程由 `Scheduler::unblock`
+/// 重新入队. 首个 `request_exit` 的退出码是组内全部 TCB 最终 `exit_code` 的权威值.
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+#[unsafe(no_mangle)]
+pub extern "C" fn process_exit_group(exit_code: u32) {
+    let current_pid = Scheduler::current().unwrap_or(0);
+    if current_pid == 0 {
+        return;
+    }
+    // 退出请求在进程表锁内发布: `Scheduler::exit` 与 `yield_current` 读取
+    // (`exit_requested` + `requested_exit_code`) 同样持该锁, 成对读取不会看到
+    // "标志已置、码未写"的中间态; `request_exit` 内部再取成员表锁, 与并发
+    // `clone` 入组互斥 (入组者要么进本快照, 要么被 `join` 拒绝).
+    let Some(group) = PROCESS_TABLE.with_process(current_pid, |p| {
+        let group = Arc::clone(p.group());
+        group.request_exit(exit_code);
+        group
+    }) else {
+        return;
+    };
+
+    for tid in group.members() {
+        if tid == current_pid {
+            continue;
+        }
+        // 仅置 pending 不直接改状态: 目标若在核上运行, 由其中断/系统调用返回路径
+        // 投递; 若在睡眠, 由 `unblock` 按调度策略搬回运行队列.
+        let _ = PROCESS_TABLE.with_process(tid, |p| {
+            p.signal_pending_set(u32::from(super::signal::SIGKILL));
+        });
+        Scheduler::unblock(tid);
+    }
+
+    process_exit(exit_code);
+}
+
+/// 子线程组已整体退出且全部 TCB 落 Zombie 时返回组退出码, 否则 `-1`.
+///
+/// 返回 `i64` 而非 `Option<u32>`: 本函数是 `extern "C"` 导出点, `Option<u32>`
+/// 无 FFI 表示; `-1` 在合法退出码空间 (0..=255) 之外, 不构成歧义.
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+#[unsafe(no_mangle)]
+pub extern "C" fn process_group_exit_code(tgid: Pid) -> i64 {
+    PROCESS_TABLE
+        .group_zombie_exit_code(tgid)
+        .map_or(-1, i64::from)
+}
+
+/// 收割已整体退出的线程组 (全部僵尸 TCB); 返回是否由本次调用完成回收.
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+#[unsafe(no_mangle)]
+pub extern "C" fn process_reap_group(tgid: Pid) -> bool {
+    PROCESS_TABLE.reap_zombie_group(tgid)
 }
 
 /// 阻塞当前进程 (用于 futex wait / 等待 I/O 等)
@@ -455,6 +515,89 @@ pub extern "C" fn process_unblock(pid: u32) {
 // ============================================================================
 // 进程创建内部实现
 // ============================================================================
+
+/// exec 前结束同组其余线程 (`de_thread`), 使调用线程成为组内唯一存活者.
+///
+/// 流程: 在同一锁域内置组 `exec_de_thread` 标记并取成员快照 (此后 `clone`
+/// 入组一律被拒) → 对每个兄弟线程登记 SIGKILL 并唤醒 → 等待全部落 Zombie →
+/// 回收非组长 TCB. 组长 TCB 若不是调用线程则保留为僵尸锚点: `tgid` 仍可经
+/// 进程表解析 (`getpid` / `kill` / `wait4` 均按 tgid 定位组), 直到调用线程
+/// 退出后整组由父进程收割.
+///
+/// 返回 `false` 表示调用线程已不在进程表中 (调用方回滚临时新进程).
+///
+/// 标记必须先于 SIGKILL 置位: 兄弟线程的致命信号处理据此走单线程退出
+/// (`terminate_from_fatal_signal`), 否则会触发组退出并终止正在 exec 的调用方.
+fn exec_de_thread(caller: Pid) -> bool {
+    let Some(group) = PROCESS_TABLE.with_process(caller, |p| Arc::clone(p.group())) else {
+        return false;
+    };
+    let tgid = group.tgid();
+    // 标记与快照同一锁域完成: 快照之后的新入组会被 `join` 拒绝 (EAGAIN),
+    // 不会留下仍运行旧映像的幽灵线程.
+    let members = group.begin_exec_de_thread_snapshot();
+    if members.len() <= 1 {
+        group.end_exec_de_thread();
+        return true;
+    }
+
+    for &tid in &members {
+        if tid == caller {
+            continue;
+        }
+        let _ = PROCESS_TABLE.with_process(tid, |p| {
+            p.signal_pending_set(u32::from(super::signal::SIGKILL));
+        });
+        Scheduler::unblock(tid);
+    }
+
+    // 等待兄弟线程自行退出 — TCB 只能由自身经调度器退出 (Scheme B). 轮询期间
+    // 每轮重发一次 SIGKILL 唤醒: 目标可能恰在"置 pending 之后、block 之前"完成
+    // 入睡, 单次 unblock 会落空 (Running 状态不投送). 内核内等待循环不经过信号
+    // 投递点, 由 `Scheduler::yield_current` 的致命信号检查保证最终退出.
+    loop {
+        let current_members = group.members();
+        let mut all_gone = true;
+        for &tid in &members {
+            if tid == caller {
+                continue;
+            }
+            let still_member = current_members.contains(&tid);
+            match PROCESS_TABLE.with_process(tid, Process::get_state) {
+                Some(ProcessState::Zombie | ProcessState::Terminated) => {}
+                // 已离开成员账且不在表中 = 入组失败/已被回滚; 无可回收对象.
+                None if !still_member => {}
+                Some(_) => {
+                    all_gone = false;
+                    // 仍在成员账才需要补发; 已离开者正在退出途中, 等它落 Zombie.
+                    if still_member {
+                        let _ = PROCESS_TABLE.with_process(tid, |p| {
+                            p.signal_pending_set(u32::from(super::signal::SIGKILL));
+                        });
+                        Scheduler::unblock(tid);
+                    }
+                }
+                // 已入组但尚未插入进程表 (clone 登记途中): 等它落表再终止.
+                None => all_gone = false,
+            }
+        }
+        if all_gone {
+            break;
+        }
+        Scheduler::yield_current();
+    }
+
+    // 回收非组长兄弟: 线程没有 `UserProcess` 镜像, `Process::drop` 按各自
+    // 登记的 cr3 持有计数归还引用并释放内核栈.
+    for &tid in &members {
+        if tid != caller && tid != tgid {
+            PROCESS_TABLE.remove_and_free(tid);
+        }
+    }
+
+    group.end_exec_de_thread();
+    true
+}
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
@@ -510,6 +653,15 @@ pub extern "C" fn proc_exec_replace(
         return -1;
     };
 
+    // 阶段 2b (K-06): 结束同组其余线程 — exec 后地址空间/身份归调用线程独有.
+    // 必须在换页表前完成: 兄弟线程仍在旧地址空间执行, 换表后它们会以旧上下文
+    // 落入新映像. 失败 (调用线程已不在表中) 时临时进程照常回滚.
+    if !exec_de_thread(current_pid) {
+        USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
+        PROCESS_TABLE.remove_and_free(new_pid_u32);
+        return -1;
+    }
+
     // 阶段 3: 切换到内核页表, 替换当前进程的用户地址空间
     let kernel_cr3 = get_kernel_pml4();
     if kernel_cr3 != 0 {
@@ -517,13 +669,19 @@ pub extern "C" fn proc_exec_replace(
         raw::switch_page_table(kernel_cr3);
     }
 
-    USER_PROC_MANAGER.replace_user_space(
+    // K-06: 调用线程可能没有镜像 (CLONE_THREAD 线程不建镜像); `replace_user_space`
+    // 会先补建镜像再替换, 补建失败时保持原映像 (临时新进程回滚).
+    if !USER_PROC_MANAGER.replace_user_space(
         current_pid,
         new_cr3,
         new_entry,
         new_user_stack,
         new_stack_bottom,
-    );
+    ) {
+        USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
+        PROCESS_TABLE.remove_and_free(new_pid_u32);
+        return -1;
+    }
 
     // 阶段 4: 移除临时新进程
     // G3 修复: 新地址空间已转移给当前进程 (所有权随 cr3 移动, 不重新计数),
@@ -550,13 +708,23 @@ pub extern "C" fn proc_exec_replace(
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
     //
-    // K-03: 先换新 Arc 再清零 —— exec 后动作表必须是本进程独有实例, 清零
-    // 不会波及潜在共享者 (当前多线程 exec 已在 functions 侧 fail-fast 拒绝).
+    // K-03/K-06: 先换新 Arc 再清零 —— exec 后动作表必须是本进程独有实例.
+    // de_thread 已结束其余线程, 清零不会波及任何存活共享者.
     PROCESS_TABLE.with_process_mut(current_pid, |p| {
         p.sigaction_table =
             alloc::sync::Arc::new(crate::privileged::sync::IrqSpinLock::new([0u64; 64]));
     });
     crate::privileged::proc::reset_signal_state_on_exec(current_pid);
+
+    // 5a2. K-06: FS 上下文 unshare — exec 后 cwd / 根前缀 / umask 归本进程独有.
+    // de_thread 已保证组内无其他线程, 但 CLONE_FS 的独立进程共享仍可能存在于
+    // 别组; 复制到新 Arc 后, 后续 chdir/umask 不再影响共享者 (POSIX exec 语义).
+    let old_fs = PROCESS_TABLE.with_process(current_pid, |p| Arc::clone(&p.fs_context));
+    if let Some(old_fs) = old_fs {
+        let new_fs = Arc::new(super::fs_context::FsContext::new_default());
+        new_fs.copy_from(&old_fs);
+        PROCESS_TABLE.with_process_mut(current_pid, |p| p.fs_context = new_fs);
+    }
 
     // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
     crate::privileged::fs::current_vfs_ops().close_cloexec_fds();
@@ -726,8 +894,8 @@ pub extern "C" fn sys_fork() -> Pid {
     child.pwm.store(0, Ordering::SeqCst);
     // 继承父进程可继承状态 (rlimit / session / seccomp / 域标志 / cgroup / namespace)
     inherit_parent_state(child, parent_pid);
-    // 内核栈
-    if !child.allocate_kernel_stack() {
+    // 内核栈 (用户 TCB 统一 USER_KSTACK_SIZE; 内核线程 idle 才用 KERNEL_STACK_SIZE)
+    if !child.allocate_user_kernel_stack() {
         raw::drop_boxed_process(child_ptr);
         PROCESS_TABLE.free_pid(child_pid);
         return 0;
@@ -807,8 +975,9 @@ pub extern "C" fn sys_fork() -> Pid {
     // 在其用户页表内 ⇒ 用户态被硬件中断/异常打断时按 TSS.RSP0 压帧即 #PF
     // (cr2=内核栈顶-8). 这正是 APS-05 x86_64 偶发未成对观测的根因 —— 该注册块
     // 在 4557cd30 重写 `sys_fork` (COW 崩溃临时改用共享页表) 时被附带删除.
-    // fail-closed: 注册失败 (内核堆 OOM) 时子进程不可投运, 回滚进程表条目.
-    if USER_PROC_MANAGER.get(parent_pid).is_some() && user_proc_clone(parent_pid, child_pid) < 0 {
+    // K-06: 父线程可能没有自己的镜像 (CLONE_THREAD 线程), `user_proc_clone`
+    // 回落到同组组长的镜像; 仍取不到源时 fail-closed (无镜像的子进程无法投运).
+    if user_proc_clone(parent_pid, child_pid) < 0 {
         // PCB 即将被回收, 先撤销 fd 继承取得的 OpenFile 引用, 避免全局句柄泄漏.
         release_inherited_fd_refs(child);
         PROCESS_TABLE.remove_and_free(child_pid);

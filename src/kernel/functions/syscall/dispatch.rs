@@ -807,10 +807,10 @@ fn dispatch_proc_lifecycle(num: u64, args: [u64; 6]) -> Option<i64> {
             a3,
             crate::functions::intcast::low_i32_from_u64(a4),
         )),
-        // SIMPLIFIED: exit_group 暂等同 exit (B05-43 返工登记); 影响面: 线程组未实现
-        // 组级终止, 仅结束当前进程; 何时需扩展: 引入 tgid/线程组基础结构后遍历组内
-        // 全部线程终止 (审查 DECISION-071 关联).
-        SYS_EXIT | SYS_EXIT_GROUP => crate::functions::proc::lifecycle::exit_syscall(
+        SYS_EXIT => crate::functions::proc::lifecycle::exit_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+        ),
+        SYS_EXIT_GROUP => crate::functions::proc::lifecycle::exit_group_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
         ),
         SYS_SCHED_YIELD => crate::functions::proc::lifecycle::sched_yield_syscall(),

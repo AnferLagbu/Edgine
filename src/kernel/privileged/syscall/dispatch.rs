@@ -424,7 +424,8 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
 }
 
 pub(crate) fn sys_kill(pid: i32, sig: i32) -> i64 {
-    if !(0..=31).contains(&sig) {
+    // K-06: 标准信号之外接受 32..=63 实时信号 (pending 位图 64 位).
+    if !(0..=63).contains(&sig) {
         return Errno::Einval.as_ret();
     }
     match crate::privileged::proc::do_signal_send_extended(

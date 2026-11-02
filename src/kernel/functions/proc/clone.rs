@@ -12,6 +12,7 @@
 //! - functions 层验证标量参数和标志组合
 //! - 页表/进程操作委托给 privileged 层 (TCB)
 
+use crate::functions::config::memory::USER_KSTACK_SIZE;
 use crate::privileged::proc::api;
 use crate::privileged::proc::raw;
 use crate::privileged::proc::{Process, ProcessState};
@@ -63,11 +64,19 @@ pub fn clone_syscall(
         return Err(Errno::Einval);
     }
 
-    // SIMPLIFIED: CLONE_FILES / CLONE_FS 仅接受线程 (CLONE_THREAD).
-    // 影响面: 非线程 clone/fork 无法共享 fd 表或 FS 上下文 (Linux 允许);
-    // 何时需扩展: K-06 实装 exec 的 unshare 与 de_thread 后再放开 —— 独立
-    // 进程共享时 exec 须能从共享表拆出私有副本, 本阶段无拆卸机制.
-    if (flags & (CLONE_FILES | CLONE_FS)) != 0 && (flags & CLONE_THREAD) == 0 {
+    // SIMPLIFIED: CLONE_FILES 仅接受线程 (CLONE_THREAD).
+    // 影响面: 非线程 clone 无法共享 fd 表 (Linux 允许); CLONE_FS 已放开 ——
+    // exec 无论是否共享都先拆出私有 FS 副本 (unshare), 独立共享者不受影响.
+    // 何时需扩展: 实装 fd 表 unshare (exec 前复制私有句柄表) 后再放开 CLONE_FILES;
+    // 在此之前非线程共享 fd 表会让 exec 的 CLOEXEC 关闭波及共享者.
+    if (flags & CLONE_FILES) != 0 && (flags & CLONE_THREAD) == 0 {
+        return Err(Errno::Einval);
+    }
+
+    // SIMPLIFIED: fork 路径 (无 CLONE_VM) 不接受 CLONE_FS —— 子进程 fork 后即可
+    // 在别核运行, 事后改写其 FS 上下文的 Arc 与并发 chdir 存在竞态;
+    // CLONE_VM 路径的共享在子进程入队前一次闭合.
+    if (flags & CLONE_FS) != 0 && (flags & CLONE_VM) == 0 {
         return Err(Errno::Einval);
     }
 
@@ -195,13 +204,18 @@ fn clone_vm_path(
         return Errno::Enomem.as_ret();
     }
 
+    // 登记前的任何失败都必须归还 PID 位图槽位: PCB 由各回滚分支自行释放,
+    // 但 `Process::drop` 不碰位图 (只有 `remove_and_free` 才释放), 漏还即永久
+    // 占用一个 PID (与 `sys_fork` 失败路径同口径).
     let Some(child_ptr) = vm_child_alloc(parent_pid, child_pid, parent_cr3, joins_group) else {
+        api::proc_free_pid(child_pid);
         return Errno::Enomem.as_ret();
     };
     let child = raw::process_ref_mut(child_ptr);
 
     // 继承父进程属性 / 内核栈 / 上下文 (失败时内部已回滚 PCB)
     if let Err(ret) = vm_child_inherit(parent_pid, &mut *child, parent_cr3, child_stack, tls) {
+        api::proc_free_pid(child_pid);
         return ret;
     }
 
@@ -214,6 +228,8 @@ fn clone_vm_path(
         child_tidptr,
         joins_group,
     ) {
+        // `vm_child_register` 的失败分支全部在进程表登记之前, PID 仍归本路径持有.
+        api::proc_free_pid(child_pid);
         return ret;
     }
 
@@ -305,8 +321,8 @@ fn vm_child_inherit(
     // 未指定 CLONE_SETTLS 时子线程继承父线程的 TLS 基址 (Linux 语义)
     child.tls_base.store(parent_tls_base, Ordering::Release);
 
-    // 分配内核栈
-    if !child.allocate_kernel_stack() {
+    // 分配内核栈 (用户 TCB 统一 USER_KSTACK_SIZE, 与 fork 路径和释放口径同源)
+    if !child.allocate_user_kernel_stack() {
         raw::drop_boxed_process(core::ptr::from_ref(child).cast_mut());
         return Err(Errno::Enomem.as_ret());
     }
@@ -331,8 +347,13 @@ fn vm_child_copy_kstack(parent_pid: u32, child: &mut crate::privileged::proc::Pr
     let parent_kstack =
         api::process_with(parent_pid, |p| p.kernel_stack.load(Ordering::SeqCst)).unwrap_or(0);
     let child_kernel_sp = child.kernel_stack.load(Ordering::SeqCst);
-    let stack_size: usize = 65536;
-    raw::copy_kstack(child_kernel_sp, parent_kstack, stack_size);
+    let stack_size = crate::privileged::glue::usize_from_u64(USER_KSTACK_SIZE);
+    // 源/目标都从"顶部向下 size"起算: 栈顶上方不属于本栈, 正向拷贝会越界读写.
+    raw::copy_kstack(
+        child_kernel_sp - stack_size as u64,
+        parent_kstack - stack_size as u64,
+        stack_size,
+    );
     crate::privileged::proc::kernel_stack_write_canary(child_kernel_sp);
 }
 
@@ -407,7 +428,15 @@ fn vm_child_register(
             );
             return Err(Errno::Esrch.as_ret());
         };
-        child.join_thread_group(group);
+        // 组正在 exec de_thread 或已发起组退出: 拒绝入组 (否则 de_thread 完成后
+        // 会留下一个停在旧映像的线程; 组退出后会有个永不退出的幽灵线程).
+        // 两者都是短暂状态, 可重试, 按 EAGAIN 返回.
+        if !child.join_thread_group(group) {
+            raw::drop_boxed_process(
+                core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+            );
+            return Err(Errno::Eagain.as_ret());
+        }
     }
 
     // 注册到进程表; 失败时回滚组成员身份与 PCB (含内核栈 / cr3 引用).
@@ -452,6 +481,14 @@ fn vm_child_register(
     }
 
     // 添加到调度器
+    //
+    // K-06 竞态收口: 本线程可能已入组 (`join` 在组退出请求发布前成功) 但登记表
+    // 晚于 `process_exit_group` 的成员快照 —— 该快照遍历到时进程表里还没有本
+    // TID, SIGKILL 会落空, 组里留下一个永不退出的"幽灵线程". 入队前复查一次组
+    // 退出请求: 命中即自挂 SIGKILL, 本线程返回用户态时按致命信号退出.
+    if joins_group && child.thread_group.exit_requested() {
+        child.signal_pending_set(u32::from(crate::privileged::proc::signal::SIGKILL));
+    }
     let _ = child.set_state_safe(ProcessState::Ready);
     api::scheduler_add_to_run_queue(child_pid);
     Ok(())

@@ -150,6 +150,15 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 层级 9: thread_group.children.lock()     →  组最后成员退出时改挂/清空子进程组账
 ```
 
+`exit_group` 的退出请求发布落在层级 7 的表锁之内，并与 `clone` 的入组共用层级 9 的成员表锁，使「入组」与「组退出」不可交错（K-06）：
+
+```
+层级 7: PROCESS_TABLE.with_process()     →  取组 Arc 并在同一闭包内发布退出请求
+层级 9: thread_group.members.lock()      →  request_exit 置位 / join 复查后拒绝入组
+层级 7: PROCESS_TABLE.with_process(tid)  →  逐成员挂 SIGKILL（成员快照已在锁外遍历）
+层级 8: Scheduler::unblock(tid)          →  睡眠成员搬回运行队列（不与层级 7 嵌套）
+```
+
 ### 跨核搬动（负载均衡 / 唤醒投送）
 
 ```

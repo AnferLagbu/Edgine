@@ -167,36 +167,50 @@ fn exit_path_leaves_group_under_process_table_lock() {
     let src = code_only(&read_src(SCHED));
     let body = fn_body(&src, "pub fn exit(&self, exit_code: u32)");
     assert!(
-        has(&body, "proc.thread_group.leave(pid)"),
+        has(&body, "let last = group.leave(pid);"),
         "K-01: 退出路径必须移除线程组成员身份"
     );
     assert!(
-        has(&body, "if proc.thread_group.leave(pid)"),
+        has(&body, "if last { group.mark_exited(code); }"),
         "K-01: 仅最后成员离开时才置组退出状态"
     );
     assert!(
-        has(&body, "mark_exited(exit_code)"),
-        "K-01: 组退出码必须来自退出路径的 exit_code"
-    );
-    assert!(
-        has(&body, "let last_member = PROCESS_TABLE"),
+        has(&body, "let (effective_code, last_member) = PROCESS_TABLE"),
         "K-01/K-04: 最后成员判定必须由退出路径持有"
+    );
+    // K-06: 组退出码以 `exit_group` / 致命信号的请求值为权威, 无请求时取本线程
+    // 退出码; 每个 TCB 的 `exit_code` 记录同一有效值.
+    assert!(
+        has(
+            &body,
+            "let code = if group.exit_requested() {
+                 group.requested_exit_code()
+             } else {
+                 exit_code
+             };"
+        ),
+        "K-06: 退出路径必须按组请求码收口有效退出码"
     );
     // 成员账锁只能在 `with_process` 临界区内取 (层级 7 → 9);
     // 反向 (先成员账后进程表) 是 AB-BA.
     assert!(
         has(
             &body,
-            "let last_member = PROCESS_TABLE
+            "let (effective_code, last_member) = PROCESS_TABLE
                  .with_process(pid, |proc| {
-                     if proc.thread_group.leave(pid) {
-                         proc.thread_group.mark_exited(exit_code);
-                         true
+                     let group = proc.group();
+                     let code = if group.exit_requested() {
+                         group.requested_exit_code()
                      } else {
-                         false
+                         exit_code
+                     };
+                     let last = group.leave(pid);
+                     if last {
+                         group.mark_exited(code);
                      }
+                     (code, last)
                  })
-                 .unwrap_or(false);"
+                 .unwrap_or((exit_code, false));"
         ),
         "K-01/K-04: 成组必须闭合在同一次进程表锁临界区内 (层级 7 → 9)"
     );
