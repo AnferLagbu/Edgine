@@ -17,3 +17,4 @@
 pub mod arch_prctl;
 pub mod sched;
 pub mod socket;
+pub mod thread;

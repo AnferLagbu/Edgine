@@ -22,21 +22,13 @@
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
-// futex op 常量 (与 Linux 兼容)
+// futex op 常量 — 单一权威源 `edgine_abi::thread`, 经 privileged `syscall::types` 出口
+// (PRIVATE_FLAG 不在本层消费: `futex_base_op` 取低 4 位即已剥掉它)
 // ============================================================================
 
-/// 基础操作: WAIT (等待唤醒)
-pub const FUTEX_WAIT: i32 = 0;
-/// 基础操作: WAKE (唤醒)
-pub const FUTEX_WAKE: i32 = 1;
-/// 基础操作: REQUEUE (从一 uaddr 唤醒并迁移到另一 uaddr)
-pub const FUTEX_REQUEUE: i32 = 3;
-/// 基础操作: `WAIT_BITSET` (带位图掩码的 WAIT, 用于选择性唤醒)
-pub const FUTEX_WAIT_BITSET: i32 = 9;
-/// 基础操作: `WAKE_BITSET` (带位图掩码的 WAKE)
-pub const FUTEX_WAKE_BITSET: i32 = 10;
-/// 私有 flag: 进程内 futex (不跨进程)
-pub const FUTEX_PRIVATE_FLAG: i32 = 128;
+use crate::functions::syscall::types::{
+    FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET,
+};
 
 // ============================================================================
 // 解析 op 字段: 提取基础操作 (低 4 位)

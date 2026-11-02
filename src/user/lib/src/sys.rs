@@ -588,11 +588,18 @@ pub const SYS_FTRUNCATE: u64 = 77;
 pub const SYS_FSYNC: u64 = 170;
 pub const SYS_GETPGID: u64 = 111;
 pub const SYS_SETSID: u64 = 112;
-pub const SYS_GETTID: u64 = 186;
 pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_UMASK: u64 = 95;
+
+/// 线程族 syscall 编号与 `clone` 标志位 — 单一权威源 `edgine-abi`.
+pub use edgine_abi::thread::{
+    CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID,
+    CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM, FUTEX_PRIVATE_FLAG, FUTEX_REQUEUE,
+    FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET, SYS_CLONE, SYS_EXIT_GROUP,
+    SYS_FUTEX, SYS_GETTID, SYS_KILL, SYS_TGKILL,
+};
 
 #[repr(C)]
 pub struct Timespec {
@@ -646,7 +653,13 @@ pub fn nanosleep(req: &Timespec) -> i32 {
 }
 #[must_use]
 pub fn kill(pid: i32, sig: i32) -> i32 {
-    unsafe { ret_i32(sys2(62, arg_bits(i64::from(pid)), arg_bits(i64::from(sig)))) }
+    unsafe {
+        ret_i32(sys2(
+            SYS_KILL,
+            arg_bits(i64::from(pid)),
+            arg_bits(i64::from(sig)),
+        ))
+    }
 }
 
 // ============================================================
@@ -1100,5 +1113,219 @@ pub fn poll(fds: &mut [PollFd], timeout: i32) -> i32 {
             fds.len() as u64,
             arg_bits(i64::from(timeout)),
         ))
+    }
+}
+
+// ============================================================
+// 线程族 wrapper — clone / futex / exit_group / tgkill
+// ============================================================
+
+/// 线程入口函数类型: 由 `clone_thread` 在新线程自己的栈上调用.
+pub type ThreadEntry = unsafe extern "C" fn(arg: u64);
+
+/// `thread_trampoline` — 子线程分支的落点 (仅由 `clone_thread` 的汇编跳入).
+///
+/// 入口函数返回后只终止本线程 (`SYS_EXIT`): K-06 起 `exit` 是单 TCB 退出,
+/// 组内其余线程不受影响; 整组退出由 `exit_group` 表达.
+///
+/// `pub` 而非私有: 本函数只被 `asm!` 的 `sym` 操作数引用, 若为私有项则不构成
+/// 任何 Rust 调用边, 会被 `dead_code` 判为孤儿 (F9 禁止用属性压制).
+///
+/// # Safety
+/// `entry` 必须是可调用入口 (内核态/用户态函数指针契约由调用方保证).
+pub unsafe extern "C" fn thread_trampoline(entry: ThreadEntry, arg: u64) -> ! {
+    // SAFETY: entry/arg 由 clone_thread 经被调用者保存寄存器偷渡后原样传入,
+    // clone_thread 的 Safety 契约保证 entry 是合法的 ThreadEntry.
+    unsafe { entry(arg) };
+    proc_exit(0)
+}
+
+/// `clone` 的线程创建包装 — 父线程返回子 TID, 子线程不返回本函数.
+///
+/// ## 为什么子分支必须在汇编块内跳转
+///
+/// 内核把父线程**陷入时**的完整寄存器帧复制给子线程, 仅改写
+/// `rax`/`x0` = 0 与栈指针 = `child_stack`. 子线程若继续执行本函数 syscall
+/// 之后的 Rust 代码, 其 `rsp` 已是一条全新栈, 而编译器生成的溢出槽读写用的
+/// 是继承来的 `rbp` (指向父线程栈) —— 父线程此刻正在别的核上改写同一批槽位,
+/// "返回值为 0" 的判定随时可能被父线程的写入翻转. 故子分支在 `asm!` 内部
+/// 直接跳入 `thread_trampoline`, 一步不落回 Rust 序言/收尾.
+///
+/// ## 入口与参数如何送到子线程
+///
+/// syscall 入参寄存器 (x86_64 `rdi/rsi/rdx/r10/r8`, aarch64 `x1..x5`) 在子线程
+/// 里装的是 clone 自己的参数, 不能用来带 `entry`. 被调用者保存寄存器
+/// (x86_64 `r12/r13`, aarch64 `x21/x22`) 由 `proc_save_user_regs*` 写入进程
+/// 上下文并随 clone 整体复制, 故用它们偷渡.
+///
+/// # Safety
+/// `child_stack` 必须 16 字节对齐且指向 `flags` 所许可的可写内存 (内核会校验
+/// 对齐); `entry`/`arg` 按 `ThreadEntry` 契约使用; `parent_tid`/`child_tid`
+/// 仅在 `flags` 带对应 `CLONE_*_TID` 位时被内核写入, 传 0 表示不用.
+///
+/// 返回值: 父线程 = 子 TID (>0) 或负 `Errno`; 子线程不执行返回路径.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn clone_thread(
+    flags: u64,
+    child_stack: u64,
+    parent_tid: *mut i32,
+    child_tid: *mut u32,
+    tls: u64,
+    entry: ThreadEntry,
+    arg: u64,
+) -> i64 {
+    let ret: i64;
+    // SAFETY: 本块是 clone(2) 的裸 syscall 序列. 入参寄存器按 Edgine x86_64
+    // syscall ABI 布置 (rdi/rsi/rdx/r10/r8 = flags/stack/ptid/ctid/tls);
+    // `syscall` 破坏 rcx/r11, 以 out 声明; r12/r13 只在本块内被子分支读取,
+    // 用 inlateout 显式声明为被改写, 阻止 LLVM 把存活值放这两格.
+    // 子分支改写 rsp (跳到 trampoline 前补一个伪返回地址槽维持 SysV 对齐),
+    // 故不声明 nomem/nostack.
+    unsafe {
+        asm!(
+            "syscall",
+            "test rax, rax",
+            "jne 2f",
+            // 子线程: rdi/rsi 此刻是 clone 的 flags/stack, 换成 trampoline 的入参
+            "sub rsp, 8",
+            "mov rdi, r12",
+            "mov rsi, r13",
+            "jmp {tramp}",
+            "2:",
+            tramp = sym thread_trampoline,
+            in("rax") SYS_CLONE,
+            in("rdi") flags,
+            in("rsi") child_stack,
+            in("rdx") parent_tid as u64,
+            in("r10") child_tid as u64,
+            in("r8") tls,
+            inlateout("r12") entry => _,
+            inlateout("r13") arg => _,
+            lateout("rax") ret,
+            out("rcx") _,
+            out("r11") _,
+        );
+    }
+    ret
+}
+
+/// `clone` 的线程创建包装 (aarch64) — 语义同 x86_64 版.
+///
+/// aarch64 侧 `x21/x22` 映射到进程上下文的 `r13/r12` 槽 (见
+/// `proc_save_user_regs_aarch64`), 随 clone 整体复制并在首次进入 EL0 前恢复;
+/// `x8..x18` 不入上下文 (首次被调度时不保证是父线程的值), `x19/x20` 被 LLVM
+/// 保留为内部用量 (不可作 inline asm 操作数), 故二者都不可用于偷渡.
+///
+/// # Safety
+/// 同 x86_64 版: `child_stack` 16 字节对齐且可写, `entry`/`arg` 遵守
+/// `ThreadEntry` 契约, `parent_tid`/`child_tid` 仅在对应 `CLONE_*_TID` 位下使用.
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn clone_thread(
+    flags: u64,
+    child_stack: u64,
+    parent_tid: *mut i32,
+    child_tid: *mut u32,
+    tls: u64,
+    entry: ThreadEntry,
+    arg: u64,
+) -> i64 {
+    let ret: i64;
+    // SAFETY: svc #0 的编号在 x0, 参数在 x1..x5 (Edgine aarch64 syscall ABI);
+    // 子分支把 entry/arg 搬到 x0/x1 后跳入 trampoline, 不回落到父路径.
+    // AAPCS64 要求 SP 16 字节对齐: child_stack 已由内核校验, 无需再调整.
+    unsafe {
+        asm!(
+            "svc #0",
+            "cbnz x0, 2f",
+            "mov x0, x21",
+            "mov x1, x22",
+            "b {tramp}",
+            "2:",
+            tramp = sym thread_trampoline,
+            in("x0") SYS_CLONE,
+            in("x1") flags,
+            in("x2") child_stack,
+            in("x3") parent_tid as u64,
+            in("x4") child_tid as u64,
+            in("x5") tls,
+            inlateout("x21") entry => _,
+            inlateout("x22") arg => _,
+            lateout("x0") ret,
+        );
+    }
+    ret
+}
+
+/// `futex(uaddr, op, val, timeout_or_uaddr2, val2)` — 内核支持面的直通入口.
+///
+/// op 的高位标志 (`FUTEX_PRIVATE_FLAG`) 由内核 `futex_base_op` 剥掉后再分派.
+#[must_use]
+pub fn futex(uaddr: *const u32, op: i32, val: i32, aux: u64, val2: u32) -> i64 {
+    unsafe {
+        sys5(
+            SYS_FUTEX,
+            uaddr as u64,
+            arg_bits(i64::from(op)),
+            arg_bits(i64::from(val)),
+            aux,
+            u64::from(val2),
+        )
+    }
+}
+
+/// 等待 `*word == val` (相等则入睡), 带 `FUTEX_PRIVATE_FLAG`.
+///
+/// 返回 0 = 被唤醒; 负值 = `-Errno` (值不等时为 `-EAGAIN`).
+#[must_use]
+pub fn futex_wait(word: &core::sync::atomic::AtomicU32, val: u32) -> i64 {
+    futex(
+        core::ptr::from_ref(word).cast::<u32>(),
+        FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
+        val.cast_signed(),
+        0,
+        0,
+    )
+}
+
+/// 唤醒至多 `count` 个等待 `word` 的线程, 返回实际唤醒数 (负值 = `-Errno`).
+#[must_use]
+pub fn futex_wake(word: &core::sync::atomic::AtomicU32, count: u32) -> i64 {
+    futex(
+        core::ptr::from_ref(word).cast::<u32>(),
+        FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+        count.cast_signed(),
+        0,
+        0,
+    )
+}
+
+/// `exit_group(code)` — 终止整个线程组 (K-06: 组退出码 first-writer-wins).
+pub fn exit_group(code: i32) -> ! {
+    unsafe {
+        sys1(SYS_EXIT_GROUP, arg_bits(i64::from(code)));
+    }
+    loop {
+        if cfg!(target_arch = "x86_64") {
+            unsafe {
+                asm!("hlt", options(nomem, nostack));
+            }
+        } else {
+            unsafe {
+                asm!("wfi", options(nomem, nostack));
+            }
+        }
+    }
+}
+
+/// `tgkill(tgid, tid, sig)` — 向线程组内指定线程投递信号 (`sig == 0` 仅作存在性探测).
+#[must_use]
+pub fn tgkill(tgid: i32, thread_id: i32, sig: i32) -> i64 {
+    unsafe {
+        sys3(
+            SYS_TGKILL,
+            arg_bits(i64::from(tgid)),
+            arg_bits(i64::from(thread_id)),
+            arg_bits(i64::from(sig)),
+        )
     }
 }

@@ -487,6 +487,12 @@ pub extern "C" fn process_reap_group(tgid: Pid) -> bool {
 }
 
 /// 阻塞当前进程 (用于 futex wait / 等待 I/O 等)
+///
+/// 唤醒返回处收口组退出 / `de_thread` 的致命信号: `process_exit_group` 对睡眠中的
+/// 兄弟线程只投递一次 `SIGKILL` + `unblock`, 该线程醒来后若立刻重睡同一个等待字,
+/// 而本架构尚未接线「返回用户态前信号投递」(aarch64), 它就永远停在队列外的 Blocked
+/// 态 —— 整组收不齐, 等待方 (父进程 `wait4` / `de_thread`) 永久挂死. 判据与
+/// [`Scheduler::yield_current`] 的致命信号检查同源: 内核内等待循环都不是信号投递点.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn process_block(pid: u32) {
@@ -500,6 +506,16 @@ pub extern "C" fn process_block(pid: u32) {
     }
     Scheduler::block(BlockReason::FutexWait);
     Scheduler::schedule();
+
+    let kill_requested = PROCESS_TABLE
+        .with_process(pid, |p| {
+            p.signal_pending_get() & (1u64 << super::signal::SIGKILL) != 0
+                && (p.group().exit_requested() || p.group().exec_de_thread())
+        })
+        .unwrap_or(false);
+    if kill_requested {
+        process_exit(u32::from(super::signal::SIGKILL) << 8 | 0x7f);
+    }
 }
 
 /// 解除进程阻塞 (用于 futex wake / I/O 完成等)

@@ -9,6 +9,7 @@
 //! - fork 复制 fd 表时在源表锁内递增 `OpenFile` 引用, 失败路径撤销;
 //! - exec 换新信号动作表后再清零;
 //! - 路径解析 / chroot / umask 走进程 FS 上下文, 全局量仅作无进程缺省.
+//! - K-07a 起 `CLONE_*` 位值单源在 `edgine-abi::thread`, clone.rs 不得再本地定义.
 //!
 //! 线程退出语义 (`exit` / `exit_group`) 与 exec 的 `de_thread` 归 K-06,
 //! 本文件不越界锁定; 多线程 exec 自 K-06 起由 `de_thread` 接管, 不再拒绝.
@@ -25,6 +26,7 @@ const PROCESS_SRC: &str = "src/kernel/privileged/proc/process.rs";
 const PROC_OPS_SRC: &str = "src/kernel/privileged/proc/proc_ops.rs";
 const EXEC_SRC: &str = "src/kernel/functions/proc/exec.rs";
 const VFS_MANAGER_SRC: &str = "src/kernel/functions/fs/vfs_manager.rs";
+const ABI_THREAD_SRC: &str = "src/rust/edgine-abi/src/thread.rs";
 
 fn repo_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -86,13 +88,25 @@ fn index_of(haystack: &str, needle: &str) -> usize {
 #[test]
 fn clone_files_requires_thread_and_fs_requires_shared_vm() {
     let src = code_only(&read_src(CLONE_SRC));
+    // K-07a: CLONE_* 位值不再在 clone.rs 内定义, 改由 ABI 单源持有, clone 经
+    // `functions::syscall::types` 出口消费. 两侧都锁: 单源里有正确数值,
+    // clone.rs 里不得再出现本地定义 (防止漂移回双写).
+    let abi = code_only(&read_src(ABI_THREAD_SRC));
     assert!(
-        has(&src, "const CLONE_FS: u64 = 0x0000_0200;"),
-        "K-03a: CLONE_FS 常量必须存在"
+        has(&abi, "pub const CLONE_FS: u64 = 0x0000_0200;"),
+        "K-03a: CLONE_FS 位值必须由 edgine-abi::thread 单源持有"
     );
     assert!(
-        has(&src, "const CLONE_FILES: u64 = 0x0000_0400;"),
-        "K-03a: CLONE_FILES 常量必须存在"
+        has(&abi, "pub const CLONE_FILES: u64 = 0x0000_0400;"),
+        "K-03a: CLONE_FILES 位值必须由 edgine-abi::thread 单源持有"
+    );
+    assert!(
+        !src.contains("const CLONE_FS"),
+        "K-07a: clone.rs 不得再本地定义 CLONE_FS"
+    );
+    assert!(
+        src.contains("use crate::functions::syscall::types::"),
+        "K-07a: clone.rs 的 CLONE_* 一律经 syscall::types 出口取用"
     );
 
     let body = fn_body(&src, "pub fn clone_syscall");

@@ -19,16 +19,12 @@ use crate::privileged::proc::{Process, ProcessState};
 use crate::privileged::syscall::Errno;
 use core::sync::atomic::Ordering;
 
-// clone 标志位 — 仅保留本模块实际消费项; 完整集合见 Linux `<linux/sched.h>`,
-// 其余标志当前无实现路径 (F9 死代码零容忍, 不预留).
-const CLONE_VM: u64 = 0x0000_0100; // 共享地址空间 (线程)
-const CLONE_FS: u64 = 0x0000_0200; // 共享 cwd / 根前缀 / umask
-const CLONE_FILES: u64 = 0x0000_0400; // 共享 fd 表
-const CLONE_SIGHAND: u64 = 0x0000_0800; // 共享信号处理
-const CLONE_THREAD: u64 = 0x0001_0000; // 同一线程组
-const CLONE_PARENT_SETTID: u64 = 0x0010_0000; // 写 TID 到 parent tidptr
-const CLONE_CHILD_CLEARTID: u64 = 0x0020_0000; // 子进程退出时清 tidptr
-const CLONE_CHILD_SETTID: u64 = 0x0100_0000; // 写 TID 到 child tidptr
+// clone 标志位 — 单一权威源 `edgine_abi::thread`, 经 `functions::syscall::types`
+// 的 glob re-export 消费 (与调度属性 ABI 同口径). 仅引入本模块实际使用项.
+use crate::functions::syscall::types::{
+    CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID,
+    CLONE_SIGHAND, CLONE_THREAD, CLONE_VM,
+};
 
 /// clone 安全代理
 ///

@@ -154,7 +154,9 @@ pub const SYS_GETSOCKOPT: u64 = 55;
 
 // 进程
 /// `SYS_CLONE` — 创建进程或线程 (可指定共享资源)
-pub const SYS_CLONE: u64 = 56;
+///
+/// 单一权威源 `edgine_abi::thread` (用户态 wrapper 引用同源).
+pub const SYS_CLONE: u64 = edgine_abi::thread::SYS_CLONE;
 /// `SYS_FORK` — 复制当前进程
 pub const SYS_FORK: u64 = 57;
 /// `SYS_EXECVE` — 加载并执行新程序
@@ -164,7 +166,9 @@ pub const SYS_EXIT: u64 = 60;
 /// `SYS_WAIT4` — 等待子进程状态变化并回收
 pub const SYS_WAIT4: u64 = 61;
 /// `SYS_KILL` — 向进程发送信号
-pub const SYS_KILL: u64 = 62;
+///
+/// 单一权威源 `edgine_abi::thread` (用户态 wrapper 引用同源).
+pub const SYS_KILL: u64 = edgine_abi::thread::SYS_KILL;
 
 // 系统信息
 /// `SYS_UNAME` — 获取系统标识信息
@@ -299,19 +303,21 @@ pub const SYS_UMOUNT2: u64 = 166;
 
 // 其他 POSIX
 /// `SYS_GETTID` — 获取当前线程 TID
-pub const SYS_GETTID: u64 = 186;
+///
+/// 单一权威源 `edgine_abi::thread` (用户态 wrapper 引用同源).
+pub const SYS_GETTID: u64 = edgine_abi::thread::SYS_GETTID;
 /// `SYS_TIME` — 获取秒级时间戳
 pub const SYS_TIME: u64 = 201;
 /// `SYS_CLOCK_GETTIME` — 读取指定时钟的时间
 pub const SYS_CLOCK_GETTIME: u64 = 228;
 /// `SYS_EXIT_GROUP` — 终止进程内所有线程
-pub const SYS_EXIT_GROUP: u64 = 231;
+pub const SYS_EXIT_GROUP: u64 = edgine_abi::thread::SYS_EXIT_GROUP;
 /// `SYS_TGKILL` — 向指定进程的指定线程发送信号
-pub const SYS_TGKILL: u64 = 234;
+pub const SYS_TGKILL: u64 = edgine_abi::thread::SYS_TGKILL;
 
 // 同步
 /// `SYS_FUTEX` — 快速用户态互斥原语
-pub const SYS_FUTEX: u64 = 202;
+pub const SYS_FUTEX: u64 = edgine_abi::thread::SYS_FUTEX;
 // CPU 亲和性 (Linux 兼容号)
 /// `SYS_SCHED_SETAFFINITY` — 设置线程 CPU 亲和性
 pub const SYS_SCHED_SETAFFINITY: u64 = 203;
@@ -547,6 +553,17 @@ pub const SYS_SCHED_GETATTR: u64 = edgine_abi::sched::SYS_SCHED_GETATTR;
 pub use edgine_abi::sched::{
     MAX_NICE, MIN_NICE, SCHED_ATTR_SIZE_VER0, SCHED_BATCH, SCHED_DEADLINE, SCHED_FIFO, SCHED_IDLE,
     SCHED_OTHER, SCHED_RESET_ON_FORK, SCHED_RR, SchedAttr, SchedParam,
+};
+
+/// 线程族 ABI — 单一权威源 `edgine_abi::thread` 的经 privileged 出口.
+///
+/// `clone` 标志位与 futex 操作码由内核分派与用户态 userlib 共同消费；口径与
+/// [`SchedAttr`] 一致: functions 层经 `functions::syscall::types` 的 glob
+/// re-export 取值, 不直连 `edgine-abi` crate (F2: functions→privileged 合法方向).
+pub use edgine_abi::thread::{
+    CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID,
+    CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM, FUTEX_PRIVATE_FLAG, FUTEX_REQUEUE,
+    FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET,
 };
 
 // 安全 / 权限 (Linux x86_64 标准编号)

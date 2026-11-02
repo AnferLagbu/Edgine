@@ -3,13 +3,16 @@
 #![no_std]
 #![no_main]
 
-use core::sync::atomic::AtomicU64;
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use userlib::sys::{
-    AF_INET, ARCH_GET_FS, ARCH_SET_FS, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR,
-    SOCK_STREAM, SOL_SOCKET, SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind,
-    close_socket, fork, fs_close, fs_read, fs_write, getsockopt, listen, nanosleep, pipe_create,
-    poll, proc_exit, recv, sched_yield, send, setsockopt, shutdown, socket, wait_pid,
-    wait_pid_status,
+    AF_INET, ARCH_GET_FS, ARCH_SET_FS, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES,
+    CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM,
+    IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
+    SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clone_thread, close_socket,
+    exit_group, fork, fs_close, fs_read, fs_write, futex_wait, futex_wake, getpid, getsockopt,
+    gettid, kill, listen, nanosleep, pipe_create, poll, proc_exit, recv, sched_yield, send,
+    setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -100,6 +103,12 @@ pub extern "C" fn _start() -> ! {
     // 必须在 busy 忙等子进程 fork 之前同步完成: 本探针依赖父子进程交替让出
     // CPU 观察切换恢复, 忙等子进程独占次核会降低交替机会.
     tls_probe();
+
+    // ── K-07a: 线程组运行时探针 ────────────────────────────────────────
+    // 同样必须在 busy 忙等子进程 fork 之前同步完成: 线程腿依赖"父线程睡下 →
+    // 子线程上核 → 子线程睡下 → 父线程上核"的交替推进, 忙等子进程独占一个核
+    // 会拖慢该交替直至撞上重试上界.
+    thread_probe();
 
     // ── APS-05: 双核并发 EL0 验证 ─────────────────────────────────────────
     // fork 一个**不 yield** 的忙等子进程: 父子各自长期占用一核并停留在 EL0
@@ -331,6 +340,406 @@ fn tls_child_probe(addr_a: u64, addr_b: u64) -> ! {
     }
     println("[TLS] child B base stable across context switches");
     proc_exit(0);
+}
+
+// ============================================================
+// K-07a: 线程组运行时探针 (clone / 每线程 TLS / futex / join / exit_group / tgkill)
+// ============================================================
+
+/// 探针创建的线程数.
+const THREAD_COUNT: usize = 3;
+/// 每线程用户栈字节数 (16 字节对齐满足 `clone` 的对齐校验).
+const THREAD_STACK_BYTES: usize = 4096;
+/// 有界等待的轮数上限: 任一判据超时即 FAIL 并继续, 启动绝不因探针挂死.
+const THREAD_RETRY_LIMIT: u32 = 20_000;
+/// 每线程 TLS magic 基址 —— 第 `i` 个线程读到 `BASE + i` 才算 `CLONE_SETTLS` 生效.
+const THREAD_TLS_MAGIC_BASE: u64 = 0x7130_0000_0000_0000;
+/// `exit_group` 腿的组退出码.
+const GROUP_EXIT_CODE: i32 = 7;
+/// `wait4` 写回的 `wstatus` (`exit_code << 8`, 无信号位).
+const GROUP_EXIT_WSTATUS: i32 = GROUP_EXIT_CODE << 8;
+
+/// 线程自检位: TLS 基址命中自己的块.
+const PROOF_TLS: u32 = 1;
+/// 线程自检位: 睡在 `THREAD_RELEASE` 上被父线程唤醒.
+const PROOF_WAKE: u32 = 2;
+
+/// 线程 `clone` 标志: D4 决策的完整 posix 线程语义组合.
+///
+/// 内核以 `tls != 0` 判定 `CLONE_SETTLS` (K-00 记录的立场), 故本位与 `tls` 实参
+/// 同时给出; `CLONE_PARENT_SETTID` / `CLONE_CHILD_SETTID` / `CLONE_CHILD_CLEARTID`
+/// 让 TID 回填与 join 路径都在真机上一次走完.
+const THREAD_CLONE_FLAGS: u64 = CLONE_VM
+    | CLONE_THREAD
+    | CLONE_SIGHAND
+    | CLONE_FILES
+    | CLONE_FS
+    | CLONE_SETTLS
+    | CLONE_PARENT_SETTID
+    | CLONE_CHILD_SETTID
+    | CLONE_CHILD_CLEARTID;
+
+/// 线程用户栈 (整块落 `.bss`, 由 ELF 装载按 `p_memsz` 整页置零).
+///
+/// 必须带内部可变性: 无 `UnsafeCell` 的不可变 `static` 会被 rustc 归入 `.rodata`,
+/// 而 aarch64 的 `.rodata` 段不带 `PF_W` ⇒ 装载成只读页, 子线程首次压栈即触发
+/// level-3 权限错误 (x86_64 的链接脚本把 `.rodata` 并入可写 `PT_LOAD`, 故同形代码
+/// 在两架构表现不一致 —— 判据以两架构都真跑为准).
+#[repr(C, align(16))]
+struct ThreadStack(UnsafeCell<[u8; THREAD_STACK_BYTES]>);
+
+// SAFETY: 每个 `ThreadStack` 实例只服务一条线程 (下标即线程号, helper 栈独立成块),
+// 内核保证不同时调度两条共用同一栈的线程; `Sync` 仅为让整块可放进 `static`
+// —— 共享的只是地址, 写入方始终是该栈所属的那条线程.
+unsafe impl Sync for ThreadStack {}
+
+/// 每线程独立用户栈.
+static THREAD_STACKS: [ThreadStack; THREAD_COUNT] =
+    [const { ThreadStack(UnsafeCell::new([0u8; THREAD_STACK_BYTES])) }; THREAD_COUNT];
+/// 每线程 TLS 块 (偏移 0 放 magic), 父线程在 clone 前写入 `BASE + idx`.
+static THREAD_TLS: [AtomicU64; THREAD_COUNT] = [const { AtomicU64::new(0) }; THREAD_COUNT];
+/// 每线程经硬件 TLS 基址读回的首字 (失败时定位读到了谁的块).
+static THREAD_TLS_SEEN: [AtomicU64; THREAD_COUNT] = [const { AtomicU64::new(0) }; THREAD_COUNT];
+/// `CLONE_CHILD_SETTID` 回填地址; 线程退出时内核写 0 并 futex 唤醒 (join 依据).
+static THREAD_TID: [AtomicU32; THREAD_COUNT] = [const { AtomicU32::new(0) }; THREAD_COUNT];
+/// `CLONE_PARENT_SETTID` 回填地址.
+static THREAD_PTID: [AtomicI32; THREAD_COUNT] = [const { AtomicI32::new(0) }; THREAD_COUNT];
+/// 线程自报 `gettid`.
+static THREAD_SELF_TID: [AtomicI64; THREAD_COUNT] = [const { AtomicI64::new(0) }; THREAD_COUNT];
+/// 线程自报 `getpid` (应恒等于组长 tgid).
+static THREAD_SELF_PID: [AtomicU64; THREAD_COUNT] = [const { AtomicU64::new(0) }; THREAD_COUNT];
+/// 线程自检位图 (join 之后由父线程读取).
+static THREAD_PROOF: [AtomicU32; THREAD_COUNT] = [const { AtomicU32::new(0) }; THREAD_COUNT];
+/// 已成功创建的线程数 (仅父线程写, 失败路径据此放行并 join 已建线程).
+static THREAD_SPAWNED: AtomicU32 = AtomicU32::new(0);
+/// 报到计数: 线程递增并唤醒父线程 (线程 → 父方向的 futex 往返).
+static THREAD_PROGRESS: AtomicU32 = AtomicU32::new(0);
+/// 放行标志: 父线程置 1 并唤醒全部线程 (父 → 线程方向).
+static THREAD_RELEASE: AtomicU32 = AtomicU32::new(0);
+
+/// `exit_group` 腿的 helper 线程栈 (子进程私有副本).
+static GROUP_HELPER_STACK: ThreadStack =
+    const { ThreadStack(UnsafeCell::new([0u8; THREAD_STACK_BYTES])) };
+/// helper 的 `CLONE_CHILD_SETTID` / `CLONE_PARENT_SETTID` 槽.
+static GROUP_HELPER_TID: AtomicU32 = AtomicU32::new(0);
+static GROUP_HELPER_PTID: AtomicI32 = AtomicI32::new(0);
+/// helper 的上核报到标志.
+static GROUP_HELPER_READY: AtomicU32 = AtomicU32::new(0);
+/// helper 的沉睡字: 值恒为 0, 只能被组退出路径 (SIGKILL + unblock) 打断.
+static GROUP_HOLD: AtomicU32 = AtomicU32::new(0);
+
+/// 线程组运行时探针 (K-07a) 的判据汇总入口.
+///
+/// 两条腿串成六个运行时判据: 线程腿覆盖 `clone` 建线程与 TID 回填、每线程独立
+/// TLS、`gettid`/`getpid` 身份、`tgkill`/`kill` 的 `sig == 0` 存在性探测、futex
+/// 双向往返与 `CLONE_CHILD_CLEARTID` join; 组退出腿覆盖 `exit_group` 终止整个
+/// 线程组 (含睡在 futex 上的兄弟线程) 后由父进程按 `code << 8` 收割.
+///
+/// 任一腿失败即打印 `[THREAD] FAIL: <判据>` 并继续启动 (不 `proc_exit`),
+/// 使单点失败不掩盖其余探针读数.
+fn thread_probe() {
+    match thread_leg() {
+        Ok(tgid) => match group_exit_leg() {
+            Ok(()) => {
+                print("[THREAD] PASS: clone+per-thread TLS+tid/tgid+futex+join+exit_group (tgid=");
+                print_dec(tgid);
+                print_char(b')');
+                print_char(b'\n');
+            }
+            Err((tag, code)) => thread_fail(tag, code),
+        },
+        Err((tag, code)) => thread_fail(tag, code),
+    }
+}
+
+/// 失败出口: `tag` 定位判据, `code` 携带该判据的实测读数 (TID / 位图 / 退出码).
+fn thread_fail(tag: &'static str, code: i64) {
+    print("[THREAD] FAIL: ");
+    print(tag);
+    print(" code=");
+    print_dec(code);
+    print_char(b'\n');
+}
+
+/// 线程腿: 建 N 线程 → 校验身份 / TLS / 信号探测 → 放行 → join.
+///
+/// 单腿判据:
+/// 1. `clone(CLONE_THREAD|...)` 建线程并回填 `CLONE_PARENT_SETTID` /
+///    `CLONE_CHILD_SETTID`;
+/// 2. 每线程独立 TLS (`CLONE_SETTLS` → `fs:[0]` / `TPIDR_EL0` 读到自己的 magic);
+/// 3. 线程身份: `gettid` 逐线程唯一且不等于 tgid, `getpid` 恒等于组长 tgid;
+/// 4. `tgkill`/`kill` 的 `sig == 0` 存在性探测 (活 TID 返 0, 越界 TID 返负);
+/// 5. futex 双向往返 (线程唤醒父线程 + 父线程唤醒全部线程) 与
+///    `CLONE_CHILD_CLEARTID` join (退出写 0 + 唤醒).
+///
+/// 组退出判据 (`exit_group` 终止整组) 由 [`group_exit_leg`] 承担. 全部等待都有
+/// `THREAD_RETRY_LIMIT` 上界: 失败只打印 FAIL, 绝不挂死启动.
+fn thread_leg() -> Result<i64, (&'static str, i64)> {
+    let tgid = getpid();
+    let Ok(tgid_i64) = i64::try_from(tgid) else {
+        return Err(("tgid-range", -1));
+    };
+    // D2: 组长线程的数值 TID 即 tgid.
+    let leader_tid = gettid();
+    if leader_tid != tgid_i64 || leader_tid <= 0 {
+        return Err(("leader-tid-ne-tgid", leader_tid));
+    }
+    // 单线程期写入每线程 TLS 块内容 (clone 之后无人改写).
+    for (idx, blk) in THREAD_TLS.iter().enumerate() {
+        blk.store(
+            THREAD_TLS_MAGIC_BASE.wrapping_add(idx as u64),
+            Ordering::Release,
+        );
+    }
+
+    let checked = thread_spawn_checks(tgid, tgid_i64, leader_tid);
+    // 已创建的线程睡在 THREAD_RELEASE 上: 不放行会一直阻塞到 init 退出, 掩盖后续
+    // 探针的读数, 故无论判据是否通过都执行放行 + join.
+    let joined = thread_release_and_join();
+    // join 之后才可读线程自检位图: 线程退出前最后一个动作是落盘 proof.
+    // 按位与聚合 —— 任一线程缺任一判据即与期望掩码不符.
+    let mut proof_seen = PROOF_TLS | PROOF_WAKE;
+    for slot in &THREAD_PROOF {
+        proof_seen &= slot.load(Ordering::Acquire);
+    }
+    checked?;
+    joined?;
+    if proof_seen != PROOF_TLS | PROOF_WAKE {
+        return Err(("thread-proof", i64::from(proof_seen)));
+    }
+    Ok(tgid_i64)
+}
+
+/// 建线程 + 线程侧判据校验 (TID 回填、报到、身份、TLS、信号探测).
+fn thread_spawn_checks(
+    tgid: u64,
+    tgid_i64: i64,
+    leader_tid: i64,
+) -> Result<(), (&'static str, i64)> {
+    let mut tids = [0i64; THREAD_COUNT];
+    for (idx, stack) in THREAD_STACKS.iter().enumerate() {
+        let ptid = i32_slot_ptr(&THREAD_PTID[idx]);
+        let ctid = u32_slot_ptr(&THREAD_TID[idx]);
+        let rc = unsafe {
+            // SAFETY: 栈顶取自本进程 BSS 的 16 字节对齐静态块 (内核按 16 字节校验);
+            // 两个 TID 指针指向本进程私有原子槽 (与 `u32`/`i32` 布局一致);
+            // TLS 基址指向本进程 `.data` 的 8 字节块; entry/arg 经被调用者保存
+            // 寄存器偷渡, 子分支在汇编块内直接跳入 trampoline.
+            clone_thread(
+                THREAD_CLONE_FLAGS,
+                thread_stack_top(stack),
+                ptid,
+                ctid,
+                core::ptr::from_ref(&THREAD_TLS[idx]) as u64,
+                thread_body,
+                idx as u64,
+            )
+        };
+        if rc <= 0 {
+            return Err(("clone", rc));
+        }
+        // CLONE_PARENT_SETTID / CLONE_CHILD_SETTID 回填必须与返回值一致.
+        let parent_tid = i64::from(THREAD_PTID[idx].load(Ordering::Acquire));
+        let child_tid = i64::from(THREAD_TID[idx].load(Ordering::Acquire));
+        if parent_tid != rc || child_tid != rc {
+            return Err(("settid", parent_tid));
+        }
+        tids[idx] = rc;
+        let created = u32::try_from(idx + 1).unwrap_or(u32::MAX);
+        THREAD_SPAWNED.store(created, Ordering::Release);
+    }
+
+    // 全部线程报到 (父线程被子线程的 futex_wake 唤醒 —— 线程 → 父方向往返).
+    let want = u32::try_from(THREAD_COUNT).unwrap_or(u32::MAX);
+    if !futex_wait_until(&THREAD_PROGRESS, |v| v >= want) {
+        return Err((
+            "progress",
+            i64::from(THREAD_PROGRESS.load(Ordering::Acquire)),
+        ));
+    }
+
+    // 线程侧上报: gettid 与 clone 返回值一致, getpid 恒等于 tgid, TLS 读到自己的块.
+    for (idx, &tid) in tids.iter().enumerate() {
+        if THREAD_SELF_TID[idx].load(Ordering::Acquire) != tid {
+            return Err(("gettid-mismatch", tid));
+        }
+        if THREAD_SELF_PID[idx].load(Ordering::Acquire) != tgid {
+            return Err(("getpid-not-tgid", tid));
+        }
+        let expect = THREAD_TLS_MAGIC_BASE.wrapping_add(idx as u64);
+        let seen = THREAD_TLS_SEEN[idx].load(Ordering::Acquire);
+        if seen != expect {
+            return Err(("tls-cross-thread", i64::try_from(seen).unwrap_or(i64::MAX)));
+        }
+        // TID 逐线程唯一且不占用组长 tgid.
+        if tid <= 0 || tid == tgid_i64 || tid == leader_tid {
+            return Err(("tid-is-tgid", tid));
+        }
+        for &other in &tids[idx + 1..] {
+            if other == tid {
+                return Err(("tid-duplicated", tid));
+            }
+        }
+    }
+
+    signal_probe(tgid_i64, &tids, leader_tid)
+}
+
+/// 放行全部线程并逐个 join (`CLONE_CHILD_CLEARTID` 写 0 + futex 唤醒).
+fn thread_release_and_join() -> Result<(), (&'static str, i64)> {
+    let spawned = usize::try_from(THREAD_SPAWNED.load(Ordering::Acquire)).unwrap_or(0);
+    THREAD_RELEASE.store(1, Ordering::Release);
+    let _ = futex_wake(&THREAD_RELEASE, u32::try_from(spawned).unwrap_or(u32::MAX));
+    for slot in THREAD_TID.iter().take(spawned) {
+        if !futex_wait_until(slot, |v| v == 0) {
+            return Err(("join-timeout", i64::from(slot.load(Ordering::Acquire))));
+        }
+    }
+    Ok(())
+}
+
+/// `sig == 0` 存在性探测: 组内活 TID 全部返 0, 越界 TID 返负, `kill(tgid, 0)` 返 0.
+fn signal_probe(tgid_i64: i64, tids: &[i64], leader_tid: i64) -> Result<(), (&'static str, i64)> {
+    let Ok(tgid) = i32::try_from(tgid_i64) else {
+        return Err(("tgid-range", tgid_i64));
+    };
+    let Ok(leader_i32) = i32::try_from(leader_tid) else {
+        return Err(("tid-range", leader_tid));
+    };
+    if tgkill(tgid, leader_i32, 0) != 0 {
+        return Err(("tgkill-leader", -1));
+    }
+    for &tid in tids {
+        let Ok(tid_i32) = i32::try_from(tid) else {
+            return Err(("tid-range", tid));
+        };
+        if tgkill(tgid, tid_i32, 0) != 0 {
+            return Err(("tgkill-thread", tid));
+        }
+    }
+    // 越界 TID: 进程表必不命中, 返 `-ESRCH`.
+    if tgkill(tgid, i32::MAX, 0) >= 0 {
+        return Err(("tgkill-bogus", i64::from(i32::MAX)));
+    }
+    // 组定向 `kill(tgid, 0)`: 按 tgid 定位线程组, 存在性探测返 0.
+    let rc = i64::from(kill(tgid, 0));
+    if rc != 0 {
+        return Err(("kill-tgid", rc));
+    }
+    Ok(())
+}
+
+/// 有界等待原子字满足判据: 每轮先 `FUTEX_WAIT` 当前值, 值已变则内核返 `-EAGAIN`
+/// 即刻重判 —— 覆盖"唤醒发生在读取与入睡之间"的竞态, 不空转也不挂死.
+fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool) -> bool {
+    let mut tries = 0u32;
+    while !done(word.load(Ordering::Acquire)) {
+        if tries >= THREAD_RETRY_LIMIT {
+            return false;
+        }
+        tries += 1;
+        let cur = word.load(Ordering::Acquire);
+        if done(cur) {
+            return true;
+        }
+        let _ = futex_wait(word, cur);
+    }
+    true
+}
+
+/// 第 `idx` 个线程的栈顶 (栈向低地址生长, 顶地址即 16 字节对齐的块尾).
+fn thread_stack_top(stack: &ThreadStack) -> u64 {
+    let base = core::ptr::from_ref(stack).cast::<u8>() as u64;
+    base.wrapping_add(THREAD_STACK_BYTES as u64)
+}
+
+/// 取原子 `u32` 槽的裸指针 (`AtomicU32` 与 `u32` 布局一致, 交内核直写).
+fn u32_slot_ptr(cell: &AtomicU32) -> *mut u32 {
+    core::ptr::from_ref(cell).cast_mut().cast::<u32>()
+}
+
+/// 取原子 `i32` 槽的裸指针 (同上).
+fn i32_slot_ptr(cell: &AtomicI32) -> *mut i32 {
+    core::ptr::from_ref(cell).cast_mut().cast::<i32>()
+}
+
+/// 线程体: 自检 TLS → 上报 tid/pid → 报到并唤醒父线程 → 有界等待放行.
+///
+/// 全程不打印: 线程共享父进程的 fd 表, 并发写会交错, 结论只落原子槽由父线程汇总.
+/// 返回即落入 `thread_trampoline` 的 `proc_exit(0)` —— 只结束本线程, 不动整组.
+extern "C" fn thread_body(raw_idx: u64) {
+    let Some(idx) = usize::try_from(raw_idx).ok().filter(|i| *i < THREAD_COUNT) else {
+        return;
+    };
+    // 1) CLONE_SETTLS 生效: 硬件 TLS 基址指向**本线程**的块.
+    let seen = tls_read_word();
+    THREAD_TLS_SEEN[idx].store(seen, Ordering::Release);
+    let expect = THREAD_TLS_MAGIC_BASE.wrapping_add(raw_idx);
+    let mut proof = if seen == expect { PROOF_TLS } else { 0 };
+    // 2) 身份上报.
+    THREAD_SELF_TID[idx].store(gettid(), Ordering::Release);
+    THREAD_SELF_PID[idx].store(getpid(), Ordering::Release);
+    // 3) 报到 + 唤醒等待本计数的父线程.
+    THREAD_PROGRESS.fetch_add(1, Ordering::AcqRel);
+    let _ = futex_wake(&THREAD_PROGRESS, 1);
+    // 4) 有界等待父线程放行 (父 → 线程方向的 futex 往返).
+    if futex_wait_until(&THREAD_RELEASE, |v| v != 0) {
+        proof |= PROOF_WAKE;
+    }
+    THREAD_PROOF[idx].store(proof, Ordering::Release);
+}
+
+/// `exit_group` 腿: fork 子进程 → 子进程起一个睡死在 futex 上的 helper →
+/// 子进程组长 `exit_group(7)` → 父进程按 `7 << 8` 收割整个线程组.
+fn group_exit_leg() -> Result<(), (&'static str, i64)> {
+    let child = fork();
+    if child == 0 {
+        group_child_body();
+    }
+    let Ok(child_pid) = i32::try_from(child) else {
+        return Err(("fork-range", -1));
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(child_pid, &mut status);
+    if reaped != i64::from(child_pid) {
+        return Err(("reap", reaped));
+    }
+    if status != GROUP_EXIT_WSTATUS {
+        return Err(("group-exit-status", i64::from(status)));
+    }
+    Ok(())
+}
+
+/// 组退出腿的子进程侧 (不返回).
+fn group_child_body() -> ! {
+    let rc = unsafe {
+        // SAFETY: helper 栈是子进程私有 BSS 块 (fork 已复制地址空间), 16 字节对齐;
+        // 两个 TID 指针指向本进程私有原子槽; `tls = 0` 表示不设新基址 (内核按
+        // `tls != 0` 判定 CLONE_SETTLS, 故本线程继承组长的 TLS 基址).
+        clone_thread(
+            THREAD_CLONE_FLAGS,
+            thread_stack_top(&GROUP_HELPER_STACK),
+            i32_slot_ptr(&GROUP_HELPER_PTID),
+            u32_slot_ptr(&GROUP_HELPER_TID),
+            0,
+            group_helper_body,
+            0,
+        )
+    };
+    if rc <= 0 {
+        proc_exit(2);
+    }
+    // 等 helper 真正上核报到 (有界), 确保 exit_group 面对的是一个活着的兄弟线程.
+    let _ = futex_wait_until(&GROUP_HELPER_READY, |v| v != 0);
+    exit_group(GROUP_EXIT_CODE);
+}
+
+/// 组退出腿的 helper 线程体: 报到后睡在 `GROUP_HOLD` 上 —— 该字永不变为 1,
+/// 唯一能把本线程搬回运行队列的是 `exit_group` 的组退出路径 (置 SIGKILL + unblock).
+extern "C" fn group_helper_body(_arg: u64) {
+    GROUP_HELPER_READY.store(1, Ordering::Release);
+    let _ = futex_wake(&GROUP_HELPER_READY, 1);
+    let _ = futex_wait_until(&GROUP_HOLD, |v| v != 0);
 }
 
 /// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).

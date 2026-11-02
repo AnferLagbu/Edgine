@@ -25,22 +25,22 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::privileged::sync::OnceLock;
 
 // ============================================================================
-// Futex 操作码 (与 Linux 兼容)
+// Futex 操作码 (单一权威源 `edgine_abi::thread`)
 // ============================================================================
 
 /// 等待: 若 *uaddr == val, 阻塞当前线程
-pub const FUTEX_WAIT: i32 = 0;
+pub const FUTEX_WAIT: i32 = edgine_abi::thread::FUTEX_WAIT;
 /// 唤醒: 唤醒最多 val 个等待者
-pub const FUTEX_WAKE: i32 = 1;
+pub const FUTEX_WAKE: i32 = edgine_abi::thread::FUTEX_WAKE;
 /// 带超时等待 (暂不支持超时, 语义同 `FUTEX_WAIT`)
-pub const FUTEX_WAIT_BITSET: i32 = 9;
+pub const FUTEX_WAIT_BITSET: i32 = edgine_abi::thread::FUTEX_WAIT_BITSET;
 /// 唤醒指定位集 (暂等同于 `FUTEX_WAKE`)
-pub const FUTEX_WAKE_BITSET: i32 = 10;
+pub const FUTEX_WAKE_BITSET: i32 = edgine_abi::thread::FUTEX_WAKE_BITSET;
 /// 迁移等待者: 将最多 val 个等待者从 uaddr 迁移到 uaddr2
-pub const FUTEX_REQUEUE: i32 = 3;
+pub const FUTEX_REQUEUE: i32 = edgine_abi::thread::FUTEX_REQUEUE;
 
 /// 私有标志: futex 位于进程内共享内存 (同一地址空间)
-pub const FUTEX_PRIVATE_FLAG: i32 = 128;
+pub const FUTEX_PRIVATE_FLAG: i32 = edgine_abi::thread::FUTEX_PRIVATE_FLAG;
 
 /// 提取基础操作码 (去掉 `PRIVATE/CLOCK_REALTIME` 等标志)
 fn futex_op(op: i32) -> i32 {

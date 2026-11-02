@@ -641,6 +641,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到用户态 TLS 切换恢复断言 (K-00)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # K-07a: 线程组运行时判据 —— clone 建线程 + TID 回填、每线程独立 TLS、
+            # gettid/getpid 身份、tgkill/kill 存在性探测、futex 双向往返 +
+            # CLONE_CHILD_CLEARTID join、exit_group 终止整组. 任一判据失败只打印
+            # `[THREAD] FAIL: <判据>`, 故 PASS 行缺失即回归 (fail-closed).
+            # 匹配只取 `PASS:` 前缀: 串口与内核日志并发写会插进同一行, 长文案更易被截断.
+            if grep -q "\[THREAD\] PASS:" "$X64_LOG"; then
+                ok "[x86_64] 线程组运行时判据通过 (K-07a)"
+            else
+                warn "[x86_64] 未观察到线程组运行时判据 (K-07a)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
             # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
             # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
@@ -805,6 +816,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 用户态 TLS 切换恢复通过 (K-00)"
             else
                 warn "[aarch64] 未观察到用户态 TLS 切换恢复断言 (K-00)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # K-07a: 线程组运行时判据 (与 x86_64 分支同断言).
+            # aarch64 侧曾在该判据上暴露两个只有真跑才现形的问题: 线程栈落
+            # `.rodata` (无 PF_W ⇒ 压栈即权限错误) 与「返回用户态前信号投递未接线」
+            # (exit_group 的 SIGKILL 无人消费 ⇒ 兄弟线程重睡、整组收不齐). 缺失即回归.
+            if grep -q "\[THREAD\] PASS:" "$A64_LOG"; then
+                ok "[aarch64] 线程组运行时判据通过 (K-07a)"
+            else
+                warn "[aarch64] 未观察到线程组运行时判据 (K-07a)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).

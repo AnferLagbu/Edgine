@@ -887,6 +887,23 @@ if [ "$MODE" = "full" ]; then
         else
             err "QEMU 双架构启动测试失败 (exit=$QEMU_RC, 见 scripts/qemu_boot_test.sh 输出)"
         fi
+
+        # K-07a: 线程组判据的固定轮次压力 (专项脚本 scripts/thread_stress_test.sh).
+        # 多线程缺陷 (丢唤醒 / join 竞态 / 跨核时序) 天然偶发, 单次启动不足以判稳;
+        # full 档固定每架构 N 轮 (默认 3, THREAD_STRESS_ROUNDS 可上调). 与上一子腿
+        # 分工: qemu_boot_test 证「单次能过」, 本子腿证「重复能过」. 镜像由上一子腿
+        # 的 make ARCH=<arch> all 产出, 故必须排在其后.
+        STRESS_ROUNDS="${THREAD_STRESS_ROUNDS:-3}"
+        set +e
+        STRESS_OUT=$(THREAD_STRESS_ARCH=both "$PROJECT_ROOT/scripts/thread_stress_test.sh" "$STRESS_ROUNDS" 2>&1)
+        STRESS_RC=$?
+        set -e
+        printf '%s\n' "$STRESS_OUT" | tail -3
+        if [ "$STRESS_RC" -eq 0 ]; then
+            ok "线程组多轮压力: ${STRESS_ROUNDS} 轮 x 2 架构全通过 (K-07a)"
+        else
+            err "线程组多轮压力失败 (exit=$STRESS_RC, 见 scripts/thread_stress_test.sh 输出)"
+        fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi
