@@ -265,9 +265,10 @@ pub extern "C" fn mutex_unlock(m: *const MutexInner) {
         // 嵌套锁，减少深度
         raw::mutex_depth(m).store(depth - 1, Ordering::Release);
     } else {
-        // 完全释放
+        // 完全释放. owner 回到 -1 哨兵 (与 `MutexInner::new` / `MutexGuard` 一致):
+        // 0 是"无进程上下文"的 PID, 用它作空标记会让 pid 0 误判为持有者 (K-05).
         raw::mutex_locked(m).store(0, Ordering::Release);
-        raw::mutex_owner(m).store(0, Ordering::Release);
+        raw::mutex_owner(m).store(-1, Ordering::Release);
         raw::mutex_depth(m).store(0, Ordering::Release);
         raw::mutex_acquire_time(m).store(0, Ordering::Release);
     }

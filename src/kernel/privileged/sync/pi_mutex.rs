@@ -53,8 +53,9 @@ use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
 // 最终方案: "持有登记表 + 类型擦除函数指针"。
 // - lock 成功时 (try_lock 快路径) 与移交路径 (do_unlock 转交 next_pid) 登记
 //   (mutex 地址, 非泛型退出分派). 分派经固定布局前缀访问, 对任意 T (含 ?Sized) 兼容.
-// - 正常 unlock 不摘除 (残留条目由进程退出时整体 remove 清理; process_exit
-//   幂等, 已释放锁为 no-op, 仅少量内存残留, 可接受)
+// - K-05: 登记按 (pid, 锁地址) 去重; 完全释放与移交时摘除原持有者条目;
+//   `PiMutex::drop` 兜底摘除所有指向本实例的条目 — 登记表不再随加锁次数增长,
+//   也不会在对象销毁后保留悬垂地址.
 // - 进程退出时按 pid 取出列表逐个强制解锁
 // ============================================================================
 
@@ -93,14 +94,49 @@ unsafe fn pi_mutex_exit_dispatch(ptr: usize, pid: u32) -> bool {
     m.force_unlock_for_exit(pid)
 }
 
-/// 登记持有关系 (lock 成功时调用): 记录 (自身地址, 类型擦除 dispatch) 到当前 pid。
+/// 锁实例地址 (与 `track_hold` 登记键同源; ?Sized 先转瘦指针再转 usize)。
+fn lock_addr<T: ?Sized>(lock: &PiMutex<T>) -> usize {
+    core::ptr::from_ref::<PiMutex<T>>(lock).cast::<u8>() as usize
+}
+
+/// 登记持有关系 (lock 成功/移交时调用): 记录 (锁地址, 类型擦除 dispatch)。
+///
+/// 同一 (pid, 锁地址) 只保留一条: 重复 lock 或移交回环不会让登记表无限增长。
 fn track_hold<T: ?Sized>(lock: &PiMutex<T>, pid: u32) {
-    let entry = HeldLock {
-        // ?Sized 时为宽指针, 先转瘦指针取数据地址再转 usize
-        ptr: core::ptr::from_ref::<PiMutex<T>>(lock).cast::<u8>() as usize,
+    let ptr = lock_addr(lock);
+    let mut table = PI_MUTEX_HELD.lock();
+    let list = table.entry(pid).or_default();
+    if list.iter().any(|h| h.ptr == ptr) {
+        return;
+    }
+    list.push(HeldLock {
+        ptr,
         dispatch: pi_mutex_exit_dispatch,
+    });
+}
+
+/// 摘除 (pid, 锁地址) 的持有登记; 无对应条目时静默返回。
+fn untrack_hold<T: ?Sized>(lock: &PiMutex<T>, pid: u32) {
+    let ptr = lock_addr(lock);
+    let mut table = PI_MUTEX_HELD.lock();
+    let Some(list) = table.get_mut(&pid) else {
+        return;
     };
-    PI_MUTEX_HELD.lock().entry(pid).or_default().push(entry);
+    list.retain(|h| h.ptr != ptr);
+    let empty = list.is_empty();
+    if empty {
+        table.remove(&pid);
+    }
+}
+
+/// 摘除所有指向本实例的登记 (对象析构兜底, 防止登记表留下悬垂地址)。
+fn untrack_all<T: ?Sized>(lock: &PiMutex<T>) {
+    let ptr = lock_addr(lock);
+    let mut table = PI_MUTEX_HELD.lock();
+    table.retain(|_, list| {
+        list.retain(|h| h.ptr != ptr);
+        !list.is_empty()
+    });
 }
 
 /// 进程退出回调: 遍历该 pid 登记的 PI Mutex, 强制解锁 (持有者已退出)。
@@ -109,11 +145,22 @@ pub fn pi_mutex_process_exit(pid: u32) {
     let held = PI_MUTEX_HELD.lock().remove(&pid);
     if let Some(list) = held {
         for h in list {
-            // SAFETY: h.ptr 在登记时有效且对象存活 (持锁期间保证);
-            // process_exit 幂等 (释放后 holder 变 PID_NONE, 重复调用 no-op).
+            // SAFETY: h.ptr 在登记时有效且对象存活 (持锁期间保证; 析构时
+            // `untrack_all` 已摘除条目); process_exit 幂等 (释放后 holder 变
+            // PID_NONE, 重复调用 no-op).
             unsafe { (h.dispatch)(h.ptr, pid) };
         }
     }
+}
+
+/// 查询某 PID 当前的 PI 持有登记条数 (仅测试构建, K-05 登记生命周期回归锁)。
+#[cfg(any(feature = "kernel_test", feature = "host-test"))]
+#[must_use]
+pub fn held_lock_count(pid: u32) -> usize {
+    PI_MUTEX_HELD
+        .lock()
+        .get(&pid)
+        .map_or(0, alloc::vec::Vec::len)
 }
 
 // ============================================================================
@@ -206,6 +253,9 @@ struct PiMutexInner {
     locked: AtomicBool,
     /// 当前持有者 PID (None = 未持有)
     holder: AtomicU32,
+    /// 定向移交目标 PID (`PID_NONE` = 无); K-05: `do_unlock` 选定下一持有者后置位,
+    /// 目标线程在下一次 `try_lock`/`lock` 循环中确认接收.
+    handoff: AtomicU32,
     /// 等待队列 (FIFO 顺序, 同优先级按 FIFO)
     waiters: IrqSpinLock<VecDeque<WaiterEntry>>,
     /// 当前有效优先级 (= `max(holder_prio`, `waiters_prio`))
@@ -220,6 +270,7 @@ impl PiMutexInner {
         Self {
             locked: AtomicBool::new(false),
             holder: AtomicU32::new(PID_NONE),
+            handoff: AtomicU32::new(PID_NONE),
             waiters: IrqSpinLock::new(VecDeque::new()),
             effective_priority: AtomicU32::new(0),
             chain: UnsafeCell::new([0; 8]),
@@ -380,6 +431,11 @@ impl<T: ?Sized> PiMutex<T> {
     ///
     /// 成功时返回 true, 失败时返回 false 并**已自动注册为等待者 + 触发捐赠**。
     pub fn try_lock(&self, my_pid: u32, my_base_priority: u32) -> bool {
+        // K-05: 若 `do_unlock` 已把本线程选为下一持有者 (定向移交), 此处确认接收.
+        if self.accept_handoff(my_pid) {
+            return true;
+        }
+
         // fast path: 直接尝试
         if self
             .inner
@@ -411,6 +467,40 @@ impl<T: ?Sized> PiMutex<T> {
         // 失败: 慢路径 — 注册为等待者 + 捐赠
         self.register_waiter_and_donate(my_pid, my_base_priority);
         false
+    }
+
+    /// 接收 `do_unlock` 的定向移交 (K-05)。
+    ///
+    /// `do_unlock` 在选出下一持有者后, 已把 holder/locked/优先级落给目标并把
+    /// `handoff` 置为目标 PID; 本线程只需确认状态与清除移交标记. 若本线程在
+    /// 移交标记可见前走过慢路径而重新入队, 接收时须撤销自身条目, 否则后续解锁
+    /// 会把自己再次选为下一持有者 (自移交死锁).
+    fn accept_handoff(&self, my_pid: u32) -> bool {
+        // PID_NONE 同时是"无移交"哨兵, 无进程上下文 (pid 0) 不得按移交处理.
+        if my_pid == PID_NONE || self.inner.handoff.load(Ordering::Acquire) != my_pid {
+            return false;
+        }
+        if self.inner.holder.load(Ordering::Acquire) != my_pid {
+            return false;
+        }
+        if self
+            .inner
+            .handoff
+            .compare_exchange(my_pid, PID_NONE, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        let removed = {
+            let mut waiters = self.inner.waiters.lock();
+            let before = waiters.len();
+            waiters.retain(|w| w.pid != my_pid);
+            before != waiters.len()
+        };
+        if removed {
+            self.recompute_and_notify();
+        }
+        true
     }
 
     /// 注册为等待者并触发捐赠 (内部函数)
@@ -601,8 +691,11 @@ impl<T: ?Sized> PiMutex<T> {
     fn do_unlock(&self) {
         let my_pid = self.inner.holder.load(Ordering::Acquire);
 
+        // K-05: 上一轮未接收的移交目标作废, 由本轮重新选定的持有者覆盖.
+        self.inner.handoff.store(PID_NONE, Ordering::Release);
+
         // 1. 找到下一个最高优先级等待者
-        let (next_pid, next_base_prio) = {
+        let next = {
             let mut waiters = self.inner.waiters.lock();
             // 找到 max 优先级 (同优先级按 FIFO, 即 VecDeque 头部优先)
             let mut best_idx: Option<usize> = None;
@@ -616,20 +709,27 @@ impl<T: ?Sized> PiMutex<T> {
             if let Some(idx) = best_idx {
                 // SAFETY: best_idx 为 Some 时 waiters[best_idx] 必然存在
                 let entry = waiters.remove(idx).expect("pi_mutex: waiters 索引无效");
-                (entry.pid, entry.base_priority)
+                Some((entry.pid, entry.base_priority))
             } else {
-                // 无等待者, 完全释放
-                self.inner.locked.store(false, Ordering::Release);
+                // 无等待者, 完全释放. K-05: 先落 holder 再清 locked, 避免释放窗口内
+                // 并发 CAS 成功后又被子系统写的 holder 覆盖, 使新持有者丧失归属.
                 self.inner.holder.store(PID_NONE, Ordering::Release);
                 self.inner.effective_priority.store(0, Ordering::Release);
                 self.holder_base_priority.store(0, Ordering::Release);
-                return;
+                self.inner.locked.store(false, Ordering::Release);
+                None
             }
         };
+        let Some((next_pid, next_base_prio)) = next else {
+            // K-05: 完全释放后摘除持有登记, 登记表不随加锁次数增长.
+            untrack_hold(self, my_pid);
+            return;
+        };
 
-        // 2. 移交锁给下一个等待者 (原子 CAS: holder = next.pid, locked 保持 true)
-        //    由于我们仍持 "持有者" 身份, 中间需要短暂 false → true 让 next 看到
-        //    这里采用: 短暂释放 + next 重入, 与 register_waiter_and_donate 配合
+        // 2. 定向移交给下一个等待者: locked 保持 true, holder 直接落为 next.
+        //    next 在下一次 try_lock/lock 循环中经 `accept_handoff` 确认接收
+        //    (K-05: 原实现先把 locked 清 false 再置 true, 该窗口内并发 try_lock
+        //    可抢到锁, 随后又被本函数覆盖 holder, 出现双持有者).
 
         // 重置自己的优先级 (基线, 由调度器钩子处理)
         notify_revoke(my_pid); // 通知调度器我自己撤销捐赠
@@ -645,28 +745,21 @@ impl<T: ?Sized> PiMutex<T> {
             self.inner.chain_len.store(0, Ordering::Relaxed);
         }
 
-        // 短暂 release, 让 next.try_lock 能看到 unlocked
-        self.inner.locked.store(false, Ordering::Release);
-        self.inner.holder.store(PID_NONE, Ordering::Release);
-        self.inner.effective_priority.store(0, Ordering::Release);
-        self.holder_base_priority.store(0, Ordering::Release);
-
-        // next 线程此刻还在自旋等待 holder==next.pid;
-        // 我们直接设置 holder, 让它从自旋中退出并完成获取
+        // 所有权落账: holder / locked / 优先级一次落给 next (locked 始终为 true).
         self.inner.holder.store(next_pid, Ordering::Release);
-        self.inner.locked.store(true, Ordering::Release);
         self.inner
             .effective_priority
             .store(next_base_prio, Ordering::Release);
-        // 持有者 base_priority 由 next 在 try_lock 时设置
-        // (这里没有, 因为我们走的是 unlock 路径而非 try_lock)
-        // 修正: 重新赋值
         self.holder_base_priority
             .store(next_base_prio, Ordering::Release);
 
-        // B03-08 返工: 移交路径不走 try_lock, 需为 next_pid 显式登记持有关系
-        // (原持有者 my_pid 的残留条目由进程退出时整体 remove 清理, 幂等 no-op).
+        // B03-08 返工 / K-05: 移交路径不走 try_lock, 需为 next_pid 显式登记,
+        // 并摘除原持有者条目 (避免登记表增长与 pid 复用后的陈旧条目).
+        untrack_hold(self, my_pid);
         track_hold(self, next_pid);
+
+        // 定向移交标记 (最后写, 保证 next 看到标记时 holder/locked 已就绪).
+        self.inner.handoff.store(next_pid, Ordering::Release);
 
         // v2.2: 如果有捐赠链, 传递给下一个持有者
         // 链式: C→B→A, 当 A unlock M1, B 成为 holder, B 的链是 [C]
@@ -702,6 +795,17 @@ impl<T: ?Sized> PiMutex<T> {
     /// 查询当前等待者数量
     pub fn waiter_count(&self) -> usize {
         self.inner.waiters.lock().len()
+    }
+}
+
+impl<T: ?Sized> Drop for PiMutex<T> {
+    /// K-05: 对象析构时摘除所有指向本实例的退出登记.
+    ///
+    /// 登记键是实例地址; 若不摘除, 地址被复用后新锁会继承陈旧条目, 进程退出
+    /// 分派可能按陈旧地址强制解锁 (悬垂). 正常 unlock/移交已摘除持有者条目,
+    /// 此处只兜底异常路径 (如持锁实例未 unlock 即被释放).
+    fn drop(&mut self) {
+        untrack_all(self);
     }
 }
 

@@ -276,6 +276,121 @@ fn test_v2_1_unlock_uses_recompute() -> TestResult {
     TestResult::Pass
 }
 
+// =============================================================================
+// K-05 — 持有登记生命周期 (析构兜底 / 移交登记 / 退出释放)
+// =============================================================================
+
+fn test_k05_untrack_on_release() -> TestResult {
+    let m = pi::PiMutex::new(0u32);
+    let pid = 9101u32;
+    if !m.try_lock(pid, 5) {
+        return TestResult::Fail("try_lock should succeed");
+    }
+    if pi::held_lock_count(pid) != 1 {
+        return TestResult::Fail("hold should be registered once");
+    }
+    // 完全释放须摘除登记; 重新加锁只产生一条新登记 (不是累加)
+    m.force_unlock();
+    if pi::held_lock_count(pid) != 0 {
+        return TestResult::Fail("hold should be untracked on full release");
+    }
+    if !m.try_lock(pid, 5) {
+        return TestResult::Fail("re-lock after release should succeed");
+    }
+    if pi::held_lock_count(pid) != 1 {
+        return TestResult::Fail("re-lock should register exactly one entry");
+    }
+    m.force_unlock();
+    TestResult::Pass
+}
+
+fn test_k05_handoff_registry_and_accept() -> TestResult {
+    let m = pi::PiMutex::new(0u32);
+    let holder = 9201u32;
+    let next = 9202u32;
+    if !m.try_lock(holder, 1) {
+        return TestResult::Fail("A should acquire");
+    }
+    let _ = m.try_lock(next, 10);
+    m.force_unlock();
+
+    // 移交后: 持有登记随所有权转移, 而不是停留在原持有者名下
+    if pi::held_lock_count(holder) != 0 {
+        return TestResult::Fail("old holder should be untracked after handoff");
+    }
+    if pi::held_lock_count(next) != 1 {
+        return TestResult::Fail("next holder should be tracked after handoff");
+    }
+    if m.holder() != next {
+        return TestResult::Fail("holder should be next after handoff");
+    }
+
+    // 定向移交必须被 next 的 try_lock 确认接收 (否则会重新入队并返回 false)
+    if !m.try_lock(next, 10) {
+        return TestResult::Fail("next should accept the handoff");
+    }
+    if m.waiter_count() != 0 {
+        return TestResult::Fail("accepted handoff should not stay queued");
+    }
+    m.force_unlock();
+    if m.is_locked() {
+        return TestResult::Fail("final release should unlock");
+    }
+    if pi::held_lock_count(next) != 0 {
+        return TestResult::Fail("final release should untrack next");
+    }
+    TestResult::Pass
+}
+
+fn test_k05_exit_releases_pending_handoff() -> TestResult {
+    let m = pi::PiMutex::new(0u32);
+    let holder = 9301u32;
+    let next = 9302u32;
+    if !m.try_lock(holder, 1) {
+        return TestResult::Fail("A should acquire");
+    }
+    let _ = m.try_lock(next, 10);
+    m.force_unlock();
+    if m.holder() != next {
+        return TestResult::Fail("holder should be next before exit");
+    }
+
+    // next 在确认接收前退出: 退出路径必须按持有人强制释放待接收的移交
+    pi::pi_mutex_process_exit(next);
+    if m.is_locked() {
+        return TestResult::Fail("pending handoff should be force-released on exit");
+    }
+    if m.holder() != pi::PID_NONE {
+        return TestResult::Fail("holder should be reset on exit release");
+    }
+    if pi::held_lock_count(next) != 0 {
+        return TestResult::Fail("exit cleanup should remove the registry entry");
+    }
+    if !m.try_lock(9303, 5) {
+        return TestResult::Fail("lock should be acquirable after exit release");
+    }
+    m.force_unlock();
+    TestResult::Pass
+}
+
+fn test_k05_drop_clears_registry() -> TestResult {
+    let pid = 9401u32;
+    {
+        let m = pi::PiMutex::new(0u32);
+        if !m.try_lock(pid, 5) {
+            return TestResult::Fail("try_lock should succeed");
+        }
+        if pi::held_lock_count(pid) != 1 {
+            return TestResult::Fail("hold should be registered");
+        }
+        // 故意不 unlock 直接析构: Drop 兜底摘除指向本实例的条目
+    }
+    if pi::held_lock_count(pid) != 0 {
+        return TestResult::Fail("drop should clear registry entries");
+    }
+    TestResult::Pass
+}
+
 pub fn register_pi_mutex_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -294,6 +409,11 @@ pub fn register_pi_mutex_tests() {
             "v2_1_update_no_op": test_v2_1_update_no_op,
             "v2_1_update_among_many": test_v2_1_update_among_many,
             "v2_1_unlock_uses_recompute": test_v2_1_unlock_uses_recompute,
+            // K-05 持有登记生命周期
+            "k05_untrack_on_release": test_k05_untrack_on_release,
+            "k05_handoff_registry_and_accept": test_k05_handoff_registry_and_accept,
+            "k05_exit_releases_pending_handoff": test_k05_exit_releases_pending_handoff,
+            "k05_drop_clears_registry": test_k05_drop_clears_registry,
         }
     }
 }
