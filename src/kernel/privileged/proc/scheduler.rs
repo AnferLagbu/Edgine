@@ -543,8 +543,8 @@ impl Scheduler {
             return None;
         }
 
-        // 初始化进程组 ID (POSIX: 新进程默认自成一组, pgid = pid)
-        crate::privileged::proc::proc_init_pgid(pid);
+        // K-04: 新进程组由 ThreadGroup::new_leader 初始化为自成一组
+        // (pgid = tgid = pid), 不再需要额外的 pgid 初始化步骤.
 
         Some(pid)
     }
@@ -2027,75 +2027,94 @@ impl Scheduler {
                     proc.exiting.store(true, Ordering::Release);
                 }
             });
-            // K-01: 退出即退出线程组. 最后一个成员离开时置组退出状态 (首个退出码
-            // 生效); 组内存本身由最后一个 TCB 的 `Arc` 引用消失释放, 不在此回收.
+            // K-01/K-04: 退出即退出线程组. 最后一个成员离开时置组退出状态 (首个
+            // 退出码生效); 组内存本身由最后一个 TCB 的 `Arc` 引用消失释放.
             // 取锁方向 7 → 9 (进程表 → 成员账), 与 `ref-lock-order.md` 层级一致.
-            PROCESS_TABLE.with_process(pid, |proc| {
-                if proc.thread_group.leave(pid) {
-                    proc.thread_group.mark_exited(exit_code);
-                }
-            });
+            let last_member = PROCESS_TABLE
+                .with_process(pid, |proc| {
+                    if proc.thread_group.leave(pid) {
+                        proc.thread_group.mark_exited(exit_code);
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(false);
             // 埋点 (见 docs/plan/archive/tlb-shootdown-epoch.md S-10): 退出事件是延迟释放覆盖的
             // 上游分位 —— 与 `vmm_x86_64.rs` 的 `destroy_page_table` 埋点配对, 可区分
             // "子进程根本没跑到 exit" 与 "已退出成 zombie 但无人回收 (无 wait4 ⇒ 无人调
             // `remove_and_free` ⇒ `Process::drop` 不运行 ⇒ 页表不销毁)" 两种情形.
             crate::klog_info!(Process, "exit: pid={} code={}", pid, exit_code);
-            // 会话 leader 退出时释放控制终端
-            crate::privileged::proc::session_leader_exit(pid);
+            // K-04: 会话属线程组; 仅组最后成员退出时释放控制终端.
+            if last_member {
+                crate::privileged::proc::session_leader_exit(pid);
+            }
             // P-7 根治: 终止即撤防 per-pid 截止期类资源 — `ITIMER_REAL`/`alarm` 与
             // POSIX timer. 两者的到期登记在 hrtimer 框架里, 不会随 `Process` 销毁
             // 而消失; 不撤防则 pid 复用后新进程会收到前一进程遗留的 SIGALRM/信号.
             // (槽位表是静态数组, 不存在 UAF, 但归属信息已失效)
+            // K-04: 定时器归属仍按 TID 撤防 (组定向投递归 K-06), 每个线程清自己的槽.
             crate::privileged::proc::itimer_real_release_pid(pid);
             crate::privileged::proc::posix_timer_release_pid(pid);
 
-            let parent_pid_opt = PROCESS_TABLE.with_process(pid, |proc| {
-                let pwm = proc.get_pwm();
-                proc.exit_code.store(exit_code, Ordering::SeqCst);
-                let _ = proc.set_state_safe(ProcessState::Zombie);
-                self.dec_limit(pwm);
-
-                // D2: 进程退出时从 cgroup 移除
-                let cg_id = proc.cgroup_id.load(core::sync::atomic::Ordering::Acquire);
-                if crate::privileged::proc::cgroup_is_initialized() {
-                    let sub = crate::privileged::proc::cgroup_subsystem();
-                    if let Some(cg) = sub.find(cg_id) {
-                        cg.detach_proc(pid);
-                    }
-                }
-
-                proc.parent.map(|p| p.0)
-            });
-
-            if let Some(parent_pid) = parent_pid_opt.flatten() {
-                Self::unblock(parent_pid);
-            }
-
-            // 单次加锁取出子进程列表, 随后逐个独立加锁处理.
-            // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process*` /
-            // `remove_and_free` 会同核自死锁.
-            let children: alloc::vec::Vec<Pid> = PROCESS_TABLE
+            let parent_tgid = PROCESS_TABLE
                 .with_process(pid, |proc| {
-                    proc.children.lock().iter().map(|c| c.0).collect()
-                })
-                .unwrap_or_default();
-            for child_pid in children {
-                PROCESS_TABLE.with_process_mut(child_pid, |child| {
-                    let state = child.get_state();
-                    if state == ProcessState::Zombie {
-                        let _ = child.set_state_safe(ProcessState::Terminated);
-                    } else {
-                        child.parent = Some(ProcessId(1));
+                    let pwm = proc.get_pwm();
+                    proc.exit_code.store(exit_code, Ordering::SeqCst);
+                    let _ = proc.set_state_safe(ProcessState::Zombie);
+                    // K-04: 进程级计数按线程组收口, 非最后成员退出不得撤销
+                    // 整个组的计数 (组长创建时已计一次, 组退出时只减一次).
+                    if last_member {
+                        self.dec_limit(pwm);
                     }
-                });
-                let child_terminated = PROCESS_TABLE
-                    .with_process(child_pid, |c| c.get_state() == ProcessState::Terminated)
-                    .unwrap_or(false);
-                if child_terminated {
-                    PROCESS_TABLE.remove_and_free(child_pid);
-                }
+
+                    // D2: cgroup 成员身份按 TCB 收口 — 每个退出的 TCB 只摘除
+                    // 自己的 PID 记录 (未显式 attach 时为幂等空操作).
+                    let cg_id = proc.cgroup_id.load(core::sync::atomic::Ordering::Acquire);
+                    if crate::privileged::proc::cgroup_is_initialized() {
+                        let sub = crate::privileged::proc::cgroup_subsystem();
+                        if let Some(cg) = sub.find(cg_id) {
+                            cg.detach_proc(pid);
+                        }
+                    }
+
+                    proc.group().parent()
+                })
+                .unwrap_or(0);
+
+            if last_member && parent_tgid != 0 {
+                Self::unblock(parent_tgid);
             }
-            let _ = PROCESS_TABLE.with_process(pid, |proc| proc.children.lock().clear());
+
+            if last_member {
+                // 单次加锁取出子进程组账, 随后逐个独立加锁处理.
+                // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process*` /
+                // `remove_and_free` 会同核自死锁.
+                let children: alloc::vec::Vec<Pid> = PROCESS_TABLE
+                    .with_process(pid, |proc| proc.group().children())
+                    .unwrap_or_default();
+                for child_tgid in children {
+                    // 子组已整体退出 → 回收组长 TCB; 否则把子组改挂到 pid 1.
+                    // K-06 的组收割会接管子组内其余僵尸 TCB 的回收.
+                    let child_exited = PROCESS_TABLE
+                        .with_process(child_tgid, |child| {
+                            if child.thread_group.has_exited() {
+                                if child.get_state() == ProcessState::Zombie {
+                                    let _ = child.set_state_safe(ProcessState::Terminated);
+                                }
+                                true
+                            } else {
+                                child.group().set_parent(1);
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
+                    if child_exited {
+                        PROCESS_TABLE.remove_and_free(child_tgid);
+                    }
+                }
+                let _ = PROCESS_TABLE.with_process(pid, |proc| proc.group().clear_children());
+            }
 
             // 本函数**不**释放本进程的用户地址空间: 唯一的销毁点是
             // `Process::drop` -> `vmm_destroy_page_table`, 而 `Process` 只在
@@ -2461,13 +2480,14 @@ impl Scheduler {
                     break;
                 }
                 if let Some(_proc) = PROCESS_TABLE.get(pid) {
-                    // 单次加锁取本进程状态与父 pid, 父存活另起一次加锁查询.
+                    // 单次加锁取本进程状态与父组 tgid, 父存活另起一次加锁查询.
                     // `processes` 为不可重入锁, 在持锁闭包内再次 `with_process`
-                    // 会同核自死锁 (本轮 hang 根因).
+                    // 会同核自死锁 (本轮 hang 根因). K-04: 父进程关系归线程组.
                     let zombie_parent = PROCESS_TABLE
                         .with_process(pid, |p| {
                             if p.get_state() == ProcessState::Zombie {
-                                Some(p.parent)
+                                let parent = p.group().parent();
+                                Some((parent != 0).then_some(ProcessId(parent)))
                             } else {
                                 None
                             }

@@ -40,8 +40,9 @@
   PER_CPU_SCHED[idx] 锁, CFS/RT/DL 队列锁
 
 层级 9: 进程属性
-  sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy, children,
-  thread_group.members（线程组成员账）, fd_table.entries / fd_table.cloexec（fd 表）,
+  sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy,
+  thread_group.members（线程组成员账）, thread_group.children（子进程组账）,
+  fd_table.entries / fd_table.cloexec（fd 表）,
   fs_context.cwd / fs_context.root（进程 FS 上下文; umask 为原子量）
 
 层级 10: POSIX Timer
@@ -118,7 +119,7 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 层级 3: MmStruct::vmas.lock()          →  克隆 VMA
 层级 1: PMM 分配页帧                    →  COW 页表克隆
 层级 8: scheduler.lock()                →  注册到运行队列
-层级 9: parent.children.lock()          →  添加子进程
+层级 9: thread_group.children.lock()    →  添加子进程组 (挂父组 tgid; 线程不入账)
 ```
 
 ### 文件写入
@@ -146,6 +147,7 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 层级 11: close_all_fds()                 →  逐句柄递减 OpenFile 引用 (仅最后持有者)
 层级 9: thread_group.members.lock()      →  移除本 TID; 组空则置退出状态
 层级 7: PROCESS_TABLE.with_process()     →  置 Zombie / 处理子进程
+层级 9: thread_group.children.lock()     →  组最后成员退出时改挂/清空子进程组账
 ```
 
 ### 跨核搬动（负载均衡 / 唤醒投送）

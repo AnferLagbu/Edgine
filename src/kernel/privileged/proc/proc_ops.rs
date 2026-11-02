@@ -704,7 +704,11 @@ pub extern "C" fn sys_fork() -> Pid {
     if child_pid == 0 {
         return 0;
     }
-    let child_ptr = raw::alloc_process(child_pid, "", Some(ProcessId(parent_pid)));
+    // K-04: 父进程关系是线程组属性; 子进程组挂在父线程组 (tgid) 名下.
+    let parent_tgid = PROCESS_TABLE
+        .with_process(parent_pid, Process::tgid)
+        .unwrap_or(parent_pid);
+    let child_ptr = raw::alloc_process(child_pid, "", Some(ProcessId(parent_tgid)));
     let child = raw::process_ref_mut(child_ptr);
 
     // COW 页表克隆: 父子共享物理页, 写入时触发 page fault 复制
@@ -811,7 +815,7 @@ pub extern "C" fn sys_fork() -> Pid {
         return 0;
     }
     PROCESS_TABLE.with_process(parent_pid, |p| {
-        p.children.lock().push(ProcessId(child_pid));
+        p.group().add_child(child_pid);
     });
     let _ = child.set_state_safe(ProcessState::Ready);
     Scheduler::add_to_run_queue(child_pid);
@@ -828,18 +832,16 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
     if let Some(rlim) = PROCESS_TABLE.with_process(parent_pid, |p| p.rlimit_table.lock().clone()) {
         *child.rlimit_table.lock() = rlim;
     }
-    // session/pgid/canary
+    // session/pgid/canary: 会话与进程组是线程组属性 (K-04)
     if let Some((sid, pgid, canary)) = PROCESS_TABLE.with_process(parent_pid, |p| {
         (
-            p.session_id.load(Ordering::SeqCst),
-            p.pgid.load(Ordering::SeqCst),
+            p.group().session_id(),
+            p.group().pgid(),
             p.stack_canary.load(Ordering::SeqCst),
         )
     }) {
-        child.session_id.store(sid, Ordering::SeqCst);
-        child
-            .pgid
-            .store(if pgid == 0 { parent_pid } else { pgid }, Ordering::SeqCst);
+        child.group().set_session_id(sid);
+        child.group().set_pgid(pgid);
         child.stack_canary.store(canary, Ordering::SeqCst);
     }
     // seccomp
@@ -999,7 +1001,7 @@ fn release_inherited_fd_refs(child: &Process) {
 #[unsafe(no_mangle)]
 pub extern "C" fn proc_get_ppid(pid: Pid) -> Pid {
     PROCESS_TABLE
-        .with_process(pid, |p| p.parent.map_or(0, |p| p.0))
+        .with_process(pid, |p| p.group().parent())
         .unwrap_or(0)
 }
 

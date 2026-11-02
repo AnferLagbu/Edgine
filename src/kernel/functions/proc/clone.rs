@@ -12,9 +12,9 @@
 //! - functions 层验证标量参数和标志组合
 //! - 页表/进程操作委托给 privileged 层 (TCB)
 
-use crate::privileged::proc::ProcessState;
 use crate::privileged::proc::api;
 use crate::privileged::proc::raw;
+use crate::privileged::proc::{Process, ProcessState};
 use crate::privileged::syscall::Errno;
 use core::sync::atomic::Ordering;
 
@@ -222,7 +222,7 @@ fn clone_vm_path(
 
 /// 分配子进程 PCB 并登记父进程 cr3 持有者; 失败返回 `None` (PCB 已回滚)
 ///
-/// `joins_group` 为真时子 TCB 是父线程同组的线程: 其父字段置空 (线程不进入
+/// `joins_group` 为真时子 TCB 是父线程同组的线程: 其新组不登记父组 (线程不进入
 /// 任何 `children` 列表, 父子关系归线程组, 见 K-04/K-06).
 fn vm_child_alloc(
     parent_pid: u32,
@@ -238,10 +238,13 @@ fn vm_child_alloc(
     .unwrap_or_default();
 
     // 创建子进程 (共享 CR3, 不 COW)
+    // K-04: 父进程关系落在线程组上; 独立进程组挂到父线程组 tgid 名下.
     let parent_record = if joins_group {
         None
     } else {
-        Some(crate::privileged::proc::ProcessId(parent_pid))
+        Some(crate::privileged::proc::ProcessId(
+            api::process_with(parent_pid, Process::tgid).unwrap_or(parent_pid),
+        ))
     };
     let child_ptr = raw::alloc_process(child_pid, name_str.as_str(), parent_record);
     let child = raw::process_ref_mut(child_ptr);
@@ -386,7 +389,7 @@ fn vm_child_init_context(
 /// `joins_group` 为真时先加入父线程所在的线程组, 再登记进程表 —— 写入顺序保证
 /// `getpid` 自首次上核起即读到正确的 tgid. 任一步失败都回滚 PCB 与组成员身份
 /// (同时释放共享 cr3 引用), 不在进程表中留下半成品. 非入组的 `CLONE_VM` 子进程
-/// 在登记成功后进入父进程 `children`, 成为可被 wait 收割的独立进程.
+/// 在登记成功后进入父线程组的 `children`, 成为可被 wait 收割的独立进程.
 fn vm_child_register(
     flags: u64,
     child: &mut crate::privileged::proc::Process,
@@ -418,13 +421,11 @@ fn vm_child_register(
         return Err(Errno::Enomem.as_ret());
     }
 
-    // 独立进程 (不带 CLONE_THREAD) 登记到父进程的 children; 线程不进入
-    // `children` — 父进程只收割线程组 (K-02), 线程退出不产生可 wait 的子进程.
+    // 独立进程 (不带 CLONE_THREAD) 登记到父线程组的 children; 线程不进入
+    // `children` — 父进程只收割线程组 (K-02/K-04), 线程退出不产生可 wait 的子进程.
     if !joins_group {
-        api::process_with_mut(parent_pid, |p| {
-            p.children
-                .lock()
-                .push(crate::privileged::proc::ProcessId(child_pid));
+        api::process_with(parent_pid, |p| {
+            p.group().add_child(child_pid);
         });
     }
 

@@ -178,17 +178,26 @@ fn exit_path_leaves_group_under_process_table_lock() {
         has(&body, "mark_exited(exit_code)"),
         "K-01: 组退出码必须来自退出路径的 exit_code"
     );
+    assert!(
+        has(&body, "let last_member = PROCESS_TABLE"),
+        "K-01/K-04: 最后成员判定必须由退出路径持有"
+    );
     // 成员账锁只能在 `with_process` 临界区内取 (层级 7 → 9);
     // 反向 (先成员账后进程表) 是 AB-BA.
     assert!(
         has(
             &body,
-            "PROCESS_TABLE.with_process(pid, |proc| {
-                 if proc.thread_group.leave(pid) {
-                     proc.thread_group.mark_exited(exit_code);
-                 }
-             });"
+            "let last_member = PROCESS_TABLE
+                 .with_process(pid, |proc| {
+                     if proc.thread_group.leave(pid) {
+                         proc.thread_group.mark_exited(exit_code);
+                         true
+                     } else {
+                         false
+                     }
+                 })
+                 .unwrap_or(false);"
         ),
-        "K-01: 成组必须闭合在同一次进程表锁临界区内 (层级 7 → 9)"
+        "K-01/K-04: 成组必须闭合在同一次进程表锁临界区内 (层级 7 → 9)"
     );
 }

@@ -5,7 +5,7 @@
 //! 本文件锁定:
 //!
 //! - `CLONE_THREAD` 必须同时置 `CLONE_VM` (否则非法组合, 不静默走 fork);
-//! - 线程 TCB 不进入 `parent.children`, 父字段不指向创建者;
+//! - 线程 TCB 不进入父线程组 `children`, 父组不指向创建者;
 //! - 线程在登记进程表前加入父线程组 (`getpid` 首次上核即读到 tgid);
 //! - 进程表登记失败时回滚组成员身份与 PCB;
 //! - `Process::join_thread_group` 共享组身份并登记成员.
@@ -124,10 +124,12 @@ fn thread_tcb_has_no_parent_record_and_skips_children() {
             "let parent_record = if joins_group {
                  None
              } else {
-                 Some(crate::privileged::proc::ProcessId(parent_pid))
+                 Some(crate::privileged::proc::ProcessId(
+                     api::process_with(parent_pid, Process::tgid).unwrap_or(parent_pid),
+                 ))
              };"
         ),
-        "K-02: 线程 TCB 不得登记创建者为其父"
+        "K-02/K-04: 线程新组不得登记创建者为其父组"
     );
 
     let register = fn_body(&src, "fn vm_child_register");
@@ -135,19 +137,17 @@ fn thread_tcb_has_no_parent_record_and_skips_children() {
         has(
             &register,
             "if !joins_group {
-                 api::process_with_mut(parent_pid, |p| {
-                     p.children
-                         .lock()
-                         .push(crate::privileged::proc::ProcessId(child_pid));
+                 api::process_with(parent_pid, |p| {
+                     p.group().add_child(child_pid);
                  });
              }"
         ),
-        "K-02: 只有独立进程才进入 parent.children"
+        "K-02/K-04: 只有独立进程组才进入父组 children"
     );
     assert_eq!(
-        register.matches("children").count(),
+        register.matches("add_child").count(),
         1,
-        "K-02: 线程路径不得在守卫之外再写 children"
+        "K-02/K-04: 线程路径不得在守卫之外再写子进程账"
     );
 
     let inherit = fn_body(&src, "fn vm_child_inherit");

@@ -23,7 +23,6 @@ use crate::privileged::proc::process_for_each;
 use crate::privileged::proc::process_get_current_pid;
 use crate::privileged::proc::process_with;
 use crate::privileged::syscall::Errno;
-use core::sync::atomic::Ordering;
 
 /// tcgetpgrp(fd) 策略 — 获取当前会话的前台进程组
 ///
@@ -48,16 +47,15 @@ pub fn tcsetpgrp_syscall(_fd: i32, pgid: i32) -> i64 {
         return -1;
     }
 
-    let sid = process_with(proc_id, |p| p.session_id.load(Ordering::SeqCst)).unwrap_or(0);
+    // K-04: 会话与进程组是线程组属性, 组内任一线程读到同一值.
+    let sid = process_with(proc_id, |p| p.group().session_id()).unwrap_or(0);
     if sid == 0 {
         return -1;
     }
 
     let mut found = false;
     process_for_each(|proc| {
-        let pg = proc.pgid.load(Ordering::SeqCst);
-        let iter_sid = proc.session_id.load(Ordering::SeqCst);
-        if pg == pgid.cast_unsigned() && iter_sid == sid {
+        if proc.group().pgid() == pgid.cast_unsigned() && proc.group().session_id() == sid {
             found = true;
         }
         true

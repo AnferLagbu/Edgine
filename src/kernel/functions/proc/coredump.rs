@@ -395,11 +395,11 @@ fn build_prstatus(pid: u32, sig: u8, frame_addr: u64) -> PrStatus {
     };
 
     // 填充进程信息 (pid 不存在时 process_with 返回 None, 保持初值)
+    // K-04: 父进程/进程组/会话均取线程组属性.
     let _ = process_with(pid, |p| {
-        prstatus.pr_ppid = p.parent.map_or(0, |pp| pp.0.cast_signed());
-        prstatus.pr_pgrp = p.pgid.load(Ordering::SeqCst).cast_signed();
-        prstatus.pr_sid =
-            crate::functions::intcast::low_i32_from_u64(p.session_id.load(Ordering::SeqCst));
+        prstatus.pr_ppid = p.group().parent().cast_signed();
+        prstatus.pr_pgrp = p.group().pgid().cast_signed();
+        prstatus.pr_sid = crate::functions::intcast::low_i32_from_u64(p.group().session_id());
         prstatus.pr_sigpend = p.signal_pending_get();
         prstatus.pr_utime = p.user_time.load(Ordering::SeqCst);
         prstatus.pr_stime = p.sys_time.load(Ordering::SeqCst);

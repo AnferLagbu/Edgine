@@ -122,10 +122,10 @@ fn reap_zombie(child_pid: u32, keep_zombie: bool) -> WaitOutcome {
 ///
 /// 根据 pid 参数匹配, 返回 PID 或 None.
 fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
-    let children = api::process_with(parent_pid, |p| p.children.lock().clone()).unwrap_or_default();
+    // K-04: 子进程账挂在线程组上, 组内任一线程调用 wait4 看到同一份账.
+    let children = api::process_with(parent_pid, |p| p.group().children()).unwrap_or_default();
 
-    for &child in &children {
-        let child_pid = child.0;
+    for &child_pid in &children {
         let state = api::process_with(
             child_pid,
             crate::privileged::proc::process::Process::get_state,
@@ -151,7 +151,7 @@ fn find_waitable_child(parent_pid: u32, target_pid: i32) -> Option<u32> {
         } else {
             // target_pid < -1: 进程组 ID = |target_pid|
             let want_pgid = target_pid.unsigned_abs();
-            let pgid = api::process_with(child_pid, |p| p.pgid.load(Ordering::SeqCst)).unwrap_or(0);
+            let pgid = api::process_with(child_pid, |p| p.group().pgid()).unwrap_or(0);
             if pgid == want_pgid {
                 return Some(child_pid);
             }

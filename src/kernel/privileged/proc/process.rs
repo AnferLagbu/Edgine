@@ -12,7 +12,6 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
 
@@ -168,11 +167,7 @@ pub struct Process {
 
     /// 进程名 (受锁保护, 可在运行时改写).
     pub name: Mutex<String>,
-    /// 父进程 PID; `None` 表示无父进程 (idle / 已脱离).
-    pub parent: Option<ProcessId>,
-    /// 子进程 PID 列表 (受锁保护).
-    pub children: Mutex<Vec<ProcessId>>,
-    /// 所属线程组 (K-01): `tgid` 与成员账的唯一权威.
+    /// 所属线程组 (K-01): `tgid`、成员账、父/子进程账与进程组身份的权威.
     ///
     /// 单线程进程由 [`Process::new`] 自建单成员组 (`tgid == pid`); 组内线程共享
     /// 同一个 `Arc`, 最后一个 TCB 释放时组内存随之回收.
@@ -263,10 +258,6 @@ pub struct Process {
     /// 当前周期内剩余可用运行时间 (纳秒).
     pub dl_remaining: AtomicU64,
 
-    /// POSIX 会话 ID (`sid`).
-    pub session_id: AtomicU64,
-    /// POSIX 进程组 ID (pgid); 0 表示未初始化 (实际默认为 pid).
-    pub pgid: AtomicU32,
     /// 本进程的文件描述符表 (K-03: 线程可经 `CLONE_FILES` 共享同一实例).
     pub fd_table: Arc<FdTable>,
 
@@ -414,17 +405,17 @@ pub struct Process {
 //
 // # Safety (Sync)
 // Process 可以安全地被多个线程共享引用 (&Process), 因为:
-// 1. name, children, context 等复合类型都被 Mutex 包装
+// 1. name, thread_group, context 等复合类型都被 Mutex / 原子量包装
 //    - 访问这些字段必须先获取锁, 保证互斥
 // 2. pid, pwm, state 等简单字段都是 Atomic 类型
 //    - 使用 Ordering::SeqCst 或 Acquire/Release 保证可见性
 // 3. 不存在内部可变性导致的未同步修改
 // 4. 调度器在切换进程时通过 scheduler_lock 保护整个 ProcessTable
 //
-// 所有字段 (Mutex<T>, Atomic*, u32, u64, bool, Option<ProcessId>) 自动 Send+Sync.
+// 所有字段 (Mutex<T>, Atomic*, u32, u64, bool 等) 自动 Send+Sync.
 
 impl Process {
-    /// 创建指定 PID、名称与父进程的进程控制块, 其余字段取默认值.
+    /// 创建指定 PID、名称与父进程组的进程控制块, 其余字段取默认值.
     #[must_use]
     pub fn new(pid: Pid, name: &str, parent: Option<ProcessId>) -> Self {
         Self {
@@ -434,9 +425,13 @@ impl Process {
             priority: AtomicU32::new(ProcessPriority::Normal as u32),
             flags: AtomicU32::new(0),
             name: Mutex::new(String::from(name)),
-            parent,
-            children: Mutex::new(Vec::new()),
-            thread_group: Arc::new(ThreadGroup::new_leader(pid)),
+            thread_group: {
+                let group = ThreadGroup::new_leader(pid);
+                if let Some(parent) = parent {
+                    group.set_parent(parent.0);
+                }
+                Arc::new(group)
+            },
             context: Mutex::new(ProcessContext::new()),
             cr3: AtomicU64::new(0),
             kernel_stack: AtomicU64::new(0),
@@ -466,8 +461,6 @@ impl Process {
             dl_period: AtomicU64::new(0),
             dl_abs: AtomicU64::new(0),
             dl_remaining: AtomicU64::new(0),
-            session_id: AtomicU64::new(0),
-            pgid: AtomicU32::new(0),
             fd_table: Arc::new(FdTable::new()),
             // C2 CPU 亲和性: 默认所有 CPU (前 64 个) 都允许
             cpuset_allowed: AtomicU64::new(u64::MAX),

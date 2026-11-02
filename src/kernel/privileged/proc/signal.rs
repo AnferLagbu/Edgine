@@ -305,7 +305,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
             let current_pgid = PROCESS_TABLE
                 .get(current)
                 // SAFETY: PROCESS_TABLE 保证指针有效, 进程在表中期间不会释放; 只读 pgid
-                .map_or(0, |p| unsafe { (&*p).pgid.load(Ordering::SeqCst) });
+                .map_or(0, |p| unsafe { (&*p).group().pgid() });
             let target_pgid = if current_pgid == 0 {
                 current
             } else {
@@ -313,8 +313,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
             };
             let mut count = 0usize;
             PROCESS_TABLE.for_each(|proc| {
-                let pg = proc.pgid.load(Ordering::SeqCst);
-                let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
+                let effective_pgid = proc.group().pgid();
                 if effective_pgid == target_pgid {
                     // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
                     if do_signal_send_process(proc, sig).is_ok() {
@@ -345,8 +344,7 @@ pub fn do_signal_send_extended(pid: i32, sig: u8) -> Result<usize, i32> {
             let target_pgid = (-p).cast_unsigned();
             let mut count = 0usize;
             PROCESS_TABLE.for_each(|proc| {
-                let pg = proc.pgid.load(Ordering::SeqCst);
-                let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
+                let effective_pgid = proc.group().pgid();
                 if effective_pgid == target_pgid {
                     // G-11: 回调内已持表锁, 用 do_signal_send_process 直接投递 (避免重入锁死)
                     if do_signal_send_process(proc, sig).is_ok() {
@@ -397,8 +395,7 @@ fn signal_send_presence(pid: i32) -> Result<usize, i32> {
             let target_pgid = (-p).cast_unsigned();
             let mut count = 0usize;
             PROCESS_TABLE.for_each(|proc| {
-                let pg = proc.pgid.load(Ordering::SeqCst);
-                let effective_pgid = if pg == 0 { proc.pid.0 } else { pg };
+                let effective_pgid = proc.group().pgid();
                 if effective_pgid == target_pgid {
                     count += 1;
                 }

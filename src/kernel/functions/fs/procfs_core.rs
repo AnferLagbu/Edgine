@@ -774,7 +774,7 @@ impl ProcfsData {
             write_str(buf, &mut pos, "\nState:\tR (running)\n");
             write_str(buf, &mut pos, &alloc::format!("\nTgid:\t{pid}\n"));
             write_str(buf, &mut pos, &alloc::format!("Pid:\t{pid}\n"));
-            let parent_pid = proc.parent.map_or(0, |p| p.0);
+            let parent_pid = proc.group().parent();
             write_str(buf, &mut pos, &alloc::format!("PPid:\t{parent_pid}\n"));
             write_str(buf, &mut pos, "TracerPid:\t0\n");
             write_str(buf, &mut pos, "Uid:\t0\t0\t0\t0\n");
@@ -885,7 +885,7 @@ impl ProcfsData {
                 _ => "X",     // Terminated
             };
 
-            let parent_pid = proc.parent.map_or(0, |p| p.0);
+            let parent_pid = proc.group().parent();
             let utime = proc.user_time.load(core::sync::atomic::Ordering::SeqCst);
             let stime = proc.sys_time.load(core::sync::atomic::Ordering::SeqCst);
             // 使用 create_time 作为进程启动时间 (ticks)

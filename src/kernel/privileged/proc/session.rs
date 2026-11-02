@@ -25,6 +25,7 @@
 use crate::privileged::config::MAX_SESSIONS;
 use crate::privileged::klog::serial_write_bytes;
 use crate::privileged::proc::PROCESS_TABLE;
+use crate::privileged::proc::Process;
 use crate::privileged::proc::process_get_current_pid;
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::Ordering;
@@ -297,28 +298,30 @@ pub fn init() {
 // ============================================================================
 
 /// setsid — 创建新会话
+///
+/// K-04: 会话与进程组是线程组属性; 组内任一线程调用作用于整个线程组,
+/// SID 取线程组 tgid (`getpid` 语义).
 pub fn proc_setsid() -> i64 {
     let pid = process_get_current_pid();
     if pid == 0 {
         return -1;
     }
 
-    let is_group_leader = PROCESS_TABLE
-        .with_process(pid, |p| {
-            let proc_pgid = p.pgid.load(Ordering::SeqCst);
-            let effective_pgid = if proc_pgid == 0 { p.pid.0 } else { proc_pgid };
-            effective_pgid == pid
-        })
-        .unwrap_or(false);
+    let Some((tgid, effective_pgid)) =
+        PROCESS_TABLE.with_process(pid, |p| (p.tgid(), p.group().pgid()))
+    else {
+        return -1;
+    };
 
-    if is_group_leader {
+    // POSIX: 进程组组长不得调用 setsid
+    if effective_pgid == tgid {
         return -1;
     }
 
-    SESSION_MANAGER.create_with_sid(pid, 0).map_or(-1, |sid| {
+    SESSION_MANAGER.create_with_sid(tgid, 0).map_or(-1, |sid| {
         PROCESS_TABLE.with_process(pid, |p| {
-            p.session_id.store(sid, Ordering::SeqCst);
-            p.pgid.store(pid, Ordering::SeqCst);
+            p.group().set_session_id(sid);
+            p.group().set_pgid(tgid);
         });
         sid.cast_signed()
     })
@@ -342,9 +345,9 @@ pub fn proc_getsid(pid: i32) -> i64 {
 
     PROCESS_TABLE
         .with_process(target_pid, |p| {
-            let sid = p.session_id.load(Ordering::SeqCst);
+            let sid = p.group().session_id();
             if sid == 0 {
-                i64::from(p.pid.0)
+                i64::from(p.tgid())
             } else {
                 sid.cast_signed()
             }
@@ -353,39 +356,41 @@ pub fn proc_getsid(pid: i32) -> i64 {
 }
 
 /// setpgid(pid, pgid) — 设置进程组
+///
+/// K-04: `pid` 定位线程组, 整个组迁移到 `new_pgid`; 线程不会与所属组分裂.
 pub fn proc_setpgid(pid: i32, pgid_arg: i32) -> i64 {
     if pid < 0 || pgid_arg < 0 {
         return -22;
     }
 
     let current_pid = process_get_current_pid();
+    if current_pid == 0 {
+        return -3;
+    }
     let target_pid = if pid == 0 {
         current_pid
     } else {
         pid.cast_unsigned()
     };
-    let new_pgid = if pgid_arg == 0 {
-        target_pid
-    } else {
-        pgid_arg.cast_unsigned()
-    };
 
-    if target_pid == 0 {
-        return -3;
-    }
-
+    let current_tgid = PROCESS_TABLE
+        .with_process(current_pid, Process::tgid)
+        .unwrap_or(current_pid);
     let sid_current = PROCESS_TABLE
-        .with_process(current_pid, |p| p.session_id.load(Ordering::SeqCst))
+        .with_process(current_pid, |p| p.group().session_id())
         .unwrap_or(0);
 
-    // 阶段 1: 单次加锁校验 target 的会话与关系.
-    let Some((sid_target, is_self, is_child)) = PROCESS_TABLE.with_process(target_pid, |p| {
-        (
-            p.session_id.load(Ordering::SeqCst),
-            p.pid.0 == current_pid,
-            p.parent.is_some_and(|ppid| ppid.0 == current_pid),
-        )
-    }) else {
+    // 阶段 1: 单次加锁校验 target 的会话与组间关系.
+    let Some((sid_target, target_tgid, is_self, is_child)) =
+        PROCESS_TABLE.with_process(target_pid, |p| {
+            (
+                p.group().session_id(),
+                p.tgid(),
+                p.tgid() == current_tgid,
+                p.group().parent() == current_tgid,
+            )
+        })
+    else {
         return -3;
     };
 
@@ -396,21 +401,25 @@ pub fn proc_setpgid(pid: i32, pgid_arg: i32) -> i64 {
         return -1;
     }
 
+    let new_pgid = if pgid_arg == 0 {
+        target_tgid
+    } else {
+        pgid_arg.cast_unsigned()
+    };
+
     // 阶段 2: 校验目标进程组归属 (独立加锁; 不得在 `processes` 锁内嵌套
     // `with_process` / `for_each`, 否则不可重入锁同核自死锁).
-    if new_pgid != target_pid && new_pgid != 0 {
+    if new_pgid != target_tgid {
         let group_in_session = PROCESS_TABLE
             .with_process(new_pgid, |leader| {
-                leader.session_id.load(Ordering::SeqCst) == sid_current
+                leader.tgid() == new_pgid && leader.group().session_id() == sid_current
             })
             .unwrap_or(false);
 
         if !group_in_session {
             let mut found = false;
             PROCESS_TABLE.for_each(|proc| {
-                let pg = proc.pgid.load(Ordering::SeqCst);
-                let sid = proc.session_id.load(Ordering::SeqCst);
-                if pg == new_pgid && sid == sid_current {
+                if proc.group().pgid() == new_pgid && proc.group().session_id() == sid_current {
                     found = true;
                 }
                 true
@@ -421,9 +430,9 @@ pub fn proc_setpgid(pid: i32, pgid_arg: i32) -> i64 {
         }
     }
 
-    // 阶段 3: 写入新 pgid.
+    // 阶段 3: 写入线程组的新 pgid.
     match PROCESS_TABLE.with_process(target_pid, |p| {
-        p.pgid.store(new_pgid, Ordering::SeqCst);
+        p.group().set_pgid(new_pgid);
     }) {
         Some(()) => 0,
         None => -3,
@@ -444,25 +453,8 @@ pub fn proc_getpgid(pid: i32) -> i64 {
         return -3;
     }
     PROCESS_TABLE
-        .with_process(target_pid, |proc| {
-            let proc_pgid = proc.pgid.load(Ordering::SeqCst);
-            if proc_pgid == 0 {
-                i64::from(proc.pid.0)
-            } else {
-                i64::from(proc_pgid)
-            }
-        })
+        .with_process(target_pid, |proc| i64::from(proc.group().pgid()))
         .unwrap_or(-3)
-}
-
-/// 初始化新创建进程的 pgid
-pub fn proc_init_pgid(pid: u32) {
-    PROCESS_TABLE.with_process(pid, |proc| {
-        let cur = proc.pgid.load(Ordering::SeqCst);
-        if cur == 0 {
-            proc.pgid.store(pid, Ordering::SeqCst);
-        }
-    });
 }
 
 // ============================================================================
@@ -476,15 +468,12 @@ pub fn sys_tiocsctty(fd: i32) -> i64 {
         return -1;
     }
 
-    let sid = PROCESS_TABLE
-        .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
-        .unwrap_or(0);
+    let (tgid, sid) = PROCESS_TABLE
+        .with_process(pid, |p| (p.tgid(), p.group().session_id()))
+        .unwrap_or((0, 0));
 
-    if sid == 0 {
-        return -1;
-    }
-
-    if sid != u64::from(pid) {
+    // 仅会话 leader (SID == 线程组 tgid) 可设置控制终端
+    if sid == 0 || sid != u64::from(tgid) {
         return -1;
     }
 
@@ -504,7 +493,7 @@ pub fn get_controlling_terminal() -> u64 {
         return 0;
     }
     let sid = PROCESS_TABLE
-        .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
+        .with_process(pid, |p| p.group().session_id())
         .unwrap_or(0);
     if sid == 0 {
         return 0;
@@ -519,7 +508,7 @@ pub fn get_foreground_pgid() -> u32 {
         return 0;
     }
     let sid = PROCESS_TABLE
-        .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
+        .with_process(pid, |p| p.group().session_id())
         .unwrap_or(0);
     if sid == 0 {
         return 0;
@@ -541,12 +530,15 @@ pub fn signal_foreground_pgid(sig: u8) {
 }
 
 /// 会话 leader 退出时释放控制终端
+///
+/// K-04: 仅在线程组最后一个成员退出时调用; 会话归属按组 tgid 判定.
 pub fn session_leader_exit(pid: u32) {
-    let sid = PROCESS_TABLE
-        .with_process(pid, |p| p.session_id.load(Ordering::SeqCst))
-        .unwrap_or(0);
+    let Some((tgid, sid)) = PROCESS_TABLE.with_process(pid, |p| (p.tgid(), p.group().session_id()))
+    else {
+        return;
+    };
 
-    if sid == 0 || sid != u64::from(pid) {
+    if sid == 0 || sid != u64::from(tgid) {
         return;
     }
 
