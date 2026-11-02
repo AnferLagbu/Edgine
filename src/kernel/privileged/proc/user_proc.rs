@@ -26,8 +26,6 @@ pub static user_entry_target: AtomicU64 = AtomicU64::new(0);
 unsafe extern "C" {
     fn vmm_create_user_page_table() -> u64;
     fn vmm_map_page_in_table(table: u64, vaddr: u64, paddr: u64, flags: u64);
-    fn vmm_map_page(vaddr: u64, paddr: u64, flags: u64) -> i32;
-    fn vmm_ensure_path_user(vaddr: u64);
     fn vmm_destroy_page_table(cr3: u64);
     fn vmm_get_physical_in_table(table: u64, vaddr: u64) -> u64;
     fn memset(s: *mut core::ffi::c_void, c: i32, n: usize) -> *mut core::ffi::c_void;
@@ -109,8 +107,7 @@ pub(crate) mod raw {
         AtomicU32, AtomicU64, KERNEL_BASE, NonNull, Ordering, PAGE_SIZE, PageFlags, Process,
         ProcessId, ProcessState, USER_KSTACK_SIZE, UserProcess, kmalloc, memcpy, memset,
         pmm_alloc_page_phys, pmm_alloc_pages_phys, raw, vmm_create_user_page_table,
-        vmm_destroy_page_table, vmm_ensure_path_user, vmm_get_physical_in_table, vmm_map_page,
-        vmm_map_page_in_table,
+        vmm_destroy_page_table, vmm_get_physical_in_table, vmm_map_page_in_table,
     };
 
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
@@ -351,6 +348,10 @@ pub(crate) mod raw {
     }
 
     /// 在用户页表中建立映射。
+    ///
+    /// 内核态低半区镜像由 `vmm::map_page_in_table` 统一同步 (kview), 此处
+    /// 不再做第二份写入 —— 双写只覆盖显式映射点, 缺页/COW 路径绕不过去,
+    /// 两份映射会在负载下漂移 (K-08 根治).
     pub fn vmm_map_user_page(cr3: u64, vaddr: u64, paddr: u64, flags: u64) {
         // SAFETY: cr3 来自 user proc 的 cr3 字段, 已建立。
         unsafe {
@@ -358,10 +359,6 @@ pub(crate) mod raw {
             let saved_if = crate::arch!(interrupt_disable()) as u64;
 
             vmm_map_page_in_table(cr3, vaddr, paddr, flags);
-
-            vmm_map_page(vaddr, paddr, flags);
-
-            vmm_ensure_path_user(vaddr);
 
             crate::arch!(interrupt_restore(crate::privileged::glue::usize_from_u64(
                 saved_if
@@ -448,8 +445,6 @@ pub(crate) mod raw {
         // SAFETY: cr3 已建立, page_phys 来自 pmm_alloc_page。
         unsafe {
             vmm_map_page_in_table(cr3, vaddr, page_phys, flags);
-            vmm_map_page(vaddr, page_phys, flags);
-            vmm_ensure_path_user(vaddr);
         }
     }
 
@@ -1145,6 +1140,16 @@ impl UserProcManager {
         #[cfg(target_arch = "x86_64")]
         unsafe {
             crate::privileged::arch::gdt::gdt_set_user_cr3(cr3);
+            // 入口内核根表: 首次进入后若发生 syscall/中断, 入口汇编从
+            // gs:KERNEL_PML4_OFF 切换到该进程的 kview, 内核态访问用户内存
+            // 才与其用户名下的映射同源.
+            let kernel_root = crate::privileged::mm::kernel_view_for_user_root(cr3)
+                .unwrap_or_else(crate::privileged::mm::get_kernel_pml4);
+            crate::privileged::arch::gdt::gdt_set_kernel_cr3(kernel_root);
+            // `enter_user_asm` 切栈到用户栈后、切 CR3 之前要在用户栈上构建
+            // iretq 帧 —— 该栈映射只在用户根表 (及其 kview 镜像) 内. 双写退役后
+            // 全局内核表低半区不再镜像用户映射, 故必须先切到 kview 再进入.
+            crate::privileged::mm::Vmm::switch_page_table(kernel_root);
         }
         // aarch64 无 per-CPU 用户页表 CR3 更新路径 (cr3 仅参与上方日志)
         #[cfg(not(target_arch = "x86_64"))]
@@ -1639,28 +1644,23 @@ impl UserProcManager {
         }
     }
 
-    /// 将 argc/argv/envp 写入用户进程栈
-    /// 返回设置后的新栈指针 (RSP)
+    /// 将 argc/argv/envp 写入指定用户页表内 `stack_top` 下方的栈区
+    ///
+    /// 返回设置后的新栈指针 (RSP); 0 表示栈空间不足或参数越界.
     ///
     /// # Safety
     ///
-    /// `pid` 对应一个活动进程. 调用方必须持有进程表锁.
-    pub unsafe fn setup_user_stack(
-        proc: *mut UserProcess,
+    /// - `argv` 非空时必须指向至少 `arg_count` 个有效 C 字符串指针; 函数按内核
+    ///   直接映射读取这些字符串, 故它们须位于**当前仍在用**的地址空间.
+    /// - `cr3` 必须是已建立的用户页表, 且 `stack_top` 所在页已映射.
+    #[must_use]
+    pub unsafe fn setup_user_stack_in_table(
+        cr3: u64,
+        stack_top: u64,
         argv: *const *const u8,
         arg_count: usize,
-        _envp: *const *const u8,
         envc: usize,
     ) -> u64 {
-        if proc.is_null() {
-            return 0;
-        }
-
-        // SAFETY: proc 由调用方保证有效, 内部访问均经 UserProcRef 安全包装。
-        let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
-        let stack_top = proc_ref.load_user_stack();
-        let cr3 = proc_ref.load_cr3();
-
         // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(envc+1)) + 字符串
         let mut string_bytes: usize = 0;
         let mut arg_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
@@ -1741,8 +1741,38 @@ impl UserProcManager {
             raw::write_user_u64(cr3, envp_start_off + i * 8, 0u64);
         }
 
-        // 更新进程栈指针
-        proc_ref.store_user_stack(new_sp);
+        new_sp
+    }
+
+    /// 将 argc/argv/envp 写入用户进程栈并更新镜像栈指针
+    /// 返回设置后的新栈指针 (RSP)
+    ///
+    /// # Safety
+    ///
+    /// `proc` 必须是有效的 `UserProcess` 指针 (调用方在进程表锁保护期内读取).
+    pub unsafe fn setup_user_stack(
+        proc: *mut UserProcess,
+        argv: *const *const u8,
+        arg_count: usize,
+        _envp: *const *const u8,
+        envc: usize,
+    ) -> u64 {
+        if proc.is_null() {
+            return 0;
+        }
+
+        // SAFETY: proc 由调用方保证有效, 内部访问均经 UserProcRef 安全包装。
+        let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
+        let stack_top = proc_ref.load_user_stack();
+        let cr3 = proc_ref.load_cr3();
+
+        // SAFETY: 调用方保证 argv 有效; cr3/stack_top 取自本进程镜像。
+        let new_sp =
+            unsafe { Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envc) };
+
+        if new_sp != 0 {
+            proc_ref.store_user_stack(new_sp);
+        }
         new_sp
     }
 

@@ -1708,6 +1708,13 @@ impl Scheduler {
         // 当前处于调度器临界区, 独占访问本核 per-CPU 数据.
         #[cfg(target_arch = "x86_64")]
         unsafe {
+            // 入口内核根表: 用户任务用其 kview (低半区镜像用户映射, 内核态访问
+            // 用户内存不再依赖 KERNEL_PML4 的低半区双写); 无 kview 的旧表退回
+            // 全局表. 内核线程 (user_cr3 == 0) 已提前返回 — 其入口经 switch.asm
+            // 内核分支直接装载 ctx.cr3 (全局根表), 不读本槽.
+            let kernel_root = crate::privileged::mm::kernel_view_for_user_root(user_cr3)
+                .unwrap_or_else(crate::privileged::mm::get_kernel_pml4);
+            crate::privileged::arch::gdt::gdt_set_kernel_cr3(kernel_root);
             crate::privileged::arch::gdt::gdt_set_user_cr3(user_cr3);
             // KPTI-08: 切换目标的用户页表必须含其内核栈顶页 ——
             // 该页随任务变化, 不在 `assemble_kernel_half` 的统一装配面内,

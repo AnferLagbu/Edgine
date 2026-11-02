@@ -18,7 +18,7 @@ use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::{SCHEDULER, Scheduler};
 use super::types::{Pid, ProcessId, ProcessState};
 pub use super::user_proc::proc_alloc_pid;
-use super::user_proc::{USER_PROC_MANAGER, user_proc_clone};
+use super::user_proc::{USER_PROC_MANAGER, UserProcManager, user_proc_clone};
 use crate::privileged::mm::{
     get_kernel_pml4, vmm_clone_user_page_table_cow, vmm_destroy_page_table, vmm_switch_page_table,
 };
@@ -663,11 +663,32 @@ pub extern "C" fn proc_exec_replace(
         })
         .flatten();
 
-    let Some((new_cr3, new_entry, new_user_stack, new_stack_bottom)) = new_addr_space else {
+    let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom)) = new_addr_space else {
         USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
         PROCESS_TABLE.remove_and_free(new_pid_u32);
         return -1;
     };
+
+    // 阶段 2c: argv/envp 必须在旧地址空间销毁前写入新栈 —— 参数字符串位于
+    // 调用进程的旧用户内存, 换表/销毁后再读即 UAF (旧实现把该步放在
+    // `replace_user_space` 之后). 写侧按 new_cr3 寻址, 与旧空间无耦合;
+    // 失败保持镜像原栈指针, 与原"忽略失败"语义一致.
+    if argv_addr != 0 && arg_count > 0 {
+        // SAFETY: argv_addr/arg_count 由 C ABI 调用方保证有效, 且此刻旧地址空间
+        // 仍存活; new_cr3 是刚加载完成的新用户页表.
+        let sp = unsafe {
+            UserProcManager::setup_user_stack_in_table(
+                new_cr3,
+                new_user_stack,
+                argv_addr as *const *const u8,
+                arg_count as usize,
+                0,
+            )
+        };
+        if sp != 0 {
+            new_user_stack = sp;
+        }
+    }
 
     // 阶段 2b (K-06): 结束同组其余线程 — exec 后地址空间/身份归调用线程独有.
     // 必须在换页表前完成: 兄弟线程仍在旧地址空间执行, 换表后它们会以旧上下文
@@ -706,21 +727,6 @@ pub extern "C" fn proc_exec_replace(
     PROCESS_TABLE.with_process(new_pid_u32, |p| p.cr3.store(0, Ordering::SeqCst));
     USER_PROC_MANAGER.detach_by_pid(new_pid_u32);
     PROCESS_TABLE.remove_and_free(new_pid_u32);
-
-    // 5. 设置 argv/envp
-    if argv_addr != 0 && arg_count > 0 {
-        let envp: *const *const u8 = core::ptr::null();
-        // SAFETY: argv 来自 C ABI 调用方 (用户态地址), 由本函数 C ABI contract 保证。
-        unsafe {
-            super::api::user_proc_setup_argv(
-                current_pid,
-                argv_addr as *const *const u8,
-                arg_count,
-                envp,
-                0,
-            );
-        }
-    }
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
     //

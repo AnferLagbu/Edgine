@@ -1046,6 +1046,23 @@ pub unsafe fn gdt_set_user_cr3(user_cr3: u64) {
     gdt.syscall.user_pml4 = user_cr3;
 }
 
+/// 更新当前 CPU 的 syscall/中断入口内核根表 (`gs:KERNEL_PML4_OFF`).
+///
+/// 与 `gdt_set_user_cr3` 成对使用: 用户任务在内核态运行时应使用该任务的
+/// **内核视图根表** (kview, 低半区镜像其用户映射), 内核线程 / idle / 地址空间
+/// 替换过渡期使用全局内核页表. 入口汇编 (`isr_common` / `syscall_entry`) 从本
+/// 字段读取切换目标, 故两者必须在同一临界区内一并更新.
+///
+/// # Safety
+///
+/// 调用方保证 `kernel_cr3` 是有效的 PML4 物理地址; 仅在当前 CPU 独占访问时
+/// 调用 (中断上下文或调度器持锁).
+#[inline]
+pub unsafe fn gdt_set_kernel_cr3(kernel_cr3: u64) {
+    let gdt = current_per_cpu_gdt_mut();
+    gdt.syscall.kernel_pml4 = kernel_cr3;
+}
+
 /// 更新当前 CPU 的 syscall 入口内核栈顶 (`gs:KERNEL_RSP_OFF`).
 ///
 /// 该字段是 `syscall` 指令入口读取内核栈顶的唯一来源 (见 `boot/isr.asm`)。

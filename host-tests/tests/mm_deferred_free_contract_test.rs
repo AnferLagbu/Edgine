@@ -180,13 +180,15 @@ fn table_frame_release_is_gated_by_frame_dec() {
 
 #[test]
 fn x86_64_table_frames_release_through_gate() {
-    // 表帧释放站点: unmap 递归 (pt/pd/pdpt) 3 处 + destroy (pt/pd/pdpt/pml4) 4 处.
+    // 表帧释放站点: unmap 递归 (pt/pd/pdpt) 3 处 + destroy (pt/pd/pdpt/pml4) 4 处
+    // + kview 拆除 (私有 pd/pdpt/根) 3 处 (K-08).
     let src = read(VMM_X86_64_RS);
     assert_eq!(
         src.matches("super::release_table_frame_locked(PhysAddr(")
             .count(),
-        7,
-        "x86_64 应有 7 处表帧释放走 release_table_frame_locked 门控 (unmap 3 + destroy 4)"
+        10,
+        "x86_64 应有 10 处表帧释放走 release_table_frame_locked 门控 \
+         (unmap 3 + destroy 4 + kview 拆除 3)"
     );
 }
 

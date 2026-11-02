@@ -122,6 +122,14 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
         return None;
     }
 
+    // 内核视图根表 (kview): 与 `create_user_page_table` 同源装配. 构建失败时
+    // 子表尚未发布 (阶段 2 未执行, 父页表未改), 释放已建子树后放弃.
+    #[cfg(target_arch = "x86_64")]
+    if super::Vmm::build_kernel_view_for_user_root_locked(child_pml4_phys.as_u64()).is_none() {
+        free_child_page_table_tree(child_pml4_phys.as_u64());
+        return None;
+    }
+
     // 阶段 2: 无分配的"登记持有者 + 清 WRITABLE". 阶段 1 已保证所有页表帧分配成功,
     // 故阶段 2 不可能失败, 无需回滚路径.
     //

@@ -213,7 +213,7 @@
 
 ---
 
-## 🔴 第 1 类：运行时已知问题 (7 项)
+## 🔴 第 1 类：运行时已知问题 (8 项)
 
 ### ISSUE-RT-001: x86_64 e1000 + smoltcp 初始化挂起
 
@@ -343,6 +343,19 @@
 | **回归测试** | [aarch64_pa_va_conversion_unify_test.rs](file:///home/anfer/Code/Edgine/host-tests/tests/aarch64_pa_va_conversion_unify_test.rs) 新增 `test_vmm_aarch64_root_table_converted_to_virt_before_deref` —— fail-closed: 禁 `root_paddr as *const/*mut` 裸解引用, 且要求 ≥3 处 `phys_to_virt(root_paddr)`。QEMU 端由 KPTI-09 / TLB shootdown 里程碑承担。 |
 | **验证结果** | 六门槛全绿（双架构 `./ci/build.sh all` 5/0; `./ci/build.sh aarch64 && ./ci/audit.sh quick` EXIT=0; `make test-host` 通过; `make test-kernel-host` 949/0; `FAIL_OK=0 ./scripts/qemu_boot_test.sh all` 2/2）; aarch64 日志恢复 `TLB shootdown #1..#3` 与 `KPTI ... denied`, 且仅剩 1 条预期 KPTI 探针故障 (`ESR=0x92000007`, from-lower-EL)。 |
 | **关联** | ISSUE-RT-006 (触发暴露); [cr3-lifetime-ownership.md](./archive/cr3-lifetime-ownership.md); [aarch64_pa_va_conversion_unify_test.rs](file:///home/anfer/Code/Edgine/host-tests/tests/aarch64_pa_va_conversion_unify_test.rs) test 6 同族（`ESR=0x96000005` level-1 fault） |
+
+### ISSUE-RT-008: `make test-unit`（kernel_test 镜像）4 项 timer 时基断言恒失败
+
+| 字段 | 数据 |
+|---|---|
+| **严重度** | P3（仅 kernel_test 测试镜像；真机启动与默认构建不受影响） |
+| **状态** | `[]`（2026-11-02 登记，修复方式待裁定） |
+| **类型** | 预存测试环境缺陷（S-3 单一时基工程遗留；与 K-08 改动无关） |
+| **现象** | `make test-unit ARCH=x86_64` 的 QEMU kernel_test 镜像报 259 passed / 4 failed：`timer::calibration::boot_timebase_recorded` / `conversions_after_record` / `zero_window_rejected` / `timer::tick::timebase_established_at_boot`；其余 259 例（含新增 `mm::kview` 4 例）全通过。 |
+| **根因** | 4 例的断言前提是"启动编排已完成时基建立"（`establish_boot_timebase`），而 `boot_interrupt_timer_init` / `kernel_init_boot` 整体被 `#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]` 排除；`kernel_init_test_mode` 只初始化内存 / 架构 / 调度器，从不调用时基测定 ⇒ 在 kernel_test 镜像内断言恒假。`make test-kernel-host`（host-test 构建）不编译这 4 例（注册函数门控 `#[cfg(feature = "kernel_test")]`），故 §2.3 第 6 条不受影响。 |
+| **修复候选** | ① `kernel_init_test_mode` 增加 `timer::calibration::establish_boot_timebase()`（QEMU 有 PIT/TSC，可真测）；② 4 例改为在 kernel_test 内先自建时基再断言；③ 若测试环境不应依赖硬件测定，则把 4 例降为 host 侧契约并删除 kernel_test 注册。需用户裁定后实施。 |
+| **证据** | `other/tests-reports/unit_test_20261102_232048.log`（QEMU exit 35）；本次 K-08 改动仅触及 VMM / CR3 / 进程生命周期，未改 timer 源码。 |
+| **关联** | K-08 门槛取证（[multithreading-project.md](./multithreading-project.md) §5） |
 
 ---
 

@@ -190,15 +190,36 @@ fn test_both_paths_use_unified_assembler() {
 
 #[test]
 fn test_no_kernel_half_bulk_copy_in_per_process_paths() {
-    // KPTI-08 fail-closed: 每进程用户页表路径不得再整段复制 `KERNEL_PML4[256..511]`.
+    // KPTI-08 fail-closed: 每进程**用户页表**路径不得再整段复制 `KERNEL_PML4[256..511]`.
     //
     // 判据取"高半区整段复制"的文本指纹 `add(256)` (复制源/目的均落在 PML4 第 256 项),
     // 而非宽松的 `copy_nonoverlapping` —— 后者在低半区数据页深拷贝等正常用途中也出现.
+    //
+    // K-08 例外: 每进程内核视图根表 (kview) **不是**用户态 CR3 —— 它只在 Ring 0
+    // 装载 (入口处切回用户根表后才 iretq), 故整段继承内核高半区不扩大 KPTI 隔离面.
+    // 该复制必须且只能出现在 kview 构建函数内, 用户根表装配路径仍硬零.
     let vmm = code_only(&read(VMM_X86));
+    let create = vmm
+        .find("pub fn create_user_page_table(")
+        .expect("vmm_x86_64.rs 必须定义 create_user_page_table");
+    let create_body = window(&vmm, create, 2000);
     assert!(
-        !vmm.contains("add(256)"),
-        "vmm_x86_64.rs 不得再整段复制内核高半区 (create_user_page_table 与深拷贝 \
-         clone_user_page_table 均已统一到 assemble_kernel_half)"
+        !create_body.contains("add(256)"),
+        "create_user_page_table 不得整段复制内核高半区 (统一走 assemble_kernel_half)"
+    );
+    // 同一行含复制源/目的两处 `add(256)` ⇒ 按"行"计数, 全文件只允许 1 行.
+    assert_eq!(
+        vmm.lines().filter(|l| l.contains("add(256)")).count(),
+        1,
+        "全文件只允许 kview 构建函数存在一处高半区整段复制"
+    );
+    let build = vmm
+        .find("fn build_kernel_view_for_user_root_locked(")
+        .expect("vmm_x86_64.rs 必须定义 kview 构建函数");
+    let build_body = window(&vmm, build, 4000);
+    assert!(
+        build_body.contains("add(256)"),
+        "内核高半区继承必须位于 kview 构建函数内"
     );
 
     // COW fork: 仅允许 `#[cfg(not(target_arch = "x86_64"))]` 退化分支保留该复制;

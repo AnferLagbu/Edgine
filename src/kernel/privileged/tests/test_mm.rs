@@ -1377,6 +1377,256 @@ fn test_pcache_close_fd_keeps_mapped_entry() -> TestResult {
     TestResult::Pass
 }
 
+// ============================================================
+// 内核视图根表 (kview): 双视图同源回归锁 (K-08)
+// ============================================================
+
+/// kview 测试地址: 内核映像保护区 (PD 索引 `< boundary`) 之上的首个 2MiB 段.
+///
+/// 动态取值 (而非固定 `0x40_0000`) 以免内核体积增长把测试地址卷进保护区.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn kview_test_va() -> u64 {
+    let kernel_end = crate::privileged::boot::boot_get_kernel_end();
+    kernel_end.div_ceil(crate::privileged::mm::HUGE_PAGE_2M_SIZE)
+        * crate::privileged::mm::HUGE_PAGE_2M_SIZE
+}
+
+/// host / aarch64 无 x86_64 boot 恒等页表与 kview 机制 (fail-closed) → 跳过.
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn test_kview_link_roundtrip() -> TestResult {
+    TestResult::Skip("K-08: kview 为 x86_64 专属, host/aarch64 跳过")
+}
+
+/// kview 关联槽往返解析: 用户根表 ↔ kview 双向 O(1) 互指, 且互不误认.
+///
+/// **判别力**: 退化实现 (kview 直接登记为用户根表, 或漏写反向标记) 会让调度 /
+/// 缺页路径取错根表; 本用例要求两个方向精确命中, 交叉解析与全局内核表均为 None.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn test_kview_link_roundtrip() -> TestResult {
+    use crate::privileged::mm::mechanism::{vmm_create_user_page_table, vmm_destroy_page_table};
+    use crate::privileged::mm::vmm::{
+        get_kernel_pml4, kernel_view_for_user_root, user_root_for_kernel_view,
+    };
+
+    let pml4 = vmm_create_user_page_table();
+    check!(
+        pml4 != 0,
+        "create_user_page_table 应成功 (kview 构建失败会 fail-closed 返回 0)"
+    );
+    let Some(kview) = kernel_view_for_user_root(pml4) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("新建用户根表必须带 kview 关联");
+    };
+    check!(kview != pml4, "kview 必须是独立根表帧");
+    check!(
+        user_root_for_kernel_view(kview) == Some(pml4),
+        "kview 必须反向解析回用户根表"
+    );
+
+    // 交叉解析: 用户根表不是 kview, kview 不是用户根表; 全局内核表两者皆非.
+    check!(
+        user_root_for_kernel_view(pml4).is_none(),
+        "用户根表不得被当作 kview"
+    );
+    check!(
+        kernel_view_for_user_root(kview).is_none(),
+        "kview 不得被当作用户根表"
+    );
+    let global = get_kernel_pml4();
+    check!(global != 0, "KERNEL_PML4 未初始化");
+    check!(
+        kernel_view_for_user_root(global).is_none(),
+        "全局内核表不得解析出 kview"
+    );
+    check!(
+        user_root_for_kernel_view(global).is_none(),
+        "全局内核表不得解析为用户根表"
+    );
+    check!(kernel_view_for_user_root(0).is_none(), "0 不得解析出 kview");
+    check!(
+        user_root_for_kernel_view(0).is_none(),
+        "0 不得解析为用户根表"
+    );
+
+    vmm_destroy_page_table(pml4);
+    TestResult::Pass
+}
+
+/// host / aarch64 无 x86_64 boot 恒等页表与 kview 机制 (fail-closed) → 跳过.
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn test_kview_mirrors_user_mapping() -> TestResult {
+    TestResult::Skip("K-08: kview 为 x86_64 专属, host/aarch64 跳过")
+}
+
+/// 用户映射必须在 kview 中同源可见, 拆除后恢复 boot 恒等.
+///
+/// **判别力**: 双写退役后若 map/unmap 不再同步 kview 结构镜像, 内核态
+/// (`CR3 = kview`) 访问用户页即 #PF; 而清镜像若留悬垂表指针, 拆除后的访问会
+/// 命中已入延迟释放链的表帧 (UAF).
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn test_kview_mirrors_user_mapping() -> TestResult {
+    use crate::privileged::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_get_physical_in_table,
+        vmm_map_page_in_table,
+    };
+    use crate::privileged::mm::pmm::get_pmm;
+    use crate::privileged::mm::vmm::kernel_view_for_user_root;
+
+    let va = kview_test_va();
+    check!(
+        va != 0 && va < crate::privileged::mm::HUGE_PAGE_1G_SIZE,
+        "测试地址必须落在首个 1GiB 用户段 (PDPT 槽 0)"
+    );
+
+    let pml4 = vmm_create_user_page_table();
+    check!(pml4 != 0, "create_user_page_table failed");
+    let Some(kview) = kernel_view_for_user_root(pml4) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("新建用户根表缺少 kview");
+    };
+
+    // 基线: 该 VA 在 kview 中仍是 boot 2MiB 恒等映射 (保护区外无用户映射).
+    check!(
+        vmm_get_physical_in_table(kview, va) == va,
+        "kview 基线应为 boot 恒等映射"
+    );
+
+    let Some(phys) = get_pmm().alloc_page() else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("pmm alloc_page failed");
+    };
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    vmm_map_page_in_table(pml4, va, phys.as_u64(), flags.bits());
+
+    let user_sees = vmm_get_physical_in_table(pml4, va) == phys.as_u64();
+    let view_sees = vmm_get_physical_in_table(kview, va) == phys.as_u64();
+
+    crate::privileged::mm::get_vmm().unmap_page_in_table(pml4, VirtAddr(va));
+    let restored = vmm_get_physical_in_table(kview, va) == va;
+
+    vmm_destroy_page_table(pml4);
+
+    check!(user_sees, "用户根表应看到新映射");
+    check!(view_sees, "kview 必须镜像用户 VA 的映射 (双视图分叉回归)");
+    check!(
+        restored,
+        "拆除后 kview 必须恢复 boot 恒等, 不得悬垂到已释放表帧"
+    );
+    TestResult::Pass
+}
+
+/// host / aarch64 无 x86_64 boot 恒等页表与 kview 机制 (fail-closed) → 跳过.
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn test_kview_protects_boot_identity() -> TestResult {
+    TestResult::Skip("K-08: kview 为 x86_64 专属, host/aarch64 跳过")
+}
+
+/// 内核映像保护区 (`PD 索引 < boundary`) 的用户映射不得改写 kview 恒等项.
+///
+/// **判别力**: 无条件镜像用户 PDE 的实现会把 kview 保护区的 2MiB 恒等页换成
+/// 用户 PT ⇒ 内核在低 VMA 取指/取数落到用户页 (提权面). 用作判据的 VA 位于
+/// PD 索引 0 (恒 `< boundary`), 与内核体积无关.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn test_kview_protects_boot_identity() -> TestResult {
+    use crate::privileged::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_get_physical_in_table,
+        vmm_map_page_in_table,
+    };
+    use crate::privileged::mm::pmm::get_pmm;
+    use crate::privileged::mm::vmm::kernel_view_for_user_root;
+
+    let va = 0x1000u64;
+    let pml4 = vmm_create_user_page_table();
+    check!(pml4 != 0, "create_user_page_table failed");
+    let Some(kview) = kernel_view_for_user_root(pml4) else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("新建用户根表缺少 kview");
+    };
+    let Some(phys) = get_pmm().alloc_page() else {
+        vmm_destroy_page_table(pml4);
+        return TestResult::Fail("pmm alloc_page failed");
+    };
+
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    vmm_map_page_in_table(pml4, va, phys.as_u64(), flags.bits());
+
+    let user_sees = vmm_get_physical_in_table(pml4, va) == phys.as_u64();
+    let view_identity = vmm_get_physical_in_table(kview, va) == va;
+
+    crate::privileged::mm::get_vmm().unmap_page_in_table(pml4, VirtAddr(va));
+    vmm_destroy_page_table(pml4);
+
+    check!(user_sees, "用户根表应看到保护区内的用户映射");
+    check!(
+        view_identity,
+        "kview 保护区必须保持 boot 恒等, 不得被用户 PDE 覆盖"
+    );
+    TestResult::Pass
+}
+
+/// host / aarch64 无 x86_64 boot 恒等页表与 kview 机制 (fail-closed) → 跳过.
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn test_kview_cow_child_own_view() -> TestResult {
+    TestResult::Skip("K-08: kview 为 x86_64 专属, host/aarch64 跳过")
+}
+
+/// fork (COW 克隆) 出的子进程必须持有独立 kview, 且共享叶子在两视图下同帧.
+///
+/// **判别力**: 子表若漏建 kview, 子进程首次内核态运行退回全局表, 内核态无法
+/// 访问其用户页 (fork 后立即 #PF); 若误共享父 kview, 调度切换写入的 `user_cr3`
+/// 与实际地址空间错配.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn test_kview_cow_child_own_view() -> TestResult {
+    use crate::privileged::mm::cow::clone_user_page_table_cow;
+    use crate::privileged::mm::mechanism::{
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_get_physical_in_table,
+        vmm_map_page_in_table,
+    };
+    use crate::privileged::mm::pmm::get_pmm;
+    use crate::privileged::mm::vmm::kernel_view_for_user_root;
+
+    let va = kview_test_va();
+    check!(
+        va != 0 && va < crate::privileged::mm::HUGE_PAGE_1G_SIZE,
+        "测试地址必须落在首个 1GiB 用户段 (PDPT 槽 0)"
+    );
+
+    let parent = vmm_create_user_page_table();
+    check!(parent != 0, "create_user_page_table failed");
+    let Some(parent_kview) = kernel_view_for_user_root(parent) else {
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("父用户根表缺少 kview");
+    };
+    let Some(phys) = get_pmm().alloc_page() else {
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("pmm alloc_page failed");
+    };
+    let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
+    vmm_map_page_in_table(parent, va, phys.as_u64(), flags.bits());
+
+    let Some(child) = clone_user_page_table_cow(parent) else {
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("clone_user_page_table_cow failed");
+    };
+    let Some(child_kview) = kernel_view_for_user_root(child) else {
+        vmm_destroy_page_table(child);
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("子用户根表缺少 kview");
+    };
+
+    let views_distinct = child_kview != parent_kview;
+    let parent_maps_shared = vmm_get_physical_in_table(parent_kview, va) == phys.as_u64();
+    let child_maps_shared = vmm_get_physical_in_table(child_kview, va) == phys.as_u64();
+
+    vmm_destroy_page_table(child);
+    vmm_destroy_page_table(parent);
+
+    check!(views_distinct, "子进程必须拥有独立 kview 根表帧");
+    check!(parent_maps_shared, "父 kview 应看到 COW 共享帧");
+    check!(child_maps_shared, "子 kview 应镜像克隆出的用户半区");
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -1408,6 +1658,12 @@ pub fn register_mm_tests() {
         },
         "mm::vmm": {
             "count_present_user_pages": test_count_present_user_pages,
+        },
+        "mm::kview": {
+            "link_roundtrip": test_kview_link_roundtrip,
+            "mirrors_user_mapping": test_kview_mirrors_user_mapping,
+            "protects_boot_identity": test_kview_protects_boot_identity,
+            "cow_child_own_view": test_kview_cow_child_own_view,
         },
         "mm::cow": {
             "child_write_isolated_from_parent": test_cow_child_write_isolated_from_parent,

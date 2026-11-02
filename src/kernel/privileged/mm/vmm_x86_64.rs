@@ -41,9 +41,9 @@
 #![deny(missing_docs)]
 
 use super::{
-    HUGE_PAGE_1G_SIZE, HUGE_PAGE_2M_SIZE, KERNEL_BASE, PAGE_NX, PAGE_PRESENT, PAGE_SIZE, PAGE_USER,
-    PAGE_WRITABLE, PageFlags, PageSize, PageTableEntry, PageTranslation, PhysAddr, VirtAddr,
-    get_pmm,
+    HUGE_PAGE_1G_SIZE, HUGE_PAGE_2M_SIZE, KERNEL_BASE, PAGE_HUGE, PAGE_NX, PAGE_PRESENT, PAGE_SIZE,
+    PAGE_USER, PAGE_WRITABLE, PageFlags, PageSize, PageTableEntry, PageTranslation, PhysAddr,
+    VirtAddr, get_pmm,
 };
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -92,6 +92,39 @@ fn try_acquire_lock() -> Option<IrqSaveFlags> {
 }
 
 const MAX_USER_PAGE_TABLES: usize = 256;
+
+/// 物理地址掩码 (4KB 对齐的 bits 12..51).
+const PHYS_ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
+
+/// 用户根表 → 本进程内核视图根表 (kview) 的关联槽位 (PML4 索引 511).
+///
+/// 与 aarch64 `EL1_VIEW_SLOT` (L0 槽 1) 同构: 关联随页表自身存放, 调度切换时无需
+/// 全局登记表, 也不存在"全局槽忘记更新 ⇒ 用错视图"的陈旧值风险. x86_64 用户 VA
+/// 的 PML4 索引 0..255 全部可达, 故取高半区末尾槽 — `KERNEL_PML4[511]` 恒为 0,
+/// 不承载任何内核映射.
+const KVIEW_LINK_SLOT: usize = 511;
+
+/// 用户根表槽 511 中关联值的标记: `kview 物理地址 | 0b010`.
+///
+/// bit0=0 ⇒ 硬件视为**非 present**, 不参与地址翻译; 也不被任何以 present 为判据的
+/// 遍历 (`is_table_empty` / `count_present_user_pages` / COW 克隆 / 销毁) 选中.
+const KVIEW_TAG_IN_USER: u64 = 0b010;
+
+/// kview 根表槽 511 中互指值的标记: `用户根表物理地址 | 0b100` (双向 O(1) 解析).
+const KVIEW_TAG_IN_KVIEW: u64 = 0b100;
+
+/// 从关联槽原值解出帧物理地址; 标记或帧号不符返回 `None`.
+///
+/// 纯函数 (不触页表), host 侧可直接做分类判据回归锁.
+#[must_use]
+fn tagged_frame(entry: u64, tag: u64) -> Option<u64> {
+    let frame = entry & PHYS_ADDR_MASK;
+    if entry & 0b111 == tag && frame != 0 {
+        Some(frame)
+    } else {
+        None
+    }
+}
 
 #[derive(Clone, Copy)]
 struct UserPageTable {
@@ -729,6 +762,19 @@ impl VirtualMemoryManager {
 
         let guard = Self::acquire_lock();
 
+        // 内核视图根表 (kview): 本进程在内核态运行时的 CR3. 低半区镜像本进程用户
+        // 映射 + 保留内核映像恒等映射; 高半区继承 KERNEL_PML4. 构建失败即放弃该
+        // 页表 (尚未注册、未发布), 归还根表帧.
+        if Self::build_kernel_view_for_user_root_locked(pml4_phys.as_u64()).is_none() {
+            Self::release_lock(guard);
+            pmm.free_page(pml4_phys);
+            crate::klog_boot_info!(
+                "[VMM] create_user_page_table: kview build failed for cr3={:#X}",
+                pml4_phys.as_u64()
+            );
+            return None;
+        }
+
         let idx = self.find_free_user_slot();
         if idx < MAX_USER_PAGE_TABLES {
             // SAFETY: VMM_LOCK held; exclusive access to user_tables via UnsafeCell
@@ -847,6 +893,10 @@ impl VirtualMemoryManager {
                 Self::flush_tlb_local(virt.0);
             }
         }
+
+        // 同步本进程 kview 的低半区结构镜像: 叶子本身在共享 PT 中已可见, 本调用只
+        // 负责把新建/替换的 PML4E / PDPTE / PDE 反映到 kview (N-1 双视图同源).
+        Self::sync_kernel_view_locked(pml4, virt);
     }
 
     /// 在指定页表中拆除单页翻译并触发远程失效; `pml4 == 0` 为空操作.
@@ -965,6 +1015,10 @@ impl VirtualMemoryManager {
             }
         }
 
+        // 同步 kview 结构镜像: 覆盖拆除路径上的 PT/PD/PDPT/PML4 递归释放
+        // (leaf 清零在共享 PT 中已可见, 此处只反映上层的建/拆).
+        Self::sync_kernel_view_locked(pml4, virt);
+
         self.total_unmaps.fetch_add(1, Ordering::Relaxed);
         Self::release_lock(guard);
     }
@@ -979,6 +1033,10 @@ impl VirtualMemoryManager {
         let admitted_before = super::deferred_free::admitted();
 
         let guard = Self::acquire_lock();
+
+        // kview 只被本用户根表持有: 先拆 kview (释放其 3 个私有表帧), 再做用户树
+        // 遍历. 两段都在同一 VMM_LOCK 临界区内, kview 共享的用户下级表由遍历负责.
+        Self::destroy_kernel_view_locked(pml4);
 
         // SAFETY: pml4 valid; VMM_LOCK held
         let pml4_virt = PhysAddr(pml4).to_virt();
@@ -1091,6 +1149,313 @@ impl VirtualMemoryManager {
             pml4,
             super::deferred_free::admitted() - admitted_before
         );
+    }
+
+    /// 读取 boot 低半区恒等映射链 (`PML4[0]` → `PDPT` → `PD`) 与保护边界.
+    ///
+    /// 返回 `(boot_pml4, boot_pml4_low_pdpt, boot_pml4_low_pd, boundary)`:
+    /// - `boot_pml4_low_pd` 是 boot `pd_low` (0..1GiB, 2MiB 恒等页);
+    /// - `boundary` = `ceil(kernel_end / 2MiB)`, 即内核映像占用的 PD 索引上界
+    ///   (kview 在 `[0, boundary)` 保留恒等映射, 不镜像用户 PDE).
+    ///
+    /// 引导信息未就绪 (`kernel_end == 0`) 或 boot 表结构缺失时返回 `None`
+    /// (fail-closed: 不能安全构建 kview 时宁可不创建进程页表).
+    fn boot_identity_tables() -> Option<(*const u64, *const u64, *const u64, usize)> {
+        let kernel_end = crate::privileged::boot::boot_get_kernel_end();
+        if kernel_end == 0 {
+            return None;
+        }
+        let boundary = usize::try_from(kernel_end.div_ceil(HUGE_PAGE_2M_SIZE)).ok()?;
+        if boundary == 0 || boundary > 512 {
+            return None;
+        }
+        let kernel_pml4 = KERNEL_PML4.load(Ordering::Acquire);
+        if kernel_pml4 == 0 {
+            return None;
+        }
+
+        // SAFETY: kernel_pml4 由 vmm_init 从 CR3 记录, 是有效的 4 级页表根;
+        // 各下级帧来自 boot 期建立的恒等映射链, phys_to_virt 后为有效内核 VA.
+        // 逐级校验 present 与非大页后才解引用下一级.
+        unsafe {
+            let boot_pml4 = PhysAddr(kernel_pml4).to_virt().0 as *const u64;
+            let pml4e0 = boot_pml4.add(0).read_volatile();
+            if pml4e0 & PAGE_PRESENT == 0 || pml4e0 & PAGE_HUGE != 0 {
+                return None;
+            }
+            let boot_pdpt = PhysAddr(pml4e0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+            let pdpte0 = boot_pdpt.add(0).read_volatile();
+            if pdpte0 & PAGE_PRESENT == 0 || pdpte0 & PAGE_HUGE != 0 {
+                return None;
+            }
+            let boot_pd = PhysAddr(pdpte0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+            Some((boot_pml4, boot_pdpt, boot_pd, boundary))
+        }
+    }
+
+    /// 为用户根表构建内核视图根表 (kview), 返回 kview 物理地址.
+    ///
+    /// **要求调用方已持 `VMM_LOCK`** (本函数分配页表帧并写入尚未发布的 kview).
+    ///
+    /// kview 是**本进程在内核态运行时的 CR3** (替代全局 `KERNEL_PML4`), 结构与
+    /// aarch64 的 EL1 视图同构:
+    /// - `PML4[0]` → 私有 PDPT; `PDPT[0]` → 私有 PD (boot `pd_low` 全量拷贝,
+    ///   保住内核映像在低 VMA 的取指/取数); `PDPT[1..512]` 拷贝 boot `pdpt_low`
+    ///   (1..4GiB 恒等, 其余 0);
+    /// - `PML4[1..256)` 原值镜像用户 PML4E (下级表**共享**, 故运行期 map/unmap/COW
+    ///   对叶子的改动天然双视图可见);
+    /// - 低半区 PDE 级: 用户 `pd_idx >= boundary` 的 present 项镜像到私有 PD,
+    ///   其余保持 boot 恒等 (内核映像与引导代码不被用户映射覆盖);
+    /// - `PML4[256..511)` 拷贝 `KERNEL_PML4` 高半区 (运行期不可变, 见
+    ///   `map_page_internal` 的 `pml4_idx >= 256` 门);
+    /// - 双方 `PML4[511]` 写入互指标记 (bit0=0, 硬件不可见).
+    ///
+    /// 用户 `PDPT[0]` 为 1GiB 大页时无法按 PDE 粒度镜像, 保持私有恒等 PD
+    /// (SIMPLIFIED, 见函数体内注释).
+    pub(crate) fn build_kernel_view_for_user_root_locked(user_pml4: u64) -> Option<u64> {
+        if user_pml4 == 0 {
+            return None;
+        }
+        let (boot_pml4, boot_pdpt, boot_pd, boundary) = Self::boot_identity_tables()?;
+        let user_pml4_v = PhysAddr(user_pml4).to_virt().0 as *mut u64;
+
+        // 关联槽必须为空 (用户 VA 的 PML4 索引 0..255 全部可达, 511 不承载映射);
+        // 非空说明传入的不是规范的用户根表 — fail-closed, 不覆盖既有条目.
+        // SAFETY: user_pml4 是有效用户页表根 (调用方产物); 仅读一个槽位.
+        if unsafe { user_pml4_v.add(KVIEW_LINK_SLOT).read_volatile() } != 0 {
+            return None;
+        }
+
+        let pmm = get_pmm();
+        // 单帧分配失败按序归还已分配帧 (此时尚未发布任何结构, 直接 free_page).
+        let kview_phys = pmm.alloc_page()?;
+        let Some(pdpt_phys) = pmm.alloc_page() else {
+            pmm.free_page(kview_phys);
+            return None;
+        };
+        let Some(pd_phys) = pmm.alloc_page() else {
+            pmm.free_page(pdpt_phys);
+            pmm.free_page(kview_phys);
+            return None;
+        };
+
+        let kview = kview_phys.to_virt().0 as *mut u64;
+        let kview_pdpt = pdpt_phys.to_virt().0 as *mut u64;
+        let kview_pd = pd_phys.to_virt().0 as *mut u64;
+
+        // SAFETY: 三个 kview 帧刚由 PMM 分配 (各为完整 4KB 页), boot 三表来自
+        // `boot_identity_tables` 校验过的恒等映射链, 用户根表由调用方保证有效;
+        // 调用方持 VMM_LOCK, kview 尚未发布 ⇒ 无并发读写. 所有槽位索引均在
+        // 512 项页内; 清零按字节计数, 不会越页.
+        unsafe {
+            let page_bytes = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
+            core::ptr::write_bytes(kview.cast::<u8>(), 0, page_bytes);
+            core::ptr::write_bytes(kview_pdpt.cast::<u8>(), 0, page_bytes);
+            core::ptr::write_bytes(kview_pd.cast::<u8>(), 0, page_bytes);
+
+            // 1. 私有 PD: boot `pd_low` 全量恒等 (0..1GiB).
+            core::ptr::copy_nonoverlapping(boot_pd, kview_pd, 512);
+            // 2. 私有 PDPT: [1..512] 沿用 boot `pdpt_low` (1..4GiB 恒等, 其余 0);
+            //    [0] 改指私有 PD, 保留 boot 条目的低 12 位标志.
+            core::ptr::copy_nonoverlapping(boot_pdpt.add(1), kview_pdpt.add(1), 511);
+            let boot_pdpte0 = boot_pdpt.add(0).read_volatile();
+            kview_pdpt
+                .add(0)
+                .write_volatile((boot_pdpte0 & 0xFFF) | pd_phys.as_u64());
+
+            // 3. kview 根表: [0] 私有 PDPT; [1..256) 镜像用户 PML4E;
+            //    [256..511) 拷贝内核高半区 (511 留给互指标记).
+            let boot_pml4e0 = boot_pml4.add(0).read_volatile();
+            kview
+                .add(0)
+                .write_volatile((boot_pml4e0 & 0xFFF) | pdpt_phys.as_u64());
+            for i in 1..256usize {
+                let entry = user_pml4_v.add(i).read_volatile();
+                kview.add(i).write_volatile(entry);
+            }
+            core::ptr::copy_nonoverlapping(boot_pml4.add(256), kview.add(256), 255);
+
+            // 4. 低半区 PDPT / PDE 镜像 (仅用户根表 PML4[0] 存在时).
+            let user_pml4e0 = user_pml4_v.read_volatile();
+            if user_pml4e0 & PAGE_PRESENT != 0 {
+                let user_pdpt = PhysAddr(user_pml4e0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+                for j in 1..512usize {
+                    let entry = user_pdpt.add(j).read_volatile();
+                    if entry & PAGE_PRESENT != 0 {
+                        kview_pdpt.add(j).write_volatile(entry);
+                    }
+                }
+                let user_pdpte0 = user_pdpt.add(0).read_volatile();
+                if user_pdpte0 & PAGE_PRESENT != 0 && user_pdpte0 & PAGE_HUGE == 0 {
+                    let user_pd = PhysAddr(user_pdpte0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+                    for k in boundary..512usize {
+                        let entry = user_pd.add(k).read_volatile();
+                        if entry & PAGE_PRESENT != 0 {
+                            kview_pd.add(k).write_volatile(entry);
+                        }
+                    }
+                }
+                // SIMPLIFIED: 用户 PDPT[0] 为 1GiB 大页时无法按 PDE 粒度镜像;
+                // 影响面: 该进程低 1GiB 内的 1GB 大页映射在内核上下文不可见
+                // (内核仍可经 KERNEL_BASE 直映访问物理页, 用户态自身不受影响);
+                // 何时需扩展: 用户态 1GB 大页成为常态时改为整段镜像 PDPTE,
+                // 需先保证内核映像/引导代码不在该 1GiB 段内取指取数.
+            }
+
+            // 5. 双向关联标记 (bit0=0 ⇒ 硬件视为非 present).
+            user_pml4_v
+                .add(KVIEW_LINK_SLOT)
+                .write_volatile(kview_phys.as_u64() | KVIEW_TAG_IN_USER);
+            kview
+                .add(KVIEW_LINK_SLOT)
+                .write_volatile(user_pml4 | KVIEW_TAG_IN_KVIEW);
+        }
+
+        crate::klog_boot_info!(
+            "[VMM] kview build: user_cr3={:#X} kview={:#X} boundary={}",
+            user_pml4,
+            kview_phys.as_u64(),
+            boundary
+        );
+        Some(kview_phys.as_u64())
+    }
+
+    /// 把 `virt` 路径上的结构变更同步到该用户根表对应的 kview; 无 kview 时为空操作.
+    ///
+    /// **要求调用方已持 `VMM_LOCK`**. 只有 PML4E / PDPTE / PDE 需要同步 —— 叶子
+    /// PTE 位于双方共享的 PT 页, 写一次即双视图可见.
+    ///
+    /// 清理方向: 用户条目被拆除时恢复 boot 恒等条目 (低半区) 或写 0 (其余), 绝不留
+    /// 悬垂表指针 (被拆的 PD/PT 帧随即进入延迟释放链, 不能再次解引用).
+    fn sync_kernel_view_locked(user_pml4: u64, virt: VirtAddr) {
+        let Some(kview) = kernel_view_for_user_root(user_pml4) else {
+            return;
+        };
+        let pml4_idx = virt.pml4_idx();
+        if pml4_idx >= 256 {
+            // kview 高半区在构建期整段继承 KERNEL_PML4; 后者运行期不接受高半区
+            // 修改 (map_page_internal 门), 故无需同步.
+            return;
+        }
+        let Some((_, boot_pdpt, boot_pd, boundary)) = Self::boot_identity_tables() else {
+            return;
+        };
+
+        let user_pml4_v = PhysAddr(user_pml4).to_virt().0 as *mut u64;
+        let kview_v = PhysAddr(kview).to_virt().0 as *mut u64;
+
+        // SAFETY: 双方均为有效页表根; 调用方持 VMM_LOCK ⇒ 无并发修改. 所有下级
+        // 指针在解引用前经 present 检查, 且被拆表帧的条目已先清零 (不会读已入
+        // 延迟释放链的帧).
+        unsafe {
+            if pml4_idx != 0 {
+                let entry = user_pml4_v.add(pml4_idx).read_volatile();
+                kview_v.add(pml4_idx).write_volatile(entry);
+                return;
+            }
+
+            // pml4_idx == 0: kview 保持私有 PDPT/PD, 只按地址逐级镜像.
+            let kview_pdpt_phys = kview_v.add(0).read_volatile() & PHYS_ADDR_MASK;
+            if kview_pdpt_phys == 0 {
+                return;
+            }
+            let kview_pdpt = PhysAddr(kview_pdpt_phys).to_virt().0 as *mut u64;
+
+            let user_pml4e0 = user_pml4_v.add(0).read_volatile();
+            if user_pml4e0 & PAGE_PRESENT == 0 {
+                // 用户低 512GiB 已整体拆除: PDPT[1..] 与私有 PD 全量恢复 boot 恒等.
+                core::ptr::copy_nonoverlapping(boot_pdpt.add(1), kview_pdpt.add(1), 511);
+                let kview_pd_phys = kview_pdpt.add(0).read_volatile() & PHYS_ADDR_MASK;
+                if kview_pd_phys != 0 {
+                    let kview_pd = PhysAddr(kview_pd_phys).to_virt().0 as *mut u64;
+                    core::ptr::copy_nonoverlapping(boot_pd, kview_pd, 512);
+                }
+                return;
+            }
+
+            let user_pdpt = PhysAddr(user_pml4e0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+            let pdpt_idx = virt.pdpt_idx();
+            if pdpt_idx != 0 {
+                let entry = user_pdpt.add(pdpt_idx).read_volatile();
+                let boot_entry = boot_pdpt.add(pdpt_idx).read_volatile();
+                kview_pdpt
+                    .add(pdpt_idx)
+                    .write_volatile(if entry & PAGE_PRESENT != 0 {
+                        entry
+                    } else {
+                        boot_entry
+                    });
+                return;
+            }
+
+            // pdpt_idx == 0: 更新私有 PD 的单个 PDE. `[0, boundary)` 与用户 1GiB
+            // 大页情形保持 boot 恒等 (内核映像保护 / 无法按 PDE 镜像).
+            let kview_pd_phys = kview_pdpt.add(0).read_volatile() & PHYS_ADDR_MASK;
+            if kview_pd_phys == 0 {
+                return;
+            }
+            let kview_pd = PhysAddr(kview_pd_phys).to_virt().0 as *mut u64;
+            let pd_idx = virt.pd_idx();
+            let boot_entry = boot_pd.add(pd_idx).read_volatile();
+            let mut new_entry = boot_entry;
+            if pd_idx >= boundary {
+                let user_pdpte0 = user_pdpt.add(0).read_volatile();
+                if user_pdpte0 & PAGE_PRESENT != 0 && user_pdpte0 & PAGE_HUGE == 0 {
+                    let user_pd = PhysAddr(user_pdpte0 & PHYS_ADDR_MASK).to_virt().0 as *const u64;
+                    let entry = user_pd.add(pd_idx).read_volatile();
+                    if entry & PAGE_PRESENT != 0 {
+                        new_entry = entry;
+                    }
+                }
+            }
+            kview_pd.add(pd_idx).write_volatile(new_entry);
+        }
+    }
+
+    /// 销毁用户根表关联的 kview (清理互指标记并归还其 3 个私有表帧).
+    ///
+    /// **要求调用方已持 `VMM_LOCK`**. 共享的用户下级表不在此归还 — 它们由随后的
+    /// 用户树遍历统一释放.
+    fn destroy_kernel_view_locked(user_pml4: u64) {
+        let user_pml4_v = PhysAddr(user_pml4).to_virt().0 as *mut u64;
+
+        // SAFETY: user_pml4 是有效页表根; VMM_LOCK 已持有. 互指校验不通过时只清
+        // 用户侧关联, 绝不按可疑关联释放帧.
+        unsafe {
+            let link = user_pml4_v.add(KVIEW_LINK_SLOT).read_volatile();
+            let Some(kview) = tagged_frame(link, KVIEW_TAG_IN_USER) else {
+                return;
+            };
+            let kview_v = PhysAddr(kview).to_virt().0 as *mut u64;
+            let back = kview_v.add(KVIEW_LINK_SLOT).read_volatile();
+            user_pml4_v.add(KVIEW_LINK_SLOT).write_volatile(0);
+            if tagged_frame(back, KVIEW_TAG_IN_KVIEW) != Some(user_pml4) {
+                crate::klog_boot_info!(
+                    "[VMM] destroy_kernel_view: back-link mismatch user_cr3={:#X} kview={:#X}",
+                    user_pml4,
+                    kview
+                );
+                return;
+            }
+            kview_v.add(KVIEW_LINK_SLOT).write_volatile(0);
+
+            let pdpt_phys = kview_v.add(0).read_volatile() & PHYS_ADDR_MASK;
+            let pd_phys = if pdpt_phys != 0 {
+                (PhysAddr(pdpt_phys).to_virt().0 as *const u64)
+                    .add(0)
+                    .read_volatile()
+                    & PHYS_ADDR_MASK
+            } else {
+                0
+            };
+            if pd_phys != 0 {
+                super::release_table_frame_locked(PhysAddr(pd_phys));
+            }
+            if pdpt_phys != 0 {
+                super::release_table_frame_locked(PhysAddr(pdpt_phys));
+            }
+            super::release_table_frame_locked(PhysAddr(kview));
+        }
     }
 
     /// 返回 (映射次数, 拆除次数, 缺页次数) 统计快照.
@@ -1538,7 +1903,10 @@ impl VirtualMemoryManager {
         let guard = Self::acquire_lock();
 
         let pmm = get_pmm();
-        let child_pml4_phys = pmm.alloc_page()?;
+        let Some(child_pml4_phys) = pmm.alloc_page() else {
+            Self::release_lock(guard);
+            return None;
+        };
         let child_pml4_base = child_pml4_phys.to_virt().0 as *mut u64;
 
         // SAFETY: child_pml4_phys from PMM, phys_to_virt valid
@@ -1565,7 +1933,20 @@ impl VirtualMemoryManager {
         // SAFETY: parent_pml4 is a valid user PML4; VMM_LOCK held
         let parent_pml4_virt = PhysAddr(parent_pml4).to_virt().0 as *const u64;
 
-        Self::clone_pml4_user_half(parent_pml4_virt, child_pml4_base)?;
+        // SIMPLIFIED: 深克隆中途 OOM 时保留已建子树帧 (不逐帧回滚) —— 本入口仅
+        // 服务遗留 FFI 深拷贝路径, OOM 下进程创建已失败, 泄漏换取回滚路径最小化;
+        // 何时需扩展: 若该入口重新进入热路径, 补与 cow.rs `free_child_page_table_tree`
+        // 同构的回滚.
+        if Self::clone_pml4_user_half(parent_pml4_virt, child_pml4_base).is_none() {
+            Self::release_lock(guard);
+            return None;
+        }
+
+        // kview 构建失败时同样放弃子表 (OOM 路径; 同上方 SIMPLIFIED 口径).
+        if Self::build_kernel_view_for_user_root_locked(child_pml4_phys.as_u64()).is_none() {
+            Self::release_lock(guard);
+            return None;
+        }
 
         Self::release_lock(guard);
         Some(child_pml4_phys.as_u64())
@@ -1903,13 +2284,53 @@ pub fn get_kernel_pml4() -> u64 {
     KERNEL_PML4.load(Ordering::Acquire)
 }
 
-/// 返回当前 CR3 指向的 PML4 物理地址 (为 0 时回退内核表).
+/// 解析用户根表槽 511 的关联标记, 返回本进程内核视图根表 (kview) 物理地址.
+///
+/// `user_pml4` 不是带关联标记的用户根表 (如 `KERNEL_PML4` / kview 自身 / 0) 时
+/// 返回 `None`. 纯读取, 不修改页表.
+#[must_use]
+pub fn kernel_view_for_user_root(user_pml4: u64) -> Option<u64> {
+    if user_pml4 == 0 {
+        return None;
+    }
+    // SAFETY: user_pml4 应为有效用户页表根 (4KB 对齐的物理帧). 只读取关联槽;
+    // 该槽 bit0=0, 不参与硬件翻译, 读取无副作用.
+    let entry = unsafe {
+        (PhysAddr(user_pml4).to_virt().0 as *const u64)
+            .add(KVIEW_LINK_SLOT)
+            .read_volatile()
+    };
+    tagged_frame(entry, KVIEW_TAG_IN_USER)
+}
+
+/// 反向解析 kview 根表槽 511 的互指标记, 返回其对应的用户根表物理地址.
+///
+/// `kview` 不是内核视图根表时返回 `None`.
+#[must_use]
+pub fn user_root_for_kernel_view(kview: u64) -> Option<u64> {
+    if kview == 0 {
+        return None;
+    }
+    // SAFETY: kview 应为有效页表根. 只读取关联槽; 该槽 bit0=0, 读取无副作用.
+    let entry = unsafe {
+        (PhysAddr(kview).to_virt().0 as *const u64)
+            .add(KVIEW_LINK_SLOT)
+            .read_volatile()
+    };
+    tagged_frame(entry, KVIEW_TAG_IN_KVIEW)
+}
+
+/// 返回当前 CR3 指向的**用户**根表物理地址 (为 0 时回退内核表).
+///
+/// 内核态运行用户任务的 syscall/中断时 CR3 是 kview (内核视图根表), 故此处先按
+/// 互指标记解析回用户根表, 供缺页处理 / VMA 路径以用户地址空间为准取表.
+/// 低 12 位一并掩去 (PCID 当前未启用, 但 CR3 低位非帧号).
 pub fn get_current_pml4() -> u64 {
-    let cr3 = crate::arch!(read_page_table_base());
-    if cr3 != 0 {
-        cr3
-    } else {
+    let cr3 = crate::arch!(read_page_table_base()) & !0xFFF;
+    if cr3 == 0 {
         KERNEL_PML4.load(Ordering::Acquire)
+    } else {
+        user_root_for_kernel_view(cr3).unwrap_or(cr3)
     }
 }
 
@@ -2090,4 +2511,56 @@ pub fn count_present_user_pages(cr3: u64) -> Option<u64> {
 
     VirtualMemoryManager::release_lock(flags);
     Some(pages)
+}
+
+/// kview 关联槽标记解码的源侧单元测试 (纯函数, host 可运行, 不触页表).
+#[cfg(test)]
+mod tests {
+    use super::{KVIEW_TAG_IN_KVIEW, KVIEW_TAG_IN_USER, PHYS_ADDR_MASK, tagged_frame};
+
+    /// 合法关联: 帧号按掩码取出, 标记只占低 3 位.
+    #[test]
+    fn tagged_frame_accepts_matching_tag() {
+        let frame = 0x1234_5000u64;
+        assert_eq!(
+            tagged_frame(frame | KVIEW_TAG_IN_USER, KVIEW_TAG_IN_USER),
+            Some(frame)
+        );
+        assert_eq!(
+            tagged_frame(frame | KVIEW_TAG_IN_KVIEW, KVIEW_TAG_IN_KVIEW),
+            Some(frame)
+        );
+    }
+
+    /// 标记不符 / 带 present 位 (bit0=1) / 帧号为 0 一律拒绝 (fail-closed).
+    #[test]
+    fn tagged_frame_rejects_invalid_encoding() {
+        let frame = 0x1234_5000u64;
+        assert_eq!(
+            tagged_frame(frame | KVIEW_TAG_IN_USER, KVIEW_TAG_IN_KVIEW),
+            None
+        );
+        assert_eq!(
+            tagged_frame(frame | KVIEW_TAG_IN_KVIEW, KVIEW_TAG_IN_USER),
+            None
+        );
+        // bit0=1 ⇒ 硬件视为 present, 关联槽会被页表遍历选中 ⇒ 必须拒绝.
+        assert_eq!(
+            tagged_frame(frame | KVIEW_TAG_IN_USER | 0b001, KVIEW_TAG_IN_USER),
+            None
+        );
+        assert_eq!(tagged_frame(frame | 0b111, KVIEW_TAG_IN_USER), None);
+        assert_eq!(tagged_frame(KVIEW_TAG_IN_USER, KVIEW_TAG_IN_USER), None);
+        assert_eq!(tagged_frame(0, KVIEW_TAG_IN_USER), None);
+        assert_eq!(tagged_frame(0, KVIEW_TAG_IN_KVIEW), None);
+    }
+
+    /// 标记常量自身不可带 present 位, 且互不相同 (双向 O(1) 解析的前提).
+    #[test]
+    fn kview_tags_are_non_present_and_distinct() {
+        assert_eq!(KVIEW_TAG_IN_USER & 0b001, 0);
+        assert_eq!(KVIEW_TAG_IN_KVIEW & 0b001, 0);
+        assert_ne!(KVIEW_TAG_IN_USER, KVIEW_TAG_IN_KVIEW);
+        assert_eq!(PHYS_ADDR_MASK & 0xFFF, 0);
+    }
 }
