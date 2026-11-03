@@ -18,7 +18,9 @@
 #         4. `[EXEC] PASS: cwd+root` 且无 `[EXEC] FAIL` —— K-07b 批2 的 execve
 #            运行时射程: cwd 相对名 + chroot 视图绝对路径两条腿都 exec 成功,
 #            载荷回读的 argv/envp/cwd 全部一致 (同时钉住归档权限位保留 ——
-#            无 x 位即 EACCES). 聚合行只在两腿全过后由 init 父进程打印.
+#            无 x 位即 EACCES). 聚合行只在两腿全过后由 init 父进程打印;
+#         5. `[SCHED] SNAP END` 且 `conserve=ok` 无 `conserve=BAD` —— K-07b 批3
+#            的 EEVDF 观测面在载体装载路径下同样可达且账目守恒.
 #
 # 跑完复原默认构建: 本脚本切换过 KERNEL_FEATURES, 若不复原, 后续门禁会跑在
 # 带 feature 的镜像上 (与 §2.3 默认构建口径不符). 复原放在判定之后, 失败也已复原.
@@ -107,13 +109,16 @@ boot_and_check() {
     # `[EXEC] PASS` —— 载荷每腿都会打印 `[EXEC] PASS: <腿> argv+envp+cwd`,
     # 首腿通过即会让轮询提前收尾, root 腿与聚合行随之被切掉 (假绿).
     local marker_exec="\[EXEC\] PASS: cwd+root"
+    # K-07b 批3: 载体 init 在睡醒后触发 EEVDF 观测导出, 命中 END 行且账目
+    # 守恒即证明观测面在载体装载路径下同样可达.
+    local marker_snap="\[SCHED\] SNAP END"
     local rc=1
     local _i
     # 日志含 NUL (内核日志与探针逐字符并发写串口), 必须 grep -a, 否则按二进制处理
     # 匹配行不输出.
     for _i in $(seq 1 $((TIMEOUT * 10))); do
         if grep -aq "$marker_carrier" "$log" && grep -aq "$marker_thread" "$log" \
-            && grep -aq "$marker_exec" "$log"; then
+            && grep -aq "$marker_exec" "$log" && grep -aq "$marker_snap" "$log"; then
             rc=0
             break
         fi
@@ -147,6 +152,16 @@ boot_and_check() {
         return 1
     fi
     ok "[$arch] 载体 init 运行判据: $(grep -a "$marker_thread" "$log" | tail -1)"
+
+    if ! grep -aq "$marker_snap" "$log"; then
+        err "[$arch] 载体 init 未触发 EEVDF 观测导出 '$marker_snap' (日志: $log)"
+        return 1
+    fi
+    if ! grep -aq "conserve=ok" "$log" || grep -aq "conserve=BAD" "$log"; then
+        err "[$arch] EEVDF 观测账目守恒判据失败 (期待 conserve=ok 且无 conserve=BAD)"
+        return 1
+    fi
+    ok "[$arch] EEVDF 观测导出且账目守恒 (K-07b 批3)"
 
     if ! grep -aq "$marker_exec" "$log"; then
         err "[$arch] execve 运行时探针未通过 '$marker_exec' (日志: $log)"

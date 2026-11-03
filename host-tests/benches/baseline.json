@@ -3,6 +3,13 @@
   "machine": "x86_64-Linux-7.2.11-200.fc44.x86_64",
   "python": "3.14.8",
   "recorded_at": "2026-11-01T12:53:33Z",
+  "sched_criteria": {
+    "lag_bound_permille": 500,
+    "wake_credit_bound_permille": 1000,
+    "wake_turnaround_schedules": 2,
+    "fairness_window_ticks": 600,
+    "fairness_spread_permille": 50
+  },
   "results": [
     {
       "name": "page_flags_bits",

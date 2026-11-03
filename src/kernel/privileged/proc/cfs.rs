@@ -187,6 +187,63 @@ pub struct EevdfPick {
     pub from_tree: bool,
 }
 
+/// EEVDF 运行期观测计数器 (K-07b 批3)。
+///
+/// 全部字段由所属 `cfs_rq` 锁保护: 调度热路径就地自增, 观测快照一次性读取,
+/// 快照之外不参与任何调度决策。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CfsObsCounters {
+    /// Wake 语义成功入队的次数 (重复唤醒降级为 Requeue, 不计)。
+    pub wakeups: u64,
+    /// 切片按预算耗尽 (Expire) 并重投的次数, 即"切片命中"。
+    pub slice_hits: u64,
+    /// Wake→首次被拣出上核 的等待时延样本数。
+    pub wait_samples: u64,
+    /// 等待时延总和 (ns)。
+    pub wait_ns_sum: u64,
+    /// 等待时延最大值 (ns)。
+    pub wait_ns_max: u64,
+}
+
+impl CfsObsCounters {
+    /// 平均等待时延 (ns); 无样本时为 0。
+    #[must_use]
+    pub fn wait_ns_avg(&self) -> u64 {
+        self.wait_ns_sum.checked_div(self.wait_samples).unwrap_or(0)
+    }
+}
+
+/// 单核 EEVDF 观测量的一次性快照 (K-07b 批3)。
+///
+/// `lag = V - vr` (Q16.16 虚拟时间): 负值表示该任务已获得超过其应得的服务,
+/// 正值表示欠账。`conserve_ok` 是账目守恒的自检结论 —— 缓存 `total_weight`
+/// 与账目一致、树结构即账本、以及 `W * V <= S < W * (V + 1)`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CfsObsSnapshot {
+    /// 本核 vruntime 下界 (IC3/IE4)。
+    pub floor: u64,
+    /// 本核加权平均虚拟时间 `V`。
+    pub avg_vruntime: u64,
+    /// 可运行集权重和 `W = tree_weight + running_weight`。
+    pub total_weight: u64,
+    /// 树账权重和。
+    pub tree_weight: u64,
+    /// 运行账权重和。
+    pub running_weight: u64,
+    /// 树上任务数。
+    pub tree_len: usize,
+    /// 运行账任务数。
+    pub running_len: usize,
+    /// 在账任务的最小 lag (无任务时为 0)。
+    pub lag_min: i128,
+    /// 在账任务的最大 lag (无任务时为 0)。
+    pub lag_max: i128,
+    /// 运行期计数器副本。
+    pub counters: CfsObsCounters,
+    /// 账目守恒自检结论。
+    pub conserve_ok: bool,
+}
+
 /// CFS 运行队列 —— 以 (vruntime, pid) 为键的有序树 + 本核 vruntime 时基下界。
 ///
 /// ## 单时基模型 (DECISION-099)
@@ -248,6 +305,8 @@ pub struct CfsRunQueue {
     running_weight: u64,
     /// 运行账加权虚拟时间 `Σ w * vr`。
     running_sum_w_vr: u128,
+    /// 运行期观测计数器 (K-07b 批3; 由本队列锁保护)。
+    obs: CfsObsCounters,
 }
 
 impl Default for CfsRunQueue {
@@ -270,6 +329,7 @@ impl CfsRunQueue {
             running_ledger: BTreeMap::new(),
             running_weight: 0,
             running_sum_w_vr: 0,
+            obs: CfsObsCounters::default(),
         }
     }
 
@@ -649,6 +709,96 @@ impl CfsRunQueue {
     /// 读取可运行集权重和 (负载均衡判据; 由账目派生)。
     pub fn get_weighted_load(&self) -> u64 {
         self.runnable_weight()
+    }
+
+    /// 记录一次 Wake 成功入队 (K-07b 批3 观测面)。
+    pub fn note_wakeup(&mut self) {
+        self.obs.wakeups = self.obs.wakeups.saturating_add(1);
+    }
+
+    /// 记录一次切片预算耗尽 (K-07b 批3 观测面)。
+    pub fn note_slice_hit(&mut self) {
+        self.obs.slice_hits = self.obs.slice_hits.saturating_add(1);
+    }
+
+    /// 记录一个 Wake→首次上核 的等待时延样本 (K-07b 批3 观测面)。
+    pub fn note_wait(&mut self, wait_ns: u64) {
+        self.obs.wait_samples = self.obs.wait_samples.saturating_add(1);
+        self.obs.wait_ns_sum = self.obs.wait_ns_sum.saturating_add(wait_ns);
+        self.obs.wait_ns_max = self.obs.wait_ns_max.max(wait_ns);
+    }
+
+    /// 读取观测计数器副本 (K-07b 批3)。
+    #[must_use]
+    pub fn obs_counters(&self) -> CfsObsCounters {
+        self.obs
+    }
+
+    /// 生成单核观测快照 (K-07b 批3): 账目、`lag` 区间、计数器与守恒自检。
+    ///
+    /// 守恒检查完全由结构重算得出, 不信任任何增量缓存:
+    /// 1. `total_weight` 缓存 == `tree_weight + running_weight`;
+    /// 2. 树结构 (`tree` 节点与树账本) 一一对应, 运行账本自洽;
+    /// 3. 树账 / 运行账的权重和与 `Σ w * vr` 与账本重算值相等;
+    /// 4. `W * V <= S < W * (V + 1)` (即 `V = floor(S / W)`), `W == 0` 时 `S == 0`。
+    #[must_use]
+    pub fn observation(&self) -> CfsObsSnapshot {
+        let tree_weight = self.tree_weight;
+        let running_weight = self.running_weight;
+        let total_weight = tree_weight.saturating_add(running_weight);
+        let sum_w_vr = self.sum_w_vr();
+        let avg = weighted_avg_vruntime(total_weight, sum_w_vr);
+
+        let mut lag_min: Option<i128> = None;
+        let mut lag_max: Option<i128> = None;
+        let mut fold = |vruntime: u64| {
+            let lag = i128::from(avg) - i128::from(vruntime);
+            lag_min = Some(lag_min.map_or(lag, |current: i128| current.min(lag)));
+            lag_max = Some(lag_max.map_or(lag, |current: i128| current.max(lag)));
+        };
+        let mut tree_w = 0u64;
+        let mut tree_s = 0u128;
+        let mut tree_keys_ok = self.tree.len() == self.tree_ledger.len();
+        for (&pid, task) in &self.tree_ledger {
+            tree_w = tree_w.saturating_add(task.weight);
+            tree_s = tree_s.saturating_add(u128::from(task.weight) * u128::from(task.vruntime));
+            tree_keys_ok &= self.tree.contains(&(task.vruntime, pid));
+            fold(task.vruntime);
+        }
+        let mut running_w = 0u64;
+        let mut running_s = 0u128;
+        for task in self.running_ledger.values() {
+            running_w = running_w.saturating_add(task.weight);
+            running_s =
+                running_s.saturating_add(u128::from(task.weight) * u128::from(task.vruntime));
+            fold(task.vruntime);
+        }
+
+        let cache_ok = self.total_weight.load(Ordering::Acquire) == total_weight;
+        let ledger_ok = tree_w == tree_weight
+            && tree_s == self.tree_sum_w_vr
+            && running_w == running_weight
+            && running_s == self.running_sum_w_vr;
+        let avg_ok = if total_weight == 0 {
+            sum_w_vr == 0
+        } else {
+            let lhs = u128::from(total_weight) * u128::from(avg);
+            lhs <= sum_w_vr && sum_w_vr < lhs.saturating_add(u128::from(total_weight))
+        };
+
+        CfsObsSnapshot {
+            floor: self.floor(),
+            avg_vruntime: avg,
+            total_weight,
+            tree_weight,
+            running_weight,
+            tree_len: self.tree.len(),
+            running_len: self.running_ledger.len(),
+            lag_min: lag_min.unwrap_or(0),
+            lag_max: lag_max.unwrap_or(0),
+            counters: self.obs,
+            conserve_ok: cache_ok && ledger_ok && avg_ok && tree_keys_ok,
+        }
     }
 
     /// 树上是否无任务 (IC2: 结构即真相)

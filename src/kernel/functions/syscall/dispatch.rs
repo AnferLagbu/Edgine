@@ -729,7 +729,7 @@ fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
         SYS_GETPRIORITY, SYS_NICE, SYS_SCHED_GETAFFINITY, SYS_SCHED_GETATTR,
         SYS_SCHED_GETSCHEDULER, SYS_SCHED_SETAFFINITY, SYS_SCHED_SETATTR, SYS_SCHED_SETSCHEDULER,
-        SYS_SETPRIORITY,
+        SYS_SETPRIORITY, SYS_SGEG_SCHED_SNAPSHOT,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -780,6 +780,9 @@ fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a2),
             crate::functions::intcast::low_u32_from_u64(a3),
         ),
+
+        // EEVDF 运行期观测快照 (K-07b 批3, SGEG 私有): 只读账目走串口导出
+        SYS_SGEG_SCHED_SNAPSHOT => crate::functions::proc::sched::sched_snapshot_syscall(),
 
         _ => return None,
     })

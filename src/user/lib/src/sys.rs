@@ -61,6 +61,8 @@ pub const SYS_SGEG_GETHOSTNAME: u64 = 459;
 pub const SYS_SGEG_SETHOSTNAME: u64 = 460;
 pub const SYS_SGEG_REBOOT: u64 = 462;
 pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
+/// SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3, 单一权威源 `edgine-abi`)
+pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = edgine_abi::sched::SYS_SGEG_SCHED_SNAPSHOT;
 
 // POSIX open flags
 pub const O_RDONLY: i32 = 0;
@@ -598,6 +600,15 @@ pub fn hotplug_status(buf: &mut [u8]) -> i64 {
             buf.len() as u64,
         )
     }
+}
+
+/// SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3).
+///
+/// 内核向串口逐 CPU 输出账目 / lag / 唤醒计数器与线程组 lag 汇总;
+/// 返回本次上报的在线 CPU 数.
+#[must_use]
+pub fn sched_snapshot() -> i64 {
+    unsafe { sys0(SYS_SGEG_SCHED_SNAPSHOT) }
 }
 
 // ============================================================

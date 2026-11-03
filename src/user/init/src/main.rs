@@ -12,7 +12,8 @@ use userlib::sys::{
     SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clone_thread, close_socket,
     env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait, futex_wake,
     getpid, getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec, proc_exit,
-    recv, sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
+    recv, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid,
+    wait_pid_status,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -126,6 +127,19 @@ pub extern "C" fn _start() -> ! {
     if busy == 0 {
         busy_wait(b'.');
     }
+
+    // ── K-07b 批3: EEVDF 运行期观测导出 ─────────────────────────────────
+    // 先睡 200ms 再醒来, 使本进程在 CFS 运行队列留下一次真实的睡眠→唤醒
+    // 等待样本 (唤醒入队记时间戳, 被拣出时计入等待时延); busy 子进程同时
+    // 占住次核, 使逐核账目与线程组 lag 汇总都有可观测的可运行任务.
+    // 快照只读调度账目, 输出走内核串口 (procfs 未接 VFS), 返回值 = 上报
+    // 的在线 CPU 数.
+    delay_ms(200);
+    let snap_cpus = sched_snapshot();
+    print("[SCHED-USER] snapshot cpus=");
+    print_dec(snap_cpus);
+    print_char(b'\n');
+
     // P6a SLAAC 联调: 用户态 IPv6 UDP 收发探针 (仅 x86_64 — 联调在 x86_64
     // tap + 宿主 dnsmasq RA 下进行; aarch64 无对应 NIC/RA 环境, 不探).
     // 探针占用并释放一个 smoltcp fd; smoltcp FD 位图全局共享, 若与 echo

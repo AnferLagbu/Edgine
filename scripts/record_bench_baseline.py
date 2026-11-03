@@ -56,7 +56,7 @@ def run_bench() -> dict:
         raise
 
 
-def build_baseline(report: dict) -> dict:
+def build_baseline(report: dict, sched_criteria: dict | None = None) -> dict:
     """从 BenchReport 提取基线条目, 附加机器 / 编译器信息."""
     entries = []
     for r in report.get("results", []):
@@ -67,13 +67,29 @@ def build_baseline(report: dict) -> dict:
             "ns_per_op_frac": r["ns_per_op_frac"],
             "ps_per_op": r["ps_per_op"],
         })
-    return {
+    baseline = {
         "version": report.get("version", 1),
         "machine": f"{platform.machine()}-{platform.system()}-{platform.release()}",
         "python": platform.python_version(),
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": entries,
     }
+    # sched_criteria 是调度公平性/时延判据 (K-07b 批3), 不是性能读数; 重录
+    # 性能基线时必须原样保留, 否则会静默删除 host 回归测试的判据来源.
+    if sched_criteria is not None:
+        baseline["sched_criteria"] = sched_criteria
+    return baseline
+
+
+def load_sched_criteria(out_path: Path) -> dict | None:
+    """读取既有基线文件中的 sched_criteria; 文件不存在/损坏时返回 None."""
+    try:
+        with open(out_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    criteria = data.get("sched_criteria")
+    return criteria if isinstance(criteria, dict) else None
 
 
 def print_summary(baseline: dict) -> None:
@@ -101,9 +117,9 @@ def main() -> int:
         return 1
 
     report = run_bench()
-    baseline = build_baseline(report)
-
     out_path = Path(args.out)
+    baseline = build_baseline(report, load_sched_criteria(out_path))
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(baseline, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 

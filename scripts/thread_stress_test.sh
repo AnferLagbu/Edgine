@@ -3,10 +3,12 @@
 # 线程组启动压测脚本 (K-07a 复验装备)
 #
 # 用途: 以多核 (默认 `-smp 2`) 连续启动内核 N 次, 每次都要求串口出现 init 的
-#       `[THREAD] PASS` 里程碑 —— 该里程碑由 src/user/init 的线程组探针打印,
-#       一次启动即覆盖 clone 建线程 + TID 回填、每线程独立 TLS、gettid/getpid
-#       身份、tgkill/kill 的 sig==0 存在性探测、futex 双向往返 +
-#       CLONE_CHILD_CLEARTID join、exit_group 终止整组六条判据.
+#       `[THREAD] PASS` 里程碑与随后的 `[SCHED] SNAP END` 观测导出里程碑 ——
+#       线程里程碑由 src/user/init 的线程组探针打印, 一次启动即覆盖 clone 建线程
+#       + TID 回填、每线程独立 TLS、gettid/getpid 身份、tgkill/kill 的 sig==0
+#       存在性探测、futex 双向往返 + CLONE_CHILD_CLEARTID join、exit_group 终止
+#       整组六条判据; 观测里程碑由 K-07b 批3 的 SGEG sched_snapshot 在睡醒后
+#       触发, 逐核/逐线程组账目须满足 conserve=ok 且全日志无 conserve=BAD.
 #
 #       多线程缺陷 (丢唤醒、join 竞态、跨核时序) 天然是偶发的, 单次启动不足以
 #       判稳; 本脚本把「偶发不可复现」转为可重复的真多核压力. 两架构都跑:
@@ -41,7 +43,9 @@ SMP="${THREAD_STRESS_SMP:-2}"
 ARCHS="${THREAD_STRESS_ARCH:-both}"
 QEMU_EXTRA="${THREAD_STRESS_QEMU_EXTRA:-}"
 # 方括号按字面量匹配需转义 (grep BRE), 与 qemu_boot_test.sh 断言写法一致.
-MARKER="\[THREAD\] PASS:"
+# K-07b 批3 起里程碑取 `[SCHED] SNAP END`: 用户态 sched_snapshot 在 [THREAD] PASS
+# 之后触发, 命中该行即证明线程组判据与本轮观测导出都已走到 (单次启动覆盖两条腿).
+MARKER="\[SCHED\] SNAP END"
 
 case "$ARCHS" in
     x86_64) ARCH_LIST="x86_64" ;;
@@ -104,13 +108,20 @@ boot_once() {
 
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
+    if [ "$hit" -eq 0 ]; then
+        # 里程碑命中外, 还要求本轮线程组判据与观测账目守恒同时成立: 任一缺失
+        # 或出现 conserve=BAD 即判本次启动失败 (fail-closed).
+        grep -aq "\[THREAD\] PASS:" "$log" 2>/dev/null || hit=1
+        grep -aq "conserve=ok" "$log" 2>/dev/null || hit=1
+        grep -aq "conserve=BAD" "$log" 2>/dev/null && hit=1
+    fi
     return "$hit"
 }
 
 TOTAL=0
 FAILED=0
 echo "[thread-stress] 次数: $ITER/架构  架构: $ARCH_LIST  单次超时: ${TIMEOUT}s  SMP: ${SMP}"
-echo "[thread-stress] 里程碑断言: '$MARKER' (init 线程组探针六条判据)"
+echo "[thread-stress] 里程碑断言: '$MARKER' + '[THREAD] PASS:' + conserve=ok (无 BAD)"
 [ -n "$QEMU_EXTRA" ] && echo "[thread-stress] 附加 QEMU 参数: $QEMU_EXTRA"
 
 for arch in $ARCH_LIST; do

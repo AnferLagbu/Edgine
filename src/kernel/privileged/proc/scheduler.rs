@@ -26,10 +26,11 @@
 
 use crate::privileged::sync::{IrqSpinLock as Mutex, OnceLock};
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 use super::cfs::{
-    CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
+    CfsObsSnapshot, CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
     LOAD_BALANCE_THRESHOLD, PlacementKind, PlacementLedger, PlacementPlan,
     calc_vruntime_delta_virt, clamp_requested_slice, effective_slice_real, is_eligible,
     nice_to_weight, plan_placement, slice_virt_of, virtual_deadline,
@@ -999,6 +1000,14 @@ impl Scheduler {
         // E-05a 唤醒抢占: 仅 Wake 语义参与判决, 且用入队后的 W/S 判合格.
         let need_resched =
             kind == PlacementKind::Wake && Self::wake_preempts(dst_cpu, pid, placed, new_vd, dst);
+        // K-07b 批3 观测面: Wake 时间戳在持锁期内落盘, 等待时延 = 首次上核 - 本值.
+        // 快照读取只用于诊断, 不参与调度决策.
+        let is_wake = kind == PlacementKind::Wake;
+        let wake_ns = if is_wake {
+            crate::privileged::timer::tick::get_uptime_ns()
+        } else {
+            0
+        };
         PROCESS_TABLE.with_process(pid, |p| {
             let _ = p.set_state_safe(ProcessState::Ready);
             // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
@@ -1006,12 +1015,18 @@ impl Scheduler {
             p.cfs_vruntime.store(placed, Ordering::Release);
             p.cfs_on_rq.store(true, Ordering::Release);
             p.eevdf_vdeadline.store(new_vd, Ordering::Release);
+            if is_wake {
+                p.eevdf_wake_ns.store(wake_ns, Ordering::Release);
+            }
             if let Some((slice_real, slice_virt)) = plan.slice {
                 p.eevdf_slice_real.store(slice_real, Ordering::Release);
                 p.eevdf_slice_virt.store(slice_virt, Ordering::Release);
                 p.eevdf_slice_left.store(slice_real, Ordering::Release);
             }
         });
+        if is_wake {
+            dst.note_wakeup();
+        }
         claim.commit(dst_cpu);
         PlacementOutcome {
             landed: true,
@@ -1351,7 +1366,7 @@ impl Scheduler {
             let pid = pick.pid;
             // 锁序 cfs_rq -> PROCESS_TABLE (本函数既有语义): 一次加锁取回
             // 可调度性与撤账所需的权重/记账凭证.
-            let (schedulable, weight, on_rq) = PROCESS_TABLE
+            let (schedulable, weight, on_rq, wake_ns) = PROCESS_TABLE
                 .with_process(pid, |p| {
                     let state = p.get_state();
                     (
@@ -1360,10 +1375,17 @@ impl Scheduler {
                             && p.get_sched_policy() == SchedPolicy::Normal,
                         p.cfs_weight.load(Ordering::Acquire),
                         p.cfs_on_rq.load(Ordering::Acquire),
+                        // K-07b 批3: 取走待测唤醒时间戳 (无待测样本时为 0).
+                        p.eevdf_wake_ns.swap(0, Ordering::AcqRel),
                     )
                 })
-                .unwrap_or((false, 0, false));
+                .unwrap_or((false, 0, false, 0));
             if schedulable {
+                // 观测面: Wake→首次上核 的等待时延 (仅诊断, 不影响选择).
+                if wake_ns != 0 {
+                    let now = crate::privileged::timer::tick::get_uptime_ns();
+                    cfs_rq.note_wait(now.saturating_sub(wake_ns));
+                }
                 // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`cfs_on_rq` 保持
                 // true, 语义同 Linux on_rq) —— 其 vruntime 由 tick 推进并同步
                 // 队列 floor, 切走时经幂等 `enqueue` 原位放回.
@@ -2025,6 +2047,34 @@ impl Scheduler {
         crate::privileged::proc::cpu_queue::mark_resched_pending_local();
     }
 
+    /// 导出调度运行期观测快照 (K-07b 批3) —— 逐核串口输出账目、`lag` 与计数器.
+    ///
+    /// 返回实际上报的在线 CPU 数. 每核先在 `cfs_rq` 锁内取账目快照 (锁内不触碰
+    /// 进程表: 合法锁序只有 `cfs_rq -> PROCESS_TABLE`); 线程组汇总随后以进程表
+    /// 只读扫描完成, 其 `lag` 以对应 CPU 的 `V` 快照为基准 (诊断用途, 不要求
+    /// 跨核同一时刻的原子视图). procfs 当前未接 VFS, 用户态读不到, 故观测面
+    /// 走串口; 该入口只读账目与计数器, 不改任何调度状态.
+    #[must_use]
+    pub fn sched_snapshot_dump() -> u32 {
+        let cpus = snapshot_cpu_observations();
+        let tasks = cpus.iter().fold(0usize, |acc, (_, obs)| {
+            acc.saturating_add(obs.tree_len)
+                .saturating_add(obs.running_len)
+        });
+        let conserve_all = cpus.iter().all(|(_, obs)| obs.conserve_ok);
+        let groups = snapshot_tg_lags(&cpus);
+        print_tg_lags(&groups);
+        crate::klog_info!(
+            Process,
+            "[SCHED] SNAP END cpus={} tasks={} tg={} conserve={}",
+            cpus.len(),
+            tasks,
+            groups.len(),
+            if conserve_all { "ok" } else { "BAD" }
+        );
+        u32::try_from(cpus.len()).unwrap_or(u32::MAX)
+    }
+
     /// 当前任务退出: 置 Zombie、处理子进程并切换到下一个任务
     pub fn exit(&self, exit_code: u32) {
         let per_cpu = per_cpu();
@@ -2444,6 +2494,9 @@ impl Scheduler {
         // Expire (Requeue): 重建切片与 `vd` 后原位入树. 只对已在可运行记账
         // 中的任务入树 —— keep-current 的 boot 任务没有归属核, 裸入树会产生
         // `rq_cpu=NO_RQ_CPU` 的树节点, 被偷取时即双重记账.
+        //
+        // K-07b 批3 观测面: 本核切片命中计数 (任务完整跑完预算才到期).
+        cfs_rq.note_slice_hit();
         Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight);
         let accounted =
             cfs_rq.running_task(current_pid).is_some() || cfs_rq.is_on_tree(current_pid);
@@ -2928,6 +2981,118 @@ impl Scheduler {
                 return;
             }
         }
+    }
+}
+
+/// 逐 CPU 采集 EEVDF 观测快照并串口输出每核一行 (K-07b 批3).
+///
+/// `cfs_rq` 锁只在取快照与调用 `observation()` 期间持有; 输出与入表均在锁外.
+fn snapshot_cpu_observations() -> Vec<(u32, CfsObsSnapshot)> {
+    let mut cpus: Vec<(u32, CfsObsSnapshot)> = Vec::new();
+    for index in 0..crate::privileged::config::MAX_CPUS {
+        let Ok(cpu) = u32::try_from(index) else {
+            break;
+        };
+        if !crate::privileged::smp::is_cpu_online(cpu) {
+            continue;
+        }
+        let obs = per_cpu_for(cpu).cfs_rq.lock().observation();
+        crate::klog_info!(
+            Process,
+            "[SCHED] SNAP cpu={} V={} floor={} W={} tree_w={} run_w={} tree_n={} run_n={} lag_min={} lag_max={} wakeups={} slice_hits={} wait_n={} wait_avg_ns={} wait_max_ns={} conserve={}",
+            cpu,
+            obs.avg_vruntime,
+            obs.floor,
+            obs.total_weight,
+            obs.tree_weight,
+            obs.running_weight,
+            obs.tree_len,
+            obs.running_len,
+            obs.lag_min,
+            obs.lag_max,
+            obs.counters.wakeups,
+            obs.counters.slice_hits,
+            obs.counters.wait_samples,
+            obs.counters.wait_ns_avg(),
+            obs.counters.wait_ns_max,
+            if obs.conserve_ok { "ok" } else { "BAD" }
+        );
+        cpus.push((cpu, obs));
+    }
+    cpus
+}
+
+/// 以进程表只读扫描聚合各线程组可运行成员的 vr lag (K-07b 批3).
+///
+/// 返回 `(tgid, members, runnable, lag_min, lag_max)`; 无样本时以 `i128`
+/// 极值作哨兵, 由打印侧归一为 0. `lag` 基准为成员所在 CPU 的 `V` 快照.
+fn snapshot_tg_lags(cpus: &[(u32, CfsObsSnapshot)]) -> Vec<(Pid, u32, u32, i128, i128)> {
+    let mut groups: Vec<(Pid, u32, u32, i128, i128)> = Vec::new();
+    for index in 1..crate::privileged::config::MAX_PROCESSES {
+        let Ok(pid) = u32::try_from(index) else {
+            break;
+        };
+        let Some((tgid, dead, normal, on_rq, rq_cpu, vr)) = PROCESS_TABLE.with_process(pid, |p| {
+            (
+                p.tgid(),
+                matches!(
+                    p.get_state(),
+                    ProcessState::Zombie | ProcessState::Terminated
+                ),
+                p.get_sched_policy() == SchedPolicy::Normal,
+                p.cfs_on_rq.load(Ordering::Acquire),
+                p.cfs_rq_cpu.load(Ordering::Acquire),
+                p.cfs_vruntime.load(Ordering::Acquire),
+            )
+        }) else {
+            continue;
+        };
+        if dead {
+            continue;
+        }
+        let lag = if normal && on_rq {
+            cpus.iter()
+                .find(|(cpu, _)| *cpu == rq_cpu)
+                .map(|(_, obs)| i128::from(obs.avg_vruntime) - i128::from(vr))
+        } else {
+            None
+        };
+        if let Some(group) = groups.iter_mut().find(|group| group.0 == tgid) {
+            group.1 = group.1.saturating_add(1);
+            if let Some(lag) = lag {
+                group.2 = group.2.saturating_add(1);
+                group.3 = group.3.min(lag);
+                group.4 = group.4.max(lag);
+            }
+        } else {
+            let (runnable, lag_min, lag_max) = if let Some(lag) = lag {
+                (1, lag, lag)
+            } else {
+                (0, i128::MAX, i128::MIN)
+            };
+            groups.push((tgid, 1, runnable, lag_min, lag_max));
+        }
+    }
+    groups
+}
+
+/// 串口输出线程组 lag 汇总行 (K-07b 批3).
+fn print_tg_lags(groups: &[(Pid, u32, u32, i128, i128)]) {
+    for (tgid, members, runnable, lag_min, lag_max) in groups {
+        let (lag_min, lag_max) = if *runnable == 0 {
+            (0, 0)
+        } else {
+            (*lag_min, *lag_max)
+        };
+        crate::klog_info!(
+            Process,
+            "[SCHED] TG tgid={} members={} runnable={} lag_min={} lag_max={}",
+            tgid,
+            members,
+            runnable,
+            lag_min,
+            lag_max
+        );
     }
 }
 

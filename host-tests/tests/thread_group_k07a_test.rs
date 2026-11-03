@@ -377,8 +377,14 @@ fn k07a_boot_and_stress_assert_thread_marker() {
 
     let stress = read_src(STRESS_SH);
     assert!(
-        stress.contains(r#"MARKER="\[THREAD\] PASS:""#),
-        "thread_stress_test.sh 的判据里程碑应与 qemu_boot_test.sh 同源"
+        stress.contains(r#"MARKER="\[SCHED\] SNAP END""#),
+        "thread_stress_test.sh 的判据里程碑应与 qemu_boot_test.sh 的观测断言同源 \
+         (K-07b 批3 起取 [SCHED] SNAP END, 它在 [THREAD] PASS 之后触发)"
+    );
+    assert!(
+        stress.contains(r#"grep -aq "\[THREAD\] PASS:""#) && stress.contains("conserve=ok"),
+        "thread_stress_test.sh 必须在里程碑之外后置检 [THREAD] PASS: 与 conserve=ok \
+         (单次启动同时覆盖线程组与观测两条腿)"
     );
     assert!(
         stress.contains("THREAD_STRESS_SMP") && stress.contains("THREAD_STRESS_ARCH"),

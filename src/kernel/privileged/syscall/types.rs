@@ -667,6 +667,8 @@ pub const SYS_SGEG_BOOT_CHECK: u64 = 461;
 pub const SYS_SGEG_REBOOT: u64 = 462;
 /// `SYS_SGEG_HOTPLUG_STATUS` — SGEG 私有: 查询热插拔状态
 pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
+/// `SYS_SGEG_SCHED_SNAPSHOT` — SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3)
+pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = edgine_abi::sched::SYS_SGEG_SCHED_SNAPSHOT;
 
 // ==================== 帧缓冲设备 (Edgine 私有, 与 EG_FB_* 同值) ====================
 /// `SYS_FB_OPEN` — 打开帧缓冲设备
@@ -1174,6 +1176,7 @@ const _: () = {
         SYS_SGEG_BOOT_CHECK,
         SYS_SGEG_REBOOT,
         SYS_SGEG_HOTPLUG_STATUS,
+        SYS_SGEG_SCHED_SNAPSHOT,
         EG_FW_LOAD,
         EG_FW_GET,
         EG_FW_GET_INFO,

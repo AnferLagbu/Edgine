@@ -252,6 +252,11 @@ pub struct Process {
     pub eevdf_slice_left: AtomicU64,
     /// EEVDF 请求切片 (tick); 0 表示未请求, 在下次建账 (Wake/Requeue) 生效 (D8③).
     pub eevdf_requested_slice: AtomicU64,
+    /// 最近一次 Wake 入队的内核时间戳 (ns); 0 表示无待测唤醒.
+    ///
+    /// K-07b 批3 观测面字段: Wake 入队成功后写入, 首次被 `pick_cfs_task` 拣出时
+    /// `swap(0)` 并计入该核的等待时延统计. 不参与任何调度决策.
+    pub eevdf_wake_ns: AtomicU64,
 
     /// 截止时间调度 (`SCHED_DEADLINE`) 的每次激活运行时间预算 (纳秒).
     pub dl_runtime: AtomicU64,
@@ -463,6 +468,7 @@ impl Process {
             eevdf_slice_virt: AtomicU64::new(0),
             eevdf_slice_left: AtomicU64::new(0),
             eevdf_requested_slice: AtomicU64::new(0),
+            eevdf_wake_ns: AtomicU64::new(0),
             dl_runtime: AtomicU64::new(0),
             dl_deadline: AtomicU64::new(0),
             dl_period: AtomicU64::new(0),

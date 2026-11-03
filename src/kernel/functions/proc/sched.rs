@@ -72,6 +72,15 @@ pub fn select_cpu_for(pid: u32, hint_cpu: u32) -> u32 {
     Scheduler::select_cpu_for(pid, hint_cpu)
 }
 
+/// SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3).
+///
+/// 逐 CPU 输出账目 / lag / 计数器, 并将每线程组可运行成员的 lag 汇总输出
+/// 到内核串口. 返回实际上报的在线 CPU 数; 只读调度账目, 不改变调度状态.
+#[must_use]
+pub fn sched_snapshot_syscall() -> i64 {
+    i64::from(Scheduler::sched_snapshot_dump())
+}
+
 // ============================================================================
 // errno 常量 (Linux 兼容子集)
 // ============================================================================

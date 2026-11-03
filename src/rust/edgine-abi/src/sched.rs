@@ -21,6 +21,14 @@ pub const SYS_SCHED_SETATTR: u64 = 314;
 /// `sched_getattr` 系统调用号（Linux x86_64 标准编号）.
 pub const SYS_SCHED_GETATTR: u64 = 315;
 
+/// Edgine 私有调度观测快照系统调用号（SGEG 段）.
+///
+/// 导出逐 CPU 的 EEVDF 账目、`vruntime` lag 与唤醒/切片/等待时延计数器,
+/// 以及每线程组的可运行成员 lag 汇总. procfs 尚未接 VFS, 观测面走内核串口
+/// 输出; 系统调用返回本次上报的在线 CPU 数, 用于用户态确认导出已发生.
+/// 该调用只读调度账目, 不改变任何调度状态.
+pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = 464;
+
 /// 普通分时调度策略（Linux `SCHED_NORMAL` 的同义名）.
 pub const SCHED_OTHER: u32 = 0;
 

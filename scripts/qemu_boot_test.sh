@@ -652,6 +652,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到线程组运行时判据 (K-07a)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # K-07b 批3: EEVDF 运行期观测导出 —— init 睡醒后经 SGEG syscall 触发
+            # 内核逐核 + 逐线程组快照. 账目守恒判据 conserve=ok 必须在, conserve=BAD
+            # 必须全日志缺席 (串口并发写会插入 NUL/交错, 故按全日志有无判定).
+            if grep -aq "\[SCHED\] SNAP END" "$X64_LOG" \
+                && grep -aq "conserve=ok" "$X64_LOG" \
+                && ! grep -aq "conserve=BAD" "$X64_LOG"; then
+                ok "[x86_64] EEVDF 观测快照导出且账目守恒 (K-07b 批3)"
+            else
+                warn "[x86_64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
             # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
             # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
@@ -826,6 +837,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 线程组运行时判据通过 (K-07a)"
             else
                 warn "[aarch64] 未观察到线程组运行时判据 (K-07a)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # K-07b 批3: EEVDF 运行期观测导出 (与 x86_64 分支同断言).
+            # aarch64 走同一 SGEG syscall 与内核快照导出; 账目守恒 conserve=ok
+            # 必须在, conserve=BAD 必须全日志缺席 (-a 防 NUL 误判二进制).
+            if grep -aq "\[SCHED\] SNAP END" "$A64_LOG" \
+                && grep -aq "conserve=ok" "$A64_LOG" \
+                && ! grep -aq "conserve=BAD" "$A64_LOG"; then
+                ok "[aarch64] EEVDF 观测快照导出且账目守恒 (K-07b 批3)"
+            else
+                warn "[aarch64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).
