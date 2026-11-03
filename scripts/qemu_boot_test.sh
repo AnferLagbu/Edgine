@@ -652,6 +652,15 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到线程组运行时判据 (K-07a)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # A-10: 返回用户态信号投递 —— init 装 handler 后自投 SIGTERM, 分别在
+            # syscall 出口与定时器中断的 EL0 出口被投递并 sigreturn 回到原指令;
+            # 两腿都命中才打印 `[SIG] PASS:`. 缺失即投递路径回归 (fail-closed).
+            if grep -q "\[SIG\] PASS:" "$X64_LOG"; then
+                ok "[x86_64] 返回用户态信号投递通过 (A-10 svc+IRQ 出口)"
+            else
+                warn "[x86_64] 未观察到返回用户态信号投递断言 (A-10)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # K-07b 批3: EEVDF 运行期观测导出 —— init 睡醒后经 SGEG syscall 触发
             # 内核逐核 + 逐线程组快照. 账目守恒判据 conserve=ok 必须在, conserve=BAD
             # 必须全日志缺席 (串口并发写会插入 NUL/交错, 故按全日志有无判定).
@@ -837,6 +846,15 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 线程组运行时判据通过 (K-07a)"
             else
                 warn "[aarch64] 未观察到线程组运行时判据 (K-07a)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # A-10: 返回用户态信号投递 (与 x86_64 分支同断言). aarch64 侧本判据
+            # 正是 K-07a 暴露的缺陷面: svc 返回与 IRQ 出口两条路径都必须投递,
+            # 且 handler 经 trampoline (`movz x0,#139` + svc) sigreturn 回到原指令.
+            if grep -q "\[SIG\] PASS:" "$A64_LOG"; then
+                ok "[aarch64] 返回用户态信号投递通过 (A-10 svc+IRQ 出口)"
+            else
+                warn "[aarch64] 未观察到返回用户态信号投递断言 (A-10)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # K-07b 批3: EEVDF 运行期观测导出 (与 x86_64 分支同断言).

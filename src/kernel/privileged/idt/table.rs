@@ -822,12 +822,14 @@ impl IdtManager {
 
             crate::privileged::irq::do_softirq();
 
-            // 信号投递 (同传统 IRQ 路径)
+            // 信号投递 (同传统 IRQ 路径). IDT 中断帧仅 x86_64 实现 `UserFrame`
+            // (aarch64 的用户帧是 `ExceptionFrame`, 其出口在 exception.rs).
+            #[cfg(target_arch = "x86_64")]
             // SAFETY: frame 有效
             unsafe {
-                let f = &*frame;
+                let f = &mut *frame;
                 if f.cs & 0x3 == 0x3 {
-                    crate::privileged::proc::do_signal_deliver(frame);
+                    crate::privileged::proc::do_signal_deliver(f);
                 }
             }
 
@@ -884,13 +886,14 @@ impl IdtManager {
 
             crate::privileged::irq::do_softirq();
 
-            // 返回用户态前检查待投递信号
+            // 返回用户态前检查待投递信号 (IDT 路径仅 x86_64, 见上)
+            #[cfg(target_arch = "x86_64")]
             // SAFETY: frame 有效, IRQ 处理完成, 即将 iretq
             unsafe {
-                let f = &*frame;
+                let f = &mut *frame;
                 // 仅在返回用户态时检查 (CS 低2位=3 表示用户态)
                 if f.cs & 0x3 == 0x3 {
-                    crate::privileged::proc::do_signal_deliver(frame);
+                    crate::privileged::proc::do_signal_deliver(f);
                 }
             }
 

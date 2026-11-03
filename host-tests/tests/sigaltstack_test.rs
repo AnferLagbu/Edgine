@@ -47,21 +47,46 @@ fn source_signal_uses_sigaltstack() {
 
 #[test]
 fn source_syscall_clears_onstack_on_sigreturn() {
-    // P1-I-45 源码静态扫描: dispatch.rs pre-dispatch rt_sigreturn 特殊路径
-    // 必须清 SS_ONSTACK (T3 迁移: 原 sys_rt_sigreturn 死分支函数已删除,
-    // 清除逻辑随迁移至 syscall_dispatch_from_frame 可达路径)
-    let source = include_str!("../../src/kernel/privileged/syscall/dispatch.rs");
-    let rt_sigreturn_start = source
+    // P1-I-45 源码静态扫描 + A-10 收敛: 两架构的 rt_sigreturn 入口
+    // (x86_64 dispatch.rs / aarch64 exception.rs) 都必须委托
+    // `restore_user_signal_frame`, 由该单点清除 SS_ONSTACK.
+    let signal_src = include_str!("../../src/kernel/privileged/proc/signal.rs");
+    let restore_start = signal_src
+        .find("pub fn restore_user_signal_frame")
+        .expect("必须存在 restore_user_signal_frame 单点恢复函数");
+    let restore_block = &signal_src[restore_start..];
+    let restore_end = restore_block
+        .find("\n}\n")
+        .expect("restore_user_signal_frame 函数体必须有结束");
+    let restore_block = &restore_block[..restore_end];
+    assert!(
+        restore_block.contains("sigaltstack_flags") && restore_block.contains("!SS_ONSTACK"),
+        "P1-I-45: restore_user_signal_frame 必须清除 SS_ONSTACK 标记"
+    );
+
+    let dispatch_src = include_str!("../../src/kernel/privileged/syscall/dispatch.rs");
+    let rt_start = dispatch_src
         .find("if is_rt_sigreturn {")
         .expect("必须存在 rt_sigreturn 特殊处理路径");
-    let rt_sigreturn_block = &source[rt_sigreturn_start
-        ..source
+    let rt_block = &dispatch_src[rt_start
+        ..dispatch_src
             .find("let a0 = f.rdi;")
             .expect("必须存在 rt_sigreturn 块结束标记")];
-    // 必须清 SS_ONSTACK
     assert!(
-        rt_sigreturn_block.contains("sigaltstack_flags")
-            && rt_sigreturn_block.contains("!crate::privileged::proc::SS_ONSTACK"),
-        "P1-I-45: rt_sigreturn 路径必须清除 SS_ONSTACK 标记"
+        rt_block.contains("restore_user_signal_frame"),
+        "P1-I-45: x86_64 rt_sigreturn 必须走共享恢复单点 (SS_ONSTACK 清除随迁)"
+    );
+
+    let exception_src = include_str!("../../src/kernel/privileged/arch/aarch64/exception.rs");
+    let svc_start = exception_src
+        .find("pub extern \"C\" fn svc_handler(")
+        .expect("必须存在 aarch64 svc_handler");
+    let svc_block = &exception_src[svc_start
+        ..exception_src
+            .find("/// 内核 IRQ 统一分发")
+            .expect("必须存在 svc_handler 之后的 IRQ 分发文档")];
+    assert!(
+        svc_block.contains("restore_user_signal_frame"),
+        "A-10: aarch64 rt_sigreturn 必须走共享恢复单点 (SS_ONSTACK 清除随迁)"
     );
 }

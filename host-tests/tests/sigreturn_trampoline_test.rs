@@ -2,7 +2,8 @@
 //!
 //! 验证:
 //! 1. x86_64 trampoline 编码 = mov eax, 15 + syscall (`SYS_RT_SIGRETURN` = 15)
-//! 2. aarch64 trampoline 编码 = movz x8, #139 + svc #0 (`SYS_RT_SIGRETURN` = 139)
+//! 2. aarch64 trampoline 编码 = movz x0, #139 + svc #0 (`SYS_RT_SIGRETURN` = 139)
+//!    (A-10: Edgine 的 aarch64 syscall 编号寄存器是 x0, 不是 Linux 的 x8)
 //! 3. 双架构在 host 端通过 union 表达, 跨平台编译期验证
 //!
 //! 主机端测试平台: 借用 host CPU 架构的 trampoline 与固定字节序列做 hex 对比.
@@ -12,14 +13,14 @@
 const EXPECTED: &[u8] = &[0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 
 #[cfg(target_arch = "aarch64")]
-const EXPECTED: &[u8] = &[0xD2, 0x80, 0x11, 0x68, 0xD4, 0x00, 0x00, 0x01];
+const EXPECTED: &[u8] = &[0x60, 0x11, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4];
 
 /// 镜像内核 `SIGRETURN_TRAMPOLINE`
 #[cfg(target_arch = "x86_64")]
 const SIGRETURN_TRAMPOLINE: [u8; 7] = [0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 
 #[cfg(target_arch = "aarch64")]
-const SIGRETURN_TRAMPOLINE: [u8; 8] = [0xD2, 0x80, 0x11, 0x68, 0xD4, 0x00, 0x00, 0x01];
+const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x60, 0x11, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4];
 
 #[cfg(target_arch = "x86_64")]
 const SIGRETURN_TRAMPOLINE_SIZE: usize = 7;
@@ -86,67 +87,60 @@ fn x86_64_trampoline_starts_with_mov_eax() {
 }
 
 #[test]
-fn aarch64_trampoline_uses_movz_x8_and_svc0() {
-    // aarch64 编码: movz x8, #imm; svc #0
+fn aarch64_trampoline_uses_movz_x0_and_svc0() {
+    // aarch64 编码 (小端): movz x0, #imm; svc #0
     #[cfg(target_arch = "aarch64")]
     {
-        // movz x8, #139: D2 80 11 68 (sf=1 opc=10 movz, hw=00, imm16=0x008B=139, Rd=8)
+        // MOVZ (64-bit): sf=1 opc=10 100101 hw=00 imm16 Rd
+        //   movz x0, #139 = 0xD280_1160
+        let movz = u32::from_le_bytes([
+            SIGRETURN_TRAMPOLINE[0],
+            SIGRETURN_TRAMPOLINE[1],
+            SIGRETURN_TRAMPOLINE[2],
+            SIGRETURN_TRAMPOLINE[3],
+        ]);
         assert_eq!(
-            SIGRETURN_TRAMPOLINE[0], 0xD2,
-            "P1-I-40: aarch64 必须是 movz (高 8 位)"
+            movz & 0xFFE0_001F,
+            0xD280_0000,
+            "A-10: aarch64 必须是 movz, 且 Rd=x0 (Edgine syscall 编号寄存器)"
         );
         assert_eq!(
-            SIGRETURN_TRAMPOLINE[1], 0x80,
-            "P1-I-40: aarch64 movz 固定 0x80 起始"
+            (movz >> 5) & 0xFFFF,
+            139,
+            "A-10: aarch64 立即数必须是 SYS_RT_SIGRETURN=139"
         );
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[2], 0x11,
-            "P1-I-40: aarch64 imm16 高字节 (139>>3=0x11)"
-        );
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[3], 0x68,
-            "P1-I-40: aarch64 Rd=x8 (低 5 位 = 8)"
-        );
-        // svc #0: D4 00 00 01
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[4], 0xD4,
-            "P1-I-40: aarch64 必须是 svc 指令"
-        );
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[5], 0x00,
-            "P1-I-40: aarch64 svc imm16 高字节"
-        );
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[6], 0x00,
-            "P1-I-40: aarch64 svc imm16 低字节"
-        );
-        assert_eq!(
-            SIGRETURN_TRAMPOLINE[7], 0x01,
-            "P1-I-40: aarch64 svc op=00001"
-        );
+        // svc #0 = 0xD400_0001
+        let svc = u32::from_le_bytes([
+            SIGRETURN_TRAMPOLINE[4],
+            SIGRETURN_TRAMPOLINE[5],
+            SIGRETURN_TRAMPOLINE[6],
+            SIGRETURN_TRAMPOLINE[7],
+        ]);
+        assert_eq!(svc, 0xD400_0001, "A-10: aarch64 必须 svc #0");
     }
 }
 
 #[test]
 fn aarch64_trampoline_rt_sigreturn_number_is_139() {
-    // aarch64 Linux: __NR_rt_sigreturn = 139
+    // aarch64 Linux: __NR_rt_sigreturn = 139; Edgine 沿用该编号.
     #[cfg(target_arch = "aarch64")]
     {
-        // 解码 imm16 字段: bits[20:5] = 0x008B = 139
-        let imm16 = ((SIGRETURN_TRAMPOLINE[1] as u32) << 8 | SIGRETURN_TRAMPOLINE[2] as u32) >> 5;
-        // imm16 = (byte1 << 8 | byte2) >> 5? 编码更准确:
-        //   bits[20:5] 在 32-bit 指令里 = 字节 1..3 的相关位
-        //   实际: imm16 = (D2_80_11_68 的 bit20..5)
-        //   D2 = 1101_0010, 80 = 1000_0000, 11 = 0001_0001, 68 = 0110_1000
-        //   bit20..5 = 0000_0000_0001_0001_0_00011 (取自 80_11_68)
-        //   简化解码: (0x80_11_68 >> 5) & 0xFFFF = 0x008B = 139
-        let decoded = ((SIGRETURN_TRAMPOLINE[1] as u32) << 16
-            | (SIGRETURN_TRAMPOLINE[2] as u32) << 8
-            | (SIGRETURN_TRAMPOLINE[3] as u32))
-            >> 5
-            & 0xFFFF;
+        // imm16 = bits[20:5] (小端解码后的指令字)
+        let movz = u32::from_le_bytes([
+            SIGRETURN_TRAMPOLINE[0],
+            SIGRETURN_TRAMPOLINE[1],
+            SIGRETURN_TRAMPOLINE[2],
+            SIGRETURN_TRAMPOLINE[3],
+        ]);
+        let decoded = (movz >> 5) & 0xFFFF;
         assert_eq!(decoded, 139, "P1-I-40: aarch64 SYS_RT_SIGRETURN 必须是 139");
-        let _ = imm16; // 防止未使用警告
+        // Rd 必须是 x0: 内核 `svc_handler` 以 `frame.x0 == 139` 判定 sigreturn,
+        // 落在 x8 (Linux ABI) 会被当成普通 syscall 编号, 信号恢复静默失效.
+        assert_eq!(
+            movz & 0x1F,
+            0,
+            "A-10: trampoline 必须把 139 写入 x0 (与内核判定寄存器一致)"
+        );
     }
 }
 

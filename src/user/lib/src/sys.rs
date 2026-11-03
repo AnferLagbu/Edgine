@@ -718,6 +718,23 @@ pub fn clock_gettime(clk_id: i32, tp: &mut Timespec) -> i32 {
         ))
     }
 }
+/// `rt_sigaction(signum, handler)` — 注册单值信号 handler.
+///
+/// Edgine 内核 ABI: `act` 指向一个 u64 (handler 地址); `oact = 0` 表示不查询旧值.
+/// 返回 0 成功, 负错误码失败 (`EINVAL`: 非法编号或不可捕获信号).
+#[must_use]
+pub fn rt_sigaction(signum: i32, handler: u64) -> i64 {
+    let act = handler;
+    unsafe {
+        sys3(
+            SYS_RT_SIGACTION,
+            arg_bits(i64::from(signum)),
+            core::ptr::from_ref(&act) as u64,
+            0,
+        )
+    }
+}
+
 #[must_use]
 pub fn kill(pid: i32, sig: i32) -> i32 {
     unsafe {

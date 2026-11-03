@@ -45,6 +45,20 @@
 //! └────────────────────┘ ← handler 返回地址
 //! ```
 //!
+//! ## `aarch64` 信号栈帧布局
+//!
+//! ```text
+//! 用户栈 (低地址 → 高地址):
+//! ┌────────────────────┐ ← 新 SP (16 字节对齐)
+//! │ Aarch64SignalFrame  │  x0-x30 / sp / elr / spsr / signum
+//! ├────────────────────┤
+//! │ sigreturn trampoline│  movz x0,#139 + svc #0
+//! └────────────────────┘ ← handler 的 LR (x30)
+//! ```
+//!
+//! 两架构共享同一套投递/恢复流程 ([`UserFrame`]), 差异只在帧头 (x86_64 的返回
+//! 地址槽)、栈指针对齐与 handler 入口寄存器约定.
+//!
 //! # Safety
 //!
 //! - `do_signal_send`: 操作进程原子字段, 线程安全
@@ -57,10 +71,10 @@ use super::process::PROCESS_TABLE;
 use super::types::{Pid, ProcessState};
 
 // ============================================================================
-// 信号栈帧 (x86_64)
+// 信号栈帧与用户态异常帧抽象
 // ============================================================================
 
-/// 信号栈帧 — 保存在用户栈上, sigreturn 时恢复
+/// 信号栈帧 — 保存在用户栈上, sigreturn 时恢复 (x86_64 布局)
 ///
 /// 布局与 `InterruptFrame` 兼容, 便于直接拷贝寄存器状态.
 /// signum 字段放在最后, handler 通过第一个参数 (rdi) 获取.
@@ -121,6 +135,42 @@ pub struct SignalFrame {
     pub signum: u64,
 }
 
+/// 信号栈帧 — 保存在用户栈上, `rt_sigreturn` 时恢复 (aarch64 布局)
+///
+/// 保存异常发生时的全部用户寄存器 (x0-x30)、栈指针与返回现场 (`elr`/`spsr`),
+/// 不含中断元数据; `signum` 仅作诊断用途. 全 u64 字段无填充, 可直接按字节
+/// 视图写入用户栈.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Aarch64SignalFrame {
+    /// 通用寄存器 x0-x30 (按编号顺序)
+    pub x: [u64; 31],
+    /// 用户栈指针 (`sp_el0`)
+    pub sp: u64,
+    /// 用户返回地址 (`elr_el1`)
+    pub elr: u64,
+    /// 用户 PSTATE (`spsr_el1`)
+    pub spsr: u64,
+    /// 信号编号 (诊断用; 恢复时不参与)
+    pub signum: u64,
+}
+
+/// 本架构的信号栈帧类型 (x86_64 为 [`SignalFrame`]).
+#[cfg(target_arch = "x86_64")]
+pub type ArchSignalFrame = SignalFrame;
+
+/// 本架构的信号栈帧类型 (aarch64 为 [`Aarch64SignalFrame`]).
+#[cfg(target_arch = "aarch64")]
+pub type ArchSignalFrame = Aarch64SignalFrame;
+
+/// 本架构承载信号投递的用户态异常帧类型 (x86_64 `InterruptFrame`).
+#[cfg(target_arch = "x86_64")]
+pub type ArchUserFrame = crate::privileged::idt::InterruptFrame;
+
+/// 本架构承载信号投递的用户态异常帧类型 (aarch64 `ExceptionFrame`).
+#[cfg(target_arch = "aarch64")]
+pub type ArchUserFrame = crate::privileged::arch::aarch64::exception::ExceptionFrame;
+
 /// sigreturn trampoline 代码
 ///
 /// # `x86_64` 机器码 (7 字节)
@@ -129,25 +179,220 @@ pub struct SignalFrame {
 ///   0F 05              syscall
 ///
 /// # aarch64 机器码 (8 字节)
-/// `mov x8, #139` (`SYS_RT_SIGRETURN` = 139) + `svc #0`:
-///   D2 80 11 68        movz x8, #139
-///   D4 00 00 01        svc #0
+/// `movz x0, #139` (`SYS_RT_SIGRETURN` = 139) + `svc #0`:
+///   60 11 80 D2        movz x0, #139
+///   01 00 00 D4        svc #0
 ///
 /// P1-I-40 修复: 之前硬编码 `x86_64` 字节序, aarch64 上是随机指令
 /// (illegal instruction), 致所有 ARM 板信号投递失败. 改为 cfg 分发.
+/// A-10 修正: aarch64 字面量原按大端书写且落在 x8 (Linux ABI), 与 Edgine
+/// `x0=syscall_num` 约定不符; 现改为小端编码的 `movz x0, #139`.
 #[cfg(target_arch = "x86_64")]
 pub const SIGRETURN_TRAMPOLINE: [u8; 7] = [0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 
 /// sigreturn trampoline 代码 (aarch64 8 字节分支, 机器码与语义见上方两架构说明)
 #[cfg(target_arch = "aarch64")]
-pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0xD2, 0x80, 0x11, 0x68, 0xD4, 0x00, 0x00, 0x01];
+pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x60, 0x11, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4];
 
 /// sigreturn trampoline 大小
 pub const SIGRETURN_TRAMPOLINE_SIZE: usize = SIGRETURN_TRAMPOLINE.len();
 
-/// 信号栈帧总大小 (含 trampoline)
-pub const SIGNAL_FRAME_TOTAL_SIZE: usize =
-    core::mem::size_of::<SignalFrame>() + SIGRETURN_TRAMPOLINE_SIZE;
+/// 信号栈帧总大小 (含帧头与 trampoline)
+pub const SIGNAL_FRAME_TOTAL_SIZE: usize = <ArchUserFrame as UserFrame>::FRAME_HEADER_SIZE
+    + core::mem::size_of::<ArchSignalFrame>()
+    + SIGRETURN_TRAMPOLINE_SIZE;
+
+// ============================================================================
+// UserFrame — 架构相关的返回用户态帧抽象
+// ============================================================================
+
+/// 承载信号投递的用户态异常帧抽象 (x86_64 `InterruptFrame` / aarch64 `ExceptionFrame`).
+///
+/// 两架构的异常入口压栈布局不同, 但投递流程一致: 选择信号帧落点 → 快照当前
+/// 用户现场 → 写入 [帧头 | 信号帧 | trampoline] → 改写帧跳转 handler.
+/// `rt_sigreturn` 经同一抽象恢复, 系统调用返回与中断返回两条路径共用本实现.
+pub trait UserFrame {
+    /// 信号帧之前的帧头字节数 (x86_64 的 handler 返回地址槽 = 8; aarch64 = 0).
+    const FRAME_HEADER_SIZE: usize;
+    /// handler 入口要求的用户栈指针对齐余数 (mod 16).
+    ///
+    /// x86_64 `SysV` 约定 callee 入口 `rsp % 16 == 8` (返回地址已压栈);
+    /// aarch64 要求 SP 16 字节对齐.
+    const SP_ALIGN: u64;
+
+    /// 读取用户栈指针.
+    fn user_sp(&self) -> u64;
+
+    /// 把异常帧切换到 handler 入口 (PC / 首参数 / 返回地址 / 栈指针).
+    ///
+    /// `frame_sp` 为信号帧落点 (x86_64 同时是 handler 的返回地址槽),
+    /// `trampoline_addr` 为 sigreturn 跳板地址 (aarch64 需写入 LR).
+    fn enter_handler(
+        &mut self,
+        frame_sp: u64,
+        trampoline_addr: u64,
+        handler_addr: u64,
+        signum: u64,
+    );
+
+    /// 从当前异常帧快照出信号栈帧.
+    fn snapshot(&self, sig: u8) -> ArchSignalFrame;
+
+    /// 按信号栈帧恢复异常帧 (`rt_sigreturn`).
+    fn restore(&mut self, sigframe: &ArchSignalFrame);
+}
+
+#[cfg(target_arch = "x86_64")]
+impl UserFrame for crate::privileged::idt::InterruptFrame {
+    const FRAME_HEADER_SIZE: usize = 8;
+    const SP_ALIGN: u64 = 8;
+
+    fn user_sp(&self) -> u64 {
+        self.rsp
+    }
+
+    fn enter_handler(
+        &mut self,
+        frame_sp: u64,
+        _trampoline_addr: u64,
+        handler_addr: u64,
+        signum: u64,
+    ) {
+        self.rip = handler_addr;
+        self.rdi = signum; // 参数1: signum
+        self.rsi = 0; // 参数2: siginfo (简化: NULL)
+        self.rdx = 0; // 参数3: ucontext (简化: NULL)
+        self.rsp = frame_sp;
+    }
+
+    fn snapshot(&self, sig: u8) -> SignalFrame {
+        SignalFrame {
+            r15: self.r15,
+            r14: self.r14,
+            r13: self.r13,
+            r12: self.r12,
+            r11: self.r11,
+            r10: self.r10,
+            r9: self.r9,
+            r8: self.r8,
+            rdi: self.rdi,
+            rsi: self.rsi,
+            rbp: self.rbp,
+            rdx: self.rdx,
+            rcx: self.rcx,
+            rbx: self.rbx,
+            rax: self.rax,
+            int_no: self.int_no,
+            err_code: self.err_code,
+            rip: self.rip,
+            cs: self.cs,
+            rflags: self.rflags,
+            rsp: self.rsp,
+            ss: self.ss,
+            signum: u64::from(sig),
+        }
+    }
+
+    fn restore(&mut self, sigframe: &SignalFrame) {
+        self.r15 = sigframe.r15;
+        self.r14 = sigframe.r14;
+        self.r13 = sigframe.r13;
+        self.r12 = sigframe.r12;
+        self.r11 = sigframe.r11;
+        self.r10 = sigframe.r10;
+        self.r9 = sigframe.r9;
+        self.r8 = sigframe.r8;
+        self.rdi = sigframe.rdi;
+        self.rsi = sigframe.rsi;
+        self.rbp = sigframe.rbp;
+        self.rdx = sigframe.rdx;
+        self.rcx = sigframe.rcx;
+        self.rbx = sigframe.rbx;
+        self.rax = sigframe.rax;
+        self.rip = sigframe.rip;
+        self.cs = sigframe.cs;
+        self.rflags = sigframe.rflags;
+        self.rsp = sigframe.rsp;
+        self.ss = sigframe.ss;
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+impl UserFrame for crate::privileged::arch::aarch64::exception::ExceptionFrame {
+    const FRAME_HEADER_SIZE: usize = 0;
+    const SP_ALIGN: u64 = 0;
+
+    fn user_sp(&self) -> u64 {
+        self.sp
+    }
+
+    fn enter_handler(
+        &mut self,
+        frame_sp: u64,
+        trampoline_addr: u64,
+        handler_addr: u64,
+        signum: u64,
+    ) {
+        self.elr = handler_addr;
+        self.x0 = signum; // 参数1: signum
+        self.x1 = 0; // 参数2: siginfo (简化: NULL)
+        self.x2 = 0; // 参数3: ucontext (简化: NULL)
+        self.x30 = trampoline_addr; // handler 返回即跳 sigreturn 跳板
+        self.sp = frame_sp;
+    }
+
+    fn snapshot(&self, sig: u8) -> Aarch64SignalFrame {
+        Aarch64SignalFrame {
+            x: [
+                self.x0, self.x1, self.x2, self.x3, self.x4, self.x5, self.x6, self.x7, self.x8,
+                self.x9, self.x10, self.x11, self.x12, self.x13, self.x14, self.x15, self.x16,
+                self.x17, self.x18, self.x19, self.x20, self.x21, self.x22, self.x23, self.x24,
+                self.x25, self.x26, self.x27, self.x28, self.x29, self.x30,
+            ],
+            sp: self.sp,
+            elr: self.elr,
+            spsr: self.spsr,
+            signum: u64::from(sig),
+        }
+    }
+
+    fn restore(&mut self, sigframe: &Aarch64SignalFrame) {
+        self.x0 = sigframe.x[0];
+        self.x1 = sigframe.x[1];
+        self.x2 = sigframe.x[2];
+        self.x3 = sigframe.x[3];
+        self.x4 = sigframe.x[4];
+        self.x5 = sigframe.x[5];
+        self.x6 = sigframe.x[6];
+        self.x7 = sigframe.x[7];
+        self.x8 = sigframe.x[8];
+        self.x9 = sigframe.x[9];
+        self.x10 = sigframe.x[10];
+        self.x11 = sigframe.x[11];
+        self.x12 = sigframe.x[12];
+        self.x13 = sigframe.x[13];
+        self.x14 = sigframe.x[14];
+        self.x15 = sigframe.x[15];
+        self.x16 = sigframe.x[16];
+        self.x17 = sigframe.x[17];
+        self.x18 = sigframe.x[18];
+        self.x19 = sigframe.x[19];
+        self.x20 = sigframe.x[20];
+        self.x21 = sigframe.x[21];
+        self.x22 = sigframe.x[22];
+        self.x23 = sigframe.x[23];
+        self.x24 = sigframe.x[24];
+        self.x25 = sigframe.x[25];
+        self.x26 = sigframe.x[26];
+        self.x27 = sigframe.x[27];
+        self.x28 = sigframe.x[28];
+        self.x29 = sigframe.x[29];
+        self.x30 = sigframe.x[30];
+        self.sp = sigframe.sp;
+        self.elr = sigframe.elr;
+        self.spsr = sigframe.spsr;
+    }
+}
 
 // ============================================================================
 // 常量
@@ -583,11 +828,9 @@ fn terminate_from_fatal_signal(pid: Pid, sig: u8) {
 /// 返回 true 表示有信号被投递 (handler 已设置, 需要返回用户态执行).
 /// 返回 false 表示无待投递信号.
 ///
-/// # Safety
-///
-/// - frame 指针必须有效且指向当前 CPU 的中断帧
-/// - 仅在返回用户态前调用 (中断上下文或系统调用出口)
-pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> bool {
+/// 调用点: x86_64 系统调用出口 / 中断出口, aarch64 `svc_handler` 与 EL0
+/// 中断出口 —— 两架构、两条路径共用本函数, 差异由 [`UserFrame`] 收口.
+pub fn do_signal_deliver<F: UserFrame>(frame: &mut F) -> bool {
     let Some(pid) = super::scheduler::Scheduler::current() else {
         return false;
     };
@@ -598,6 +841,7 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
 
     // SAFETY: 当前进程一定有效
     let proc = unsafe { &*proc_ptr };
+    let frame_addr = core::ptr::from_mut(&mut *frame).cast::<()>() as u64;
 
     let mut delivered = false;
 
@@ -613,7 +857,7 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
 
         match action {
             SIG_DFL => {
-                do_signal_default_action(pid, sig, frame as u64);
+                do_signal_default_action(pid, sig, frame_addr);
                 delivered = true;
                 // 如果进程被终止或停止, 不再投递更多信号
                 let state = proc.state.load(Ordering::Acquire);
@@ -625,7 +869,7 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
                 delivered = true;
             }
             handler_addr => {
-                delivered |= deliver_user_handler(pid, sig, proc, frame, handler_addr);
+                delivered |= deliver_user_handler(pid, sig, proc, &mut *frame, handler_addr);
                 // 一次只投递一个 handler 信号 (sigreturn 后再投递下一个)
                 break;
             }
@@ -638,19 +882,24 @@ pub fn do_signal_deliver(frame: *mut crate::privileged::idt::InterruptFrame) -> 
 /// 计算信号帧在用户栈上的落点 (sigaltstack 优先, 否则主栈).
 ///
 /// 返回 `None` 表示主栈剩余空间不足 (栈溢出), 调用方应转默认动作.
-fn signal_frame_base(proc: &super::process::Process, user_rsp: u64, total: usize) -> Option<u64> {
+fn signal_frame_base<F: UserFrame>(
+    proc: &super::process::Process,
+    user_rsp: u64,
+    total: usize,
+) -> Option<u64> {
     // P1-I-45: 检查 sigaltstack 替代栈. 若进程通过 sigaltstack 注册了替代栈,
     // 且当前不在替代栈上 (SS_ONSTACK 未置位), 优先把信号帧写到替代栈顶部,
     // 避免在主栈溢出场景下 double fault (POSIX SA_ONSTACK 语义).
     let ss_addr = proc.sigaltstack_addr.load(Ordering::Acquire);
     let ss_size = proc.sigaltstack_size.load(Ordering::Acquire);
     let ss_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
+    // 向下对齐最多吃掉 15 字节, 容量判据把该量算进去 (否则对齐会把帧推出栈底).
     let use_alternate = ss_addr != 0
-        && crate::privileged::glue::usize_from_u64(ss_size) >= total
+        && crate::privileged::glue::usize_from_u64(ss_size) >= total + 15
         && (ss_flags & SS_DISABLE) == 0
         && (ss_flags & SS_ONSTACK) == 0;
 
-    let frame_rsp = if use_alternate {
+    let frame_top = if use_alternate {
         // 替代栈顶部向下分配
         ss_addr + ss_size - total as u64
     } else if user_rsp >= total as u64 {
@@ -658,6 +907,10 @@ fn signal_frame_base(proc: &super::process::Process, user_rsp: u64, total: usize
     } else {
         return None;
     };
+
+    // 帧落点向低地址对齐到 handler 入口要求 (x86_64 rsp ≡ 8 mod 16 /
+    // aarch64 sp ≡ 0 mod 16); 只向下对齐, 帧仍完整位于原落点之内.
+    let frame_rsp = frame_top.checked_sub(frame_top.wrapping_sub(F::SP_ALIGN) & 0xF)?;
 
     // 标记替代栈为"正在使用", 防止信号重入再次落回主栈
     if use_alternate {
@@ -667,111 +920,127 @@ fn signal_frame_base(proc: &super::process::Process, user_rsp: u64, total: usize
     Some(frame_rsp)
 }
 
-/// 从当前中断帧快照出用户态信号帧 (`rt_sigreturn` 时据此恢复).
-fn make_signal_frame(f: &crate::privileged::idt::InterruptFrame, sig: u8) -> SignalFrame {
-    SignalFrame {
-        r15: f.r15,
-        r14: f.r14,
-        r13: f.r13,
-        r12: f.r12,
-        r11: f.r11,
-        r10: f.r10,
-        r9: f.r9,
-        r8: f.r8,
-        rdi: f.rdi,
-        rsi: f.rsi,
-        rbp: f.rbp,
-        rdx: f.rdx,
-        rcx: f.rcx,
-        rbx: f.rbx,
-        rax: f.rax,
-        int_no: f.int_no,
-        err_code: f.err_code,
-        rip: f.rip,
-        cs: f.cs,
-        rflags: f.rflags,
-        rsp: f.rsp,
-        ss: f.ss,
-        signum: u64::from(sig),
-    }
-}
-
-/// 把 [返回地址 | `SignalFrame` | trampoline] 三件套写到用户栈, 并改写中断帧跳转 handler.
+/// 把 [帧头 | `ArchSignalFrame` | trampoline] 写到用户栈, 并改写异常帧跳转 handler.
 ///
-/// 返回 `false` 表示用户栈写入失败 (munmap/越界): 中断帧保持原样, 信号未投递.
-fn install_user_signal_frame(
-    f: &mut crate::privileged::idt::InterruptFrame,
+/// 帧头仅 x86_64 存在 (handler 的返回地址槽 = trampoline 地址); aarch64 以 LR
+/// 承载返回地址, 帧头长度为 0.
+///
+/// 返回 `false` 表示用户栈写入失败 (munmap/越界): 异常帧保持原样, 信号未投递.
+fn install_user_signal_frame<F: UserFrame>(
+    f: &mut F,
     frame_rsp: u64,
-    sigframe: &SignalFrame,
+    sigframe: &ArchSignalFrame,
     handler_addr: u64,
 ) -> bool {
     // P0-I-38 修复: 信号栈帧写入走异常表保护版 copy_to_user,
     // 用户栈任意一页失效 (munmap/越界) 时回滚信号投递
-    // (恢复原始栈指针 + 不修改 InterruptFrame), 进程继续运行.
-    let trampoline_start = frame_rsp + 8 + core::mem::size_of::<SignalFrame>() as u64;
-    let ret_addr_bytes = trampoline_start.to_ne_bytes();
+    // (恢复原始栈指针 + 不修改异常帧), 进程继续运行.
+    let sigframe_addr = frame_rsp + F::FRAME_HEADER_SIZE as u64;
+    let trampoline_addr = sigframe_addr + core::mem::size_of::<ArchSignalFrame>() as u64;
     // SAFETY: sigframe 由调用方保证指向本函数可读的信号帧; 长度 =
-    // size_of::<SignalFrame>(), 完全在 sigframe 内存范围内;
+    // size_of::<ArchSignalFrame>(), 完全在 sigframe 内存范围内;
     // from_raw_parts 仅借用字节视图供 copy_to_user 读取.
     let sigframe_bytes = unsafe {
         core::slice::from_raw_parts(
             (&raw const *sigframe).cast::<u8>(),
-            core::mem::size_of::<SignalFrame>(),
+            core::mem::size_of::<ArchSignalFrame>(),
         )
     };
 
-    let ok_ret = crate::privileged::mm::copy_to_user(frame_rsp, &ret_addr_bytes, 8);
-    let ok_frame = crate::privileged::mm::copy_to_user(
-        frame_rsp + 8,
+    let mut ok = true;
+    if F::FRAME_HEADER_SIZE > 0 {
+        let ret_addr_bytes = trampoline_addr.to_ne_bytes();
+        ok = crate::privileged::mm::copy_to_user(
+            frame_rsp,
+            &ret_addr_bytes[..F::FRAME_HEADER_SIZE],
+            F::FRAME_HEADER_SIZE,
+        )
+        .is_ok();
+    }
+    ok &= crate::privileged::mm::copy_to_user(
+        sigframe_addr,
         sigframe_bytes,
-        core::mem::size_of::<SignalFrame>(),
-    );
-    let ok_trampoline = crate::privileged::mm::copy_to_user(
-        trampoline_start,
+        core::mem::size_of::<ArchSignalFrame>(),
+    )
+    .is_ok();
+    ok &= crate::privileged::mm::copy_to_user(
+        trampoline_addr,
         &SIGRETURN_TRAMPOLINE,
         SIGRETURN_TRAMPOLINE_SIZE,
-    );
+    )
+    .is_ok();
 
-    if ok_ret.is_err() || ok_frame.is_err() || ok_trampoline.is_err() {
-        // 栈帧写入失败 (用户栈 munmap/越界): 不修改 InterruptFrame,
+    if !ok {
+        // 栈帧写入失败 (用户栈 munmap/越界): 不修改异常帧,
         // 也不投递信号, 进程继续运行等待下次信号投递窗口.
         return false;
     }
 
-    // 修改 InterruptFrame: 跳转到 handler
-    f.rip = handler_addr;
-    f.rdi = sigframe.signum; // 参数1: signum
-    f.rsi = 0; // 参数2: siginfo (简化: NULL)
-    f.rdx = 0; // 参数3: ucontext (简化: NULL)
-    f.rsp = frame_rsp;
+    // 修改异常帧: 跳转到 handler (两架构的寄存器约定见 `UserFrame::enter_handler`)
+    f.enter_handler(frame_rsp, trampoline_addr, handler_addr, sigframe.signum);
     true
 }
 
-/// 针对"用户 handler"分支: 装配信号帧并改写中断帧, 返回是否已投递.
+/// 针对"用户 handler"分支: 装配信号帧并改写异常帧, 返回是否已投递.
 ///
-/// 栈帧布局:
+/// 栈帧布局 (帧头仅 x86_64 存在):
 ///   `frame_rsp+0`: 返回地址 (指向 trampoline, handler ret 时弹出)
-///   `frame_rsp+8`: `SignalFrame` (保存原始寄存器)
-///   `frame_rsp+8+sizeof(SignalFrame)`: 跳板代码 (`rt_sigreturn` 桩)
-fn deliver_user_handler(
+///   `frame_rsp+8`: `ArchSignalFrame` (保存原始寄存器)
+///   `frame_rsp+8+sizeof(ArchSignalFrame)`: 跳板代码 (`rt_sigreturn` 桩)
+fn deliver_user_handler<F: UserFrame>(
     pid: Pid,
     sig: u8,
     proc: &super::process::Process,
-    frame: *mut crate::privileged::idt::InterruptFrame,
+    frame: &mut F,
     handler_addr: u64,
 ) -> bool {
-    // SAFETY: frame 由调用方保证有效
-    let f = unsafe { &mut *frame };
-
-    let total = 8 + core::mem::size_of::<SignalFrame>() + SIGRETURN_TRAMPOLINE_SIZE;
-    let Some(frame_rsp) = signal_frame_base(proc, f.rsp, total) else {
+    let total =
+        F::FRAME_HEADER_SIZE + core::mem::size_of::<ArchSignalFrame>() + SIGRETURN_TRAMPOLINE_SIZE;
+    let Some(frame_rsp) = signal_frame_base::<F>(proc, frame.user_sp(), total) else {
         // 栈溢出: 执行默认动作
-        do_signal_default_action(pid, sig, frame as u64);
+        let frame_addr = core::ptr::from_mut(&mut *frame).cast::<()>() as u64;
+        do_signal_default_action(pid, sig, frame_addr);
         return true;
     };
 
-    let sigframe = make_signal_frame(f, sig);
-    install_user_signal_frame(f, frame_rsp, &sigframe, handler_addr)
+    let sigframe = frame.snapshot(sig);
+    install_user_signal_frame::<F>(frame, frame_rsp, &sigframe, handler_addr)
+}
+
+/// 从用户栈上的信号栈帧恢复异常帧 (`rt_sigreturn` 的两架构共享实现).
+///
+/// 读取点: x86_64 在 handler `ret` 之后 `rsp` 已指向 `SignalFrame` 起点
+/// (返回地址槽已被弹出); aarch64 的 `sp` 同样指向 `Aarch64SignalFrame` 起点
+/// (trampoline 不压栈). 两架构都从 [`UserFrame::user_sp`] 直接读, 不带偏移.
+///
+/// 返回 `false` 表示用户栈信号帧不可读 (栈被 munmap / 指针越界): 调用方须终止
+/// 该线程组, 不能带着未恢复的帧返回用户态.
+pub fn restore_user_signal_frame<F: UserFrame>(frame: &mut F) -> bool {
+    let mut sigframe = core::mem::MaybeUninit::<ArchSignalFrame>::uninit();
+    // SAFETY: dst 覆盖本地 MaybeUninit 的完整字节范围; copy_from_user 只写该范围.
+    let dst = unsafe {
+        core::slice::from_raw_parts_mut(
+            sigframe.as_mut_ptr().cast::<u8>(),
+            core::mem::size_of::<ArchSignalFrame>(),
+        )
+    };
+    if crate::privileged::mm::copy_from_user(dst, frame.user_sp(), dst.len()).is_err() {
+        return false;
+    }
+    // SAFETY: copy_from_user 成功即已写满 ArchSignalFrame 的全部字节 (全 u64 字段).
+    let sigframe = unsafe { sigframe.assume_init() };
+    frame.restore(&sigframe);
+
+    // P1-I-45: sigreturn 清除替代栈 SS_ONSTACK 标志 (返回后不再处于替代栈上,
+    // POSIX 语义允许下一次信号再次落回替代栈).
+    if let Some(pid) = super::scheduler::Scheduler::current() {
+        let _ = PROCESS_TABLE.with_process_mut(pid, |proc| {
+            let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
+            proc.sigaltstack_flags
+                .store(flags & !SS_ONSTACK, Ordering::Release);
+        });
+    }
+    true
 }
 
 // ============================================================================

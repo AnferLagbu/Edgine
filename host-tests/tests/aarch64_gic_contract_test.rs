@@ -231,25 +231,32 @@ fn test_qemu_script_asserts_gic_marker() {
 fn test_el0_and_el1_irq_paths_share_sgi_dispatch() {
     let src = read(EXCEPTION_RS);
 
-    // 两条入口必须委托到同一分发函数。
+    // 两条入口必须委托到同一分发函数 (A-10: EL0 入口额外携带用户帧以投递信号)。
     let el1 = slice_between(&src, "pub extern \"C\" fn irq_handler(", "\n}\n");
     let el0 = slice_between(&src, "pub extern \"C\" fn irq_handler_el0(", "\n}\n");
     assert!(
-        el1.contains("handle_irq(false)"),
+        el1.contains("handle_irq(false, None)"),
         "irq_handler (EL1h) 必须委托 handle_irq (单一分发)"
     );
     assert!(
-        el0.contains("handle_irq(true)"),
-        "irq_handler_el0 (EL0) 必须委托 handle_irq (单一分发)"
+        el0.contains("handle_irq(true, Some(frame))"),
+        "irq_handler_el0 (EL0) 必须委托 handle_irq 并携带用户帧"
     );
     // EL0 入口不得自带任何独立分派逻辑 (否则平行实现分叉复发)。
     assert!(
         !el0.contains("if intid ==") && !el0.contains("acknowledge()"),
         "irq_handler_el0 不得自带独立分发 (须复用 handle_irq)"
     );
+    // A-10: EL0 中断出口必须执行信号投递 (与 x86_64 `idt` 出口同构),
+    // 使纯用户态自旋的线程也能被信号打断。
+    let wrapper = slice_between(&src, "fn handle_irq(from_el0: bool", "\n}\n");
+    assert!(
+        wrapper.contains("do_signal_deliver"),
+        "handle_irq 出口必须投递待处理信号 (EL0 来源)"
+    );
 
     // 共用分发必须覆盖全部内核 SGI 的路由条件与接收处理。
-    let shared = slice_between(&src, "fn handle_irq(", "\n}\n");
+    let shared = slice_between(&src, "fn handle_irq_inner(", "\n}\n");
     for (cond, call) in [
         ("super::gic::FREG_RECOVERY_SGI", "freg_sgi_handler"),
         ("super::gic::TLB_SHOOTDOWN_SGI", "tlb_catch_up_local"),

@@ -12,8 +12,8 @@ use userlib::sys::{
     SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime, clone_thread,
     close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait,
     futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep,
-    pipe_create, poll, proc_exec, proc_exit, recv, sched_snapshot, sched_yield, send, setsockopt,
-    shutdown, socket, tgkill, wait_pid, wait_pid_status, wait_pid_status_nohang,
+    pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot, sched_yield, send,
+    setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -110,6 +110,11 @@ pub extern "C" fn _start() -> ! {
     // 子线程上核 → 子线程睡下 → 父线程上核"的交替推进, 忙等子进程独占一个核
     // 会拖慢该交替直至撞上重试上界.
     thread_probe();
+
+    // ── A-10: 返回用户态信号投递探针 ────────────────────────────────────
+    // 必须在 busy 忙等子进程 fork 之前同步完成: IRQ 腿依赖目标线程在次核上
+    // 纯用户自旋, 忙等子进程会抢占该核并掩盖定时器中断的投递窗口.
+    sig_probe();
 
     // ── K-07b 批2: execve 运行时探针 ────────────────────────────────────
     // 载荷 `/bin/exectest` 只在 initramfs 载体启动时存在; 默认启动 (无文件
@@ -893,6 +898,175 @@ extern "C" fn group_helper_body(_arg: u64) {
         let cur = GROUP_HOLD.load(Ordering::Acquire);
         let _ = futex_wait(&GROUP_HOLD, cur);
     }
+}
+
+// ============================================================
+// A-10: 返回用户态信号投递探针 (svc 出口 + IRQ 出口)
+// ============================================================
+
+/// 探针信号: `SIGTERM` (默认动作 Term, 装 handler 后可控).
+const SIG_PROBE_SIGNUM: i32 = 15;
+/// IRQ 腿自旋线程的兜底轮数: 信号应在毫秒级到达, 该上界只防回归时挂死.
+const SIG_SPIN_LIMIT: u64 = 400_000_000;
+
+/// handler 命中计数 (svc 腿 1 次 + IRQ 腿 1 次, 只增).
+static SIG_HITS: AtomicU32 = AtomicU32::new(0);
+/// IRQ 腿线程已进入纯用户自旋 (不发起任何 syscall).
+static SIG_SPIN_READY: AtomicU32 = AtomicU32::new(0);
+/// IRQ 腿线程已观察到 handler 命中并退出自旋.
+static SIG_SPIN_DONE: AtomicU32 = AtomicU32::new(0);
+/// 自旋进度读数 (每 4096 圈刷新): `spin-done` 超时用它区分「线程没上核」与
+/// 「线程在跑但信号没投递」。
+static SIG_SPIN_TICKS: AtomicU64 = AtomicU64::new(0);
+/// IRQ 腿线程栈 (落 `.bss`, 必须有内部可变性, 理由见 `ThreadStack`).
+static SIG_THREAD_STACK: ThreadStack =
+    const { ThreadStack(UnsafeCell::new([0u8; THREAD_STACK_BYTES])) };
+/// `CLONE_CHILD_SETTID` / `CLONE_CHILD_CLEARTID` 槽 (join 依据).
+static SIG_THREAD_TID: AtomicU32 = AtomicU32::new(0);
+/// `CLONE_PARENT_SETTID` 槽.
+static SIG_THREAD_PTID: AtomicI32 = AtomicI32::new(0);
+
+/// 信号 handler: 只做计数, 返回后经 trampoline (`rt_sigreturn`) 回到原指令.
+///
+/// 两架构的 handler 入口约定由内核 `UserFrame::enter_handler` 收口:
+/// 首参数 = signum (`rdi` / `x0`), 返回地址分别走栈槽 / `x30` (LR).
+extern "C" fn sig_probe_handler(_signum: i32) {
+    SIG_HITS.fetch_add(1, Ordering::AcqRel);
+}
+
+/// A-10 运行时探针: 两腿串成两条返回用户态路径的投递判据.
+///
+/// - **svc 腿**: 自身定向 `tgkill(SIGTERM)` —— 信号必须在 tgkill 的系统调用
+///   返回用户态前投递, handler 返回经 `rt_sigreturn` 恢复, 调用点继续执行;
+/// - **IRQ 腿**: 起一条纯用户自旋的兄弟线程 (全程不发起 syscall), 父线程定向
+///   `tgkill` 该 TID —— 唯一投递窗口是定时器中断的 EL0 出口.
+///
+/// 失败打印单行 `[SIG] FAIL: <tag> code=<读数>` 并继续启动; 两腿全过才打印
+/// `[SIG] PASS`, 供 QEMU fail-closed 断言.
+fn sig_probe() {
+    let Some(deadline) = wait_deadline() else {
+        sig_fail("clock", -1);
+        return;
+    };
+    match sig_probe_impl(deadline) {
+        Ok(()) => println("[SIG] PASS: svc-return + irq-exit handler delivery"),
+        Err((tag, code)) => sig_fail(tag, code),
+    }
+}
+
+/// 探针主体; 两腿共用同一条绝对截止时刻 (毫秒).
+fn sig_probe_impl(deadline: u64) -> Result<(), (&'static str, i64)> {
+    let tgid = getpid();
+    let leader = gettid();
+    let (Ok(tgid_i32), Ok(leader_i32)) = (i32::try_from(tgid), i32::try_from(leader)) else {
+        return Err(("id-range", -1));
+    };
+    // 装 handler: 内核 ABI 的 act 是单值 u64 (handler 地址);
+    // 经裸指针中转, 避免函数项直接转整数 (clippy `fn_to_numeric_cast`).
+    let rc = rt_sigaction(SIG_PROBE_SIGNUM, sig_probe_handler as *const () as u64);
+    if rc != 0 {
+        return Err(("sigaction", rc));
+    }
+
+    // ── 腿1: svc 出口投递 ──
+    // 信号在 tgkill 返回用户态前被投递; handler 返回后 `rt_sigreturn` 恢复
+    // 现场, 本线程从 tgkill 的返回点继续 —— 返回码仍是 0.
+    let rc = tgkill(tgid_i32, leader_i32, SIG_PROBE_SIGNUM);
+    if rc != 0 {
+        return Err(("tgkill-svc", rc));
+    }
+    let hits = SIG_HITS.load(Ordering::Acquire);
+    if hits != 1 {
+        return Err(("svc-hits", i64::from(hits)));
+    }
+
+    // ── 腿2: IRQ 出口投递 ──
+    let child = unsafe {
+        // SAFETY: 栈取自本进程 BSS 的 16 字节对齐静态块; TID 指针指向本进程
+        // 私有原子槽; `tls = 0` 表示不设新基址 (内核按 `tls != 0` 判定).
+        clone_thread(
+            THREAD_CLONE_FLAGS,
+            thread_stack_top(&SIG_THREAD_STACK),
+            i32_slot_ptr(&SIG_THREAD_PTID),
+            u32_slot_ptr(&SIG_THREAD_TID),
+            0,
+            sig_irq_body,
+            0,
+        )
+    };
+    if child <= 0 {
+        return Err(("clone", child));
+    }
+    let Ok(spin_tid) = i32::try_from(child) else {
+        return Err(("tid-range", child));
+    };
+    // 等自旋线程上核: 该线程不发起任何 syscall, 只能由父线程轮询.
+    loop {
+        if SIG_SPIN_READY.load(Ordering::Acquire) != 0 {
+            break;
+        }
+        if monotonic_ms().is_none_or(|now| now >= deadline) {
+            return Err(("spin-ready", -1));
+        }
+        delay_ms(1);
+    }
+    let ticks_at_send = SIG_SPIN_TICKS.load(Ordering::Acquire);
+    let rc = tgkill(tgid_i32, spin_tid, SIG_PROBE_SIGNUM);
+    if rc != 0 {
+        return Err(("tgkill-irq", rc));
+    }
+    // 等目标线程观察到命中并退出自旋 (证明 handler 在中断出口被投递). 用 futex
+    // 阻塞而不是轮询: 父线程忙轮询会与自旋目标抢同一颗核, 使「线程没上核」与
+    // 「信号没投递」两种失效分不开 (K-07a 的 futex 往返已证明阻塞等待可用).
+    if !futex_wait_until(&SIG_SPIN_DONE, |v| v != 0, deadline) {
+        // 区分两种「handler 没跑」: 自旋计数在动 ⇒ 线程在核上但信号没投递;
+        // 计数冻结 ⇒ 线程根本没再上核 (调度侧饿死), 投递点无从执行.
+        let tag = if SIG_SPIN_TICKS.load(Ordering::Acquire) > ticks_at_send {
+            "spin-live"
+        } else {
+            "spin-starved"
+        };
+        return Err((tag, i64::from(SIG_HITS.load(Ordering::Acquire))));
+    }
+    let hits = SIG_HITS.load(Ordering::Acquire);
+    if hits != 2 {
+        return Err(("irq-hits", i64::from(hits)));
+    }
+    // join: `CLONE_CHILD_CLEARTID` 在退出时清零 TID 槽并唤醒.
+    if !futex_wait_until(&SIG_THREAD_TID, |v| v == 0, deadline) {
+        return Err((
+            "join-timeout",
+            i64::from(SIG_THREAD_TID.load(Ordering::Acquire)),
+        ));
+    }
+    Ok(())
+}
+
+/// IRQ 腿线程体: 纯用户自旋 (不发起 syscall), handler 命中后退出并落 DONE.
+extern "C" fn sig_irq_body(_arg: u64) {
+    SIG_SPIN_READY.store(1, Ordering::Release);
+    let mut i: u64 = 0;
+    while SIG_HITS.load(Ordering::Acquire) < 2 && i < SIG_SPIN_LIMIT {
+        i = i.wrapping_add(1);
+        if i.is_multiple_of(4_096) {
+            SIG_SPIN_TICKS.store(i, Ordering::Release);
+        }
+        core::hint::spin_loop();
+    }
+    SIG_SPIN_DONE.store(1, Ordering::Release);
+    let _ = futex_wake(&SIG_SPIN_DONE, 1);
+}
+
+/// 失败出口: 单次写入整行 (理由同 [`thread_fail`]).
+fn sig_fail(tag: &'static str, code: i64) {
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+    append_bytes(&mut buf, &mut pos, b"[SIG] FAIL: ");
+    append_bytes(&mut buf, &mut pos, tag.as_bytes());
+    append_bytes(&mut buf, &mut pos, b" code=");
+    append_dec(&mut buf, &mut pos, code);
+    append_bytes(&mut buf, &mut pos, b"\n");
+    let _ = fs_write(1, &buf[..pos]);
 }
 
 // ============================================================

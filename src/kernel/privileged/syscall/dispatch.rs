@@ -123,44 +123,13 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         let is_rt_sigreturn = syscall_num == 139;
 
         if is_rt_sigreturn {
-            let sigframe_ptr = (f.rsp + 8) as *const crate::privileged::proc::SignalFrame;
-            if !sigframe_ptr.is_null() {
-                let sigframe = core::ptr::read_unaligned(sigframe_ptr);
-                f.r15 = sigframe.r15;
-                f.r14 = sigframe.r14;
-                f.r13 = sigframe.r13;
-                f.r12 = sigframe.r12;
-                f.r11 = sigframe.r11;
-                f.r10 = sigframe.r10;
-                f.r9 = sigframe.r9;
-                f.r8 = sigframe.r8;
-                f.rdi = sigframe.rdi;
-                f.rsi = sigframe.rsi;
-                f.rbp = sigframe.rbp;
-                f.rdx = sigframe.rdx;
-                f.rcx = sigframe.rcx;
-                f.rbx = sigframe.rbx;
-                f.rax = sigframe.rax;
-                f.rip = sigframe.rip;
-                f.cs = sigframe.cs;
-                f.rflags = sigframe.rflags;
-                f.rsp = sigframe.rsp;
-                f.ss = sigframe.ss;
-            }
-            // P1-I-45: sigreturn 清除替代栈 SS_ONSTACK 标志 (原 sys_rt_sigreturn
-            // 死分支中的清除逻辑, T3 迁移至本可达路径——sigreturn 返回后不再处于
-            // 替代栈上, POSIX 语义).
-            {
-                let cur = crate::privileged::proc::process_get_current_pid();
-                if cur != 0 {
-                    crate::privileged::proc::process_with_mut(cur, |proc| {
-                        let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
-                        proc.sigaltstack_flags.store(
-                            flags & !crate::privileged::proc::SS_ONSTACK,
-                            Ordering::Release,
-                        );
-                    });
-                }
+            // A-10: 恢复流程收敛到 `restore_user_signal_frame` (与 aarch64 共用).
+            // 读取点 = 当前 rsp: handler `ret` 已弹出返回地址槽, rsp 正指向
+            // SignalFrame 起点 (历史实现的 `rsp + 8` 是错位读取).
+            // 用户栈信号帧不可读 (munmap/越界) 时按 SIGSEGV 终止线程组,
+            // 不带着未恢复的帧返回用户态.
+            if !crate::privileged::proc::restore_user_signal_frame(f) {
+                crate::privileged::proc::process_exit_group(11u32 << 8 | 0x7f);
             }
             return;
         }
@@ -174,9 +143,8 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
         let result = syscall_dispatch(syscall_num, a0, a1, a2, a3, a4, a5);
         f.rax = result.cast_unsigned();
 
-        // 返回用户态前检查待投递信号
-        // SAFETY: frame 有效, 当前在当前 CPU 的 syscall 上下文
-        crate::privileged::proc::do_signal_deliver(frame);
+        // 返回用户态前检查待投递信号 (A-10: 两架构共用 `UserFrame` 抽象)
+        crate::privileged::proc::do_signal_deliver(f);
     }
 }
 

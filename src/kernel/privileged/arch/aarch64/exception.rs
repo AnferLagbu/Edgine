@@ -611,24 +611,16 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     }
 
     // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch.
-    // aarch64: SYS_RT_SIGRETURN = 139
-    // aarch64 信号投递 (do_signal_deliver) 尚未实现, 此拦截为预留.
-    // 当信号投递实现后, 从用户栈读取 Aarch64SignalFrame 并恢复 x0-x30/elr/spsr/sp.
+    // aarch64: SYS_RT_SIGRETURN = 139 (由 trampoline 以 `movz x0, #139` 发起).
+    // 恢复流程与 x86_64 共用 `restore_user_signal_frame`: 从用户 SP 指向的
+    // Aarch64SignalFrame 恢复 x0-x30/elr/spsr/sp 并清除 SS_ONSTACK.
     if syscall_num == 139 {
-        // 清除 SS_ONSTACK 标记
-        if let Some(pid) =
-            Some(crate::privileged::proc::process_get_current_pid()).filter(|&p| p != 0)
-        {
-            crate::privileged::proc::process_with_mut(pid, |proc| {
-                use core::sync::atomic::Ordering;
-                let flags = proc.sigaltstack_flags.load(Ordering::Acquire);
-                proc.sigaltstack_flags.store(
-                    flags & !crate::privileged::proc::SS_ONSTACK,
-                    Ordering::Release,
-                );
-            });
+        // 用户栈信号帧不可读 (munmap/越界) 时按 SIGSEGV 终止线程组,
+        // 不带着未恢复的帧返回用户态.
+        if !crate::privileged::proc::restore_user_signal_frame(frame) {
+            crate::privileged::proc::process_exit_group(11u32 << 8 | 0x7f);
         }
-        // sigreturn 不返回值, 保持 x0 原值
+        // sigreturn 不返回值: x0 已由信号帧恢复为原用户值
         return frame.x0;
     }
 
@@ -644,8 +636,11 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
         // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         unsafe { crate::privileged::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
 
-    // 返回值写入 x0
-    result.cast_unsigned()
+    // 返回值写入 x0 后再做返回用户态前的信号投递: 投递会快照当前帧
+    // (含此返回值), `rt_sigreturn` 恢复后 x0 即系统调用结果.
+    frame.x0 = result.cast_unsigned();
+    crate::privileged::proc::do_signal_deliver(frame);
+    frame.x0
 }
 
 /// 内核 IRQ 统一分发 (`EL1h` 与 EL0 两条异常路径的**唯一**实现)。
@@ -658,7 +653,24 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
 /// (并保留陈旧 TLB 项)。收敛为单一入口后两条路径不可能再分叉。
 ///
 /// `from_el0` 仅用于 Timer 诊断日志区分来源入口, 不改变任何路由或处置逻辑。
-fn handle_irq(from_el0: bool) {
+///
+/// A-10: 中断出口与系统调用出口共用同一信号投递检查点 —— EL0 来源的中断在
+/// 路由完成后先投递待处理信号, 再执行挂起重调度 (与 x86_64 `idt` 出口同序),
+/// 使纯用户态自旋的线程也能被 `SIGKILL`/handler 信号打断, 而不必等到下一次
+/// 进入内核. 内部路由返回"是否需要重调度", 由本函数统一在投递之后执行.
+fn handle_irq(from_el0: bool, frame: Option<&mut ExceptionFrame>) {
+    let need_resched = handle_irq_inner(from_el0);
+    if from_el0 && let Some(f) = frame {
+        crate::privileged::proc::do_signal_deliver(f);
+    }
+    if need_resched {
+        // 中断退出前执行挂起重调度 (须在 do_softirq / 信号投递之后)
+        crate::privileged::proc::cpu_queue::run_pending_resched();
+    }
+}
+
+/// `handle_irq` 的路由主体; 返回 `true` 表示出口需要执行挂起重调度.
+fn handle_irq_inner(from_el0: bool) -> bool {
     // 诊断计数器置于语句之前 (避免 items_after_statements)。
     static IRQ_COUNT: AtomicU64 = AtomicU64::new(0);
     static TIMER_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -677,7 +689,7 @@ fn handle_irq(from_el0: bool) {
 
     if intid >= 1020 {
         // 伪中断, 无需 EOI
-        return;
+        return false;
     }
 
     // ISSUE-RT-005 正向证据: `enter_user` / 调度恢复路径清 SPSR.I 后, EL0 期可
@@ -715,7 +727,7 @@ fn handle_irq(from_el0: bool) {
             crate::klog_info!(Boot, "FREG recovery SGI failed: {}", result);
         }
         super::gic::end_of_interrupt(intid);
-        return;
+        return false;
     }
 
     // ── 跨核 TLB 失效 SGI 13 (aarch64 等价于 x86_64 向量 0xFD) ──────────
@@ -727,7 +739,7 @@ fn handle_irq(from_el0: bool) {
         crate::privileged::smp::tlb_catch_up_local();
         crate::privileged::smp::tlb_probe_report();
         super::gic::end_of_interrupt(intid);
-        return;
+        return false;
     }
 
     // ── 跨核重新调度 SGI 14 (aarch64 等价于 x86_64 向量 0xFE) ───────────
@@ -736,8 +748,8 @@ fn handle_irq(from_el0: bool) {
         // EOI 之后经统一调度点执行切换 (见 `run_pending_resched` 文档).
         crate::privileged::proc::cpu_queue::resched_ipi_handler();
         super::gic::end_of_interrupt(intid);
-        crate::privileged::proc::cpu_queue::run_pending_resched();
-        return;
+        // 出口统一执行信号投递 + 挂起重调度 (见 `handle_irq`).
+        return true;
     }
 
     // Timer interrupt (PPI 30 = non-secure physical timer)
@@ -787,8 +799,8 @@ fn handle_irq(from_el0: bool) {
 
     crate::privileged::irq::do_softirq();
 
-    // 中断退出前执行挂起重调度 (须在 do_softirq 返回之后, 见其文档)
-    crate::privileged::proc::cpu_queue::run_pending_resched();
+    // 出口统一执行信号投递 + 挂起重调度 (须在 do_softirq 返回之后, 见其文档)
+    true
 }
 
 /// EL0 IRQ 处理器 (用户态中断入口)。
@@ -797,12 +809,12 @@ fn handle_irq(from_el0: bool) {
 /// EL0 期到达的内核 SGI (7/13/14) 必须与内核态同样处置 (历史缺陷见 `handle_irq`)。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
-pub extern "C" fn irq_handler_el0(_frame: &ExceptionFrame) {
+pub extern "C" fn irq_handler_el0(frame: &mut ExceptionFrame) {
     // Lockdep: 标记中断上下文 (仅诊断构建; 默认 boot 零开销). 与 x86_64
     // `idt::irq_handler` 同构, 包裹共用的 `handle_irq`.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     crate::privileged::sync::lockdep::irq_enter();
-    handle_irq(true);
+    handle_irq(true, Some(frame));
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     crate::privileged::sync::lockdep::irq_exit();
 }
@@ -871,8 +883,9 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     //
     // SIMPLIFIED: 不按 ESR.EC/DFSC 细分故障语义 (翻译/权限/未定义指令一律同等对待),
     // 也不向用户态投递具体信号; 影响: 用户态无法区分 SIGSEGV/SIGILL/SIGBUS (与
-    // x86_64 侧"终止而不投递具体信号"现状一致); 何时需扩展: 需要按信号语义投递
-    // (信号帧构建 + sigreturn 恢复) 时。
+    // x86_64 侧"终止而不投递具体信号"现状一致); 何时需扩展: 需要按 ESR 分类生成
+    // siginfo 并投递具体信号时 —— 信号帧构建与 sigreturn 恢复已就绪 (A-10),
+    // 尚缺的只是 ESR→signum 映射。
     //
     // SPSR_EL1.M[3:0] == 0 (EL0t) ⟺ 低 4 位全零 ⟺ `trailing_zeros() >= 4`;
     // 该判据用于区分 EL0 来源与内核态同 EL 异常 (内核态异常必须停机而非杀进程).
@@ -931,7 +944,8 @@ pub extern "C" fn irq_handler(_frame: &ExceptionFrame) {
     // Lockdep: 标记中断上下文 (仅诊断构建; 默认 boot 零开销). 与 EL0 入口同构.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     crate::privileged::sync::lockdep::irq_enter();
-    handle_irq(false);
+    // EL1h 来源不投递用户信号 (无用户帧可改写).
+    handle_irq(false, None);
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     crate::privileged::sync::lockdep::irq_exit();
 }
