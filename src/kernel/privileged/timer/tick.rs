@@ -873,10 +873,12 @@ mod tests {
 pub fn register_timer_tick_tests() {
     use crate::privileged::tests::{TestFn, TestResult, runner};
 
-    fn initial_state() -> TestResult {
-        crate::assert_eq_test!(get_ticks(), 0, "ticks");
+    /// 启动后恒定状态: 测试模式启动已复刻生产时基契约 (`timer_init` + 建锚),
+    /// 故此处断言"已初始化 + 频率为请求值", 不再断言未初始化态 (ISSUE-RT-008:
+    /// 该态随测试模式启动补齐而不可观测).
+    fn post_boot_state() -> TestResult {
+        crate::check!(is_initialized(), "timer initialized at boot");
         crate::assert_eq_test!(get_frequency(), DEFAULT_INTERRUPT_FREQ_HZ, "freq");
-        crate::check!(!is_initialized(), "not initialized");
         TestResult::Pass
     }
 
@@ -920,7 +922,7 @@ pub fn register_timer_tick_tests() {
     }
 
     let r = runner();
-    r.register("timer::tick", "initial_state", initial_state as TestFn);
+    r.register("timer::tick", "post_boot_state", post_boot_state as TestFn);
     r.register(
         "timer::tick",
         "zero_frequency_handling",

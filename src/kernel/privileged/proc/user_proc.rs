@@ -2000,6 +2000,14 @@ impl UserProcManager {
             }
 
             let vaddr_start = (phdr.vaddr + load_bias) & !(PAGE_SIZE - 1);
+
+            // K-08: 与 `elf::elf_load_segment` 同一下界判据 — 低于用户 VA 下界
+            // 的段落会映射进 kview 恒等窗口, 内核态经 kview 访问该地址将命中
+            // 恒等物理页而非用户帧 (I4 代理面失真), 装载期 fail-closed 拒绝.
+            if vaddr_start < crate::privileged::mm::user_va_lower_bound() {
+                return None;
+            }
+
             let vaddr_end =
                 (phdr.vaddr + phdr.memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
             let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;

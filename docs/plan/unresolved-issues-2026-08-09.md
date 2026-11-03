@@ -349,12 +349,13 @@
 | 字段 | 数据 |
 |---|---|
 | **严重度** | P3（仅 kernel_test 测试镜像；真机启动与默认构建不受影响） |
-| **状态** | `[]`（2026-11-02 登记，修复方式待裁定） |
+| **状态** | ✅ 已修复 (`[X]`)（2026-11-03 采用修复候选 ①） |
 | **类型** | 预存测试环境缺陷（S-3 单一时基工程遗留；与 K-08 改动无关） |
 | **现象** | `make test-unit ARCH=x86_64` 的 QEMU kernel_test 镜像报 259 passed / 4 failed：`timer::calibration::boot_timebase_recorded` / `conversions_after_record` / `zero_window_rejected` / `timer::tick::timebase_established_at_boot`；其余 259 例（含新增 `mm::kview` 4 例）全通过。 |
 | **根因** | 4 例的断言前提是"启动编排已完成时基建立"（`establish_boot_timebase`），而 `boot_interrupt_timer_init` / `kernel_init_boot` 整体被 `#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]` 排除；`kernel_init_test_mode` 只初始化内存 / 架构 / 调度器，从不调用时基测定 ⇒ 在 kernel_test 镜像内断言恒假。`make test-kernel-host`（host-test 构建）不编译这 4 例（注册函数门控 `#[cfg(feature = "kernel_test")]`），故 §2.3 第 6 条不受影响。 |
 | **修复候选** | ① `kernel_init_test_mode` 增加 `timer::calibration::establish_boot_timebase()`（QEMU 有 PIT/TSC，可真测）；② 4 例改为在 kernel_test 内先自建时基再断言；③ 若测试环境不应依赖硬件测定，则把 4 例降为 host 侧契约并删除 kernel_test 注册。需用户裁定后实施。 |
-| **证据** | `other/tests-reports/unit_test_20261102_232048.log`（QEMU exit 35）；本次 K-08 改动仅触及 VMM / CR3 / 进程生命周期，未改 timer 源码。 |
+| **修复实施** | 取候选 ①：`kernel_init_test_mode`（[lib.rs](file:///home/anfer/Code/Edgine/src/kernel/lib.rs)）在 `interrupt_early_init` 之后、`smp::init` 之前补 `timer::timer_init(DEFAULT_INTERRUPT_FREQ_HZ)` + `timer::calibration::establish_boot_timebase()`，与生产 `boot_interrupt_timer_init` 同形；失败仅记日志不阻断（测试模式不因时基失败停机）。连带口径：`timer::tick` 的 kernel_test 用例由 `initial_state`（断言"未初始化且 ticks == 0"）改为 `post_boot_state`（断言"已初始化 + 频率为请求值"）—— 补建时基后"未初始化态"在 kernel_test 镜像内已不可观测；host 侧 `test_initial_state` 不变。 |
+| **证据** | 修复前：`other/tests-reports/unit_test_20261102_232048.log`（QEMU exit 35）。修复后：`other/tests-reports/unit_test_20261103_110511.log`（QEMU exit 33，`ALL 264 TESTS PASSED (0 skipped)`；串口 `Test mode: timebase ... Hz (PIT measured)`；4 例全 PASS，新增 `mm::kview::user_va_floor_covers_identity` 亦 PASS）。 |
 | **关联** | K-08 门槛取证（[multithreading-project.md](./multithreading-project.md) §5） |
 
 ---

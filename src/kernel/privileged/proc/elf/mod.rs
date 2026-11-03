@@ -151,7 +151,8 @@ pub fn elf_validate(elf_data: &[u8]) -> Option<&'static Elf64Header> {
 /// 当 ELF 头校验失败时返回 `Err("Invalid ELF header")`; 当无 program header 时返回
 /// `Err("No program headers")`; 当段地址/大小溢出或物理页分配失败 (OOM) 时分别返回
 /// `Err("ELF: vaddr + memsz overflow")`, `Err("ELF: p_offset + p_filesz overflow")`,
-/// `Err("OOM loading ELF")`.
+/// `Err("OOM loading ELF")`; 段落起点低于用户 VA 下界时返回
+/// `Err("ELF: PT_LOAD below user VA lower bound")`.
 pub fn elf_load(mm: &MmStruct, elf_data: &[u8]) -> Result<ElfLoadResult, &'static str> {
     elf_load_with_bias(mm, elf_data, 0)
 }
@@ -165,7 +166,8 @@ pub fn elf_load(mm: &MmStruct, elf_data: &[u8]) -> Result<ElfLoadResult, &'stati
 /// 当 ELF 头校验失败时返回 `Err("Invalid ELF header")`; 当无 program header 时返回
 /// `Err("No program headers")`; 当段地址/大小算术溢出时返回
 /// `Err("ELF: vaddr + memsz overflow")` 或 `Err("ELF: p_offset + p_filesz overflow")`;
-/// 当物理页分配失败时返回 `Err("OOM loading ELF")`.
+/// 当物理页分配失败时返回 `Err("OOM loading ELF")`; 段落起点低于用户 VA 下界时
+/// 返回 `Err("ELF: PT_LOAD below user VA lower bound")`.
 pub fn elf_load_with_bias(
     mm: &MmStruct,
     elf_data: &[u8],
@@ -275,6 +277,13 @@ fn elf_load_segment(
         .ok_or("ELF: p_offset + p_filesz overflow")?;
     if file_data_end > elf_size {
         return Ok(0);
+    }
+
+    // K-08: 用户 VA 下界之下 (x86_64 的 kview 恒等窗口 / ELF 装载基址之下) 的
+    // 段落会让内核态经 kview 访问时命中恒等物理页而非用户帧 (I4 代理面失真),
+    // 装载期 fail-closed 拒绝, 不留给缺页路径兜底.
+    if vaddr_start < crate::privileged::mm::user_va_lower_bound() {
+        return Err("ELF: PT_LOAD below user VA lower bound");
     }
 
     let mut page_flags = PageFlags::USER;

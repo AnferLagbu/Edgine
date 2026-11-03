@@ -364,6 +364,14 @@ mod tests {
 
     #[test]
     fn test_busy_wait_zero_duration() {
+        // 冷启动预热: 首次触碰 read_tsc / busy_wait_* 的指令页会触发 ~15k cycles 的
+        // 缺页开销, 与"零延时立即返回"语义无关. 先走一遍同路径, 使测量窗口只反映
+        // 函数体本身 (否则用例单跑必红、全量跑偶然绿).
+        let _ = read_tsc();
+        busy_wait_ns(0);
+        busy_wait_us(0);
+        busy_wait_ms(0);
+
         // 零延时应该立即返回
         let start = read_tsc();
         busy_wait_ns(0);

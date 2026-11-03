@@ -557,7 +557,8 @@ fn kernel_init_test_memory() {
     }
 }
 
-/// 测试模式架构基线: GDT/TSS → 中断早初始化 → SMP → 调度器 (顺序契约见 I-24).
+/// 测试模式架构基线: GDT/TSS → 中断早初始化 → 定时器与时基 → SMP → 调度器
+/// (顺序契约见 I-24; 定时器/时基位置对齐生产启动步骤 7/7.5).
 #[cfg(feature = "kernel_test")]
 fn kernel_init_test_arch() {
     // I-24 启动顺序契约: GDT/TSS init (set_ist[0..4]) 必须在 IDT init 之前.
@@ -571,6 +572,28 @@ fn kernel_init_test_arch() {
 
     <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_early_init();
     crate::klog_boot_info!("Test mode: interrupt early init done");
+
+    // ISSUE-RT-008: 测试模式须复刻生产启动的定时器/时基契约, 否则
+    // `timer::calibration` / `timer::tick` 的启动接线用例没有真实读数可断言.
+    // `timer_init` 在 x86_64 上还是 `calibrate_counter_hz` 的 PIT 前置
+    // (CPUID 标称频率不可得时走 PIT 实测回退). 失败不致命, 与生产路径同语义.
+    match crate::privileged::timer::timer_init(crate::privileged::timer::DEFAULT_INTERRUPT_FREQ_HZ)
+    {
+        Ok(_freq) => {
+            crate::klog_boot_info!("Test mode: timer configured");
+        }
+        Err(msg) => {
+            crate::klog_err!(Timer, "test mode timer_init failed: {}", msg);
+        }
+    }
+    match crate::privileged::timer::calibration::establish_boot_timebase() {
+        Ok((hz, source)) => {
+            crate::klog_boot_info!("Test mode: timebase {} Hz ({})", hz, source.label());
+        }
+        Err(msg) => {
+            crate::klog_warn!(Timer, "test mode boot timebase not established: {}", msg);
+        }
+    }
 
     crate::privileged::smp::init();
     crate::klog_boot_info!("Test mode: SMP BSP registered");

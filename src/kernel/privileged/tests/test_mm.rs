@@ -1627,6 +1627,40 @@ fn test_kview_cow_child_own_view() -> TestResult {
     TestResult::Pass
 }
 
+/// host / aarch64 无 kview 恒等窗口概念 → 跳过.
+#[cfg(not(all(target_arch = "x86_64", not(feature = "host-test"))))]
+fn test_user_va_floor_covers_identity_window() -> TestResult {
+    TestResult::Skip("K-08: kview 恒等窗口为 x86_64 专属, host/aarch64 跳过")
+}
+
+/// 用户 VA 下界必须覆盖 kview 恒等窗口上界, 且不低于用户 ELF 装载基址.
+///
+/// **判别力**: 恒等窗口 (`ceil(kernel_end/2MiB)*2MiB`) 若越到下界之上, 用户映射
+/// 会与 boot 恒等页重叠, 内核态经 kview 访问用户地址即命中恒等物理页 (I4 代理
+/// 面失真). 本用例在真机 QEMU 上以实际 `kernel_end` 读数复核该契约.
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
+fn test_user_va_floor_covers_identity_window() -> TestResult {
+    let kernel_end = crate::privileged::boot::boot_get_kernel_end();
+    let identity_end = kernel_end.div_ceil(crate::privileged::mm::HUGE_PAGE_2M_SIZE)
+        * crate::privileged::mm::HUGE_PAGE_2M_SIZE;
+    let floor = crate::privileged::mm::user_va_lower_bound();
+
+    check!(kernel_end != 0, "kernel_end 不得为 0");
+    check!(
+        identity_end <= crate::privileged::config::memory::USER_CODE_BASE,
+        "kview 恒等窗口越过 USER_CODE_BASE (boot 断言应已在启动期拦下)"
+    );
+    check!(
+        floor >= identity_end,
+        "用户 VA 下界必须覆盖 kview 恒等窗口上界"
+    );
+    check!(
+        floor >= crate::privileged::config::memory::USER_CODE_BASE,
+        "用户 VA 下界不得低于 USER_CODE_BASE"
+    );
+    TestResult::Pass
+}
+
 pub fn register_mm_tests() {
     let r = runner();
     register_tests_inner! { r:
@@ -1664,6 +1698,7 @@ pub fn register_mm_tests() {
             "mirrors_user_mapping": test_kview_mirrors_user_mapping,
             "protects_boot_identity": test_kview_protects_boot_identity,
             "cow_child_own_view": test_kview_cow_child_own_view,
+            "user_va_floor_covers_identity": test_user_va_floor_covers_identity_window,
         },
         "mm::cow": {
             "child_write_isolated_from_parent": test_cow_child_write_isolated_from_parent,

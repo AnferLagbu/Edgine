@@ -323,6 +323,10 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
 // 符号桩化 (host-test): kernel_end 取值已分叉, 触发 borrow_as_ptr 的
 // `&_kernel_end as *const u8` 仅存在于真机分支, expect 须同步收窄.
 /// 初始化启动信息子系统, 解析引导器传入的启动参数并返回汇总的 [`BootInfo`]
+///
+/// # Panics
+/// x86_64 真机构建下, 内核映像末尾越过 `USER_CODE_BASE` (kview 恒等窗口
+/// 将与用户映射区重叠, I4 代理面失真) 时以启动期断言停机.
 pub fn init() -> BootInfo {
     // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号且不执行裸机引导,
     // 常量中性取值 0. 真机分支取链接脚本符号地址.
@@ -335,6 +339,21 @@ pub fn init() -> BootInfo {
     let kernel_end = &raw const _kernel_end as u64;
     #[cfg(feature = "host-test")]
     let kernel_end = 0u64;
+
+    // K-08: kview 恒等窗口 (`[0, ceil(kernel_end/2MiB) * 2MiB)`) 不得与用户映射区
+    // 相交 —— 用户映射统一下界见 `mm::user_va_lower_bound` (x86_64 上取窗口上界与
+    // `USER_CODE_BASE` 的较大者). 内核映像一旦越过 `USER_CODE_BASE` (4 MiB),
+    // 恒等窗口就会下探不了而覆盖用户区, 内核态经 kview 的 `copy_*_user` / 缺页
+    // 路径会解析到恒等物理页而非用户帧 (I4 代理面失真). 产物越界即启动期
+    // fail-closed 停机, 不留到运行期随机踩页. aarch64 无 kview (恒等映射在高半区
+    // TTBR1), 不适用此约束.
+    #[cfg(all(not(feature = "host-test"), target_arch = "x86_64"))]
+    assert!(
+        kernel_end <= crate::privileged::config::memory::USER_CODE_BASE,
+        "K-08: kernel image end {:#X} exceeds USER_CODE_BASE {:#X}; kview identity window would overlap user mappings",
+        kernel_end,
+        crate::privileged::config::memory::USER_CODE_BASE
+    );
 
     #[cfg(target_arch = "x86_64")]
     let (mem_size, mmap_entries) = {

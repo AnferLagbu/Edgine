@@ -263,11 +263,18 @@ fn elf_load_rollback_routes_every_failure_site_to_single_source() {
         ),
         "回滚必须挂在装载失败的判据上 (装载成功不得回滚)"
     );
-    // phnum 超限 / phdr 越界 / 装配页 OOM 三个失败点逐个返回 None, 不接受部分接线.
+    // phnum 超限 / phdr 越界 / 用户 VA 下界 / 装配页 OOM 四个失败点逐个返回 None,
+    // 不接受部分接线.
     assert_eq!(
         count(&segments, "return None;"),
-        3,
-        "load_elf_segments 的三个装载失败点必须各自返回 None (逐个计数, 防漏接)"
+        4,
+        "load_elf_segments 的四个装载失败点必须各自返回 None (逐个计数, 防漏接)"
+    );
+    // K-08: 装载器必须与 elf::elf_load_segment 共用同一下界判据, 否则 init 路径
+    // 仍可把 PT_LOAD 映射进 kview 恒等窗口 (内核态访问命中恒等物理页, I4 失真).
+    assert!(
+        segments.contains("crate::privileged::mm::user_va_lower_bound()"),
+        "K-08: load_elf_segments 必须以统一用户 VA 下界拒绝恒等窗口内的 PT_LOAD"
     );
     assert!(
         !src.contains("destroy_raw"),

@@ -191,6 +191,11 @@ pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
 }
 
 /// 查找或分配映射地址
+///
+/// 非零 hint 必须是**精确**落点 (本实现不忽略 hint), 故低于用户 VA 下界的
+/// hint 直接 `EINVAL`: 该区间在 x86_64 kview 中是内核 boot 恒等窗口, 用户映射
+/// 落进去会让内核态 `copy_*_user` / 缺页路径解析到恒等物理页 (I4 代理面失真).
+/// hint-less 分配的搜索起点同样抬到下界 (见 `MmStruct::find_free_range`).
 fn find_or_allocate_addr(
     mm: &MmStruct,
     addr_hint: u64,
@@ -198,6 +203,9 @@ fn find_or_allocate_addr(
 ) -> Result<usize, Errno> {
     use crate::privileged::constants::limits::USER_ADDR_MAX;
     if addr_hint != 0 && addr_hint < USER_ADDR_MAX {
+        if addr_hint < crate::privileged::mm::user_va_lower_bound() {
+            return Err(Errno::Einval);
+        }
         Ok(crate::functions::intcast::usize_from_u64(addr_hint))
     } else {
         mm.find_free_range(len_aligned).ok_or(Errno::Enomem)

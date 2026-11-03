@@ -725,9 +725,14 @@ impl MmStruct {
     }
 
     /// 查找空闲地址范围 (用于 mmap 的 hint-less 分配)
+    ///
+    /// 搜索起点取 `mmap_base` 与 [`crate::privileged::mm::user_va_lower_bound`]
+    /// 的较大者: 恒等窗口 / ELF 装载基址之下不放用户映射 (K-08, I4 代理面).
     pub fn find_free_range(&self, size: usize) -> Option<usize> {
         let vmas = self.vmas.lock();
-        let mut cursor = self.mmap_base;
+        let lower =
+            crate::privileged::glue::usize_from_u64(crate::privileged::mm::user_va_lower_bound());
+        let mut cursor = self.mmap_base.max(lower);
 
         for vma in vmas.iter() {
             if cursor + size <= vma.start {

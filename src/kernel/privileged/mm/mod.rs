@@ -230,6 +230,30 @@ pub const PHYSICAL_BASE: u64 = 0x0000_0000_0000_0000_u64;
 /// aarch64: 同 0x1000.
 pub const USER_ADDR_FLOOR: u64 = 0x1000;
 
+/// 用户态 VA 下界 — 所有用户映射 (mmap / ELF `PT_LOAD`) 的统一起算底线.
+///
+/// x86_64 kview 在低半区 `[0, boundary)` 保留 boot 恒等映射 (护内核映像,
+/// `boundary = ceil(kernel_end / 2MiB)`). 用户映射一旦落进该窗口, 内核态经
+/// kview 的 `copy_*_user` / 缺页路径会解析到恒等物理页而非用户帧 (I4 代理面
+/// 失真). 故下界取恒等窗口上界与用户 ELF 装载基址 `USER_CODE_BASE` 的较大者;
+/// aarch64 无 kview, 只用 `USER_CODE_BASE`.
+///
+/// 注意与 [`USER_ADDR_FLOOR`] 区分: 后者是空指针/canary 判定阈值, 本函数是
+/// 可映射地址的下界.
+#[must_use]
+pub fn user_va_lower_bound() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let kernel_end = crate::privileged::boot::boot_get_kernel_end();
+        let identity_end = kernel_end.div_ceil(HUGE_PAGE_2M_SIZE) * HUGE_PAGE_2M_SIZE;
+        identity_end.max(crate::privileged::config::memory::USER_CODE_BASE)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::privileged::config::memory::USER_CODE_BASE
+    }
+}
+
 /// 用户空间低地址上限 (`x86_64` 兼容阈值).
 /// 低于此地址的 RIP/故障地址视为空指针区域, 用于异常处理中的
 /// 地址分类 (空指针解引用 vs 用户有效地址).
