@@ -419,7 +419,10 @@ fn owner_paths_use_tid_not_tgid() {
     );
 
     let futex = code_only(&read_src(FUTEX_SRC));
-    let wait = fn_body(&futex, "fn futex_wait(uaddr: u64, val: i32, _timeout: u64)");
+    let wait = fn_body(
+        &futex,
+        "fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool)",
+    );
     assert!(
         has(
             &wait,

@@ -133,6 +133,7 @@ pub fn futex_syscall(
             11 => Errno::Eagain, // EAGAIN = 11 (Linux)
             14 => Errno::Efault,
             38 => Errno::Enosys,
+            110 => Errno::Etimedout, // ETIMEDOUT = 110 (FUTEX_WAIT_BITSET 绝对超时)
             // 未识别错误码 (含 22 = EINVAL) 回退为 EINVAL
             _ => Errno::Einval,
         };

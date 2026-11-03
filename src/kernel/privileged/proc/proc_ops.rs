@@ -16,7 +16,7 @@ use alloc::sync::Arc;
 
 use super::process::{PROCESS_TABLE, Process};
 use super::scheduler::{SCHEDULER, Scheduler};
-use super::types::{Pid, ProcessId, ProcessState};
+use super::types::{BlockReason, Pid, ProcessId, ProcessState};
 pub use super::user_proc::proc_alloc_pid;
 use super::user_proc::{USER_PROC_MANAGER, UserProcManager, user_proc_clone};
 use crate::privileged::mm::{
@@ -488,23 +488,52 @@ pub extern "C" fn process_reap_group(tgid: Pid) -> bool {
 
 /// 阻塞当前进程 (用于 futex wait / 等待 I/O 等)
 ///
-/// 唤醒返回处收口组退出 / `de_thread` 的致命信号: `process_exit_group` 对睡眠中的
-/// 兄弟线程只投递一次 `SIGKILL` + `unblock`, 该线程醒来后若立刻重睡同一个等待字,
-/// 而本架构尚未接线「返回用户态前信号投递」(aarch64), 它就永远停在队列外的 Blocked
-/// 态 —— 整组收不齐, 等待方 (父进程 `wait4` / `de_thread`) 永久挂死. 判据与
-/// [`Scheduler::yield_current`] 的致命信号检查同源: 内核内等待循环都不是信号投递点.
+/// 先经 [`process_block_prepare`] 置 Blocked (不切换), 再由 [`process_block_finish`]
+/// 完成切换并在唤醒返回处收口致命信号.
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn process_block(pid: u32) {
-    use super::types::BlockReason;
-    if pid == 0 {
+    if process_block_prepare(pid, BlockReason::FutexWait, 0) {
+        process_block_finish(pid);
+    }
+}
+
+/// 置当前线程为阻塞态 (原因 + 可选的定时唤醒截止 tick), 不切换 CPU.
+///
+/// futex 等待必须把"等待者入队"与"置 Blocked"放在同一锁域内原子完成: 若先入队
+/// 后阻塞, 落在两步之间的唤醒会被 [`Scheduler::unblock`] 的 Running 判据丢弃
+/// (线程仍在核上运行), 等待者随后永久睡在队列外. 调用方因此需在自己的锁域内
+/// 调用本函数, 解锁后再经 [`process_block_finish`] 切换.
+///
+/// `sleep_until` 按 tick 解释 (0 = 不定时); 非零时配合 [`BlockReason::Sleeping`]
+/// 由 tick 扫描到期唤醒.
+///
+/// 返回 `false` 表示 `pid` 不是本核当前线程 —— 调用方应回滚已入队的等待者.
+#[must_use]
+pub fn process_block_prepare(pid: u32, reason: BlockReason, sleep_until: u64) -> bool {
+    if pid == 0 || pid != Scheduler::current().unwrap_or(0) {
+        return false;
+    }
+    if sleep_until != 0 {
+        let _ = PROCESS_TABLE.with_process(pid, |p| {
+            p.sleep_until.store(sleep_until, Ordering::SeqCst);
+        });
+    }
+    Scheduler::block(reason);
+    true
+}
+
+/// 在阻塞态已置位后完成调度切换, 并收口组退出 / `de_thread` 的致命信号.
+///
+/// 唤醒返回处收口致命信号: `process_exit_group` 对睡眠中的兄弟线程只投递一次
+/// `SIGKILL` + `unblock`, 该线程醒来后若立刻重睡同一个等待字, 而本架构尚未接线
+/// 「返回用户态前信号投递」(aarch64), 它就永远停在队列外的 Blocked 态 —— 整组
+/// 收不齐, 等待方 (父进程 `wait4` / `de_thread`) 永久挂死. 判据与
+/// [`Scheduler::yield_current`] 的致命信号检查同源: 内核内等待循环都不是信号投递点.
+pub fn process_block_finish(pid: u32) {
+    if pid == 0 || pid != Scheduler::current().unwrap_or(0) {
         return;
     }
-    let current_pid = Scheduler::current().unwrap_or(0);
-    if pid != current_pid {
-        return;
-    }
-    Scheduler::block(BlockReason::FutexWait);
     Scheduler::schedule();
 
     let kill_requested = PROCESS_TABLE

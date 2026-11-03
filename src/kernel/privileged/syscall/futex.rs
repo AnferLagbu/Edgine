@@ -5,6 +5,7 @@
 //! ## 核心语义
 //!
 //! - `FUTEX_WAIT(op=0)`: 原子比较 *uaddr == val, 若相等则阻塞当前线程
+//! - `FUTEX_WAIT_BITSET(op=9)`: 同上, 且接受 `CLOCK_MONOTONIC` **绝对**超时
 //! - `FUTEX_WAKE(op=1)`: 唤醒最多 val 个等待在 uaddr 上的线程
 //! - `FUTEX_REQUEUE(op=3)`: 将最多 val 个等待者从 uaddr 迁移到 uaddr2
 //!
@@ -13,16 +14,26 @@
 //! 使用全局哈希表将 uaddr 映射到等待者, 哈希表以自旋锁保护.
 //! 每个桶使用固定大小数组, 避免动态内存分配.
 //!
+//! ## 丢唤醒防线 (桶序号)
+//!
+//! 每个桶带一个唤醒序号: 唤醒/迁移在桶锁内推进它, 等待者按"快照序号 → 读等待字
+//! → 持桶锁复查序号并复查后入队"三步入睡. 只要快照之后发生过一次唤醒, 复查即
+//! 失败并返回 `EAGAIN` 重试 —— 唤醒不会落在"读字"与"入队"之间被丢掉.
+//! "入队 + 置 Blocked"还在同一桶锁域内完成 (临界区关中断): 否则两者之间的唤醒
+//! 会被 `Scheduler::unblock` 的 Running 判据丢弃, 等待者永久睡在队列外.
+//!
 //! # Safety
 //!
-//! - `uaddr` 必须是合法的用户空间指针, 在 syscall 入口已通过 `check_user_ptr` 验证
+//! - `uaddr` 必须是合法的用户空间指针, 入队/读字前经 `super::raw::check_user_ptr`
+//!   限定在 `[1, USER_ADDR_MAX)`; 页表映射有效性由当前进程地址空间保证
 //! - 原子比较使用 `AtomicU32` 访问用户空间, 需确保页表映射有效
 
 use alloc::boxed::Box;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
-use crate::privileged::sync::OnceLock;
+use crate::privileged::sync::{OnceLock, disable_interrupts, restore_interrupts};
+use crate::privileged::timer::{get_ticks, get_uptime_ns, ms_to_ticks};
 
 // ============================================================================
 // Futex 操作码 (单一权威源 `edgine_abi::thread`)
@@ -32,7 +43,7 @@ use crate::privileged::sync::OnceLock;
 pub const FUTEX_WAIT: i32 = edgine_abi::thread::FUTEX_WAIT;
 /// 唤醒: 唤醒最多 val 个等待者
 pub const FUTEX_WAKE: i32 = edgine_abi::thread::FUTEX_WAKE;
-/// 带超时等待 (暂不支持超时, 语义同 `FUTEX_WAIT`)
+/// 带绝对超时的等待: 超时参数是 `CLOCK_MONOTONIC` 绝对时刻 (`timespec`)
 pub const FUTEX_WAIT_BITSET: i32 = edgine_abi::thread::FUTEX_WAIT_BITSET;
 /// 唤醒指定位集 (暂等同于 `FUTEX_WAKE`)
 pub const FUTEX_WAKE_BITSET: i32 = edgine_abi::thread::FUTEX_WAKE_BITSET;
@@ -140,15 +151,16 @@ impl FutexBucket {
         false
     }
 
-    /// 移除指定 PID 的等待者
-    fn remove_by_pid(&mut self, pid: u32) {
+    /// 移除指定 PID 的等待者, 返回是否确实移除
+    fn remove_by_pid(&mut self, pid: u32) -> bool {
         for slot in &mut self.waiters {
             if slot.pid == pid {
                 *slot = FutexWaiter::empty();
                 self.count -= 1;
-                return;
+                return true;
             }
         }
+        false
     }
 
     /// 唤醒最多 `max_count` 个等待在 uaddr 上的线程, 返回实际唤醒数
@@ -208,10 +220,30 @@ impl FutexBucket {
     }
 }
 
-/// 全局 futex 哈希表 (桶数组与锁数组均在堆上, 避免约 16.5 KB 常驻 BSS)
+/// 全局 futex 哈希表 (桶数组、桶序号与锁数组均在堆上, 避免约 16.5 KB 常驻 BSS)
 struct FutexHashTable {
     locks: Box<[SimpleSpinLock]>,
+    /// 每桶唤醒序号: 唤醒/迁移在桶锁内推进, 等待者在同一锁域内复查 ——
+    /// 序号变化即"快照之后发生过唤醒", 等待者必须放弃入睡并重试.
+    seqs: Box<[AtomicU64]>,
     buckets: Box<[UnsafeCell<FutexBucket>]>,
+}
+
+impl FutexHashTable {
+    /// 逐元素构造空表 (堆分配两个桶数组 + 序号数组).
+    fn new() -> Self {
+        Self {
+            locks: (0..FUTEX_HASH_BUCKETS)
+                .map(|_| SimpleSpinLock {
+                    locked: AtomicBool::new(false),
+                })
+                .collect(),
+            seqs: (0..FUTEX_HASH_BUCKETS).map(|_| AtomicU64::new(0)).collect(),
+            buckets: (0..FUTEX_HASH_BUCKETS)
+                .map(|_| UnsafeCell::new(FutexBucket::empty()))
+                .collect(),
+        }
+    }
 }
 
 // SAFETY: FutexHashTable 的每个桶由独立的 SimpleSpinLock 保护,
@@ -222,22 +254,13 @@ unsafe impl Send for FutexHashTable {}
 
 /// 全局 futex 哈希表 — 惰性堆置, `OnceLock` 内联仅数十字节。
 ///
-/// 首次 futex 系统调用时在 kmalloc 堆上逐元素构造两个桶数组。
+/// 首次 futex 系统调用时在 kmalloc 堆上逐元素构造桶数组、序号数组与锁数组。
 static FUTEX_TABLE: OnceLock<FutexHashTable> = OnceLock::new();
 
 /// 获取全局 futex 哈希表 (首次调用时惰性分配)。
 fn futex_table() -> &'static FutexHashTable {
     FUTEX_TABLE.get_or_init(|slot| {
-        slot.write(FutexHashTable {
-            locks: (0..FUTEX_HASH_BUCKETS)
-                .map(|_| SimpleSpinLock {
-                    locked: AtomicBool::new(false),
-                })
-                .collect(),
-            buckets: (0..FUTEX_HASH_BUCKETS)
-                .map(|_| UnsafeCell::new(FutexBucket::empty()))
-                .collect(),
-        });
+        slot.write(FutexHashTable::new());
     })
 }
 
@@ -245,6 +268,98 @@ fn futex_table() -> &'static FutexHashTable {
 fn hash_uaddr(uaddr: u64) -> usize {
     let hash = (uaddr.wrapping_mul(0x9E37_79B9_7F4A_7C15)) >> 58;
     (hash as usize) & (FUTEX_HASH_BUCKETS - 1)
+}
+
+// ============================================================================
+// 序号守卫与超时换算
+// ============================================================================
+
+/// 唤醒 uaddr 上的等待者, 并在桶锁内推进桶序号 (调用方已持有该桶锁).
+///
+/// 序号推进必须与唤醒扫描同处一个锁域: 等待者以"快照序号 → 读等待字 → 持锁
+/// 复查序号"三步入队, 只要快照之后发生过一次唤醒, 复查即失败并返回 `EAGAIN`
+/// 重试. 唤醒按 uaddr 匹配, 但序号是桶级的 —— 同桶不同地址的唤醒会带来一次
+/// 多余的 `EAGAIN` 重试, 换取的是一把锁内的单一序号, 无额外扫描.
+fn wake_with_seq(seq: &AtomicU64, bucket: &mut FutexBucket, uaddr: u64, max_count: u32) -> u32 {
+    seq.fetch_add(1, Ordering::SeqCst);
+    bucket.wake(uaddr, max_count)
+}
+
+/// 迁移 uaddr 上的等待者, 并在源桶锁内推进序号 (调用方已持有该桶锁).
+fn requeue_with_seq(
+    seq: &AtomicU64,
+    bucket: &mut FutexBucket,
+    uaddr: u64,
+    max_wake: u32,
+    uaddr2: u64,
+    max_requeue: u32,
+) -> (u32, u32) {
+    seq.fetch_add(1, Ordering::SeqCst);
+    bucket.requeue(uaddr, max_wake, uaddr2, max_requeue)
+}
+
+/// 入队等待者: 序号仍等于快照值才写入 (调用方已持有该桶锁).
+///
+/// 返回 `false` 表示快照之后发生过唤醒 (序号已推进) 或桶已满 —— 调用方必须
+/// 放弃本次等待并返回 `EAGAIN`.
+fn enqueue_if_seq_unchanged(
+    seq: &AtomicU64,
+    snapshot: u64,
+    bucket: &mut FutexBucket,
+    waiter: FutexWaiter,
+) -> bool {
+    if seq.load(Ordering::SeqCst) != snapshot {
+        return false;
+    }
+    bucket.push(waiter)
+}
+
+/// 解析 `FUTEX_WAIT_BITSET` 的绝对超时 (`timespec` 秒/纳秒 → 纳秒).
+///
+/// `timeout_ptr == 0` 表示无超时; 指针越界返回 `-EFAULT`, 字段非法返回 `-EINVAL`.
+fn parse_abs_deadline_ns(timeout_ptr: u64) -> Result<Option<u64>, i64> {
+    const EFAULT: i64 = -14;
+
+    /// `struct timespec` (Linux 用户 ABI, 16 字节)
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+
+    if timeout_ptr == 0 {
+        return Ok(None);
+    }
+    if !super::raw::check_user_buf(timeout_ptr, 16) {
+        return Err(EFAULT);
+    }
+    // SAFETY: check_user_buf 已确认 [timeout_ptr, timeout_ptr+16) 落在用户地址
+    // 空间, 且当前进程页表处于激活状态 (系统调用上下文); 仅只读拷贝一次.
+    let ts = unsafe { core::ptr::read_unaligned(timeout_ptr as *const Timespec) };
+    abs_deadline_ns(ts.tv_sec, ts.tv_nsec).map(Some)
+}
+
+/// 校验并换算绝对超时: 负值或越界纳秒字段按 `-EINVAL` 拒绝.
+fn abs_deadline_ns(sec: i64, nsec: i64) -> Result<u64, i64> {
+    if sec < 0 || !(0..1_000_000_000).contains(&nsec) {
+        return Err(-22); // -EINVAL
+    }
+    Ok(sec
+        .cast_unsigned()
+        .saturating_mul(1_000_000_000)
+        .saturating_add(nsec.cast_unsigned()))
+}
+
+/// 距离截止时刻的剩余毫秒 (向上取整; 已过期返回 0).
+fn remaining_ms_ceil(deadline_ns: u64, now_ns: u64) -> u64 {
+    deadline_ns.saturating_sub(now_ns).div_ceil(1_000_000)
+}
+
+/// 绝对截止时刻 → 定时唤醒的 tick 截止值.
+///
+/// 已经过期的截止时刻换算为"当前 tick", tick 扫描会在下一轮立即唤醒.
+fn sleep_until_ticks(deadline_ns: u64) -> u64 {
+    get_ticks().saturating_add(ms_to_ticks(remaining_ms_ceil(deadline_ns, get_uptime_ns())))
 }
 
 // ============================================================================
@@ -257,7 +372,8 @@ pub fn sys_futex(uaddr: u64, op: i32, val: i32, timeout_or_uaddr2: u64, val2: u3
     let base_op = futex_op(op);
 
     match base_op {
-        FUTEX_WAIT | FUTEX_WAIT_BITSET => futex_wait(uaddr, val, timeout_or_uaddr2),
+        FUTEX_WAIT => futex_wait(uaddr, val, timeout_or_uaddr2, false),
+        FUTEX_WAIT_BITSET => futex_wait(uaddr, val, timeout_or_uaddr2, true),
         FUTEX_WAKE | FUTEX_WAKE_BITSET => futex_wake(uaddr, val.cast_unsigned()),
         FUTEX_REQUEUE => futex_requeue(uaddr, val.cast_unsigned(), timeout_or_uaddr2, val2),
         _ => {
@@ -267,61 +383,109 @@ pub fn sys_futex(uaddr: u64, op: i32, val: i32, timeout_or_uaddr2: u64, val2: u3
     }
 }
 
-/// `FUTEX_WAIT`: 原子比较并阻塞
-fn futex_wait(uaddr: u64, val: i32, _timeout: u64) -> i64 {
-    // 1. 原子读取用户空间值
-    let uaddr_ptr = uaddr as *const AtomicU32;
-    if uaddr_ptr.is_null() {
-        return -(14i64); // -EFAULT
+/// `FUTEX_WAIT` / `FUTEX_WAIT_BITSET`: 原子比较并阻塞
+///
+/// 睡前的三个动作 —— 复查桶序号、入队等待者、置 Blocked —— 在同一个桶锁域内
+/// 完成 (临界区关中断). 任何一项拆到锁外都会留下丢唤醒窗口:
+/// - 只查序号不入队: 唤醒仍可落在检查与入队之间;
+/// - 先入队后阻塞: 落在两步之间的唤醒被 `Scheduler::unblock` 的 Running 判据
+///   丢弃 (线程仍在核上), 等待者随后永久睡在队列外;
+/// - 关中断: 置 Blocked 后若被本核中断退出路径切走, 本线程既不在运行队列也没有
+///   唤醒者, 而唤醒方又必须取桶锁 —— 永久死锁.
+///
+/// `FUTEX_WAIT_BITSET` 的绝对超时按 `CLOCK_MONOTONIC` 解释, 与 `get_uptime_ns`
+/// 同纪元; 到期由 tick 睡眠扫描兜底唤醒, 醒来后仍留在队列中即返回 `-ETIMEDOUT`.
+fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool) -> i64 {
+    const EAGAIN: i64 = -11;
+    const EFAULT: i64 = -14;
+    const EINVAL: i64 = -22;
+    const ETIMEDOUT: i64 = -110;
+
+    if !super::raw::check_user_ptr(uaddr) {
+        return EFAULT;
     }
-
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    let current_val = unsafe {
-        // SAFETY: uaddr 已在 syscall 入口通过 check_user_ptr 验证.
-        (*uaddr_ptr).load(Ordering::Acquire)
-    };
-
-    // 2. 原子比较: 若不匹配, 立即返回 EAGAIN
-    if current_val != val.cast_unsigned() {
-        return -(11i64); // -EAGAIN
-    }
-
-    // 3. 获取当前 PID
     let current_pid = crate::privileged::proc::process_get_current_pid();
     if current_pid == 0 {
-        return -(22i64); // -EINVAL
+        return EINVAL;
     }
 
-    // 4. 加入等待队列
-    let bucket_idx = hash_uaddr(uaddr);
     let table = futex_table();
-    {
-        table.locks[bucket_idx].lock();
-        // SAFETY: 我们持有锁, 可以安全访问桶
-        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        let added = bucket.push(FutexWaiter {
+    let bucket_idx = hash_uaddr(uaddr);
+    // 序号快照必须早于等待字读取: 唤醒方先改字再唤醒; 若快照晚于该唤醒,
+    // 读取一定晚于用户存储 (Release/Acquire 链), 会看到新值并直接走 EAGAIN.
+    let seq_snapshot = table.seqs[bucket_idx].load(Ordering::SeqCst);
+
+    // SAFETY: check_user_ptr 已限定 uaddr ∈ [1, USER_ADDR_MAX); 4 字节对齐由
+    // functions 层 `futex_validate_uaddr` 保证; 当前进程页表处于激活状态.
+    let current_val = unsafe { (*(uaddr as *const AtomicU32)).load(Ordering::Acquire) };
+    if current_val != val.cast_unsigned() {
+        return EAGAIN;
+    }
+
+    // SIMPLIFIED: 仅 FUTEX_WAIT_BITSET 携带绝对超时; FUTEX_WAIT 的相对超时、
+    // FUTEX_CLOCK_REALTIME 时钟选择与 val2 位集过滤本轮均不接线 (等待按全体
+    // 等待者语义). 影响面: 用 FUTEX_WAIT+相对超时的用户态库仍会无限等待, 需
+    // 改用 BITSET 变体; 位集过滤缺省等于全 1. 何时需扩展: 出现依赖相对超时或
+    // 位集分组的用户态同步库时补接线.
+    let deadline_ns = if is_bitset {
+        match parse_abs_deadline_ns(timeout_ptr) {
+            Ok(deadline) => deadline,
+            Err(errno) => return errno,
+        }
+    } else {
+        None
+    };
+    // 已过期的绝对超时: 值仍等于 val 时按超时返回 (Linux 语义: 不入睡).
+    if deadline_ns.is_some_and(|deadline| deadline <= get_uptime_ns()) {
+        return ETIMEDOUT;
+    }
+
+    let flags = disable_interrupts();
+    table.locks[bucket_idx].lock();
+    // SAFETY: 持桶锁访问本桶
+    let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
+    let mut queued = enqueue_if_seq_unchanged(
+        &table.seqs[bucket_idx],
+        seq_snapshot,
+        bucket,
+        FutexWaiter {
             uaddr,
             pid: current_pid,
             woken: false,
-        });
-        table.locks[bucket_idx].unlock();
-        if !added {
-            return -(11i64); // -EAGAIN: 桶满
+        },
+    );
+    if queued {
+        let reason = if deadline_ns.is_some() {
+            crate::privileged::proc::BlockReason::Sleeping
+        } else {
+            crate::privileged::proc::BlockReason::FutexWait
+        };
+        let sleep_until = deadline_ns.map_or(0, sleep_until_ticks);
+        if !crate::privileged::proc::process_block_prepare(current_pid, reason, sleep_until) {
+            bucket.remove_by_pid(current_pid);
+            queued = false;
         }
     }
+    table.locks[bucket_idx].unlock();
+    restore_interrupts(flags);
 
-    // 5. 阻塞当前线程
-    crate::privileged::proc::process_block(current_pid);
-
-    // 6. 被唤醒后, 从等待队列中移除自己
-    {
-        table.locks[bucket_idx].lock();
-        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
-        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        bucket.remove_by_pid(current_pid);
-        table.locks[bucket_idx].unlock();
+    if !queued {
+        return EAGAIN; // 快照后被唤醒 / 桶满 / 非本核当前线程
     }
 
+    // 阻塞切换 + 唤醒返回处的致命信号收口 (组退出 / de_thread).
+    crate::privileged::proc::process_block_finish(current_pid);
+
+    // 醒来后移除自己: 唤醒路径已在同一锁域内清槽, 仍留在队列里说明是定时扫描
+    // 唤醒; 再按截止时刻给出超时结论, 否则按被唤醒 (或伪唤醒) 返回 0.
+    table.locks[bucket_idx].lock();
+    // SAFETY: 持桶锁访问本桶
+    let still_queued = unsafe { (*table.buckets[bucket_idx].get()).remove_by_pid(current_pid) };
+    table.locks[bucket_idx].unlock();
+
+    if still_queued && deadline_ns.is_some_and(|deadline| get_uptime_ns() >= deadline) {
+        return ETIMEDOUT;
+    }
     0
 }
 
@@ -338,9 +502,9 @@ pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
     let table = futex_table();
     let woken = {
         table.locks[bucket_idx].lock();
-        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
+        // SAFETY: 持桶锁访问本桶
         let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        let w = bucket.wake(uaddr, max_count);
+        let w = wake_with_seq(&table.seqs[bucket_idx], bucket, uaddr, max_count);
         table.locks[bucket_idx].unlock();
         w
     };
@@ -354,9 +518,16 @@ fn futex_requeue(uaddr: u64, max_wake: u32, uaddr2: u64, max_requeue: u32) -> i6
     let table = futex_table();
     let (woken, requeued) = {
         table.locks[bucket_idx].lock();
-        // SAFETY: `table` 由 `futex_table()` 返回 `&'static`, 有效; 持锁下访问桶
+        // SAFETY: 持桶锁访问本桶
         let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        let r = bucket.requeue(uaddr, max_wake, uaddr2, max_requeue);
+        let r = requeue_with_seq(
+            &table.seqs[bucket_idx],
+            bucket,
+            uaddr,
+            max_wake,
+            uaddr2,
+            max_requeue,
+        );
         table.locks[bucket_idx].unlock();
         r
     };
@@ -432,4 +603,120 @@ pub fn register_futex_tests() {
     r.register("futex", "op_mask", test_futex_op_mask);
     r.register("futex", "hash", test_futex_hash);
     r.register("futex", "bucket_push_remove", test_futex_bucket_push_remove);
+}
+
+// ============================================================================
+// 主机侧确定性用例 (host-test: `make test-kernel-host`)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn waiter(uaddr: u64, pid: u32) -> FutexWaiter {
+        FutexWaiter {
+            uaddr,
+            pid,
+            woken: false,
+        }
+    }
+
+    /// 丢唤醒复现: 等待者快照之后、入队之前发生的唤醒即使队列为空也必须留下
+    /// 序号痕迹, 使入队复查失败并让等待者重试.
+    #[test]
+    fn wake_bumps_bucket_seq_even_without_waiters() {
+        let seq = AtomicU64::new(0);
+        let mut bucket = FutexBucket::empty();
+        let snapshot = seq.load(Ordering::SeqCst);
+
+        let woken = wake_with_seq(&seq, &mut bucket, 0x1000, 1);
+        assert_eq!(woken, 0);
+        assert_eq!(seq.load(Ordering::SeqCst), snapshot + 1);
+
+        assert!(!enqueue_if_seq_unchanged(
+            &seq,
+            snapshot,
+            &mut bucket,
+            waiter(0x1000, 7)
+        ));
+        assert_eq!(bucket.count, 0);
+    }
+
+    /// 序号未变时入队成功; 唤醒推进序号后, 同一快照不再允许入队.
+    #[test]
+    fn enqueue_after_unchanged_snapshot_succeeds() {
+        let seq = AtomicU64::new(5);
+        let mut bucket = FutexBucket::empty();
+        let snapshot = seq.load(Ordering::SeqCst);
+        assert!(enqueue_if_seq_unchanged(
+            &seq,
+            snapshot,
+            &mut bucket,
+            waiter(0x2000, 8)
+        ));
+        assert_eq!(bucket.count, 1);
+
+        assert_eq!(wake_with_seq(&seq, &mut bucket, 0x2000, 1), 1);
+        assert_eq!(bucket.count, 0);
+        assert!(!enqueue_if_seq_unchanged(
+            &seq,
+            snapshot,
+            &mut bucket,
+            waiter(0x2000, 9)
+        ));
+    }
+
+    /// 迁移推进源桶序号并改写等待者地址; 迁移不产生唤醒.
+    #[test]
+    fn requeue_bumps_source_seq_and_moves_waiters() {
+        let seq = AtomicU64::new(0);
+        let mut bucket = FutexBucket::empty();
+        assert!(bucket.push(waiter(0x3000, 10)));
+
+        let (woken, requeued) = requeue_with_seq(&seq, &mut bucket, 0x3000, 0, 0x4000, 1);
+        assert_eq!((woken, requeued), (0, 1));
+        assert_eq!(seq.load(Ordering::SeqCst), 1);
+        assert_eq!(bucket.waiters[0].uaddr, 0x4000);
+    }
+
+    /// 自移除返回是否命中: 唤醒路径已清槽时必须返回 `false` (用于超时判据).
+    #[test]
+    fn remove_by_pid_reports_removal() {
+        let mut bucket = FutexBucket::empty();
+        assert!(!bucket.remove_by_pid(11));
+
+        assert!(bucket.push(waiter(0x5000, 11)));
+        assert!(bucket.remove_by_pid(11));
+        assert_eq!(bucket.count, 0);
+        assert!(!bucket.remove_by_pid(11));
+    }
+
+    /// 绝对超时字段校验: 负值/越界纳秒按 EINVAL 拒绝, 大幅值按 u64 饱和.
+    #[test]
+    fn abs_deadline_validation() {
+        assert_eq!(abs_deadline_ns(0, 0), Ok(0));
+        assert_eq!(abs_deadline_ns(2, 500_000_000), Ok(2_500_000_000));
+        assert_eq!(abs_deadline_ns(-1, 0), Err(-22));
+        assert_eq!(abs_deadline_ns(0, -1), Err(-22));
+        assert_eq!(abs_deadline_ns(0, 1_000_000_000), Err(-22));
+        assert_eq!(abs_deadline_ns(i64::MAX, 999_999_999), Ok(u64::MAX));
+    }
+
+    /// 剩余毫秒向上取整: 1ns 也占 1ms, 已过期钳到 0.
+    #[test]
+    fn remaining_ms_rounds_up() {
+        assert_eq!(remaining_ms_ceil(0, 0), 0);
+        assert_eq!(remaining_ms_ceil(1, 0), 1);
+        assert_eq!(remaining_ms_ceil(1_000_000, 0), 1);
+        assert_eq!(remaining_ms_ceil(1_000_001, 0), 2);
+        assert_eq!(remaining_ms_ceil(10, 20), 0);
+    }
+
+    /// 新建表的桶序号全部从 0 起步 (与 `futex_table()` 惰性初始化同源).
+    #[test]
+    fn table_starts_with_zeroed_bucket_seqs() {
+        let table = FutexHashTable::new();
+        assert_eq!(table.seqs.len(), FUTEX_HASH_BUCKETS);
+        assert!(table.seqs.iter().all(|s| s.load(Ordering::SeqCst) == 0));
+    }
 }

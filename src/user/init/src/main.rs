@@ -11,9 +11,9 @@ use userlib::sys::{
     CLONE_VM, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
     SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime, clone_thread,
     close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait,
-    futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec,
-    proc_exit, recv, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill,
-    wait_pid, wait_pid_status, wait_pid_status_nohang,
+    futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep,
+    pipe_create, poll, proc_exec, proc_exit, recv, sched_snapshot, sched_yield, send, setsockopt,
+    shutdown, socket, tgkill, wait_pid, wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -377,6 +377,8 @@ const THREAD_STACK_BYTES: usize = 4096;
 /// 误判为判据失败. 正常路径的等待是毫秒级, 预算只作兜底, 且必须小于
 /// `qemu_boot_test.sh` 的单次启动超时 (25s), 保证失败时 `[THREAD] FAIL` 能落地.
 const THREAD_WAIT_BUDGET_MS: u64 = 5_000;
+/// `FUTEX_WAIT_BITSET` 到期时内核的返回码 (`-ETIMEDOUT`, Linux errno 110).
+const FUTEX_ETIMEDOUT: i64 = -110;
 /// 每线程 TLS magic 基址 —— 第 `i` 个线程读到 `BASE + i` 才算 `CLONE_SETTLS` 生效.
 const THREAD_TLS_MAGIC_BASE: u64 = 0x7130_0000_0000_0000;
 /// `exit_group` 腿的组退出码.
@@ -726,13 +728,17 @@ fn wait_deadline() -> Option<u64> {
     monotonic_ms().map(|now| now.saturating_add(THREAD_WAIT_BUDGET_MS))
 }
 
-/// 有界等待原子字满足判据: 每轮先 `FUTEX_WAIT` 当前值, 值已变则内核返 `-EAGAIN`
+/// 有界等待原子字满足判据: 每轮先按当前值入睡, 值已变则内核返 `-EAGAIN`
 /// 即刻重判 —— 覆盖"唤醒发生在读取与入睡之间"的竞态, 不空转也不挂死.
 ///
 /// 上界是绝对截止时刻而非轮次计数: 轮次与真实耗时在宿主超订下脱钩, 同一计数
 /// 在空载与满载下跨越的时间差几个数量级. 截止时刻与宿主调度速度无关 —— 宿主
 /// 再慢也只是等待变长, 不会让判据提前失效; 时钟读不到时按失败处理 (无法建立
 /// 时间上界, 不伪装成"等到超时").
+///
+/// 入睡用 `FUTEX_WAIT_BITSET` 把同一截止时刻交给内核: 对端线程若中途消失且
+/// 不再唤醒, 内核仍在截止时刻兜底唤醒本线程. 无超时的 `FUTEX_WAIT` 不够 ——
+/// 本线程会永久睡在等待字上, 用户态截止检查根本没有机会执行.
 fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool, deadline: u64) -> bool {
     loop {
         if done(word.load(Ordering::Acquire)) {
@@ -745,7 +751,19 @@ fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool, deadline: u64)
         if done(cur) {
             return true;
         }
-        let _ = futex_wait(word, cur);
+        let ts = deadline_timespec(deadline);
+        if futex_wait_bitset(word, cur, &ts) == FUTEX_ETIMEDOUT {
+            // 内核确认截止时刻已过: 做最后一次值判定后按超时收尾, 不再入睡.
+            return done(word.load(Ordering::Acquire));
+        }
+    }
+}
+
+/// 截止毫秒 → `CLOCK_MONOTONIC` 绝对 `Timespec` (与 `monotonic_ms` 同一时基).
+fn deadline_timespec(deadline_ms: u64) -> Timespec {
+    Timespec {
+        tv_sec: i64::try_from(deadline_ms / 1_000).unwrap_or(i64::MAX),
+        tv_nsec: i64::try_from((deadline_ms % 1_000).saturating_mul(1_000_000)).unwrap_or(0),
     }
 }
 

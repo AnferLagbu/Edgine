@@ -1354,6 +1354,26 @@ pub fn futex_wait(word: &core::sync::atomic::AtomicU32, val: u32) -> i64 {
     )
 }
 
+/// 带**绝对**超时的等待 (`FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG`).
+///
+/// `timeout` 是 `CLOCK_MONOTONIC` 绝对时刻 (秒 + 纳秒, 与 `clock_gettime` 同
+/// 时基); 到期由内核兜底唤醒并返回 `-ETIMEDOUT` (Linux errno 110). 位集参数取
+/// 全 1, 即不按位过滤 (与 `FUTEX_WAKE_BITSET` 全体唤醒对称).
+#[must_use]
+pub fn futex_wait_bitset(
+    word: &core::sync::atomic::AtomicU32,
+    val: u32,
+    timeout: &Timespec,
+) -> i64 {
+    futex(
+        core::ptr::from_ref(word).cast::<u32>(),
+        FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG,
+        val.cast_signed(),
+        core::ptr::from_ref(timeout) as u64,
+        u32::MAX,
+    )
+}
+
 /// 唤醒至多 `count` 个等待 `word` 的线程, 返回实际唤醒数 (负值 = `-Errno`).
 #[must_use]
 pub fn futex_wake(word: &core::sync::atomic::AtomicU32, count: u32) -> i64 {
