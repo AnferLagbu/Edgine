@@ -260,6 +260,16 @@ pub struct ProcessContext {
     /// 首次切换时由 `process_switch_asm` 恢复. 布局偏移 672 (`fpu_state` 144+512,
     /// fpcr 656, fpsr 664).
     pub extra_regs: [u64; 8],
+    /// aarch64: 用户 `x8`-`x18` 快照 (索引 = `xN - 8`)。
+    ///
+    /// 用户库 `sys0..sys5` 的内联汇编只声明 `x0` 为输出, 编译器可合法地把跨
+    /// `svc` 的活跃值放在 `x8`-`x18` 中 (如 init `exec_leg` 把腿标记留在 `x8`).
+    /// 故内核必须在 syscall 入口保存、fork/clone 子进程首次进入 EL0 时恢复全量
+    /// `x8`-`x18`: `x0`-`x7` 见 [`Self::extra_regs`], `x19`-`x30` 见前 12 个字段,
+    /// 本字段补齐余下 11 个. `proc_save_user_regs_aarch64` 写入; 恢复侧
+    /// `x8`/`x12`-`x18` 由 `context_switch_asm` 的 EL0 路径直接装载,
+    /// `x9`-`x11` (切表 trampoline 的 scratch) 经本核 KPTI 槽中转.
+    pub extra_regs_x8: [u64; 11],
 }
 
 // FXSAVE/FXRSTOR 硬约束 (P-61 乙 暴露): `switch.asm` 以 `[ctx + 144]` 访问
@@ -267,6 +277,8 @@ pub struct ProcessContext {
 const _: () = {
     assert!(core::mem::align_of::<ProcessContext>() == 16);
     assert!(core::mem::offset_of!(ProcessContext, fpu_state) == 144);
+    // aarch64 上下文切换汇编按固定偏移访问 `extra_regs_x8` (EL0 首次进入路径).
+    assert!(core::mem::offset_of!(ProcessContext, extra_regs_x8) == 736);
 };
 
 impl ProcessContext {
@@ -296,6 +308,7 @@ impl ProcessContext {
             fpcr: 0,
             fpsr: 0,
             extra_regs: [0; 8],
+            extra_regs_x8: [0; 11],
         }
     }
 

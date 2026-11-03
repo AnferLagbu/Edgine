@@ -406,10 +406,15 @@ pub(crate) mod raw {
         if page.is_null() {
             return page;
         }
-        // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
+        // 清零必须走内核高半区别名: aarch64 的 KPTI EL1 视图按 L1-05 刻意不映射
+        // DRAM 恒等块 (内核经 TTBR1 高半区可达), 直接按物理地址写会在内核态触发
+        // level-1 翻译故障. 该差异只在首个用户进程建立后暴露 —— 启动期 init 装载
+        // 仍处于 TTBR0 恒等映射下, 故 x86_64 (kview 低半区继承 boot 恒等) 无此问题.
+        // SAFETY: page 来自 alloc_phys_page (PHYSMAP 高半区别名覆盖全部帧),
+        // 别名映射对整页可写.
         unsafe {
             memset(
-                page.cast::<core::ffi::c_void>(),
+                raw::phys_to_kern_mut(page as u64, 0).cast::<core::ffi::c_void>(),
                 0,
                 crate::privileged::glue::usize_from_u64(PAGE_SIZE),
             );
@@ -452,10 +457,12 @@ pub(crate) mod raw {
     pub fn alloc_code_page() -> *mut u8 {
         let page = raw::alloc_phys_page();
         if !page.is_null() {
-            // SAFETY: page 来自 alloc_phys_page, 大小为 PAGE_SIZE。
+            // 同 `alloc_zeroed_user_page`: 裸机物理地址经内核高半区别名写入
+            // (aarch64 KPTI EL1 视图无 DRAM 恒等块).
+            // SAFETY: page 来自 alloc_phys_page, 别名映射对整页可写.
             unsafe {
                 memset(
-                    page.cast::<core::ffi::c_void>(),
+                    raw::phys_to_kern_mut(page as u64, 0).cast::<core::ffi::c_void>(),
                     0,
                     crate::privileged::glue::usize_from_u64(PAGE_SIZE),
                 );
@@ -516,10 +523,22 @@ pub(crate) mod raw {
         }
     }
 
-    /// 分配并清零一个 `Process` (用于 process table)。
+    /// 分配一个未初始化的 `Process` (用于 process table)。
+    ///
+    /// 必须走**全局分配器**: 进程表的权威销毁路径 (`ProcessTable::remove_and_free` /
+    /// `dec_ref_and_maybe_free`) 以 `Box::from_raw` 归还, 而全局分配器
+    /// (`KernelAllocator`) 的块带 8 字节归还路由标签, 裸 `kmalloc` 块没有。
+    /// 混用会让归还侧把堆上相邻字节当标签; `size > PAGE_THRESHOLD` 时更会按 PMM
+    /// 帧归还 —— 把 kmalloc 堆页还给 PMM 后该页可被二次分配并清零, 活堆数据
+    /// (如本进程的 `Arc<FsContext>`) 静默消失。K-07b 批2 首次运行时 exec 即踩中。
+    ///
+    /// 内存未清零: 调用方必须随后以 `init_kernel_process_fields` 整块写入
+    /// [`Process::new`], 不允许读取旧值。
     pub fn alloc_kernel_process() -> Option<*mut Process> {
-        let size = core::mem::size_of::<Process>() as u64;
-        let ptr = raw::alloc_zeroed(size) as usize as *mut Process;
+        let layout = alloc::alloc::Layout::new::<Process>();
+        // SAFETY: layout 由 `Process` 类型决定且非零; KernelAllocator 契约返回
+        // null 或一块满足该 layout 的可写内存.
+        let ptr = unsafe { alloc::alloc::alloc(layout) } as usize as *mut Process;
         if ptr.is_null() { None } else { Some(ptr) }
     }
 
@@ -530,14 +549,20 @@ pub(crate) mod raw {
     ///   调用后该指针失效, 不得再次解引用.
     /// - 仅用于 `UserProcManager::create()` 的失败回滚路径; 成功路径下应
     ///   将其所有权转移给 `PROCESS_TABLE.insert` 或 `destroy` 链路.
+    /// - 回滚点全部早于 `init_kernel_process_fields`: 内存仍是未初始化状态,
+    ///   因此按 `Process` 布局直接 dealloc, **不得**跑 `Process::drop` 胶水.
     pub unsafe fn free_kernel_process(kproc_ptr: *mut Process) {
         if kproc_ptr.is_null() {
             return;
         }
 
-        // SAFETY: 由本函数的安全契约保证 kproc_ptr 是 alloc_kernel_process 返回且未再使用的指针.
+        // SAFETY: 由本函数的安全契约保证 kproc_ptr 是 alloc_kernel_process 返回且
+        // 未再使用的指针; 分配与归还同走全局分配器 (`Layout::new::<Process>()` 对称).
         unsafe {
-            crate::privileged::mm::kfree(kproc_ptr.cast::<u8>());
+            alloc::alloc::dealloc(
+                kproc_ptr.cast::<u8>(),
+                alloc::alloc::Layout::new::<Process>(),
+            );
         }
     }
 
@@ -1650,8 +1675,9 @@ impl UserProcManager {
     ///
     /// # Safety
     ///
-    /// - `argv` 非空时必须指向至少 `arg_count` 个有效 C 字符串指针; 函数按内核
-    ///   直接映射读取这些字符串, 故它们须位于**当前仍在用**的地址空间.
+    /// - `argv` / `envp` 非空时必须指向至少 `arg_count` / `env_count` 个有效 C
+    ///   字符串指针; 函数按内核直接映射读取这些字符串, 故它们须位于**当前仍在
+    ///   用**的地址空间.
     /// - `cr3` 必须是已建立的用户页表, 且 `stack_top` 所在页已映射.
     #[must_use]
     pub unsafe fn setup_user_stack_in_table(
@@ -1659,11 +1685,13 @@ impl UserProcManager {
         stack_top: u64,
         argv: *const *const u8,
         arg_count: usize,
-        envc: usize,
+        envp: *const *const u8,
+        env_count: usize,
     ) -> u64 {
-        // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(envc+1)) + 字符串
+        // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(env_count+1)) + 字符串
         let mut string_bytes: usize = 0;
         let mut arg_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
+        let mut env_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
 
         if !argv.is_null() {
             for i in 0..arg_count {
@@ -1684,7 +1712,26 @@ impl UserProcManager {
             }
         }
 
-        let ptr_count = 1 + (arg_count + 1) + (envc + 1); // 指针数: arg_count(1) + argv(n+1) + envp(m+1)
+        if !envp.is_null() {
+            for i in 0..env_count {
+                // SAFETY: envp 由调用方保证至少 env_count 个有效指针。
+                let s = unsafe { *envp.add(i) };
+                if s.is_null() {
+                    env_lens.push(1);
+                    string_bytes += 1;
+                } else {
+                    let mut len: usize = 0;
+                    // SAFETY: s 是 C 字符串, 不断读直到 NUL。
+                    while unsafe { *s.add(len) } != 0 {
+                        len += 1;
+                    }
+                    env_lens.push(len + 1);
+                    string_bytes += len + 1;
+                }
+            }
+        }
+
+        let ptr_count = 1 + (arg_count + 1) + (env_count + 1); // 指针数: argc(1) + argv(n+1) + envp(m+1)
         let total = ptr_count * 8 + string_bytes;
         // 确保 16 字节对齐
         let total = (total + 15) & !15;
@@ -1704,7 +1751,7 @@ impl UserProcManager {
         pos += (arg_count + 1) * 8;
         // 跳过 envp 指针
         let envp_start_off = pos;
-        pos += (envc + 1) * 8;
+        pos += (env_count + 1) * 8;
         // 字符串区起始
         let strings_off = pos;
 
@@ -1736,10 +1783,29 @@ impl UserProcManager {
         // argv 末尾 NULL 哨兵
         raw::write_user_u64(cr3, argv_start_off + arg_count * 8, 0u64);
 
-        // envp 指针 (暂时全填 NULL)
-        for i in 0..=envc {
-            raw::write_user_u64(cr3, envp_start_off + i * 8, 0u64);
+        // 写入 envp 字符串与指针 (字符串区紧接 argv 字符串之后)
+        let mut env_str_off = str_off;
+        for i in 0..env_count {
+            raw::write_user_u64(cr3, envp_start_off + i * 8, env_str_off as u64);
+
+            if !envp.is_null() {
+                // SAFETY: envp 由调用方保证, i < env_count 有效。
+                let src = unsafe { *envp.add(i) };
+                let l = env_lens.get(i).copied().unwrap_or(0);
+                for j in 0..l {
+                    let b = if src.is_null() {
+                        0u8
+                    } else {
+                        // SAFETY: src 由 envp 有效项解引用得到, j < l 且 l 为该字符串长度, 区间可读.
+                        unsafe { raw::read_byte_from_user_ptr(src, j) }
+                    };
+                    raw::write_user_byte(cr3, env_str_off + j, b);
+                }
+                env_str_off += l;
+            }
         }
+        // envp 末尾 NULL 哨兵
+        raw::write_user_u64(cr3, envp_start_off + env_count * 8, 0u64);
 
         new_sp
     }
@@ -1754,8 +1820,8 @@ impl UserProcManager {
         proc: *mut UserProcess,
         argv: *const *const u8,
         arg_count: usize,
-        _envp: *const *const u8,
-        envc: usize,
+        envp: *const *const u8,
+        env_count: usize,
     ) -> u64 {
         if proc.is_null() {
             return 0;
@@ -1767,8 +1833,9 @@ impl UserProcManager {
         let cr3 = proc_ref.load_cr3();
 
         // SAFETY: 调用方保证 argv 有效; cr3/stack_top 取自本进程镜像。
-        let new_sp =
-            unsafe { Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envc) };
+        let new_sp = unsafe {
+            Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envp, env_count)
+        };
 
         if new_sp != 0 {
             proc_ref.store_user_stack(new_sp);
@@ -2027,10 +2094,11 @@ impl UserProcManager {
                 code_size - i * PAGE_SIZE
             };
 
-            // SAFETY: page 来自 pmm_alloc_page, code 区间内可读。
+            // SAFETY: page 来自 pmm_alloc_page, 经内核高半区别名整页可写
+            // (aarch64 KPTI EL1 视图无 DRAM 恒等块); code 区间内可读.
             unsafe {
                 memcpy(
-                    page.cast::<core::ffi::c_void>(),
+                    raw::phys_to_kern_mut(page as u64, 0).cast::<core::ffi::c_void>(),
                     code.add(crate::privileged::glue::usize_from_u64(i * PAGE_SIZE))
                         .cast::<core::ffi::c_void>(),
                     crate::privileged::glue::usize_from_u64(copy_size),

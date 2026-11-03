@@ -19,6 +19,7 @@
 //! | 144..656 | `fpu_state`   | V0-V31 |
 //! | 656, 664 | fpcr, fpsr  | FPCR / FPSR |
 //! | 672..728 | `extra_regs`  | x0..x7 |
+//! | 736..824 | `extra_regs_x8` | x8..x18 |
 //!
 //! 恢复侧按目标 `SPSR_EL1.M[3:0]` 分派两条路径 (见 `context_switch_asm` 注释):
 //! 内核续跑 (`M != 0`) 与首次进入 EL0 (`M == 0`).
@@ -224,6 +225,23 @@ context_switch_asm:
     mrs  x3, tpidr_el1
     ldr  x4, [x1, #136]
     str  x4, [x3, #0]
+    // 暂存用户 x9/x10/x11 到本核 KPTI 槽 @24/32/40: trampoline 用这三者作
+    // 切表 scratch, 而它们是 syscall ABI 保留的用户活跃值 (用户库 asm 只声明
+    // x0 为输出). 切表后内核上下文页不可达, 故必须经 tramp 表映射的槽中转.
+    // extra_regs_x8 位于偏移 736: x9@744, x10@752, x11@760.
+    add  x7, x1, #736
+    ldr  x4, [x7, #8]
+    ldr  x5, [x7, #16]
+    ldr  x6, [x7, #24]
+    str  x4, [x3, #24]
+    str  x5, [x3, #32]
+    str  x6, [x3, #40]
+    // trampoline 不触碰的用户寄存器就地恢复: x8, x13-x18.
+    // (x7 暂作基址, 稍后从 extra_regs 装入用户 x7.)
+    ldr  x8, [x7, #0]
+    ldp  x13, x14, [x7, #40]
+    ldp  x15, x16, [x7, #56]
+    ldp  x17, x18, [x7, #72]
     // 用户栈指针 / 用户返回 PC / 用户 PSTATE.
     ldr  x2, [x1, #128]
     msr  sp_el0, x2
@@ -239,6 +257,8 @@ context_switch_asm:
     ldp  x2, x3, [x12, #16]
     ldp  x4, x5, [x12, #32]
     ldp  x6, x7, [x12, #48]
+    // 用户 x12 最后装入 (x12 此前是 extra_regs 基址; @672+96 = @768 = xN=12).
+    ldr  x12, [x12, #96]
     // 跳 trampoline 的**高半区别名**: 该 trampoline 会切 TTBR0 → 用户表,
     // 切换后低半区代码即不可取指, 故必须在高别名上执行.
     // 低半区链接符号 (bit63 == 0) 需加高半区别名基数 (0xFFFF_0000_0000_0000,

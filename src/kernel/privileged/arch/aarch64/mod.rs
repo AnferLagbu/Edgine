@@ -391,6 +391,9 @@ impl MmuArch for Aarch64 {
 
         // 记录用户页表到本核 KPTI 槽: 异常出口 (el0_return) 与 trampoline 均从该槽读取
         crate::privileged::mm::kpti::kpti_set_user_ttbr0(user_cr3);
+        // 本路径无 `ProcessContext` 快照可装载用户 x9-x11 (trampoline 的切表
+        // scratch); 置 0 避免残留上一个进程写进本核槽的用户寄存器值.
+        crate::privileged::mm::kpti::kpti_stage_enter_regs(0, 0, 0);
         let tramp = exception::kpti_enter_user_trampoline_high();
 
         // SAFETY: 进入 EL0 的最后一步:

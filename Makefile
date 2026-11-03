@@ -151,6 +151,7 @@ USER_INSTALL_ELF = $(RUST_USER_TARGET)/install
 USER_FBTERM_ELF = $(RUST_USER_TARGET)/fbterm
 USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
+USER_EXECTEST_ELF = $(RUST_USER_TARGET)/exectest
 
 # initramfs 载体归档 (K-07b): 由 scripts/make_initramfs_cpio.py 从本架构 user/*.bin
 # 打包成 cpio(newc); 内核 `initramfs` feature 编译期 include_bytes! 它. 归档恒生成
@@ -192,10 +193,10 @@ ifeq ($(ARCH),x86_64)
 # cp 无法被 make 排序: cpio 需按 .bin 产物建依赖, 内联 cp 会让归档静默少产物).
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
-      $(USER_BUILD_DIR)/proctest.bin $(USER_CPIO)
+      $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin $(USER_CPIO)
 	@echo "User programs built successfully (Rust)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
@@ -220,6 +221,10 @@ $(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
 	@cp $< $@
 
 $(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 endif
@@ -249,10 +254,10 @@ ifeq ($(ARCH),aarch64)
 # aarch64 也产出 proctest.bin —— 两架构的 initramfs 载体内容集需一致.
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
-      $(USER_BUILD_DIR)/proctest.bin $(USER_CPIO)
+      $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin $(USER_CPIO)
 	@echo "User programs built (Rust aarch64)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
@@ -280,6 +285,10 @@ $(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
+$(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
 # 末尾 $(if ...) = P-62 甲 的 feature 戳记: 仅当 KERNEL_FEATURES 值变化时才挂前置.
@@ -299,7 +308,7 @@ endif
 # `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
 $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
               $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
-              $(USER_BUILD_DIR)/proctest.bin $(MK_CPIO_PY)
+              $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
 

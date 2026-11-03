@@ -118,43 +118,48 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     })
 }
 
+/// 计算 `stat` 结果 — 路径解析 + 挂载分发 + SGEG 身份映射, **不触用户内存**.
+///
+/// 内核内部调用方 (syscall 策略层 / `execve` 可执行性判定 / `chroot` 前置校验)
+/// 一律用本函数; 面向用户态的写回只在 [`vfs_stat_internal`] 末尾发生 (I4).
+///
+/// 单独拆出的原因: `vfs_stat_safe` 曾复用 `vfs_stat_internal` 并传入栈上
+/// `VfsStat` 作为输出, 而后者按用户指针经安全代理写回 —— 内核栈/堆地址高于
+/// `USER_ADDR_MAX`, 代理必然拒绝, 于是内核侧 stat 恒失败 (静默 -1).
+#[must_use]
+pub(crate) fn vfs_stat_core(path: *const u8, pwm: u64) -> Option<VfsStat> {
+    let path = ptr_to_str(path);
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let path = VFS_MANAGER.resolve_user_path(path, &mut pbuf)?;
+    let (mount_idx, _fs_type, fs_opt) = VFS_MANAGER.resolve_mount_fs(path)?;
+    let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
+    let mut stat = fs_opt?.fs_stat(rel_path, pwm).ok()?;
+
+    let tbl = crate::privileged::sgeg::identity::get_table();
+    stat.uid = tbl.uid_of(stat.owner_pwm);
+    stat.gid = tbl.gid_of(stat.group_pwm);
+    if stat.gid == 0xFFFF_FFFF {
+        stat.gid = stat.uid;
+    }
+    Some(stat)
+}
+
 /// `stat(2)` — 按路径取文件属性并写入用户空间.
 ///
 /// uid/gid 经 SGEG 身份表映射后经安全代理写入 (I4); 成功返回 0,
 /// 失败返回 `-1`.
 pub extern "C" fn vfs_stat_internal(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
-    let path = ptr_to_str(path);
     if st.is_null() {
         return -1;
     }
-    let mut pbuf = [0u8; VFS_MAX_PATH];
-    let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
+    let Some(stat) = vfs_stat_core(path, pwm) else {
         return -1;
     };
-    let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
-        return -1;
-    };
-    let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
-
-    // E6-4: trait object 分发
-
-    fs_opt.map_or(-1, |fs| {
-        fs.fs_stat(rel_path, pwm).map_or(-1, |stat| {
-            // sgeg 身份映射: 先算最终 stat 再经 privileged 安全代理写入 (I4)
-            let mut stat = stat;
-            let tbl = crate::privileged::sgeg::identity::get_table();
-            stat.uid = tbl.uid_of(stat.owner_pwm);
-            stat.gid = tbl.gid_of(stat.group_pwm);
-            if stat.gid == 0xFFFF_FFFF {
-                stat.gid = stat.uid;
-            }
-            if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
-                0
-            } else {
-                -1
-            }
-        })
-    })
+    if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// 设置当前工作目录 (chroot 视图路径).
@@ -253,16 +258,14 @@ pub extern "C" fn vfs_stat(path: *const u8, st: *mut VfsStat, pwm: u64) -> i32 {
 
 /// Safe 包装: functions 层用, 返回 `VfsStat` 而非 raw pointer.
 ///
-/// 内部复用 `vfs_stat_internal`, 在 stack 上接收结果, 然后转为 Option 返回.
-/// 服务层拿到 `Option<VfsStat>` 后可安全地用 `write_struct_to_user` 写回 user.
+/// 直接走内核侧 `vfs_stat_core` (不经用户写回): 输出结构体位于内核栈,
+/// 通过 `write_struct_to_user` 写回会因地址不在用户区间而失败.
 #[must_use]
 pub fn vfs_stat_safe(path: *const u8, pwm: u64) -> Option<VfsStat> {
     if path.is_null() {
         return None;
     }
-    let mut st = VfsStat::default();
-    let r = vfs_stat_internal(path, &raw mut st, pwm);
-    if r < 0 { None } else { Some(st) }
+    vfs_stat_core(path, pwm)
 }
 
 /// `mkdir(2)` 入口 — 转 [`vfs_mkdir_internal`].

@@ -342,7 +342,7 @@ fn run_external(cmd: &Cmd) {
     }
     if pid == 0 {
         // 子进程
-        let _ = userlib::sys::proc_exec(&path[..path.len() - 1], &argv_ptrs[..=argc]);
+        let _ = userlib::sys::proc_exec(&path[..path.len() - 1], &argv_ptrs[..=argc], &[]);
         // exec 失败
         userlib::print("eash: ");
         userlib::print(name_str(name));

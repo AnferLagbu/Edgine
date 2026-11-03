@@ -90,11 +90,15 @@ const _: () = assert!(core::mem::offset_of!(KptiGlobals, ready) == 24);
 
 /// KPTI 每核活跃状态 (元素 = 一个 CPU 的槽).
 ///
-/// 三个字段都是"本核在 EL0 期间的活跃值", 双核并发 EL0 时必须互不可见:
+/// 各字段都是"本核在 EL0 期间的活跃值", 双核并发 EL0 时必须互不可见:
 /// - `user_ttbr0`: 本核当前用户进程 TTBR0 (异常出口 / 进入 EL0 时切回);
 /// - `tramp_save0` / `tramp_save1`: 入口/出口暂存槽, 保住切表序列 clobber 掉的
 ///   用户 `x4` / `x3` (入口时刻 `x0-x30` 全是用户态活跃值, 而切表需要 scratch
 ///   寄存器; 若无暂存槽则被 clobber 的用户值永久丢失 —— 帧尚未压入内核栈).
+/// - `enter_x9` / `enter_x10` / `enter_x11`: 进入 EL0 前暂存的用户 `x9`-`x11`.
+///   `kpti_enter_user_trampoline` 用这三个寄存器完成 TTBR0/TTBR1 切换, 而它们
+///   同样是 syscall ABI 保留的用户活跃值 (见 `ProcessContext::extra_regs_x8`)。
+///   切表后内核上下文页不可达, 故须经 tramp 表映射的本槽中转.
 #[repr(C)]
 pub struct KptiCpuState {
     /// 本核当前用户进程 `TTBR0_EL1` 物理地址.
@@ -103,6 +107,12 @@ pub struct KptiCpuState {
     pub tramp_save0: AtomicU64,
     /// 入口/出口暂存槽 1: 保住切换序列 clobber 掉的用户 `x3`.
     pub tramp_save1: AtomicU64,
+    /// 进入 EL0 前暂存的用户 `x9` (trampoline 切表 scratch).
+    pub enter_x9: AtomicU64,
+    /// 进入 EL0 前暂存的用户 `x10` (trampoline 切表 scratch).
+    pub enter_x10: AtomicU64,
+    /// 进入 EL0 前暂存的用户 `x11` (trampoline 切表 scratch).
+    pub enter_x11: AtomicU64,
 }
 
 /// 每核 KPTI 活跃状态数组 (索引 = `arch::cpu_id`, 即 `MPIDR_EL1 & 0xFF`, 取模 `MAX_CPUS`).
@@ -127,15 +137,21 @@ impl KptiCpuState {
             user_ttbr0: AtomicU64::new(0),
             tramp_save0: AtomicU64::new(0),
             tramp_save1: AtomicU64::new(0),
+            enter_x9: AtomicU64::new(0),
+            enter_x10: AtomicU64::new(0),
+            enter_x11: AtomicU64::new(0),
         }
     }
 }
 
-// 汇编按字面偏移 (0/8/16) + 步长索引元素; 布局漂移会在此编译失败.
+// 汇编按字面偏移 (0/8/16/24/32/40) + 步长索引元素; 布局漂移会在此编译失败.
 const _: () = assert!(core::mem::offset_of!(KptiCpuState, user_ttbr0) == 0);
 const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save0) == 8);
 const _: () = assert!(core::mem::offset_of!(KptiCpuState, tramp_save1) == 16);
-const _: () = assert!(core::mem::size_of::<KptiCpuState>() == 24);
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, enter_x9) == 24);
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, enter_x10) == 32);
+const _: () = assert!(core::mem::offset_of!(KptiCpuState, enter_x11) == 40);
+const _: () = assert!(core::mem::size_of::<KptiCpuState>() == 48);
 // 载体按页对齐 (汇编 `adrp` 取符号地址; `kpti_init` 按整页映射).
 const _: () = assert!(
     core::mem::align_of::<KptiCpuStateArray>()
@@ -161,6 +177,20 @@ pub fn kpti_is_active() -> bool {
 #[inline]
 pub fn kpti_set_user_ttbr0(ttbr0: u64) {
     kpti_cpu_state().user_ttbr0.store(ttbr0, Ordering::Release);
+}
+
+/// 暂存进入 EL0 时 trampoline 无法直接恢复的用户寄存器 `x9`-`x11`.
+///
+/// 仅 `enter_user` 快路径 (新建进程首次进入用户态, 无 `ProcessContext` 快照)
+/// 需要调用并传 0: fork/clone 子进程由 `context_switch_asm` 的 EL0 路径从
+/// `ProcessContext::extra_regs_x8` 直接写入本槽. 必须调用 —— 不调用会残留
+/// 上一个进程的用户寄存器值 (跨进程信息泄漏).
+#[inline]
+pub fn kpti_stage_enter_regs(x9: u64, x10: u64, x11: u64) {
+    let state = kpti_cpu_state();
+    state.enter_x9.store(x9, Ordering::Release);
+    state.enter_x10.store(x10, Ordering::Release);
+    state.enter_x11.store(x11, Ordering::Release);
 }
 
 /// 返回**本核** KPTI 活跃状态槽 (索引 = `smp::current_cpu_index()` 对 `MAX_CPUS` 取模)。

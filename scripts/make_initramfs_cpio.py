@@ -77,6 +77,7 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin", "dir", ""),
     ("bin/eash", "file", "eash.bin"),
     ("bin/proctest", "file", "proctest.bin"),
+    ("bin/exectest", "file", "exectest.bin"),
     ("bin/install", "file", "install.bin"),
     ("bin/fbterm", "file", "fbterm.bin"),
     ("bin/httpsrv", "file", "httpsrv.bin"),

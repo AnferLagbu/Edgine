@@ -4,7 +4,7 @@ edition = "2024"
 
 [workspace]
 resolver = "2"
-members = ["lib", "init", "eash", "install", "fbterm", "httpsrv", "proctest"]
+members = ["lib", "init", "eash", "install", "fbterm", "httpsrv", "proctest", "exectest"]
 
 [profile.release]
 panic = "abort"

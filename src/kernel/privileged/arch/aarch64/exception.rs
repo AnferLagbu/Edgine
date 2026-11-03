@@ -468,6 +468,11 @@ handle_el0_irq:
 // KPTI 进入 EL0 trampoline (必须位于 .vectors: 由 TTBR1 高半区取指)
 // 入参: sp_el0 / elr_el1 / spsr_el1 / sp_el1 已由 Rust 侧写好, x0 = 用户参数
 // 出口: 切 TTBR0 → 用户页表, TTBR1 → tramp 表后 eret
+//
+// 寄存器约定: x8 / x12-x18 由调用方 (context_switch_asm 的 EL0 路径) 就地
+// 恢复, 本 trampoline 不触碰; x9/x10/x11 是切表序列的 scratch, 同时也是
+// syscall ABI 保留的用户活跃值, 故调用方先把用户值暂存到本核 KPTI 槽
+// @24/32/40, 本段切表后经 tramp 表映射的槽页取回.
 // ============================================================
 .global kpti_enter_user_trampoline
 kpti_enter_user_trampoline:
@@ -489,6 +494,12 @@ kpti_enter_user_trampoline:
     tlbi vmalle1is
     dsb  ish
     isb
+    // 恢复用户 x9/x10/x11 (切表前已暂存; 本核槽页经 tramp 表仍可达).
+    // 顺序: x10/x11 先取, x9 最后覆盖基址.
+    mrs  x9, tpidr_el1
+    ldr  x10, [x9, #32]
+    ldr  x11, [x9, #40]
+    ldr  x9, [x9, #24]
     eret
 
 // -------- 未预期异常处理 --------

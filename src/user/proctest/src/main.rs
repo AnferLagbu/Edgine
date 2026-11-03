@@ -394,7 +394,7 @@ fn test_process_state() {
     if child_pid == 0 {
         let path = b"/nonexistent\0";
         let argv: [*const u8; 2] = [path.as_ptr(), core::ptr::null()];
-        let _ = proc_exec(path, &argv);
+        let _ = proc_exec(path, &argv, &[]);
         proc_exit(0);
     }
     let result = wait_pid(child_pid);

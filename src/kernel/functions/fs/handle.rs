@@ -505,23 +505,16 @@ pub fn vfs_open_safe(path: &str, flags: u32, pwm: u64) -> i32 {
 
 /// Safe 包装: `vfs_read` (接受可变切片)
 pub fn vfs_read_safe(fd: u32, buf: &mut [u8]) -> i32 {
-    // SAFETY: buf 是调用方拥有的有效可写缓冲区
-    vfs_read(
-        fd,
-        buf.as_mut_ptr(),
-        crate::functions::intcast::low_u32_from_usize(buf.len()),
-    )
+    // 切片必为内核内存: 用户缓冲入口 `vfs_read_internal` 经 I4 代理校验,
+    // 会把高半区内核地址判为非法而拒绝.
+    vfs_read_kernel(fd, buf)
 }
 
 /// Safe 包装: `vfs_write` (接受不可变切片)
 #[must_use]
 pub fn vfs_write_safe(fd: u32, buf: &[u8]) -> i32 {
-    // SAFETY: buf 是调用方拥有的有效只读缓冲区
-    vfs_write(
-        fd,
-        buf.as_ptr(),
-        crate::functions::intcast::low_u32_from_usize(buf.len()),
-    )
+    // 同 `vfs_read_safe`: 切片必为内核内存, 不能走用户缓冲入口.
+    vfs_write_kernel(fd, buf)
 }
 
 /// Safe 包装: 把 POD 结构体按位写入 fd (供 coredump 等序列化场景)

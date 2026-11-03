@@ -257,16 +257,22 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
 
         let file_type = entry.mode & CPIO_S_IFMT;
 
+        // 归档权限位: ramfs 建目录默认 0777 / 建文件默认 0644, 不 chmod 则归档
+        // 写出的 mode 位 (生成器 0755) 丢失 —— execve 的 x 位判定会随之失败.
+        let archive_perm = crate::functions::intcast::low_u16_from_u32(entry.mode & 0o7777);
+
         match file_type {
             CPIO_S_IFDIR => {
                 // 创建目录
                 let _ = crate::functions::fs::vfs_mkdir(path_buf.as_ptr(), pwm);
+                let _ = crate::functions::fs::vfs_chmod(path_buf.as_ptr(), archive_perm, pwm);
                 file_count += 1;
             }
             CPIO_S_IFREG => {
                 // 创建文件并写入数据 —— 无 fd 路径: 解压发生在首个用户进程建立
                 // 之前, `vfs_open` 要在当前进程 fd 表里分配句柄, 此时必然失败.
                 if super::api::write_file_kernel(path_str, entry.data, pwm) {
+                    let _ = crate::functions::fs::vfs_chmod(path_buf.as_ptr(), archive_perm, pwm);
                     file_count += 1;
                 }
             }

@@ -39,6 +39,7 @@ pub const SYS_GETGID: u64 = 104;
 pub const SYS_GETEUID: u64 = 107;
 pub const SYS_GETEGID: u64 = 108;
 pub const SYS_GETPPID: u64 = 110;
+pub const SYS_CHROOT: u64 = 161;
 pub const SYS_SYNC: u64 = 162;
 pub const SYS_MOUNT: u64 = 165;
 
@@ -310,9 +311,24 @@ pub fn arch_prctl(code: u64, addr: u64) -> i64 {
 // Edgine 兼容 wrapper — 保留原有语义，内部映射到 POSIX/PWM 编号
 // ============================================================
 
+/// `execve(path, argv, envp)` — 映像替换; argv/envp 均以 `NULL` 指针结尾.
+///
+/// `envp` 为空切片时传空指针 (内核视为空环境), 否则须由调用方保证数组以
+/// `core::ptr::null()` 终止.
 #[must_use]
-pub fn proc_exec(path: &[u8], argv: &[*const u8]) -> i64 {
-    unsafe { sys3(SYS_EXECVE, path.as_ptr() as u64, argv.as_ptr() as u64, 0) }
+pub fn proc_exec(path: &[u8], argv: &[*const u8], envp: &[*const u8]) -> i64 {
+    // 空切片 as_ptr 返回非空悬垂指针, 内核会按数组解析; 空向量必须显式传 NULL.
+    let argv_ptr = if argv.is_empty() {
+        0
+    } else {
+        argv.as_ptr() as u64
+    };
+    let envp_ptr = if envp.is_empty() {
+        0
+    } else {
+        envp.as_ptr() as u64
+    };
+    unsafe { sys3(SYS_EXECVE, path.as_ptr() as u64, argv_ptr, envp_ptr) }
 }
 pub fn proc_exit(code: i32) -> ! {
     unsafe {
@@ -493,6 +509,11 @@ pub fn env_getcwd(buf: &mut [u8]) -> i32 {
 #[must_use]
 pub fn env_chdir(path: &[u8]) -> i32 {
     unsafe { ret_i32(sys1(SYS_CHDIR, path.as_ptr() as u64)) }
+}
+/// `chroot(path)` — 切换本进程视图根 (需 `CAP_SYS_ADMIN`).
+#[must_use]
+pub fn env_chroot(path: &[u8]) -> i32 {
+    unsafe { ret_i32(sys1(SYS_CHROOT, path.as_ptr() as u64)) }
 }
 
 pub fn gethostname(buf: &mut [u8]) -> i32 {

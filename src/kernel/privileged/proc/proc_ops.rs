@@ -618,11 +618,17 @@ fn exec_de_thread(caller: Pid) -> bool {
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 /// 用给定 ELF 镜像替换当前进程映像 (exec), 成功返回 0, 失败返回 -1.
+///
+/// `argv_addr` / `envp_addr` 指向调用进程旧地址空间中 `NULL` 结尾的用户指针
+/// 数组, 由 functions 层先行校验并计数; 本函数在旧空间销毁前把字符串复制进
+/// 新进程栈 (K-07b 批2).
 pub extern "C" fn proc_exec_replace(
     elf_addr: u64,
     elf_size: u64,
     argv_addr: u64,
     arg_count: u32,
+    envp_addr: u64,
+    env_count: u32,
 ) -> i32 {
     if elf_addr == 0 {
         return -1;
@@ -673,16 +679,17 @@ pub extern "C" fn proc_exec_replace(
     // 调用进程的旧用户内存, 换表/销毁后再读即 UAF (旧实现把该步放在
     // `replace_user_space` 之后). 写侧按 new_cr3 寻址, 与旧空间无耦合;
     // 失败保持镜像原栈指针, 与原"忽略失败"语义一致.
-    if argv_addr != 0 && arg_count > 0 {
-        // SAFETY: argv_addr/arg_count 由 C ABI 调用方保证有效, 且此刻旧地址空间
-        // 仍存活; new_cr3 是刚加载完成的新用户页表.
+    if (argv_addr != 0 && arg_count > 0) || (envp_addr != 0 && env_count > 0) {
+        // SAFETY: argv_addr/arg_count 与 envp_addr/env_count 由 C ABI 调用方保证
+        // 有效, 且此刻旧地址空间仍存活; new_cr3 是刚加载完成的新用户页表.
         let sp = unsafe {
             UserProcManager::setup_user_stack_in_table(
                 new_cr3,
                 new_user_stack,
                 argv_addr as *const *const u8,
                 arg_count as usize,
-                0,
+                envp_addr as *const *const u8,
+                env_count as usize,
             )
         };
         if sp != 0 {
@@ -834,7 +841,7 @@ pub fn proc_save_user_regs(pid: Pid, f: &crate::privileged::idt::InterruptFrame)
 /// - `@0..72`   ← x19..x28      - `@80` ← x29 (FP)      - `@88` ← x30 (LR)
 /// - `@112` ← `SPSR_EL1` (EL0 状态)  - `@120` ← `ELR_EL1` (用户返回 PC)
 /// - `@128` ← `SP_EL0` (用户栈指针)  - `@136` ← 用户页表 (EL0 的 TTBR0)
-/// - `extra_regs[@672..728]` ← x0..x7
+/// - `extra_regs[@672..728]` ← x0..x7  - `extra_regs_x8[@736..824]` ← x8..x18
 ///
 /// **不写** `@96` (`SP_EL1`) 与 `@104` (EL1 侧 TTBR0): 二者由调度切换保存侧维护,
 /// 未调度过的新任务由创建方 (fork / init) 预置.
@@ -873,6 +880,11 @@ pub fn proc_save_user_regs_aarch64(
         ctx.extra_regs[5] = f.x5;
         ctx.extra_regs[6] = f.x6;
         ctx.extra_regs[7] = f.x7;
+        // 用户库 syscall 汇编只声明 x0 为输出 ⇒ x8-x18 是编译器可跨 `svc`
+        // 保留的活跃值, 必须全量快照供 fork/clone 子进程首次进入 EL0 时恢复.
+        ctx.extra_regs_x8 = [
+            f.x8, f.x9, f.x10, f.x11, f.x12, f.x13, f.x14, f.x15, f.x16, f.x17, f.x18,
+        ];
     });
 }
 

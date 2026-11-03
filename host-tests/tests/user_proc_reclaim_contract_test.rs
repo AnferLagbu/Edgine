@@ -61,6 +61,17 @@ fn body_of<'a>(src: &'a str, def: &str, len: usize) -> &'a str {
     window(src, at, len)
 }
 
+/// 取 `def` 到 `next` 之间的窗口: 用于需要对整个函数体做"不得出现"断言的场景,
+/// 避免固定长度窗口越界到下一个函数造成误判.
+fn body_until<'a>(src: &'a str, def: &str, next: &str) -> &'a str {
+    let at = src.find(def).unwrap_or_else(|| panic!("未找到定义: {def}"));
+    let rest = &src[at..];
+    let end = rest
+        .find(next)
+        .unwrap_or_else(|| panic!("未找到下一个定义: {next}"));
+    &rest[..end]
+}
+
 #[test]
 fn test_remove_and_free_reclaims_user_proc_mirror() {
     // 权威销毁的唯一入口分支: 必须在 Process 析构前回收镜像.
@@ -135,5 +146,44 @@ fn test_destroy_by_pid_releases_lock_before_destroy() {
     assert!(
         !body.contains("if let Some(proc) = self.processes.lock()"),
         "{def} 不得在 `if let` scrutinee 中持锁取句柄 (会自锁死)"
+    );
+}
+
+#[test]
+fn test_kernel_process_alloc_symmetric_with_table_free() {
+    // `create()` 产出的权威 `Process` 最终由 `ProcessTable::remove_and_free` /
+    // `dec_ref_and_maybe_free` 的 `Box::from_raw` 归还 (全局分配器, 块首带 8 字节
+    // 归还路由标签). 分配侧若退回裸 `kmalloc` (`raw::alloc_zeroed`), 归还侧会把
+    // 堆上相邻字节当标签; 且 `size_of::<Process>() > PAGE_THRESHOLD` 时
+    // `KernelAllocator::dealloc` 走 PMM 分支, 把 kmalloc 堆页按物理帧归还 ——
+    // 该页随后可被 PMM 二次分配并清零, 活堆数据静默消失 (K-07b 批2 exec 真跑
+    // 命中的 `Arc<FsContext>` 被清零即此形). 分配/归还必须同源.
+    let src = code_only(&read(USER_PROC));
+    let alloc = body_until(
+        &src,
+        "pub fn alloc_kernel_process() -> Option<*mut Process> {",
+        "pub unsafe fn free_kernel_process",
+    );
+    assert!(
+        alloc.contains("alloc::alloc::alloc(layout)"),
+        "alloc_kernel_process 必须走全局分配器 (与进程表 Box::from_raw 归还同源)"
+    );
+    assert!(
+        !alloc.contains("raw::alloc_zeroed"),
+        "alloc_kernel_process 不得退回裸 kmalloc (无归还路由标签, 与 Box 归还失配)"
+    );
+
+    let free = body_until(
+        &src,
+        "pub unsafe fn free_kernel_process(kproc_ptr: *mut Process) {",
+        "pub unsafe fn free_user_process",
+    );
+    assert!(
+        free.contains("alloc::alloc::dealloc("),
+        "free_kernel_process 必须与 alloc_kernel_process 同走全局分配器"
+    );
+    assert!(
+        !free.contains("mm::kfree("),
+        "free_kernel_process 不得退回裸 kfree (与全局分配器块布局失配)"
     );
 }

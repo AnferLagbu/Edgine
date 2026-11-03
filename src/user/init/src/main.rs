@@ -10,9 +10,9 @@ use userlib::sys::{
     CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM,
     IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
     SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clone_thread, close_socket,
-    exit_group, fork, fs_close, fs_read, fs_write, futex_wait, futex_wake, getpid, getsockopt,
-    gettid, kill, listen, nanosleep, pipe_create, poll, proc_exit, recv, sched_yield, send,
-    setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
+    env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait, futex_wake,
+    getpid, getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec, proc_exit,
+    recv, sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -109,6 +109,12 @@ pub extern "C" fn _start() -> ! {
     // 子线程上核 → 子线程睡下 → 父线程上核"的交替推进, 忙等子进程独占一个核
     // 会拖慢该交替直至撞上重试上界.
     thread_probe();
+
+    // ── K-07b 批2: execve 运行时探针 ────────────────────────────────────
+    // 载荷 `/bin/exectest` 只在 initramfs 载体启动时存在; 默认启动 (无文件
+    // 系统载体) 会打印 FAIL, 与网络探针"无宿主服务即 FAIL 并继续"同口径.
+    // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
+    exec_probe();
 
     // ── APS-05: 双核并发 EL0 验证 ─────────────────────────────────────────
     // fork 一个**不 yield** 的忙等子进程: 父子各自长期占用一核并停留在 EL0
@@ -740,6 +746,97 @@ extern "C" fn group_helper_body(_arg: u64) {
     GROUP_HELPER_READY.store(1, Ordering::Release);
     let _ = futex_wake(&GROUP_HELPER_READY, 1);
     let _ = futex_wait_until(&GROUP_HOLD, |v| v != 0);
+}
+
+// ============================================================
+// K-07b 批2: execve 运行时探针 (envp 传递 + FsContext cwd/root 解析)
+// ============================================================
+
+/// `cwd` 腿标记: 子进程先 `chdir("/bin")`, 再以**相对路径** `exectest` 执行.
+const EXEC_LEG_CWD: &[u8] = b"cwd";
+/// `root` 腿标记: 子进程先 `chroot("/bin")`, 再以**视图绝对路径** `/exectest` 执行.
+const EXEC_LEG_ROOT: &[u8] = b"root";
+
+/// execve 运行时探针: 两条腿各自 fork 子进程完成视图切换 + exec, 父进程按
+/// `wstatus == 0` 判定. 载荷 `exectest` 在自身进程内校验 argc/argv、envp 与
+/// cwd (判据写侧见 `src/user/exectest/src/main.rs`).
+///
+/// - `cwd` 腿: 只有相对路径按进程 `FsContext.cwd` 解析成 `/bin/exectest` 才成功;
+/// - `root` 腿: 只有视图绝对路径按进程 `FsContext.root` 前缀解析成 `/bin/exectest`
+///   才成功.
+///
+/// 任一腿失败打印 `[EXEC] FAIL` 并继续启动 (与网络探针同口径), 两条腿全过才
+/// 打印 `[EXEC] PASS`.
+fn exec_probe() {
+    let cwd_ok = exec_leg(EXEC_LEG_CWD);
+    let root_ok = exec_leg(EXEC_LEG_ROOT);
+    if cwd_ok && root_ok {
+        println("[EXEC] PASS: cwd+root argv+envp");
+    } else {
+        print("[EXEC] FAIL: cwd=");
+        print_dec(i64::from(cwd_ok));
+        print(" root=");
+        print_dec(i64::from(root_ok));
+        print_char(b'\n');
+    }
+}
+
+/// 单腿: fork → 子进程切换 FS 视图并 exec → 父进程收割按 `wstatus` 判定.
+fn exec_leg(leg: &'static [u8]) -> bool {
+    let child = fork();
+    if child == 0 {
+        exec_leg_child(leg);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        return false;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    reaped == i64::from(pid) && status == 0
+}
+
+/// 子进程侧: 按腿切换视图 → `execve(exectest, argv, envp)`; exec 失败不返回.
+fn exec_leg_child(leg: &'static [u8]) -> ! {
+    let view_rc = if leg == EXEC_LEG_CWD {
+        env_chdir(b"/bin\0")
+    } else {
+        env_chroot(b"/bin\0")
+    };
+    if view_rc != 0 {
+        // 失败必须把腿名与返回码带出来: 父进程只看到 wstatus, 静默退出码无法
+        // 区分"路径不存在 / 缺 CAP_SYS_ADMIN / 参数非法".
+        print("[EXEC] FAIL: view ");
+        print(core::str::from_utf8(leg).unwrap_or("?"));
+        print(" rc=");
+        print_dec(i64::from(view_rc));
+        print_char(b'\n');
+        proc_exit(2);
+    }
+    // cwd 腿用相对名 (由 cwd 解析), root 腿用视图绝对路径 (由 root 前缀解析).
+    let (leg_cstr, path): (&core::ffi::CStr, &[u8]) = if leg == EXEC_LEG_CWD {
+        (c"cwd", b"exectest\0")
+    } else {
+        (c"root", b"/exectest\0")
+    };
+    let argv: [*const u8; 4] = [
+        c"exectest".as_ptr().cast::<u8>(),
+        leg_cstr.as_ptr().cast::<u8>(),
+        c"K07B".as_ptr().cast::<u8>(),
+        core::ptr::null(),
+    ];
+    let envp: [*const u8; 3] = [
+        c"K07B_ENV=1".as_ptr().cast::<u8>(),
+        c"K07B_BATCH=2".as_ptr().cast::<u8>(),
+        core::ptr::null(),
+    ];
+    let exec_rc = proc_exec(path, &argv, &envp);
+    // exec 成功不返回; 返回即失败, 带上 errno 便于区分 ENOENT / EACCES.
+    print("[EXEC] FAIL: exec ");
+    print(core::str::from_utf8(leg).unwrap_or("?"));
+    print(" rc=");
+    print_dec(exec_rc);
+    print_char(b'\n');
+    proc_exit(3);
 }
 
 /// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).

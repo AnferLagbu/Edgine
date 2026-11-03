@@ -236,7 +236,7 @@ fn run_pipeline_child(seg: &Segment, prev_pipe: &[i32; 2], cur_pipe: &[i32; 2]) 
 
     // null 终止路径方便 exec
     let path_slice = unsafe { CStr::from_ptr(path.cast::<core::ffi::c_char>()) }.to_bytes();
-    let _ = proc_exec(path_slice, argv);
+    let _ = proc_exec(path_slice, argv, &[]);
     // exec 失败
     print("eash: ");
     print(from_utf8(path_slice).unwrap_or("?"));

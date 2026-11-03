@@ -1,0 +1,7 @@
+[package]
+name = "exectest"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+userlib = { path = "../lib" }
