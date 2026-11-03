@@ -396,6 +396,22 @@ pub fn wait_pid_status(pid: i32, status: &mut i32) -> i64 {
     }
 }
 
+/// `wait4(pid, &status, WNOHANG)` — 非阻塞回收.
+///
+/// 子进程仍在运行时返回 0; 调用方自行按墙钟时间决定何时放弃等待.
+#[must_use]
+pub fn wait_pid_status_nohang(pid: i32, status: &mut i32) -> i64 {
+    const WNOHANG: i32 = 1;
+    unsafe {
+        sys3(
+            SYS_WAIT4,
+            arg_bits(i64::from(pid)),
+            core::ptr::from_mut(status) as u64,
+            arg_bits(i64::from(WNOHANG)),
+        )
+    }
+}
+
 #[must_use]
 pub fn fs_open(path: &[u8], flags: i32, m: i32) -> i32 {
     unsafe {
@@ -624,6 +640,10 @@ pub const SYS_NANOSLEEP: u64 = 35;
 pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_UMASK: u64 = 95;
+pub const SYS_CLOCK_GETTIME: u64 = 228;
+
+/// POSIX 时钟 ID: 自启动单调时钟 (只读) — 与内核 `functions::timer::clock` 同值.
+pub const CLOCK_MONOTONIC: i32 = 1;
 
 /// 线程族 syscall 编号与 `clone` 标志位 — 单一权威源 `edgine-abi`.
 pub use edgine_abi::thread::{
@@ -680,6 +700,21 @@ pub fn nanosleep(req: &Timespec) -> i32 {
             SYS_NANOSLEEP,
             core::ptr::from_ref::<Timespec>(req) as u64,
             0,
+        ))
+    }
+}
+
+/// `clock_gettime(clk_id, tp)` — 读取指定时钟的时间.
+///
+/// 失败返回负错误码; 调用方不得把失败当作"时间为 0", 否则时间限界会退化成
+/// 永久等待.
+#[must_use]
+pub fn clock_gettime(clk_id: i32, tp: &mut Timespec) -> i32 {
+    unsafe {
+        ret_i32(sys2(
+            SYS_CLOCK_GETTIME,
+            arg_bits(i64::from(clk_id)),
+            core::ptr::from_mut(tp) as u64,
         ))
     }
 }

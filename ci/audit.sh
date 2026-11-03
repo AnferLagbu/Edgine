@@ -870,6 +870,8 @@ popd > /dev/null
 # ── 4. QEMU 真实启动测试 (full 模式) ──────────────────────────
 # 双架构内核必须在 QEMU 中真实启动通过
 # 跳过条件: QEMU 二进制不可用 ⇒ skip_leg 记账 (P-55 乙: 日志点名「本腿未执行」，退出码不变)
+# 取证腿: 三个子腿的全量输出分别落 other/build/log/audit_*.log, 终端只留尾部;
+# 偶发红归因需要完整判定链, 只靠 tail 会把证据丢掉 (失败信息点名日志路径).
 step "4/6 QEMU 双架构真实启动测试"
 if [ "$MODE" = "full" ]; then
     if command -v qemu-system-x86_64 >/dev/null 2>&1 && command -v qemu-system-aarch64 >/dev/null 2>&1; then
@@ -877,15 +879,22 @@ if [ "$MODE" = "full" ]; then
         # 原脚本默认 FAIL_OK=1, 启动失败时仍返 0 (虚假通过).
         # 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走
         # else, 「失败 (exit=…)」分支不可达、真因被「执行异常」吞掉.
+        # 取证腿: 终端只留尾部若干行, 全量输出落盘并在失败信息中点名 —— 偶发红
+        # 归因需要完整判定链 (哪条判据、哪一行里程碑缺失), 只靠 tail 会把证据丢掉.
+        EVIDENCE_DIR="$PROJECT_ROOT/other/build/log"
+        mkdir -p "$EVIDENCE_DIR"
+        QEMU_EVIDENCE="$EVIDENCE_DIR/audit_qemu_boot_all.log"
         set +e
         QEMU_OUT=$(FAIL_OK=0 "$PROJECT_ROOT/scripts/qemu_boot_test.sh" all 2>&1)
         QEMU_RC=$?
         set -e
+        printf '%s\n' "$QEMU_OUT" > "$QEMU_EVIDENCE"
         printf '%s\n' "$QEMU_OUT" | tail -6
+        printf '   全量输出: %s\n' "$QEMU_EVIDENCE"
         if [ "$QEMU_RC" -eq 0 ]; then
             ok "QEMU 双架构启动测试: 2/2 通过"
         else
-            err "QEMU 双架构启动测试失败 (exit=$QEMU_RC, 见 scripts/qemu_boot_test.sh 输出)"
+            err "QEMU 双架构启动测试失败 (exit=$QEMU_RC, 全量输出见 $QEMU_EVIDENCE)"
         fi
 
         # K-07a: 线程组判据的固定轮次压力 (专项脚本 scripts/thread_stress_test.sh).
@@ -894,15 +903,18 @@ if [ "$MODE" = "full" ]; then
         # 分工: qemu_boot_test 证「单次能过」, 本子腿证「重复能过」. 镜像由上一子腿
         # 的 make ARCH=<arch> all 产出, 故必须排在其后.
         STRESS_ROUNDS="${THREAD_STRESS_ROUNDS:-3}"
+        STRESS_EVIDENCE="$EVIDENCE_DIR/audit_thread_stress.log"
         set +e
         STRESS_OUT=$(THREAD_STRESS_ARCH=both "$PROJECT_ROOT/scripts/thread_stress_test.sh" "$STRESS_ROUNDS" 2>&1)
         STRESS_RC=$?
         set -e
+        printf '%s\n' "$STRESS_OUT" > "$STRESS_EVIDENCE"
         printf '%s\n' "$STRESS_OUT" | tail -3
+        printf '   全量输出: %s\n' "$STRESS_EVIDENCE"
         if [ "$STRESS_RC" -eq 0 ]; then
             ok "线程组多轮压力: ${STRESS_ROUNDS} 轮 x 2 架构全通过 (K-07a)"
         else
-            err "线程组多轮压力失败 (exit=$STRESS_RC, 见 scripts/thread_stress_test.sh 输出)"
+            err "线程组多轮压力失败 (exit=$STRESS_RC, 全量输出见 $STRESS_EVIDENCE)"
         fi
 
         # K-07b 批1: initramfs 载体专项 feature 腿 (scripts/initramfs_boot_test.sh).
@@ -911,15 +923,18 @@ if [ "$MODE" = "full" ]; then
         # 与 P-62 甲 同形: 真构建 (KERNEL_FEATURES=initramfs) + 真启动 + 断言里程碑,
         # 脚本尾部自行复原默认构建, 故排在本步骤最后, 不污染后续腿的镜像口径.
         # 依赖 python3 (verify_image_arch.py), 与上一子腿同样已在 QEMU 可用分支内.
+        CPIO_EVIDENCE="$EVIDENCE_DIR/audit_initramfs_boot.log"
         set +e
         CPIO_OUT=$("$PROJECT_ROOT/scripts/initramfs_boot_test.sh" all 2>&1)
         CPIO_RC=$?
         set -e
+        printf '%s\n' "$CPIO_OUT" > "$CPIO_EVIDENCE"
         printf '%s\n' "$CPIO_OUT" | tail -8
+        printf '   全量输出: %s\n' "$CPIO_EVIDENCE"
         if [ "$CPIO_RC" -eq 0 ]; then
             ok "initramfs 载体双架构启动: PID 1 由 /init 加载并通过 (K-07b 批1)"
         else
-            err "initramfs 载体启动失败 (exit=$CPIO_RC, 见 scripts/initramfs_boot_test.sh 输出)"
+            err "initramfs 载体启动失败 (exit=$CPIO_RC, 全量输出见 $CPIO_EVIDENCE)"
         fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"

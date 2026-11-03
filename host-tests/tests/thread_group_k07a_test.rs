@@ -24,7 +24,15 @@
 //! 5. 探针的六条判据与 `[THREAD] PASS` 里程碑在位, 且 `qemu_boot_test.sh` 两架构
 //!    分支都以 fail-closed 断言该里程碑; 专项压力脚本 `thread_stress_test.sh`
 //!    以同一里程碑为判据, 并由 `ci/audit.sh` 的 full 档固定轮次接线（偶发缺陷靠
-//!    重复启动才现形，单次启动断言不足以判稳）.
+//!    重复启动才现形，单次启动断言不足以判稳）;
+//! 6. 探针等待限界取 `CLOCK_MONOTONIC` 绝对截止时刻, 不取轮次计数（轮次与真实
+//!    耗时在宿主超订下脱钩, 同一计数跨越的时间差几个数量级）; `CLONE_PARENT_SETTID`
+//!    在父上下文同步校验、`CLONE_CHILD_SETTID` 在子线程报到握手之后校验; 组退出
+//!    收割按 `WNOHANG` + 截止时刻轮询, 失败只打印 `FAIL`, 绝不挂死启动; 失败行
+//!    整行单次写入且时钟读取失败与截止到期分开报因 (证据完整性);
+//! 7. `ci/audit.sh` 的 QEMU 段三个子腿都保留全量取证日志
+//!    (`other/build/log/audit_*.log`), 失败信息点名日志路径 —— 偶发红只靠终端
+//!    尾部几行无法归因.
 
 use std::fs;
 use std::path::PathBuf;
@@ -320,15 +328,15 @@ fn k07a_init_probe_covers_six_criteria() {
         init.contains("[THREAD] FAIL: "),
         "init 探针缺少失败出口, 单点失败无法定位判据"
     );
-    // 六条判据的落点各就各位.
+    // 六条判据的落点各就各位; 两条腿的出口都带同一个绝对截止时刻.
     for anchor in [
         "fn thread_probe()",
-        "fn thread_leg()",
+        "fn thread_leg(deadline: u64)",
         "fn thread_spawn_checks(",
-        "fn thread_release_and_join()",
+        "fn thread_release_and_join(deadline: u64)",
         "fn signal_probe(",
-        "fn group_exit_leg()",
-        "fn group_child_body()",
+        "fn group_exit_leg(deadline: u64)",
+        "fn group_child_body(deadline: u64)",
         "extern \"C\" fn thread_body(",
     ] {
         assert!(init.contains(anchor), "init 探针缺少判据函数 {anchor}");
@@ -349,10 +357,73 @@ fn k07a_init_probe_covers_six_criteria() {
         tls_at < thread_at,
         "线程探针必须排在 TLS 探针之后 (共用每线程基址恢复链路)"
     );
-    // 所有等待都有界: 失败只打印 FAIL, 绝不挂死启动.
+    // 所有等待都有界, 且上界取自墙钟时间而非轮次计数: 轮次与真实耗时在宿主
+    // 超订下脱钩 (同一计数在空载与满载下跨越的时间差几个数量级), 会把"宿主
+    // 调度慢"误判为判据失败.
     assert!(
-        init.contains("const THREAD_RETRY_LIMIT: u32"),
-        "线程探针缺少重试上界 (判据失败会挂死启动)"
+        init.contains("const THREAD_WAIT_BUDGET_MS: u64"),
+        "线程探针缺少墙钟时间预算 (判据失败会挂死启动)"
+    );
+    assert!(
+        init.contains("clock_gettime(CLOCK_MONOTONIC") && init.contains("fn monotonic_ms()"),
+        "线程探针的时间限界必须取自 CLOCK_MONOTONIC"
+    );
+    assert!(
+        init.contains(
+            "fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool, deadline: u64)"
+        ),
+        "futex 等待必须带绝对截止时刻"
+    );
+    assert!(
+        !init.contains("THREAD_RETRY_LIMIT"),
+        "轮次计数限界已退役: 宿主调度慢不得让判据提前失效"
+    );
+    // SETTID 两判据各归其位: PARENT_SETTID 由内核在父上下文同步回填, clone
+    // 返回即可校验; CHILD_SETTID 按子侧语义在报到握手之后校验.
+    let ptid_at = init
+        .find("\"settid\", parent_tid")
+        .expect("init 探针缺少 CLONE_PARENT_SETTID 判据");
+    let progress_at = init
+        .find("futex_wait_until(&THREAD_PROGRESS")
+        .expect("init 探针缺少报到等待");
+    let ctid_at = init
+        .find("\"child-settid\", child_tid")
+        .expect("init 探针缺少 CLONE_CHILD_SETTID 判据");
+    assert!(
+        ptid_at < progress_at && progress_at < ctid_at,
+        "SETTID 判据次序漂移: PARENT_SETTID 必须先于报到握手, CHILD_SETTID 不得早于它"
+    );
+    // 组退出收割有界: WNOHANG 轮询到截止时刻, 不用阻塞式 wait4.
+    assert!(
+        init.contains("wait_pid_status_nohang(child_pid, &mut status)")
+            && init.contains("\"reap-timeout\"")
+            && init.contains("nanosleep(&pause)"),
+        "组退出腿的收割必须按 WNOHANG + 截止时刻轮询 (阻塞 wait4 会挂死启动)"
+    );
+    // 时钟读取失败与截止到期必须分开报因: 二者混同会让 FAIL 只剩 `code=0`,
+    // 无法区分"等待超时"与"时间限界失效".
+    assert!(
+        init.contains("(\"clock-lost\", -1)"),
+        "组退出收割未把时钟读取失败单独报因 (FAIL 证据会退化成语义不明的 code=0)"
+    );
+    // 失败行必须整行单次写入: 控制台写错误被 `print` 静默忽略, 分段打印时
+    // 瞬时失败会吞掉其中一段 (已实测到缺 tag 的 `[THREAD] FAIL:  code=0`).
+    assert!(
+        init.contains("let _ = fs_write(1, &buf[..pos]);") && init.contains("b\"[THREAD] FAIL: \""),
+        "失败行未在栈缓冲内拼成整行后单次写入 (分段打印可被瞬时写失败吞掉 tag)"
+    );
+    assert!(
+        init.contains(
+            "if !futex_wait_until(&GROUP_HELPER_READY, |v| v != 0, deadline) {\n        proc_exit(3);"
+        ),
+        "helper 就绪握手超时必须如实以专属退出码退出, 不伪装成组退出失败"
+    );
+    // helper 是组退出的受害者: 唯一合法的唤醒源是 exit_group 路径, 不得自行
+    // 限时退出 (否则组退出判据失去"退出时仍有兄弟线程睡在 futex 上"的前提).
+    assert!(
+        init.contains("futex_wait(&GROUP_HOLD, cur)")
+            && !init.contains("futex_wait_until(&GROUP_HOLD"),
+        "组退出 helper 不得给 GROUP_HOLD 等待加超时"
     );
 }
 
@@ -414,4 +485,36 @@ fn k07a_full_gate_runs_thread_stress_rounds() {
         stress_call.contains("STRESS_RC") && stress_call.contains("err "),
         "ci/audit.sh 的压力子腿不是 fail-closed (非零退出未阻断)"
     );
+}
+
+/// full 档 QEMU 段的三个子腿都必须保留全量取证日志: 偶发红 (启动挂死 / 判据缺失)
+/// 只靠终端尾部几行无法归因, 失败信息必须点名日志路径.
+#[test]
+fn full_gate_qemu_sublegs_keep_evidence_logs() {
+    let audit = read_src(AUDIT_SH);
+    let step4 = slice_between(&audit, "4/6 QEMU", "report_unexecuted_legs");
+    assert!(
+        step4.contains("EVIDENCE_DIR=\"$PROJECT_ROOT/other/build/log\"")
+            && step4.contains("mkdir -p \"$EVIDENCE_DIR\""),
+        "QEMU 段缺少取证日志目录 other/build/log"
+    );
+    for evidence in [
+        "audit_qemu_boot_all.log",
+        "audit_thread_stress.log",
+        "audit_initramfs_boot.log",
+    ] {
+        assert!(step4.contains(evidence), "QEMU 段缺少取证日志 {evidence}");
+    }
+    for var in ["QEMU_EVIDENCE", "STRESS_EVIDENCE", "CPIO_EVIDENCE"] {
+        assert_eq!(
+            count_occurrences(&step4, &format!("> \"${var}\"")),
+            1,
+            "{var} 未把子腿全量输出落盘"
+        );
+        assert_eq!(
+            count_occurrences(&step4, &format!("全量输出见 ${var}")),
+            1,
+            "{var} 的失败信息未点名取证日志 (红机时证据不可发现)"
+        );
+    }
 }

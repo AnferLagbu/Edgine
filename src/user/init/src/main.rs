@@ -6,14 +6,14 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use userlib::sys::{
-    AF_INET, ARCH_GET_FS, ARCH_SET_FS, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES,
-    CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM,
-    IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
-    SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clone_thread, close_socket,
-    env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait, futex_wake,
-    getpid, getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec, proc_exit,
-    recv, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid,
-    wait_pid_status,
+    AF_INET, ARCH_GET_FS, ARCH_SET_FS, CLOCK_MONOTONIC, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
+    CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD,
+    CLONE_VM, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
+    SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime, clone_thread,
+    close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait,
+    futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec,
+    proc_exit, recv, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill,
+    wait_pid, wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -370,8 +370,13 @@ fn tls_child_probe(addr_a: u64, addr_b: u64) -> ! {
 const THREAD_COUNT: usize = 3;
 /// 每线程用户栈字节数 (16 字节对齐满足 `clone` 的对齐校验).
 const THREAD_STACK_BYTES: usize = 4096;
-/// 有界等待的轮数上限: 任一判据超时即 FAIL 并继续, 启动绝不因探针挂死.
-const THREAD_RETRY_LIMIT: u32 = 20_000;
+/// 线程探针整条腿的等待时间预算 (毫秒).
+///
+/// 限界按 `CLOCK_MONOTONIC` 墙钟时间计, 不按轮次计: 轮次与真实耗时在宿主超订
+/// 下脱钩 (同一计数在空载与满载下跨越的时间差几个数量级), 会把"宿主调度慢"
+/// 误判为判据失败. 正常路径的等待是毫秒级, 预算只作兜底, 且必须小于
+/// `qemu_boot_test.sh` 的单次启动超时 (25s), 保证失败时 `[THREAD] FAIL` 能落地.
+const THREAD_WAIT_BUDGET_MS: u64 = 5_000;
 /// 每线程 TLS magic 基址 —— 第 `i` 个线程读到 `BASE + i` 才算 `CLONE_SETTLS` 生效.
 const THREAD_TLS_MAGIC_BASE: u64 = 0x7130_0000_0000_0000;
 /// `exit_group` 腿的组退出码.
@@ -458,8 +463,14 @@ static GROUP_HOLD: AtomicU32 = AtomicU32::new(0);
 /// 任一腿失败即打印 `[THREAD] FAIL: <判据>` 并继续启动 (不 `proc_exit`),
 /// 使单点失败不掩盖其余探针读数.
 fn thread_probe() {
-    match thread_leg() {
-        Ok(tgid) => match group_exit_leg() {
+    // 两条腿共用同一个绝对截止时刻: 探针总等待时间有界, 不随判据条数累加.
+    let Some(deadline) = wait_deadline() else {
+        // 单调时钟不可用时无法建立时间限界: 如实判失败, 不伪装成"等到超时".
+        thread_fail("clock", -1);
+        return;
+    };
+    match thread_leg(deadline) {
+        Ok(tgid) => match group_exit_leg(deadline) {
             Ok(()) => {
                 print("[THREAD] PASS: clone+per-thread TLS+tid/tgid+futex+join+exit_group (tgid=");
                 print_dec(tgid);
@@ -473,12 +484,46 @@ fn thread_probe() {
 }
 
 /// 失败出口: `tag` 定位判据, `code` 携带该判据的实测读数 (TID / 位图 / 退出码).
+///
+/// 整行在栈缓冲内拼好后只发一次 `fs_write`: 控制台写的错误返回值被 `print`
+/// 忽略, 分段打印时被瞬时失败吞掉的恰好可能是 tag 那段, 留下
+/// `[THREAD] FAIL:  code=0` 这类无从判因的证据; 单次写入使失败行要么完整落地,
+/// 要么整行缺失 (后者由启动断言缺 `[THREAD] PASS` 暴露).
 fn thread_fail(tag: &'static str, code: i64) {
-    print("[THREAD] FAIL: ");
-    print(tag);
-    print(" code=");
-    print_dec(code);
-    print_char(b'\n');
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+    append_bytes(&mut buf, &mut pos, b"[THREAD] FAIL: ");
+    append_bytes(&mut buf, &mut pos, tag.as_bytes());
+    append_bytes(&mut buf, &mut pos, b" code=");
+    append_dec(&mut buf, &mut pos, code);
+    append_bytes(&mut buf, &mut pos, b"\n");
+    let _ = fs_write(1, &buf[..pos]);
+}
+
+/// 截断式追加字节: 失败行远小于缓冲容量, 正常路径不触发截断.
+fn append_bytes(buf: &mut [u8], pos: &mut usize, src: &[u8]) {
+    let n = src.len().min(buf.len() - *pos);
+    buf[*pos..*pos + n].copy_from_slice(&src[..n]);
+    *pos += n;
+}
+
+/// 十进制追加 `i64` (负数带 `-` 前缀), 供单次写入的失败行拼装.
+fn append_dec(buf: &mut [u8], pos: &mut usize, val: i64) {
+    let mut digits = [0u8; 20];
+    let mut i = digits.len();
+    let mut v = val.unsigned_abs();
+    loop {
+        i -= 1;
+        digits[i] = b'0' + u8::try_from(v % 10).expect("末位十进制数字必在 u8 范围");
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    if val < 0 {
+        append_bytes(buf, pos, b"-");
+    }
+    append_bytes(buf, pos, &digits[i..]);
 }
 
 /// 线程腿: 建 N 线程 → 校验身份 / TLS / 信号探测 → 放行 → join.
@@ -492,9 +537,9 @@ fn thread_fail(tag: &'static str, code: i64) {
 /// 5. futex 双向往返 (线程唤醒父线程 + 父线程唤醒全部线程) 与
 ///    `CLONE_CHILD_CLEARTID` join (退出写 0 + 唤醒).
 ///
-/// 组退出判据 (`exit_group` 终止整组) 由 [`group_exit_leg`] 承担. 全部等待都有
-/// `THREAD_RETRY_LIMIT` 上界: 失败只打印 FAIL, 绝不挂死启动.
-fn thread_leg() -> Result<i64, (&'static str, i64)> {
+/// 组退出判据 (`exit_group` 终止整组) 由 [`group_exit_leg`] 承担. 全部等待以
+/// 传入的绝对截止时刻为时间上界: 失败只打印 FAIL, 绝不挂死启动.
+fn thread_leg(deadline: u64) -> Result<i64, (&'static str, i64)> {
     let tgid = getpid();
     let Ok(tgid_i64) = i64::try_from(tgid) else {
         return Err(("tgid-range", -1));
@@ -512,10 +557,10 @@ fn thread_leg() -> Result<i64, (&'static str, i64)> {
         );
     }
 
-    let checked = thread_spawn_checks(tgid, tgid_i64, leader_tid);
+    let checked = thread_spawn_checks(tgid, tgid_i64, leader_tid, deadline);
     // 已创建的线程睡在 THREAD_RELEASE 上: 不放行会一直阻塞到 init 退出, 掩盖后续
     // 探针的读数, 故无论判据是否通过都执行放行 + join.
-    let joined = thread_release_and_join();
+    let joined = thread_release_and_join(deadline);
     // join 之后才可读线程自检位图: 线程退出前最后一个动作是落盘 proof.
     // 按位与聚合 —— 任一线程缺任一判据即与期望掩码不符.
     let mut proof_seen = PROOF_TLS | PROOF_WAKE;
@@ -531,10 +576,13 @@ fn thread_leg() -> Result<i64, (&'static str, i64)> {
 }
 
 /// 建线程 + 线程侧判据校验 (TID 回填、报到、身份、TLS、信号探测).
+///
+/// `deadline` 是整条腿共用的绝对截止时刻 (单调时钟毫秒).
 fn thread_spawn_checks(
     tgid: u64,
     tgid_i64: i64,
     leader_tid: i64,
+    deadline: u64,
 ) -> Result<(), (&'static str, i64)> {
     let mut tids = [0i64; THREAD_COUNT];
     for (idx, stack) in THREAD_STACKS.iter().enumerate() {
@@ -558,10 +606,11 @@ fn thread_spawn_checks(
         if rc <= 0 {
             return Err(("clone", rc));
         }
-        // CLONE_PARENT_SETTID / CLONE_CHILD_SETTID 回填必须与返回值一致.
+        // CLONE_PARENT_SETTID 由内核在父上下文同步回填: clone 返回即必须可见,
+        // 这条判据不依赖新线程是否已拿到 CPU. (CLONE_CHILD_SETTID 按子侧语义
+        // 在报到握手之后校验, 见下方.)
         let parent_tid = i64::from(THREAD_PTID[idx].load(Ordering::Acquire));
-        let child_tid = i64::from(THREAD_TID[idx].load(Ordering::Acquire));
-        if parent_tid != rc || child_tid != rc {
+        if parent_tid != rc {
             return Err(("settid", parent_tid));
         }
         tids[idx] = rc;
@@ -571,15 +620,24 @@ fn thread_spawn_checks(
 
     // 全部线程报到 (父线程被子线程的 futex_wake 唤醒 —— 线程 → 父方向往返).
     let want = u32::try_from(THREAD_COUNT).unwrap_or(u32::MAX);
-    if !futex_wait_until(&THREAD_PROGRESS, |v| v >= want) {
+    if !futex_wait_until(&THREAD_PROGRESS, |v| v >= want, deadline) {
         return Err((
             "progress",
             i64::from(THREAD_PROGRESS.load(Ordering::Acquire)),
         ));
     }
 
-    // 线程侧上报: gettid 与 clone 返回值一致, getpid 恒等于 tgid, TLS 读到自己的块.
+    // 线程侧上报: CHILD_SETTID 回填、gettid 与 clone 返回值一致、getpid 恒等于
+    // tgid、TLS 读到自己的块.
+    //
+    // CHILD_SETTID 按 Linux 语义由子侧在返回用户态前落盘, 故判据放在子线程已
+    // 上核报到之后 —— 父线程的即时读取不再参与这条判据, 两项 SETTID 各成独立
+    // 判据 (任一失败可凭 tag 区分是父侧回填还是子侧回填).
     for (idx, &tid) in tids.iter().enumerate() {
+        let child_tid = i64::from(THREAD_TID[idx].load(Ordering::Acquire));
+        if child_tid != tid {
+            return Err(("child-settid", child_tid));
+        }
         if THREAD_SELF_TID[idx].load(Ordering::Acquire) != tid {
             return Err(("gettid-mismatch", tid));
         }
@@ -606,12 +664,12 @@ fn thread_spawn_checks(
 }
 
 /// 放行全部线程并逐个 join (`CLONE_CHILD_CLEARTID` 写 0 + futex 唤醒).
-fn thread_release_and_join() -> Result<(), (&'static str, i64)> {
+fn thread_release_and_join(deadline: u64) -> Result<(), (&'static str, i64)> {
     let spawned = usize::try_from(THREAD_SPAWNED.load(Ordering::Acquire)).unwrap_or(0);
     THREAD_RELEASE.store(1, Ordering::Release);
     let _ = futex_wake(&THREAD_RELEASE, u32::try_from(spawned).unwrap_or(u32::MAX));
     for slot in THREAD_TID.iter().take(spawned) {
-        if !futex_wait_until(slot, |v| v == 0) {
+        if !futex_wait_until(slot, |v| v == 0, deadline) {
             return Err(("join-timeout", i64::from(slot.load(Ordering::Acquire))));
         }
     }
@@ -649,22 +707,46 @@ fn signal_probe(tgid_i64: i64, tids: &[i64], leader_tid: i64) -> Result<(), (&'s
     Ok(())
 }
 
+/// 单调时钟毫秒读数; `clock_gettime(CLOCK_MONOTONIC)` 失败时返回 `None`.
+fn monotonic_ms() -> Option<u64> {
+    let mut ts = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if clock_gettime(CLOCK_MONOTONIC, &mut ts) != 0 {
+        return None;
+    }
+    let sec = u64::try_from(ts.tv_sec).ok()?;
+    let nsec = u64::try_from(ts.tv_nsec).ok()?;
+    Some(sec.saturating_mul(1_000).saturating_add(nsec / 1_000_000))
+}
+
+/// 以当前单调时刻为起点建立等待截止时刻; 时钟不可用时返回 `None`.
+fn wait_deadline() -> Option<u64> {
+    monotonic_ms().map(|now| now.saturating_add(THREAD_WAIT_BUDGET_MS))
+}
+
 /// 有界等待原子字满足判据: 每轮先 `FUTEX_WAIT` 当前值, 值已变则内核返 `-EAGAIN`
 /// 即刻重判 —— 覆盖"唤醒发生在读取与入睡之间"的竞态, 不空转也不挂死.
-fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool) -> bool {
-    let mut tries = 0u32;
-    while !done(word.load(Ordering::Acquire)) {
-        if tries >= THREAD_RETRY_LIMIT {
+///
+/// 上界是绝对截止时刻而非轮次计数: 轮次与真实耗时在宿主超订下脱钩, 同一计数
+/// 在空载与满载下跨越的时间差几个数量级. 截止时刻与宿主调度速度无关 —— 宿主
+/// 再慢也只是等待变长, 不会让判据提前失效; 时钟读不到时按失败处理 (无法建立
+/// 时间上界, 不伪装成"等到超时").
+fn futex_wait_until(word: &AtomicU32, done: impl Fn(u32) -> bool, deadline: u64) -> bool {
+    loop {
+        if done(word.load(Ordering::Acquire)) {
+            return true;
+        }
+        if monotonic_ms().is_none_or(|now| now >= deadline) {
             return false;
         }
-        tries += 1;
         let cur = word.load(Ordering::Acquire);
         if done(cur) {
             return true;
         }
         let _ = futex_wait(word, cur);
     }
-    true
 }
 
 /// 第 `idx` 个线程的栈顶 (栈向低地址生长, 顶地址即 16 字节对齐的块尾).
@@ -703,7 +785,10 @@ extern "C" fn thread_body(raw_idx: u64) {
     THREAD_PROGRESS.fetch_add(1, Ordering::AcqRel);
     let _ = futex_wake(&THREAD_PROGRESS, 1);
     // 4) 有界等待父线程放行 (父 → 线程方向的 futex 往返).
-    if futex_wait_until(&THREAD_RELEASE, |v| v != 0) {
+    //
+    // 子线程自建截止时刻: 与父线程同一个单调时钟, 但起点是本线程拿到 CPU 的
+    // 时刻 —— 宿主调度慢只会推迟起点, 不会缩短本线程的等待预算.
+    if wait_deadline().is_some_and(|d| futex_wait_until(&THREAD_RELEASE, |v| v != 0, d)) {
         proof |= PROOF_WAKE;
     }
     THREAD_PROOF[idx].store(proof, Ordering::Release);
@@ -711,18 +796,39 @@ extern "C" fn thread_body(raw_idx: u64) {
 
 /// `exit_group` 腿: fork 子进程 → 子进程起一个睡死在 futex 上的 helper →
 /// 子进程组长 `exit_group(7)` → 父进程按 `7 << 8` 收割整个线程组.
-fn group_exit_leg() -> Result<(), (&'static str, i64)> {
+///
+/// 收割按 `WNOHANG` + 1ms 睡眠轮询到整条探针的截止时刻为止: 组退出本身是
+/// 内核路径, 阻塞式 `wait4` 在组内线程异常滞留时会把启动挂死.
+fn group_exit_leg(deadline: u64) -> Result<(), (&'static str, i64)> {
     let child = fork();
     if child == 0 {
-        group_child_body();
+        group_child_body(deadline);
     }
     let Ok(child_pid) = i32::try_from(child) else {
         return Err(("fork-range", -1));
     };
     let mut status = 0i32;
-    let reaped = wait_pid_status(child_pid, &mut status);
-    if reaped != i64::from(child_pid) {
-        return Err(("reap", reaped));
+    loop {
+        let reaped = wait_pid_status_nohang(child_pid, &mut status);
+        if reaped == i64::from(child_pid) {
+            break;
+        }
+        if reaped != 0 {
+            return Err(("reap", reaped));
+        }
+        // 时钟读不到 ≠ 截止到期: 分开报因, 否则失败证据只剩 code=0,
+        // 无法区分"等待超时"与"时间限界失效".
+        let Some(now) = monotonic_ms() else {
+            return Err(("clock-lost", -1));
+        };
+        if now >= deadline {
+            return Err(("reap-timeout", 0));
+        }
+        let pause = Timespec {
+            tv_sec: 0,
+            tv_nsec: 1_000_000,
+        };
+        let _ = nanosleep(&pause);
     }
     if status != GROUP_EXIT_WSTATUS {
         return Err(("group-exit-status", i64::from(status)));
@@ -731,7 +837,7 @@ fn group_exit_leg() -> Result<(), (&'static str, i64)> {
 }
 
 /// 组退出腿的子进程侧 (不返回).
-fn group_child_body() -> ! {
+fn group_child_body(deadline: u64) -> ! {
     let rc = unsafe {
         // SAFETY: helper 栈是子进程私有 BSS 块 (fork 已复制地址空间), 16 字节对齐;
         // 两个 TID 指针指向本进程私有原子槽; `tls = 0` 表示不设新基址 (内核按
@@ -750,7 +856,11 @@ fn group_child_body() -> ! {
         proc_exit(2);
     }
     // 等 helper 真正上核报到 (有界), 确保 exit_group 面对的是一个活着的兄弟线程.
-    let _ = futex_wait_until(&GROUP_HELPER_READY, |v| v != 0);
+    // 报到超时即如实以专属退出码退出: 父进程会在 `group-exit-status` 读到它,
+    // 不必伪装成"组退出失败"而掩盖握手超时本身.
+    if !futex_wait_until(&GROUP_HELPER_READY, |v| v != 0, deadline) {
+        proc_exit(3);
+    }
     exit_group(GROUP_EXIT_CODE);
 }
 
@@ -759,7 +869,12 @@ fn group_child_body() -> ! {
 extern "C" fn group_helper_body(_arg: u64) {
     GROUP_HELPER_READY.store(1, Ordering::Release);
     let _ = futex_wake(&GROUP_HELPER_READY, 1);
-    let _ = futex_wait_until(&GROUP_HOLD, |v| v != 0);
+    // 无超时: 本线程唯一合法的唤醒源是组退出路径; 若在此限时返回, 组退出判据
+    // 就失去"退出时仍有兄弟线程睡在 futex 上"的前提.
+    loop {
+        let cur = GROUP_HOLD.load(Ordering::Acquire);
+        let _ = futex_wait(&GROUP_HOLD, cur);
+    }
 }
 
 // ============================================================
