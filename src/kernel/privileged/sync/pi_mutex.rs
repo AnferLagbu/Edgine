@@ -43,7 +43,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
 
 use crate::privileged::sync::IrqSpinLock;
-#[cfg(debug_assertions)]
+#[cfg(any(debug_assertions, feature = "lockdep"))]
 use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
 
 // ============================================================================
@@ -82,7 +82,7 @@ static PI_MUTEX_HELD: IrqSpinLock<BTreeMap<u32, alloc::vec::Vec<HeldLock>>> =
 /// 类型擦除分派: 经固定布局前缀访问, 强制解锁持锁进程的 PI Mutex。
 ///
 /// `PiMutex<T>` 中 `data` 之前的字段 (`inner`/`holder_base_priority`/`protocol`/
-/// `ceiling`, debug 下含 `lockdep_class`) 布局与 `T` 无关, 因此以 `PiMutex<u8>`
+/// `ceiling`, debug 或 feature="lockdep" 下含 `lockdep_class`) 布局与 `T` 无关, 因此以 `PiMutex<u8>`
 /// 重建引用只触碰前缀字段, 不读取 `data`, 对任意 `T` 布局兼容。
 ///
 /// # Safety
@@ -303,8 +303,8 @@ pub struct PiMutex<T: ?Sized> {
     protocol: PiMutexProtocol,
     /// v2.4: 优先级天花板 (仅 Pcp 模式使用)
     ceiling: AtomicU32,
-    /// Lockdep 锁类 ID (debug 模式下使用)
-    #[cfg(debug_assertions)]
+    /// Lockdep 锁类 ID (debug 或 feature="lockdep" 下使用)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     lockdep_class: LockClassId,
     /// 被保护的数据 (必须为最后一项, 以支持 ?Sized)
     data: UnsafeCell<T>,
@@ -337,13 +337,13 @@ impl<T> PiMutex<T> {
             protocol: PiMutexProtocol::Pi,
             ceiling: AtomicU32::new(0),
             data: UnsafeCell::new(data),
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             lockdep_class: LockClassId::INVALID,
         }
     }
 
     /// 创建命名 `PiMutex` (用于调试 + lockdep)
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     // J-01 (2026-09-08): 删除 unfulfilled doc_markdown expect — 文档已用反引号包裹
     // 标识符, doc_markdown 从不触发, expect 为多余防御 (host-test debug 编译暴露)
     pub fn named(name: &'static str, data: T) -> Self {
@@ -361,8 +361,8 @@ impl<T> PiMutex<T> {
         }
     }
 
-    /// 创建命名 `PiMutex` (release 模式: 忽略名称)
-    #[cfg(not(debug_assertions))]
+    /// 创建命名 `PiMutex` (其余构建: 忽略名称)
+    #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     pub fn named(_name: &'static str, data: T) -> Self {
         Self::new(data)
     }
@@ -398,7 +398,7 @@ impl<T: ?Sized> PiMutex<T> {
     ///
     /// `PiMutex<T: ?Sized>` 是宽指针, 须先转瘦指针 (`*const u8`) 取数据地址再转
     /// `usize`, 与 [`track_hold`] 的登记键同源.
-    #[cfg(debug_assertions)]
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
     fn lockdep_instance(&self) -> usize {
         core::ptr::from_ref::<Self>(self).cast::<u8>() as usize
     }
@@ -454,7 +454,7 @@ impl<T: ?Sized> PiMutex<T> {
             track_hold(self, my_pid);
 
             // Lockdep: 通知锁获取
-            #[cfg(debug_assertions)]
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
             crate::privileged::sync::acquire(
                 self.lockdep_class,
                 self.lockdep_instance(),
@@ -626,7 +626,7 @@ impl<T: ?Sized> PiMutex<T> {
     /// (测试无需完整 lock 循环, 直接 drop 即可触发)
     pub(crate) fn unlock_internal(&self) {
         // Lockdep: 通知锁释放
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance());
 
         let my_pid = current_pid();
@@ -651,7 +651,7 @@ impl<T: ?Sized> PiMutex<T> {
     #[cfg(any(feature = "kernel_test", feature = "host-test"))]
     pub(crate) fn force_unlock(&self) {
         // Lockdep: 通知锁释放
-        #[cfg(debug_assertions)]
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
         crate::privileged::sync::release(self.lockdep_class, self.lockdep_instance());
 
         // 跳过 holder 检查: 静默忽略未持锁情况 (无操作)

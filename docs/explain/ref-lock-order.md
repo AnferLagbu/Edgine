@@ -207,8 +207,11 @@ Lockdep（`privileged/sync/lockdep.rs`）在 `debug_assertions` 或 `feature = "
 - **递归获取**：同一线程对同一锁重复 lock
 - **释放未持有的锁**：unlock 时当前线程并非持有者
 
-Lockdep 类通过 `SpinLock::named()` / `Mutex::named()` / `RwLock::named()` 自动注册，
-无需手动维护锁类 ID。
+Lockdep 类由构造点自动注册，无需手动维护锁类 ID：`SpinLock::named()` / `Mutex::named()` /
+`RwLock::named()` / `PiMutex::named()` 在创建时注册；`IrqSpinLock` 走 const 构造 + 首次
+`lock()` 按名惰性注册（机制 A）。五把锁的门控掩码同为 `any(debug_assertions, feature = "lockdep")`
+——只写 `debug_assertions` 的锁在 release + `KERNEL_FEATURES=lockdep` 构建里会静默不跟踪，
+锁序图缺边（由 `host-tests/tests/lockdep_cfg_mask_test.rs` 拦回归）。
 
 ## 参考
 
