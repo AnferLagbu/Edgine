@@ -265,3 +265,16 @@ K-00 → K-01 → K-02 → K-03a ─┐
   - 描述：`futex_wait` 先无锁读取用户字并与 `val` 比较（[futex.rs:279-287](../../src/kernel/privileged/syscall/futex.rs#L279-L287)），随后才在桶锁内入队（[futex.rs:298-311](../../src/kernel/privileged/syscall/futex.rs#L298-L311)）。若 `futex_wake` 的扫描恰好落在「比较之后、入队之前」，唤醒找不到等待者，入队后的线程会睡在已变化的字上直到下一次有人唤醒——用户态循环的「入睡前重判」覆盖不了这条窗口，因为它发生在内核侧比较与入队之间。K-07a 探针的报到 / 放行 / join / CLEARTID 全链路都走 `FUTEX_WAIT`，该窗口是启动偶发挂死的候选来源之一；用户态墙钟预算只能约束「能返回的等待」，无法打断已入睡的内核阻塞。x86_64 满载复验（16 个宿主自旋 + load 8.5→21.7，8 轮）另抓到一例与 futex 无关的启动挂死（停在 `[SMP] TLB shootdown` 之后、`[THREAD]` 之前），已作为启动偶发挂死样本登记在 [net-e2e-tcp-echo-flakiness.md](./net-e2e-tcp-echo-flakiness.md) P-78（与 `[NET] Step1` 后的静默挂死并列，两者都早于 init，可据此排除本条 futex 窗口）。
   - 方案：把「重新比较用户字 + 入队」收进同一桶锁临界区（对齐 Linux futex 的 `futex_wait_setup` 在 hb 锁内取值），不匹配在锁内直接返 `-EAGAIN`；同时评估为 `FUTEX_WAIT_BITSET` 接入超时（当前 `_timeout` 被显式忽略，[futex.rs:271](../../src/kernel/privileged/syscall/futex.rs#L271)），使用户态截止时刻也能约束已入睡的阻塞。修复前由 `scripts/thread_stress_test.sh` 多轮压力与门禁取证腿观察该窗口的命中率。
   - 状态：[]
+
+### 8.1 处置裁定
+
+| 缺口 | 裁定 |
+|---|---|
+| A-1 / A-2 | 合并取口径甲：调用点 `any(debug_assertions, feature = "lockdep")`，`lockdep` 进默认 features ⇒ 默认全构建常开，仅 `--no-default-features` 可关。 |
+| A-3 | 甲：建立机器可读锁类序表 + 静态环检测，接入门禁。 |
+| A-4 | 甲：debug 期内存序断言 hook + host 模型测试；无法自动化处登记覆盖边界。 |
+| A-7 | 原地重新设计并完整化：保留 API；单状态锁收敛、退出释放前移到线程 exit、`try_lock` 失败零副作用、自旋改调度阻塞等待、捐赠接入 EEVDF 权重链（`nice` / `cfs_weight`）。 |
+| A-8 | 甲：`Process::drop` 为 cr3 唯一减计点，删除镜像 `destroy` 的 cr3 分支，补 host 帧计数负控制。 |
+| A-9 | 甲：镜像 `destroy` 与 `alloc_user_process` 配对释放，与 A-8 同批。 |
+| A-10 | 甲：`UserFrame` 抽象统一，svc 返回与 IRQ 出口两路径同批，aarch64 `SignalFrame` + `rt_sigreturn`。 |
+| A-11 | 甲：桶内 `seq` 快照 + 入队前复查关闭丢唤醒窗口（避开持锁读用户页的缺页风险），再接 `WAIT_BITSET` 绝对超时 + 确定性复现用例。 |
