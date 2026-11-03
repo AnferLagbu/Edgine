@@ -363,8 +363,9 @@ impl DevfsData {
                 crate::functions::intcast::low_i32_from_usize(buf.len())
             }
             Some(DevKind::Console | DevKind::Tty) => {
-                // functions 层不能使用 klog_info! (含 unsafe), 改用 safe 串口输出
-                crate::privileged::klog::serial_write_bytes(buf);
+                // functions 层不能使用 klog_info! (含 unsafe), 改走 safe 的控制台写出单点
+                // (持 LOG_EMIT_LOCK 的行原子写出, 不与内核日志互相插行)
+                crate::privileged::klog::console_write_bytes(buf);
                 crate::functions::intcast::low_i32_from_usize(buf.len())
             }
             Some(DevKind::Sgeg) => {

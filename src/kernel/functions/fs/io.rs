@@ -173,7 +173,7 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
                 chunk,
             ) {
                 Ok(n) if n > 0 => {
-                    crate::privileged::klog::serial_write_bytes(&kernel_buf[..n]);
+                    crate::privileged::klog::console_write_bytes(&kernel_buf[..n]);
                     off += n;
                 }
                 _ => return Err(Errno::Efault),

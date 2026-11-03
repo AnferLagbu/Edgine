@@ -1,10 +1,28 @@
 /// 控制台 I/O
 use crate::sys;
 
+/// 整行单次写出的正文上限 (字节).
+///
+/// 与内核侧 `klog::CONSOLE_EMIT_MAX` (256) 对齐: 正文 + `\n` 不超过一次内核控制台
+/// 写出分块, 才能落在同一个持锁段里.
+const PRINT_LINE_MAX: usize = 255;
+
 pub fn print(s: &str) {
     let _ = sys::fs_write(1, s.as_bytes());
 }
 pub fn println(s: &str) {
+    // 整行单次 write: 正文与换行分两次 write 会在段间给别的写者留缝 (内核控制台写出
+    // 已收为行原子单点, 见 `privileged::klog::console_write_bytes`).
+    let bytes = s.as_bytes();
+    if bytes.len() <= PRINT_LINE_MAX {
+        let mut buf = [0u8; PRINT_LINE_MAX + 1];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        buf[bytes.len()] = b'\n';
+        let _ = sys::fs_write(1, &buf[..=bytes.len()]);
+        return;
+    }
+    // SIMPLIFIED: 超上限的行退回两次 write; 影响面 = 这类极长行仍可能在切段处被插入;
+    // 需要任意长度整段原子时改走内核侧行缓冲.
     print(s);
     print("\n");
 }

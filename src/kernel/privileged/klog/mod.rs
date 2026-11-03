@@ -252,6 +252,10 @@ fn serial_newline() {
 }
 
 /// 向串口逐字节写出数据, 将换行符转换为 `\r\n`.
+///
+/// **这是不带跨核独占的写出原语**: 只允许在 `LOG_EMIT_LOCK` 临界区内 (sink 广播) 或
+/// 有意不取锁的路径 (panic / early boot) 调用. 一般的控制台写者请用
+/// [`console_write_bytes`].
 pub fn serial_write_bytes(data: &[u8]) {
     for &byte in data {
         if byte == b'\n' {
@@ -260,6 +264,60 @@ pub fn serial_write_bytes(data: &[u8]) {
             serial_putc_chained(byte);
         }
     }
+}
+
+/// 控制台写出单点的段长上限: 一次持锁写出的字节数上界.
+///
+/// 串口是逐字节忙等 (`serial_putc` 轮询 TX 空闲), 持锁时长与本段写出字节数成正比;
+/// 换行按 `\r\n` 展开 ⇒ 256 输入字节最坏写出 512 字节 (@115200 ≈ 44ms, 每段一个换行
+/// 时 ≈ 22ms)。封顶让「本核 IRQ 被屏蔽 + 其余核自旋等同锁」的最坏时长有界.
+pub const CONSOLE_EMIT_MAX: usize = 256;
+
+/// 控制台字节流的**行原子**写出单点.
+///
+/// 为什么需要它: `serial_write_bytes` 直写设备且不经 `LOG_EMIT_LOCK`, 而 klog 的整行
+/// 发射在锁内 —— 两条路径并发时, 内核日志的字节流会从用户写出的中间穿过. 实测把
+/// `[TLS] PASS: …` 切成 `[TLS] PASS:0.17… [KE …RN] [SMP] …`, 使 QEMU 门禁的整行字面
+/// 匹配假阴性. 本函数把所有控制台写者收到与 klog 同一把锁上.
+///
+/// 语义: 按 `\n` 边界切段 (段含其换行符), 每段一次持锁整体写出; 无换行且超
+/// `CONSOLE_EMIT_MAX` 的段在封顶处再切. 于是一条不超上限的行不可能被插入.
+///
+/// 有意留在锁外的调用方 (改之即自锁死, `LOG_EMIT_LOCK` 不可重入):
+/// - [`serial_write_bytes`] 自身 —— 它是 `SerialSink` 与 klog 临界区内的写出原语;
+/// - `src/kernel/lib.rs` 的 panic 路径与 early boot (SMP AP 上线 / NUMA / cgroup /
+///   session init) —— panic 可能正发生在持锁期间, 取锁会自旋不返.
+// SIMPLIFIED: 行原子只在段长上限内成立; 跨调用边界或超上限的长行仍可能在切段处被插入,
+// 且用户控制台写出不进 `RING` 与 sink 广播 (与历史口径一致); 需要整块任意长度原子或
+// 让 `/proc/klog` 也读到用户写出时再扩展.
+pub fn console_write_bytes(data: &[u8]) {
+    #[cfg(feature = "host-test")]
+    {
+        // host 下无并发串口, 且 LOG_EMIT_LOCK 不存在 (与 klog_output 的 no-op 同口径).
+        serial_write_bytes(data);
+    }
+    #[cfg(not(feature = "host-test"))]
+    {
+        let mut rest = data;
+        while !rest.is_empty() {
+            let cut = console_emit_segment_len(rest);
+            let (segment, tail) = rest.split_at(cut);
+            let emit = LOG_EMIT_LOCK.lock();
+            serial_write_bytes(segment);
+            drop(emit);
+            rest = tail;
+        }
+    }
+}
+
+/// 求下一段长度: 首个换行符之后 (含换行), 与 [`CONSOLE_EMIT_MAX`] 取小.
+#[cfg(not(feature = "host-test"))]
+fn console_emit_segment_len(data: &[u8]) -> usize {
+    let line_end = data
+        .iter()
+        .position(|&b| b == b'\n')
+        .map_or(data.len(), |idx| idx + 1);
+    line_end.min(CONSOLE_EMIT_MAX)
 }
 
 // ============================================================================
