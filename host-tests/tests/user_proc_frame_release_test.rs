@@ -20,8 +20,14 @@
 //!    新进程 PML4 ⇒ 页表帧被当数据页覆写 = 形态 A; 跨核踩内核栈 = 形态 B).
 //!
 //! 本文件锁死"用户页帧归还只有一条路径"这一责任分离, 并覆盖同一 bug 类的四处
-//! 实例 (`destroy` / `replace_user_space` / `create` 回滚 / ELF 加载回滚), 以及
-//! 让三元组能点名双方的**归因穿透**约束 (Rust 侧不得再经 `extern "C"` 调 PMM).
+//! 实例 (`replace_user_space` / `create` 回滚 / ELF 加载回滚, 以及镜像销毁侧的
+//! 禁止形态), 以及让三元组能点名双方的**归因穿透**约束 (Rust 侧不得再经
+//! `extern "C"` 调 PMM).
+//!
+//! A-8 后 cr3 的减计与销毁**只在** `Process::drop`: 镜像 destroy 与它各减一次
+//! 会在两次调用之间让帧被重新分配, 第二次递减抹掉新持有者的计数并误销毁在用
+//! 页表. 因此镜像 destroy 从"必须带归零门"翻转为"不得触碰 cr3", 由
+//! `process_drop_is_the_only_cr3_release_gate` 与负控制共同锁定.
 //!
 //! 删除平行归还后新暴露的一个对偶缺陷一并锁住: 装配失败的回滚原本经 `destroy`
 //! 的 `is_exited()` 门, 而 `create()` 把状态置 `Ready` ⇒ 回滚是**静默空操作**
@@ -37,6 +43,7 @@
 use std::fs;
 
 const USER_PROC_RS: &str = "../src/kernel/privileged/proc/user_proc.rs";
+const PROCESS_RS: &str = "../src/kernel/privileged/proc/process.rs";
 const VMM_X86_RS: &str = "../src/kernel/privileged/mm/vmm_x86_64.rs";
 const MEM_ALLOC_RS: &str = "../src/kernel/memory_allocator.rs";
 
@@ -123,6 +130,16 @@ fn cr3_release_is_gated(body: &str) -> bool {
     body.contains(".frame_dec(") && body.contains("destroy_user_page_table(")
 }
 
+/// A-8: 镜像 destroy 不得触碰 cr3 (`Process::drop` 是销毁路径唯一减计点).
+fn no_cr3_teardown(body: &str) -> bool {
+    !body.contains(".frame_dec(") && !body.contains("destroy_user_page_table(")
+}
+
+/// `Process::drop` 的 cr3 归还: 归零门 + vmm 层销毁 (权威对象的唯一减计点).
+fn process_drop_releases_cr3_gated(body: &str) -> bool {
+    body.contains(".frame_dec(") && body.contains("vmm_destroy_page_table(")
+}
+
 /// `create` 回滚只归还未映射的 guard 尾页 (偏移 `USER_STACK_SIZE` 之后).
 fn create_rollback_releases_only_unmapped_guard(body: &str) -> bool {
     count(body, "free_phys_page(") == 1 && body.contains("stack_pages as u64 + USER_STACK_SIZE")
@@ -177,8 +194,20 @@ fn destroy_has_no_parallel_user_stack_release() {
         "destroy() 不应再读取用户栈区间 (旧 pre-free 循环的判据字段)"
     );
     assert!(
-        cr3_release_is_gated(&body),
-        "destroy() 的 cr3 销毁必须由 frame_dec 归零门把关 (CLONE_VM / execve 共享)"
+        no_cr3_teardown(&body),
+        "A-8: 镜像 destroy 不得对 cr3 减计/拆表 — Process::drop 是唯一减计点, \
+         两次递减会在帧重分配后抹掉新持有者的计数"
+    );
+}
+
+#[test]
+fn process_drop_is_the_only_cr3_release_gate() {
+    let src = read(PROCESS_RS);
+    let prod = prod_code(&src);
+    let body = item_from(&prod, "impl Drop for Process {");
+    assert!(
+        process_drop_releases_cr3_gated(&body),
+        "Process::drop 必须保留 frame_dec 归零门 + vmm 销毁: 销毁路径的唯一 cr3 减计点 (A-8)"
     );
 }
 
@@ -232,7 +261,7 @@ fn elf_load_rollback_has_no_per_page_release() {
 fn unrun_rollback_marks_zombie_then_uses_authoritative_teardown() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
-    let body = item_from(&prod, "fn rollback_unrun_process(");
+    let body = item_from(&prod, "fn discard_unrun_process(");
     assert!(
         rollback_is_gated_then_single_source(&body),
         "回滚必须先标 Zombie (否则 destroy 的 is_exited 门静默返回 = 全量泄漏), \
@@ -253,7 +282,7 @@ fn elf_load_rollback_routes_every_failure_site_to_single_source() {
     // 装载失败点已收口为 `load_elf_segments` 的 `None` 返回, 由调用方唯一一处判据统一
     // 路由到回滚入口 —— 单路由 + 失败点逐个 `return None` 比逐点重复调用更强.
     assert_eq!(
-        count(&body, "Self::rollback_unrun_process(proc_ref)"),
+        count(&body, "Self::discard_unrun_process(proc_ref)"),
         1,
         "load_elf_from_memory 必须把装载失败统一路由到回滚入口"
     );
@@ -359,6 +388,26 @@ fn assert_pre_free_loop_rejected() {
         !regressed_destroy.contains(".frame_dec("),
         "负控制失效: 样本本身就没有计数门, 却未被 cr3_release_is_gated 拒掉"
     );
+    assert!(
+        !no_cr3_teardown(regressed_destroy),
+        "负控制失效: 镜像侧销毁 cr3 的样本未被 A-8 谓词拒掉"
+    );
+
+    // A-8 回归样本原样: 镜像 destroy 对 cr3 再减一次并拆表 (与 Process::drop 重复).
+    let regressed_mirror_cr3 = "\
+    fn destroy(&self, proc: NonNull<UserProcess>) {
+        let cr3 = proc_ref.load_cr3();
+        if cr3 != 0 && get_pmm().frame_dec(PhysAddr(cr3)) {
+            raw::destroy_user_page_table(cr3);
+        }
+        let pid = proc_ref.pid();
+        self.processes.lock().remove(&pid);
+    }
+";
+    assert!(
+        !no_cr3_teardown(regressed_mirror_cr3),
+        "负控制失效: A-8 的镜像侧二次减计样本未被识别"
+    );
 }
 
 fn assert_rollback_degradations_rejected() {
@@ -430,7 +479,7 @@ unsafe extern \"C\" {
 fn assert_gated_single_source_rollback_rejected() {
     // 回滚缺状态标记 (P-16 的原始缺陷形状): 直接调单源, 被 is_exited 门拒掉.
     let regressed_no_state = "\
-    fn rollback_unrun_process(proc_ref: &UserProcRef) {
+    fn discard_unrun_process(proc_ref: &UserProcRef) {
         let pid = proc_ref.pid();
         PROCESS_TABLE.remove_and_free(pid);
     }
@@ -442,7 +491,7 @@ fn assert_gated_single_source_rollback_rejected() {
 
     // 回滚就地手抄归还 (造出第四份平行实现的形状).
     let regressed_hand_rolled = "\
-    fn rollback_unrun_process(proc_ref: &UserProcRef) {
+    fn discard_unrun_process(proc_ref: &UserProcRef) {
         proc_ref.store_state(ProcessState::Zombie as u32);
         raw::destroy_user_page_table(proc_ref.load_cr3());
         raw::free_phys_page(proc_ref.load_user_stack() as *mut u8);

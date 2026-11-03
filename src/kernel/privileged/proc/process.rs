@@ -864,6 +864,9 @@ impl Drop for Process {
     fn drop(&mut self) {
         let cr3 = self.cr3.load(Ordering::SeqCst);
         if cr3 != 0 {
+            // A-8: 这是销毁路径**唯一**的 cr3 减计点 —— UserProc 镜像 destroy
+            // 不再对 cr3 减计; 两处各减一次会在两次调用之间让帧被重新分配,
+            // 第二次递减抹掉新持有者的计数并误销毁在用页表.
             // 计数归零才销毁: cr3 可能仍被 CLONE_VM 的兄弟进程持有, 无条件销毁
             // 会使对方在用的页表被回收 (UAF). `frame_dec` 对未计数帧 (计数 0)
             // 返回 false, 同时防止同一 PML4 被二次销毁.
@@ -1045,9 +1048,9 @@ impl ProcessTable {
             if prev == 0 {
                 table[pid as usize] = None;
                 drop(table);
-                // 回收 UserProc 镜像记录 — 必须先于 Process 析构: 镜像 destroy
-                // 经 cr3 翻译用户栈/释放页表, 而 Process::drop 会销毁该页表
-                // (INV-USER-PROC #2: 镜像须先于权威 Process 被移除).
+                // 回收 UserProc 镜像记录 — 必须先于 Process 析构: 镜像持有指向
+                // 本 PCB 的非拥有句柄, 镜像必须先于权威对象消失
+                // (INV-USER-PROC #2). cr3 减计/销毁只在下面的 Process::drop (A-8).
                 crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
                 // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
                 unsafe {
@@ -1088,7 +1091,7 @@ impl ProcessTable {
                 table[pid as usize] = None;
                 drop(table);
                 // 回收 UserProc 镜像记录 (延迟释放分支): 同 remove_and_free,
-                // 必须在 Process 析构 (销毁页表) 之前移除镜像.
+                // 镜像必须先于权威 PCB 析构 (INV-USER-PROC #2).
                 crate::privileged::proc::user_proc::USER_PROC_MANAGER.destroy_by_pid(pid);
                 // SAFETY: nn 由 Box::into_raw 分配, 且我们持有唯一引用 (ref_count 归零).
                 unsafe {

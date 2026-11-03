@@ -757,6 +757,18 @@ impl UserProcManager {
     /// 初始化占位 (`const` 构造已完成全部初始化, 此处无额外动作)
     pub fn init() {}
 
+    /// 销毁已退出进程的镜像记录: 摘除索引并归还 `UserProcess` 分配.
+    ///
+    /// 本函数**不触碰地址空间与内核栈** — 两者所有权都归权威 `Process`:
+    ///
+    /// - cr3 的减计与销毁只在 `Process::drop` (A-8). 镜像字段是非拥有句柄,
+    ///   这里再减一次会与 `drop` 争同一计数槽: 两次调用之间该帧可被其他核
+    ///   重新分配, 第二次递减把新持有者的计数抹到 0 并销毁其在用页表.
+    /// - 用户栈物理页由 `destroy_page_table` 拆表时逐 USER leaf 走 `frame_dec`
+    ///   归零门 + 延迟释放 (`vmm_x86_64.rs`), 内核栈由 `Process::drop` 按分配时
+    ///   记录的页数单点归还 (线程 TCB 没有镜像, 镜像路径无法覆盖).
+    ///
+    /// 用户帧归还的取证与回归锁见 `host-tests/tests/user_proc_frame_release_test.rs`.
     fn destroy(&self, proc: NonNull<UserProcess>) {
         // SAFETY: proc 是 NonNull<UserProcess>, 由 kmalloc 分配并插入
         // BTreeMap, 在 destroy 前始终有效.
@@ -767,34 +779,21 @@ impl UserProcManager {
             return;
         }
 
-        let cr3 = proc_ref.load_cr3();
-
-        // 用户栈物理页**不在此处释放**: 拆除地址空间时 `destroy_page_table` 已逐
-        // leaf 走 `frame_dec` 归零门 + 延迟释放 (见 vmm_x86_64.rs 的 USER leaf 处理).
-        // 此处再按固定栈区间逐个 `pmm_free_page` 是同一释放的第二份平行实现, 且
-        // 绕过了两道防线:
-        //   1) 持有计数 —— fork/COW 共享页被提前还回 PMM, 兄弟进程仍在用;
-        //   2) TLB 追平 —— 他核陈旧映射即刻可命中被重分配的帧.
-        // 二者叠加即表现为 `[PMM] Warn: double free` 与页表帧被当数据页覆写后
-        // 的启动挂死 / 内核态 #GP (取证三元组: first_retire = this_free =
-        // `mm/api.rs` 的 `pmm_free_page`, 即本循环与销毁路径争同一帧).
-        // 旧注释担心的"页表销毁后无法翻译虚拟地址"不成立: 归还物理帧不需要翻译,
-        // 而需要翻译的逐 leaf 遍历已由 destroy_page_table 在拆表时一并完成.
-
-        // 计数归零才销毁: cr3 可能被 CLONE_VM 兄弟进程共享, 或已被 execve
-        // 转移给其他进程 (转移时源已清空, 见 proc_ops::proc_exec_replace).
-        if cr3 != 0
-            && crate::privileged::mm::pmm::get_pmm().frame_dec(crate::privileged::mm::PhysAddr(cr3))
-        {
-            raw::destroy_user_page_table(cr3);
-        }
-        // K-06: 内核栈不在此处释放 — 所有权归权威 `Process`, 由其 `Drop` 按
-        // 分配时记录的页数单点归还 (线程 TCB 没有镜像, 镜像路径无法覆盖).
+        // A-9: 摘表与释放镜像分配配对. 先摘表 (持锁) 再释放: 摘除后不存在新的
+        // 持有者, 释放早于上游 `Box::from_raw(Process)` —— 镜像先于权威对象
+        // 消失 (INV-USER-PROC #2), 镜像字段为非拥有句柄, 释放不触发析构.
         let pid = proc_ref.pid();
-        self.processes.lock().remove(&pid);
+        let removed = self.processes.lock().remove(&pid).is_some();
+        if removed {
+            // SAFETY: proc 由 alloc_user_process 分配且由 BTreeMap 条目唯一持有;
+            // 条目已摘除, 本函数不再解引用 proc_ref.
+            unsafe {
+                raw::free_user_process(proc.as_ptr());
+            }
+        }
     }
 
-    /// 装配失败的回滚: 先如实标记终止状态, 再交给权威销毁单源.
+    /// 丢弃一个**从未运行**的进程: 先如实标记终止状态, 再交给权威销毁单源.
     ///
     /// `create()` 完成两张表注册时把状态置 `Ready`, 而 [`Self::destroy`] 的门是
     /// `is_exited()` (仅 `Zombie` / `Terminated` 放行)。未曾运行即失败的进程直接
@@ -808,12 +807,31 @@ impl UserProcManager {
     /// 通知 + 引用递减 + 镜像 destroy + `Box::from_raw` + PID 回收)。在这里
     /// 重抄一遍归还顺序等于再造一份平行实现 —— 正是本轮 `destroy` 旧用户栈
     /// pre-free 循环造成 double free 的形状。
-    fn rollback_unrun_process(proc_ref: UserProcRef) {
+    fn discard_unrun_process(proc_ref: UserProcRef) {
         let pid = proc_ref.pid();
         // 状态写入经 `store_state` 委托到权威 `Process::state` (见上方访问器),
         // 不存在镜像与权威两份状态分裂。
         proc_ref.store_state(crate::privileged::proc::types::ProcessState::Zombie as u32);
         PROCESS_TABLE.remove_and_free(pid);
+    }
+
+    /// 丢弃指定 PID 的**从未运行**进程 (装配失败回滚 / exec 交接后的临时进程).
+    ///
+    /// 与 `destroy_by_pid` 的区别: 后者只接受已退出进程 (`Zombie` /
+    /// `Terminated`), 对 `Ready` 状态静默返回; 本入口把状态改写为真实语义
+    /// (已终止且从未运行) 后走同一销毁单源, 因此镜像条目与 PCB 都必然回收.
+    pub fn discard_unrun(&self, pid: u32) {
+        // 取句柄与销毁分独立语句: guard 随本语句结束释放, `remove_and_free`
+        // 下游的 `destroy` 会重取同一把锁, 写在 `if let` scrutinee 中会自锁死.
+        let proc = self.processes.lock().get(&pid).copied();
+        if let Some(proc) = proc {
+            // SAFETY: proc 来自 BTreeMap, 在 `remove_and_free` 释放前有效.
+            let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc.as_ptr()) };
+            Self::discard_unrun_process(proc_ref);
+        } else {
+            // 镜像缺失 (线程 TCB 无镜像 / 已被摘除): 仍须回收权威 PCB.
+            PROCESS_TABLE.remove_and_free(pid);
+        }
     }
 
     /// 获取进程裸指针 (向后兼容接口)。
@@ -902,16 +920,17 @@ impl UserProcManager {
         // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc.as_ptr()) };
 
-        // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享)
+        // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享).
+        //    exec 下权威 `Process` 存活且 cr3 字段即将被新值覆盖, 其 `Drop` 只会
+        //    看到新表 —— 旧表的这次减计是本进程所持引用的唯一注销点 (镜像
+        //    destroy 不再减计, 见 A-8). 旧用户栈物理页由 `destroy_page_table`
+        //    按 leaf 归还 (单一实现 + 计数门 + 延迟释放).
         let old_cr3 = proc_ref.load_cr3();
-        if old_cr3 != 0 {
-            // 旧用户栈物理页同样由 `destroy_page_table` 按 leaf 归还 (单一实现 +
-            // 计数门 + 延迟释放), 理由见 `destroy()` 内同处注释.
-            if crate::privileged::mm::pmm::get_pmm()
+        if old_cr3 != 0
+            && crate::privileged::mm::pmm::get_pmm()
                 .frame_dec(crate::privileged::mm::PhysAddr(old_cr3))
-            {
-                raw::destroy_user_page_table(old_cr3);
-            }
+        {
+            raw::destroy_user_page_table(old_cr3);
         }
 
         // 2. 更新为新的地址空间 (UserProcRef 已委托到 Process, 无需重复写入)
@@ -920,12 +939,6 @@ impl UserProcManager {
         proc_ref.store_user_stack(new_user_stack);
         proc_ref.store_stack_bottom(new_stack_bottom);
         true
-    }
-
-    /// 从管理器中移除进程索引但不释放任何资源.
-    /// 用于 execve: 新进程资源已转移到旧 PID, 仅需移除索引条目.
-    pub fn detach_by_pid(&self, pid: u32) {
-        self.processes.lock().remove(&pid);
     }
 
     /// 按 `info` 创建用户进程 (分配 PID / 页表 / 内核栈), 失败返回 `None`
@@ -1943,7 +1956,7 @@ impl UserProcManager {
             let cr3 = proc_ref.load_cr3();
 
             if Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3).is_none() {
-                Self::rollback_unrun_process(proc_ref);
+                Self::discard_unrun_process(proc_ref);
                 return -1;
             }
 
@@ -2036,7 +2049,7 @@ impl UserProcManager {
                         // `alloc_zeroed_user_page` 映射进 cr3, 所有权属地址空间;
                         // `allocated_pages` 里还混有复用的既有页 (`existing_phys`),
                         // 逐个 free 会把别人在用的帧抽走. 真正的释放路径是调用方
-                        // 的 `rollback_unrun_process` —— 它把状态标为 `Zombie` 后
+                        // 的 `discard_unrun_process` —— 它把状态标为 `Zombie` 后
                         // 经权威销毁单源走到 `destroy_user_page_table` 的 USER leaf 处理.
                         return None;
                     }

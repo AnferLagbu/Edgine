@@ -670,8 +670,7 @@ pub extern "C" fn proc_exec_replace(
         .flatten();
 
     let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom)) = new_addr_space else {
-        USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
-        PROCESS_TABLE.remove_and_free(new_pid_u32);
+        USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;
     };
 
@@ -701,8 +700,7 @@ pub extern "C" fn proc_exec_replace(
     // 必须在换页表前完成: 兄弟线程仍在旧地址空间执行, 换表后它们会以旧上下文
     // 落入新映像. 失败 (调用线程已不在表中) 时临时进程照常回滚.
     if !exec_de_thread(current_pid) {
-        USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
-        PROCESS_TABLE.remove_and_free(new_pid_u32);
+        USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;
     }
 
@@ -722,8 +720,7 @@ pub extern "C" fn proc_exec_replace(
         new_user_stack,
         new_stack_bottom,
     ) {
-        USER_PROC_MANAGER.destroy_by_pid(new_pid_u32);
-        PROCESS_TABLE.remove_and_free(new_pid_u32);
+        USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;
     }
 
@@ -731,9 +728,10 @@ pub extern "C" fn proc_exec_replace(
     // G3 修复: 新地址空间已转移给当前进程 (所有权随 cr3 移动, 不重新计数),
     // 临时进程必须先清空其 cr3, 否则其 Process::drop 会对同一 PML4 计数减到
     // 归零并销毁当前进程正在使用的页表 (UAF).
+    // 临时进程从未运行, 与装配失败回滚同走 `discard_unrun` 销毁单源:
+    // 写 Zombie → 镜像摘除并归还分配 → PCB 释放 → PID 回收.
     PROCESS_TABLE.with_process(new_pid_u32, |p| p.cr3.store(0, Ordering::SeqCst));
-    USER_PROC_MANAGER.detach_by_pid(new_pid_u32);
-    PROCESS_TABLE.remove_and_free(new_pid_u32);
+    USER_PROC_MANAGER.discard_unrun(new_pid_u32);
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)
     //

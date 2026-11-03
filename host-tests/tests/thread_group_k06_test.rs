@@ -20,8 +20,9 @@
 //! - `exit_group` 与 `clone` 并发: 入组与退出请求在成员表锁内互斥, 快照漏掉的
 //!   线程入队前自挂 SIGKILL, 登记前失败路径归还 PID 槽位.
 //!
-//! 镜像 `destroy` 与 `Process::drop` 对同一 cr3 的重复 `frame_dec` 是本阶段发现的
-//! 预存问题 (§11.5), 不在本文件锁定范围.
+//! 镜像 `destroy` 与 `Process::drop` 对同一 cr3 的重复 `frame_dec` 是 K-06 阶段
+//! 发现的预存问题 (§11.5), 已由 A-8 收口 (`Process::drop` 唯一减计点); 回归锁见
+//! `user_proc_reclaim_contract_test.rs` 与 `user_proc_frame_release_test.rs`.
 
 use std::fs;
 use std::path::PathBuf;
