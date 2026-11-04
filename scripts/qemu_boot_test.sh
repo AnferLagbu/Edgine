@@ -672,6 +672,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # A-14 乙: execve 探针在无载体启动下必须是显式第三态. 默认根是空 ramfs,
+            # /bin/exectest 只来自 initramfs cpio ⇒ 探针自检载体后打印 `[EXEC] SKIP:`
+            # 并跳过两腿. SKIP 缺失 = 探针跑回 FAIL 或 init 未走到该段; FAIL 出现 =
+            # 载体自检失效 (无载体下两腿按设计不可能成功). 两者都判红 (fail-closed).
+            # -a: 日志可能被串口并发写插入 NUL, 按文本处理以免误判二进制.
+            if grep -aq "\[EXEC\] SKIP:" "$X64_LOG" && ! grep -aq "\[EXEC\] FAIL" "$X64_LOG"; then
+                ok "[x86_64] execve 探针无载体呈显式 SKIP 且无 FAIL 噪声 (A-14)"
+            else
+                warn "[x86_64] execve 探针未呈现无载体第三态 (A-14)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
             # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
             # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
@@ -866,6 +877,14 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] EEVDF 观测快照导出且账目守恒 (K-07b 批3)"
             else
                 warn "[aarch64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # A-14 乙: execve 探针的无载体第三态 (与 x86_64 分支同断言).
+            # 载体自检链路与架构无关, 故两架构的读数逐字相同 (取证见 A-14 详情).
+            if grep -aq "\[EXEC\] SKIP:" "$A64_LOG" && ! grep -aq "\[EXEC\] FAIL" "$A64_LOG"; then
+                ok "[aarch64] execve 探针无载体呈显式 SKIP 且无 FAIL 噪声 (A-14)"
+            else
+                warn "[aarch64] execve 探针未呈现无载体第三态 (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).

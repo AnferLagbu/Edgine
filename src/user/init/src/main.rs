@@ -8,12 +8,13 @@ use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use userlib::sys::{
     AF_INET, ARCH_GET_FS, ARCH_SET_FS, CLOCK_MONOTONIC, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
     CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD,
-    CLONE_VM, IPPROTO_TCP, InAddr, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET,
-    SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime, clone_thread,
-    close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_read, fs_write, futex_wait,
-    futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep,
-    pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot, sched_yield, send,
-    setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status, wait_pid_status_nohang,
+    CLONE_VM, IPPROTO_TCP, InAddr, O_RDONLY, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM,
+    SOL_SOCKET, SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime,
+    clone_thread, close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_open,
+    fs_read, fs_write, futex_wait, futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill,
+    listen, nanosleep, pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot,
+    sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
+    wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -1088,7 +1089,15 @@ const EXEC_LEG_ROOT: &[u8] = b"root";
 ///
 /// 任一腿失败打印 `[EXEC] FAIL` 并继续启动 (与网络探针同口径), 两条腿全过才
 /// 打印 `[EXEC] PASS`.
+///
+/// A-14: 两腿的靶子 `/bin/exectest` 只来自 initramfs cpio, 默认启动的根是空
+/// ramfs ⇒ 无载体时按设计不可能成功. 故先自检载体, 无载体打印 `[EXEC] SKIP:
+/// no carrier` 并跳过两腿 —— 否则三行「预期失败」与真回归在日志里同形.
 fn exec_probe() {
+    if !carrier_present() {
+        println("[EXEC] SKIP: no carrier");
+        return;
+    }
     let cwd_ok = exec_leg(EXEC_LEG_CWD);
     let root_ok = exec_leg(EXEC_LEG_ROOT);
     if cwd_ok && root_ok {
@@ -1100,6 +1109,22 @@ fn exec_probe() {
         print_dec(i64::from(root_ok));
         print_char(b'\n');
     }
+}
+
+/// 载体自检: 两腿最终解析到的都是真实路径 `/bin/exectest`, 该文件在不在即可
+/// 判定载体 (`feature = "initramfs"` 解包) 是否就位. 用 `open` 而非 `stat` ——
+/// 用户态没有 stat 包装, 且 `open` 走的正是两腿要验证的那套路径解析.
+///
+/// SIMPLIFIED: 只判能否打开, 不校验常规文件位与 x 位; 影响面: 载体存在但权限
+/// 坏时本函数判「有载体」, 两腿照样打印 `[EXEC] FAIL` (失败信号仍会暴露);
+/// 何时需扩展: 需要区分 ENOENT 与 EACCES 两类载体故障时给用户态补 stat 包装.
+fn carrier_present() -> bool {
+    let fd = fs_open(b"/bin/exectest\0", O_RDONLY, 0);
+    if fd < 0 {
+        return false;
+    }
+    let _ = fs_close(fd);
+    true
 }
 
 /// 单腿: fork → 子进程切换 FS 视图并 exec → 父进程收割按 `wstatus` 判定.

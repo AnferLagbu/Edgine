@@ -16,8 +16,10 @@
 //!    则归档里的 0755 丢失, execve 的 x 位判定会 EACCES. 现解包按 `entry.mode`
 //!    回写, exec 判定要求常规文件至少一位 x (Linux 对 root 也不放宽).
 //!
-//! 真跑判据在专项 feature 腿 (`scripts/initramfs_boot_test.sh`): 默认构建不含
-//! 载体, `[EXEC]` 探针按网络探针同口径打印 FAIL 并继续启动.
+//! 真跑判据分两条腿: 载体腿 (`scripts/initramfs_boot_test.sh`) 要求 `[EXEC] PASS`
+//! 且无 `[EXEC] FAIL`; 默认构建 (空 ramfs、无 cpio 解包) 由 `scripts/qemu_boot_test.sh`
+//! 要求 `[EXEC] SKIP: no carrier` 且无 `[EXEC] FAIL` —— A-14 把「无载体」钉成显式
+//! 第三态, 预期失败不再与真回归在日志里同形.
 
 use std::fs;
 use std::path::PathBuf;
@@ -34,7 +36,9 @@ const USER_CARGO: &str = "src/user/Cargo.toml";
 const CPIO_PY: &str = "scripts/make_initramfs_cpio.py";
 const MAKEFILE: &str = "Makefile";
 const BOOT_SH: &str = "scripts/initramfs_boot_test.sh";
+const QEMU_BOOT_SH: &str = "scripts/qemu_boot_test.sh";
 const VFS_PATH_RS: &str = "src/kernel/functions/fs/vfs_path.rs";
+const PATH_RS: &str = "src/kernel/functions/fs/path.rs";
 const HANDLE_RS: &str = "src/kernel/functions/fs/handle.rs";
 
 fn repo_root() -> PathBuf {
@@ -421,6 +425,126 @@ fn test_init_exec_probe_runs_both_path_resolution_legs() {
         &code,
         "print(\"[EXEC] FAIL: cwd=\");",
         "任一腿失败必须留下可诊断的失败横幅",
+    );
+
+    // A-14 乙: 无载体是显式第三态 —— 载体自检短路在两条腿之前, 不打 FAIL.
+    let probe = fn_body(&code, "fn exec_probe()");
+    assert_contains(
+        &probe,
+        "if !carrier_present() {",
+        "探针入口先自检载体 (无载体下两腿按设计不可能成功)",
+    );
+    assert_contains(
+        &probe,
+        "println(\"[EXEC] SKIP: no carrier\");",
+        "无载体打印 SKIP —— scripts/qemu_boot_test.sh 按该串断言 (缺失即判红)",
+    );
+    assert_contains(&probe, "return;", "SKIP 分支必须短路, 不进两腿");
+    assert_eq!(
+        count_needle(&probe, "exec_leg("),
+        2,
+        "exec_probe 只跑 cwd/root 两腿 —— 增减腿数即判据面变化"
+    );
+
+    let carrier = fn_body(&code, "fn carrier_present() -> bool");
+    assert_contains(
+        &carrier,
+        "fs_open(b\"/bin/exectest\\0\", O_RDONLY, 0)",
+        "载体自检用 open 而非 stat: 用户态无 stat 包装, 且 open 与两腿同走一套路径解析",
+    );
+    assert_contains(&carrier, "let _ = fs_close(fd);", "探针不得泄漏 fd");
+}
+
+// ── 5b. A-14: chdir 与 chroot 的存在性校验不对称 (探针两腿红点位置的成因) ──
+
+/// 取证结论见 `docs/plan/multithreading-project.md` A-14 详情第 4 跳: cwd 腿的红点
+/// 落在 `exec` 而不是 `view`, 因为 `chdir` 只校验用户指针就切 cwd; root 腿的红点落在
+/// `view`, 因为 `chroot` 有 `require_directory` 前置. 本腿把这条不对称钉成回归锁 ——
+/// 若日后给 `chdir` 补存在性校验, 两腿红点会互换, 届时 A-14 详情与载体腿判据都要同步
+/// 改, 由本腿提醒, 而不是靠读日志的人猜.
+#[test]
+fn test_chdir_skips_existence_check_while_chroot_validates() {
+    let path_rs = code_only(&read_src(PATH_RS));
+    let chdir = fn_body(
+        &path_rs,
+        "pub fn chdir_syscall(path_ptr: u64) -> Result<usize, Errno>",
+    );
+    assert_contains(
+        &chdir,
+        "api::validate_user_ptr(path_ptr)",
+        "chdir 校验用户指针 (EFAULT 面)",
+    );
+    assert_contains(&chdir, "fw::vfs_set_cwd(ptr);", "chdir 直接切 cwd");
+    for absent in [
+        "require_directory(",
+        "vfs_stat",
+        "resolve_user_path",
+        "Enotdir",
+        "Enoent",
+    ] {
+        assert_absent(
+            &chdir,
+            absent,
+            "chdir 目前不校验路径存在性 —— 该不对称决定探针两腿的红点位置; \
+             若已补校验, 需同步改本文件 A-14 详情引用与载体腿判据",
+        );
+    }
+
+    let chroot = fn_body(
+        &path_rs,
+        "pub fn chroot_syscall(path_ptr: u64) -> Result<usize, Errno>",
+    );
+    assert_contains(
+        &chroot,
+        "require_directory(path_ptr, pwm)?;",
+        "chroot 有「存在且为目录」前置 —— 与 chdir 的不对称即在此",
+    );
+    let req = fn_body(
+        &path_rs,
+        "fn require_directory(ptr: u64, pwm: u64) -> Result<(), Errno>",
+    );
+    assert_contains(&req, "fw::vfs_stat_safe(", "require_directory 做真实 stat");
+    assert_contains(
+        &req,
+        "Errno::Enoent",
+        "路径不存在返 ENOENT —— 即探针 view 腿 rc=-2 的来源",
+    );
+    assert_contains(&req, "Errno::Enotdir", "非目录返 ENOTDIR");
+}
+
+// ── 5c. A-14: 无载体第三态在启动门禁里有消费腿 (双向 fail-closed) ──────────
+
+/// 消费腿一旦被摘掉, 「无载体」就退回 A-14 的原病灶: 读数无人消费、也没有任何
+/// 腿会因它变红. 探针侧的源码锁 (:431 起) 只证明 init 会打这行, 不证明门禁读它,
+/// 故门禁脚本面单独钉一次——取法照 `thread_group_k07a_test.rs` 的 `[THREAD]` 先例
+/// (按 marker 切段判「两条架构分支各一次」+ 每段 fail-closed).
+#[test]
+fn test_qemu_boot_gate_consumes_no_carrier_skip_state() {
+    let sh = read_src(QEMU_BOOT_SH);
+    let parts: Vec<&str> = sh.split(r"\[EXEC\] SKIP:").collect();
+    assert_eq!(
+        parts.len(),
+        3,
+        "qemu_boot_test.sh 应在 x86_64 与 aarch64 两条腿各断言一次 `[EXEC] SKIP:` —— \
+         少一处即消费腿被摘或只补了单架构 (载体自检链路与架构无关, 两腿必须同形)"
+    );
+    for (idx, part) in parts.iter().skip(1).enumerate() {
+        // 只看该 if 块自身 (截到首个 `fi`): 按固定字符数取窗会越到下一条腿上,
+        // 而下一条腿的 `RESULT=1` 足以把「本块被改成非 fail-closed」判成绿.
+        let block = part.split("\n            fi\n").next().unwrap_or(*part);
+        assert!(
+            block.contains("RESULT=1"),
+            "第 {idx} 处 `[EXEC] SKIP:` 断言不是 fail-closed (缺失时未置 RESULT=1):\n{}",
+            block.chars().take(400).collect::<String>()
+        );
+    }
+    // 双向判据: 只钉 SKIP 会放过「SKIP 与 FAIL 同现」(载体门失效但两腿仍跑),
+    // 只钉 FAIL 缺席会放过「init 崩在探针之前、整段没打印」.
+    assert_eq!(
+        count_needle(&sh, r#"! grep -aq "\[EXEC\] FAIL""#),
+        2,
+        "两条 SKIP 腿都必须同时判 `[EXEC] FAIL` 缺席 —— 单向断言会让「门失效但仍打 \
+         SKIP」或「探针整段没跑」判绿"
     );
 }
 
