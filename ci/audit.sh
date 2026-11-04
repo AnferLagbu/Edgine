@@ -7,7 +7,7 @@
 #
 # - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 内核双架构 + 四树 pedantic
 #           扩围, 2b feature 维) + 2c rustfmt, 到 2c 后即退出
-# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 3 Lockbud + 4 QEMU
+# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 2f 性能指标测试腿 + 3 Lockbud + 4 QEMU
 #
 # P-56 甲: 原「3 SAFETY 注释覆盖率统计」与「6 模块级 SAFETY 不变式」两条统计腿已删除 ——
 # 前者与 0.5 组的 audit_safety_coverage.py 同名不同尺 (实测 131% 的「覆盖率」), 后者统计
@@ -166,9 +166,9 @@ report_unexecuted_legs() {
 # 分支, 在本函数里复写同一字面会让它们把函数定义误认成早退位置.
 report_mode_boundary() {
     if [ "${MODE}" = "quick" ]; then
-        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
+        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/2f/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
     else
-        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/Lockbud/QEMU)${NC}"
+        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/2f/Lockbud/QEMU)${NC}"
     fi
 }
 
@@ -782,6 +782,33 @@ if [ -z "$AUDIT_MISSING_LEGS_FULL" ]; then
     ok "P-49 存量审计腿到位: ${AUDIT_LEG_FULL_TOTAL}/${AUDIT_LEG_FULL_TOTAL} (无静默跳过)"
 else
     err "P-49 存量审计腿未到位:${AUDIT_MISSING_LEGS_FULL} (fail-closed, 不接受假绿)"
+fi
+
+# ── 2f. 性能指标测试腿 (绝对预算) ─────────────────────────────
+# 用户裁定 (2026-11-04): 「性能门禁」改形态为「性能指标测试项」—— 判据从「与单份
+# 基线读数比 15%」换成每项一个**绝对预算** (host-tests/benches/baseline.json 的
+# budget_ns_per_op, 由 scripts/record_bench_baseline.py 按「中位读数 × 10 向上取整
+# 到两位有效数字」钉). 换形的实测理由: 相对判据把宿主当下的状态也读成回归 —— 同一
+# 份代码交替 5 轮实测 2/5–3/5 假红且红项随 load 轮换; 而 24 项里 13 项的总测量窗
+# < 1ms、唯一 ≥10ms 的 bitmap_scan (45ms 窗) 也出现过 +20% 摆幅 ⇒ 放大窗口救不了
+# 相对判据, 只有把判据从「比大小」换成「量级上界」才既留检出面又不产假红.
+# 本腿不写进 AUDIT_REQUIRED_LEGS / AUDIT_REQUIRED_LEGS_FULL: 两处清单分别按「两档都
+# 断言到位」(quick 会恒红) 与「python3 scripts/<name>.py」的调用形态硬编码, 一条
+# cargo 腿进任一处都会让对账失真. 判据侧的接线锁见 host-tests/tests/perf_metric_test.rs.
+# 必须 --release: make test-host 是 debug 档 (Makefile 的 cargo test --quiet), 拿
+# release 读数钉下的预算去判 debug 实测只会造出与代码无关的假红.
+step "2f/6 性能指标测试腿 (release 实测 vs 绝对预算)"
+set +e
+PERF_METRIC_OUT=$( (cd "$PROJECT_ROOT/host-tests" && cargo test --release --test perf_metric_test -- --nocapture) 2>&1)
+PERF_METRIC_RC=$?
+set -e
+mkdir -p "$PROJECT_ROOT/other/build/log"
+printf '%s\n' "$PERF_METRIC_OUT" > "$PROJECT_ROOT/other/build/log/audit_perf_metric.log"
+printf '%s\n' "$PERF_METRIC_OUT" | tail -32
+if [ "$PERF_METRIC_RC" -eq 0 ]; then
+    ok "性能指标测试腿: 条目全部在绝对预算内 (整表读数 other/build/log/audit_perf_metric.log)"
+else
+    err "性能指标测试腿失败 (exit=$PERF_METRIC_RC, 整表读数 other/build/log/audit_perf_metric.log)"
 fi
 
 # ── 3. Lockbud 死锁扫描 ───────────────────────────────────────

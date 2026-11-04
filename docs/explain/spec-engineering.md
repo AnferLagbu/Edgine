@@ -56,7 +56,7 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 9 测试
 
-3 条测试规则：9.1 修改跨模块接口必须补充集成测试（host-tests）；9.2 公共 API 必须有单元测试（no_std 单元测试 + host-tests 集成测试）；9.3 性能基线（host-tests/benches/baseline.json）每次 PR 更新。
+3 条测试规则：9.1 修改跨模块接口必须补充集成测试（host-tests）；9.2 公共 API 必须有单元测试（no_std 单元测试 + host-tests 集成测试）；9.3 性能指标按**绝对预算**判定——`host-tests/tests/perf_metric_test.rs` 以 release 实测对比 `host-tests/benches/baseline.json` 每项的 `budget_ns_per_op`（记录器按 k 次采样中位 × 10 向上取整钉下），重录时机是算法改进 / 依赖或工具链升级（`make -f Makefile.ci ci-bench-record`），不要求每次 PR 更新读数，也不使用相对 15% 判据（宿主抖动会被读成回归，详见 AGENTS.md §8）。
 
 ### 10 文档
 

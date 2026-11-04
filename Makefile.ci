@@ -8,8 +8,8 @@
 #   make -f Makefile.ci ci-test-kernel-host  # 内核 host 侧 #[cfg(test)] 内联用例
 #   make -f Makefile.ci ci-boot         # QEMU 集成 (x86_64 + aarch64)
 #   make -f Makefile.ci ci-rustdoc      # 双架构 rustdoc 0 warning (对齐 ci-lint.yml)
-#   make -f Makefile.ci ci-bench        # framekernel-bench + 回归检查
-#   make -f Makefile.ci ci-bench-record # 重新记录性能基线
+#   make -f Makefile.ci ci-bench        # 性能指标测试腿 (release 实测 vs 绝对预算)
+#   make -f Makefile.ci ci-bench-record # 重新记录读数与预算 (每项 5 次取中位)
 #   make -f Makefile.ci ci-fix          # auto-fix where possible
 #   make -f Makefile.ci ci-clean        # clean log dir
 #
@@ -51,7 +51,7 @@ ci: ci-build ci-audit ci-test-host ci-test-kernel-host ci-boot ci-bench ci-rustd
 	@echo "  4 host-tests 全通过          → ci-test-host"
 	@echo "  5 QEMU 集成通过              → ci-boot"
 	@echo "  6 内核 host 单元测试 0 failed → ci-test-kernel-host"
-	@echo "  (+ bench 回归 / rustdoc, 见 §8 性能基线)"
+	@echo "  (+ 性能指标测试腿 / rustdoc, 见 §8 性能指标)"
 	@echo "=========================================="
 
 # ── 门槛 1: 双架构 0 error / 0 warning + 链接 ───────────────────
@@ -152,27 +152,33 @@ ci-rustdoc:
 	if [ $$x86_status -ne 0 ] || [ $$arm_status -ne 0 ]; then exit 1; fi; }
 	@echo "PASS: rustdoc 0 源码级 link 错误 + 0 私有项链接 (x86_64 + aarch64 两腿都真跑)"
 
-# ── Bench: framekernel-bench + 15% 回归检查 (M6.9) ───────────────
+# ── Bench: 性能指标测试腿 (绝对预算 vs release 实测) ────────────
+# 判据形态: 每项一个绝对预算 (host-tests/benches/baseline.json 的 budget_ns_per_op,
+# 由记录器按「中位读数 × 10 向上取整」钉), 不再是「与单份基线读数比 15%」——
+# 相对判据会把宿主当下状态读成回归 (fc45 台账: 同一份代码交替 5 轮 2/5–3/5 假红).
+# 必须 --release: debug 档慢一个数量级, 拿 release 预算判 debug 读数只会造出假红.
 ci-bench:
-	@echo "[+] framekernel-bench + 回归检查 (M6.9)..."
+	@echo "[+] 性能指标测试腿 (release 实测 vs 绝对预算)..."
 	@mkdir -p $(LOG_DIR)
 	@if [ ! -f host-tests/benches/baseline.json ]; then \
-		echo "  - baseline.json 不存在, 自动记录初始基线..." ; \
-		$(PY) scripts/record_bench_baseline.py > $(LOG_DIR)/bench_baseline_init.txt 2>&1 ; \
-		echo "  - 已生成 baseline.json, 后续将进入回归检查模式" ; \
+		echo "  - baseline.json 不存在, 自动记录初始基线 (每项 5 次采样取中位)..." ; \
+		$(PY) scripts/record_bench_baseline.py --runs 5 > $(LOG_DIR)/bench_baseline_init.txt 2>&1 ; \
+		echo "  - 已生成 baseline.json (含 budget_ns_per_op), 后续进入预算判定模式" ; \
 	fi
-	@echo "  - 运行回归检查..."
-	@$(PY) scripts/check_bench_regression.py > $(LOG_DIR)/bench_regression.txt || \
-		( echo "FAIL: bench 回归检查失败, 见 $(LOG_DIR)/bench_regression.txt" ; \
-		  cat $(LOG_DIR)/bench_regression.txt ; \
+	@echo "  - 运行判定 (判据 = baseline.json 的 budget_ns_per_op)..."
+	@cd host-tests && cargo test --release --test perf_metric_test -- --nocapture \
+		> $(CURDIR)/$(LOG_DIR)/bench_perf.txt 2>&1 || \
+		( echo "FAIL: 性能指标测试未通过, 见 $(LOG_DIR)/bench_perf.txt" ; \
+		  cat $(CURDIR)/$(LOG_DIR)/bench_perf.txt ; \
 		  exit 1 )
-	@echo "PASS: bench 回归检查通过"
+	@tail -n 30 $(LOG_DIR)/bench_perf.txt
+	@echo "PASS: 性能指标测试通过 (整表读数见 $(LOG_DIR)/bench_perf.txt)"
 
 ci-bench-record:
-	@echo "[bench] 重新记录性能基线..."
+	@echo "[bench] 重新记录性能基线与绝对预算 (每项 5 次采样取中位)..."
 	@mkdir -p $(LOG_DIR)
-	@$(PY) scripts/record_bench_baseline.py | tee $(LOG_DIR)/bench_baseline.txt
-	@echo "PASS: baseline.json 已更新"
+	@$(PY) scripts/record_bench_baseline.py --runs 5 | tee $(LOG_DIR)/bench_baseline.txt
+	@echo "PASS: baseline.json 已更新 (读数 + 预算同源重算)"
 
 # ── 辅助目标 ────────────────────────────────────────────────────
 ci-fix:
@@ -195,8 +201,8 @@ help:
 	@echo "  make -f Makefile.ci ci-test-kernel-host  - 内核 host 侧 #[cfg(test)] 用例"
 	@echo "  make -f Makefile.ci ci-boot              - QEMU 集成 (x86_64 + aarch64)"
 	@echo "  make -f Makefile.ci ci-rustdoc           - 双架构 rustdoc 0 warning"
-	@echo "  make -f Makefile.ci ci-bench             - bench + 回归检查"
-	@echo "  make -f Makefile.ci ci-bench-record      - 重新记录基线"
+	@echo "  make -f Makefile.ci ci-bench             - 性能指标测试 (release 实测 vs 绝对预算)"
+	@echo "  make -f Makefile.ci ci-bench-record      - 重新记录读数与预算"
 	@echo "  make -f Makefile.ci ci-unsafe-scan       - functions unsafe 单点快查"
 	@echo "  make -f Makefile.ci ci-fix               - auto-fix"
 	@echo "  make -f Makefile.ci ci-clean             - clean log dir"

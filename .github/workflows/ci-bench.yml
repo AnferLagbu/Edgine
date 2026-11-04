@@ -11,7 +11,7 @@ env:
 
 jobs:
   # ========================================================================
-  # Job 1: 性能基准测试 + 回归检查
+  # Job 1: 性能指标测试 (release 实测 vs baseline 绝对预算)
   # ========================================================================
   benchmark:
     name: 性能基准测试
@@ -48,20 +48,20 @@ jobs:
       - name: 记录初始基线 (首次)
         if: steps.check-baseline.outputs.has_baseline == 'false'
         run: |
-          echo "baseline.json 不存在, 自动记录初始基线..."
-          python3 scripts/record_bench_baseline.py 2>&1 | tee other/build/log/bench_baseline_init.txt
-          echo "已生成 baseline.json, 后续将进入回归检查模式"
+          echo "baseline.json 不存在, 自动记录初始基线 (每项 5 次采样取中位)..."
+          python3 scripts/record_bench_baseline.py --runs 5 2>&1 | tee other/build/log/bench_baseline_init.txt
+          echo "已生成 baseline.json, 后续将进入性能指标判定模式"
 
-      - name: 运行回归检查
+      - name: 运行性能指标测试
         if: steps.check-baseline.outputs.has_baseline == 'true'
         run: |
-          python3 scripts/check_bench_regression.py 2>&1 | tee other/build/log/bench_regression.txt
+          make -f Makefile.ci ci-bench 2>&1 | tee other/build/log/bench_perf.txt
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "::error::bench 回归检查失败"
-            cat other/build/log/bench_regression.txt
+            echo "::error::性能指标测试失败 (release 实测超 baseline 绝对预算)"
+            cat other/build/log/bench_perf.txt
             exit 1
           fi
-          echo "✅ bench 回归检查通过"
+          echo "✅ 性能指标测试通过"
 
       - name: 上传基准报告
         if: always()
@@ -69,7 +69,7 @@ jobs:
         with:
           name: bench-report
           path: |
-            other/build/log/bench_regression.txt
+            other/build/log/bench_perf.txt
             other/build/log/bench_baseline_init.txt
             host-tests/benches/baseline.json
           retention-days: 30

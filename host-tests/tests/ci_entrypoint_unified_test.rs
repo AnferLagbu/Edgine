@@ -113,12 +113,13 @@ fn test_makefile_ci_delegates_instead_of_reimplementing() {
         );
     }
     // 检查逻辑不落在 Makefile.ci: 除单点快查外不得直接调 python 审计脚本.
+    // 原第三条豁免 `bench_regression` 随 `check_bench_regression.py` 退役一并删除 ——
+    // 豁免名单里留一个已不存在的脚本等于给「把相对判据腿改回来」留免检通道.
     let py_calls = mk
         .lines()
         .filter(|l| l.trim_start().starts_with('@') && l.contains("$(PY)"))
         .filter(|l| !l.contains("ci_check_functions_unsafe.py"))
         .filter(|l| !l.contains("bench_baseline"))
-        .filter(|l| !l.contains("bench_regression"))
         .collect::<Vec<_>>();
     assert!(
         py_calls.is_empty(),

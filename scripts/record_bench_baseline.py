@@ -10,13 +10,22 @@
 # 行为:
 #   1. 调用 `cargo run --release --bin framekernel-bench` 收集 JSON 结果 N 次
 #   2. 按条目取 N 次读数的**中位数**作为基线 (N=1 时即该次读数, 与历史行为一致)
-#   3. 写入 out_path (默认 host-tests/benches/baseline.json)
-#   4. 同时打印简洁摘要
+#   3. 由中位数派生每项的**绝对预算** budget_ns_per_op = 中位 × 10 向上取整到
+#      两位有效数字 (判据形态见下「为什么是绝对预算」)
+#   4. 写入 out_path (默认 host-tests/benches/baseline.json)
+#   5. 同时打印简洁摘要
 #
 # 为什么取中位数: 单样本基线会把一次离群的低读数钉成判据, 之后正常读数即被判成
 # 回归 (fc45 宿主复录实测: attribution_classify 5 次采样 5.177–7.423ns、1.43 倍
 # 摆幅, 据此钉下的基线当场让 ci-bench 自红). 摆幅来自「迭代数 × 单次耗时 < 1ms」
 # 的短测量窗, 中位数对单点离群不敏感.
+#
+# 为什么是绝对预算而不是相对 15%: 相对判据把「宿主当下的状态」也读成回归 —— 同一
+# 份代码交替 5 轮的实测假红率 2/5 至 3/5, 红项随 load 轮换 (fc45 台账登记). 且本
+# 仓 24 项里 13 项的总测量窗 < 1ms、唯一 ≥10ms 的 bitmap_scan (45ms) 也出现过
+# +20% 摆幅, 即「放大窗口」并不能救相对判据. 绝对预算 (×10) 只拦数量级走样 ——
+# 热路径多出一次分配 / 循环由 O(n) 变 O(n²) 通常是 ×100 级, 而环境噪声是 ×1.4 级.
+# 判据的执行侧见 host-tests/tests/perf_metric_test.rs (release 档).
 #
 # 基线文件结构 (与 BenchReport 兼容):
 #   {
@@ -25,11 +34,14 @@
 #     "rustc": "<rustc version>",
 #     "runs_per_item": N,
 #     "recorded_at": "<ISO8601>",
-#     "results": [ { "name": "...", "category": "...", "ns_per_op_frac": ..., "iterations": ... }, ... ]
+#     "results": [ { "name": "...", "category": "...", "iterations": ...,
+#                    "ns_per_op_frac": ..., "ps_per_op": ...,
+#                    "budget_ns_per_op": ... }, ... ]
 #   }
 
 import argparse
 import json
+import math
 import os
 import platform
 import statistics
@@ -41,6 +53,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "host-tests" / "benches" / "baseline.json"
 HOST_TESTS_DIR = REPO_ROOT / "host-tests"
+
+# 绝对预算的钉法 (单源; perf_metric_test.rs 的另一半判据「预算不得被悄悄收紧」
+# 按同一倍数断言, 改这里必须同批改那边).
+BUDGET_MULTIPLIER = 10.0
+# 预算向上取整到的有效数字位数 —— 只为让工件里的数字可读, 不改变「×10」的量级判据.
+BUDGET_SIG_DIGITS = 2
+# 预算下限 (ns): 读数为 0 的条目 (编译器完全优化掉) 若按 ×10 得到 0 预算, 任何
+# 亚纳秒抖动都会把它判红 —— 那正是本文件要消灭的形态. 取下限值让「零成本条目」
+# 仍能吸收 10ps 量级的读数地板, 而任何真实回退 (>100ps) 照旧打红.
+BUDGET_FLOOR_NS = 0.01
+
+
+def budget_ns_per_op(median_ns: float) -> float:
+    """中位读数 × BUDGET_MULTIPLIER, 向上取整到 BUDGET_SIG_DIGITS 位有效数字."""
+    raw = median_ns * BUDGET_MULTIPLIER
+    if raw <= 0.0:
+        return BUDGET_FLOOR_NS
+    exponent = math.floor(math.log10(raw))
+    scale = 10.0 ** (exponent - (BUDGET_SIG_DIGITS - 1))
+    ceiled = math.ceil(raw / scale) * scale
+    # scale < 1 时浮点乘会留下 3.0000000000000004 一类的尾数, 取 12 位抹掉
+    return float(round(max(ceiled, BUDGET_FLOOR_NS), 12))
 
 
 def run_bench() -> dict:
@@ -125,6 +159,9 @@ def build_baseline(report: dict, sched_criteria: dict | None = None, runs: int =
             "iterations": r["iterations"],
             "ns_per_op_frac": r["ns_per_op_frac"],
             "ps_per_op": r["ps_per_op"],
+            # 预算每次重录都由**本次中位**重算, 不读旧值 —— 否则一次离群读数会
+            # 把预算永久钉松 (旧形态) 或钉死 (单样本形态).
+            "budget_ns_per_op": budget_ns_per_op(r["ns_per_op_frac"]),
         })
     baseline = {
         "version": report.get("version", 1),
@@ -156,12 +193,20 @@ def load_sched_criteria(out_path: Path) -> dict | None:
 
 def print_summary(baseline: dict) -> None:
     print(f"\n[baseline] 记录 {len(baseline['results'])} 条基线:")
-    print(f"  {'name':<24} {'category':<10} {'ns/op (frac)':>14} {'iterations':>12}")
-    print(f"  {'-'*24} {'-'*10} {'-'*14} {'-'*12}")
+    print(
+        f"  {'name':<24} {'category':<10} {'ns/op (frac)':>14} "
+        f"{'budget ns/op':>14} {'iterations':>12}"
+    )
+    print(f"  {'-'*24} {'-'*10} {'-'*14} {'-'*14} {'-'*12}")
     for r in baseline["results"]:
         ns = r["ns_per_op_frac"]
         ns_str = f"{ns:.4f}" if ns < 1.0 else f"{ns:.2f}"
-        print(f"  {r['name']:<24} {r['category']:<10} {ns_str:>14} {r['iterations']:>12}")
+        budget = r["budget_ns_per_op"]
+        budget_str = f"{budget:.4f}" if budget < 1.0 else f"{budget:.2f}"
+        print(
+            f"  {r['name']:<24} {r['category']:<10} {ns_str:>14} "
+            f"{budget_str:>14} {r['iterations']:>12}"
+        )
 
 
 def _synthetic_run(samples: list[float], iterations: int = 1000) -> dict:
@@ -273,11 +318,40 @@ def self_test() -> list[str]:
     check(
         "基线条目字段",
         sorted(baseline["results"][0]),
-        sorted(["name", "category", "iterations", "ns_per_op_frac", "ps_per_op"]),
+        sorted(
+            [
+                "name",
+                "category",
+                "iterations",
+                "ns_per_op_frac",
+                "ps_per_op",
+                "budget_ns_per_op",
+            ]
+        ),
     )
     # 缺省 runs=1: 老调用点 (不传参数) 行为不变.
     check("runs 缺省为 1", build_baseline(agg)["runs_per_item"], 1)
     check("缺省时不带 sched_criteria", "sched_criteria" in build_baseline(agg), False)
+
+    # 7. 绝对预算口径: ×BUDGET_MULTIPLIER 后向上取整到两位有效数字, 且永不比
+    #    中位×倍数更小 (收紧预算 = 把判据调严, 是另一种形态的「放宽后难红」反面,
+    #    perf_metric_test.rs 的另一半断言按同一条下界钉).
+    check("预算上取整 (亚纳秒)", budget_ns_per_op(0.296), 3.0)
+    check("预算上取整 (个位)", budget_ns_per_op(5.858), 59.0)
+    check("预算上取整 (百位)", budget_ns_per_op(454.62), 4600.0)
+    check("预算上取整 (万位)", budget_ns_per_op(7332.724), 74000.0)
+    check("零读数取预算下限", budget_ns_per_op(0.0), BUDGET_FLOOR_NS)
+    check(
+        "预算不低于中位×倍数",
+        all(
+            budget_ns_per_op(v) >= v * BUDGET_MULTIPLIER
+            for v in (0.0296, 1.423, 5.858, 19.35, 172.018, 454.62, 7332.724)
+        ),
+        True,
+    )
+    # 预算由**本次**中位重算: 离群读数抬高的中位会一并抬高预算, 但基线读数与预算
+    # 必须同源 (否则「基线放宽 / 预算不变」这类半截改动会让判据自相矛盾).
+    check("预算与基线读数同源", baseline["results"][0]["budget_ns_per_op"], budget_ns_per_op(5.0))
 
     return failures
 
@@ -310,7 +384,10 @@ def main() -> int:
             print(f"自检失败: {msg}", file=sys.stderr)
         return 2
     if args.self_test:
-        print("自检通过: 单样本透传 + 中位数抗离群 + fail-closed 四形 + sched_criteria 保留")
+        print(
+            "自检通过: 单样本透传 + 中位数抗离群 + fail-closed 四形 "
+            "+ 绝对预算口径 + sched_criteria 保留"
+        )
         return 0
 
     if not HOST_TESTS_DIR.is_dir():

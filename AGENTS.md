@@ -217,7 +217,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **测用户可见行为**（公共 API），不测内部实现.
 - 修改跨模块接口必须补充集成测试（host-tests）.
 - 公共 API 必须有单元测试（no_std 单元 + host-tests 集成）.
-- 性能基线（`host-tests/benches/baseline.json`）每次 PR 更新.
+- **性能指标**是一条**测试腿**，不是一个相对阈值门禁：每项一个绝对预算 `budget_ns_per_op`（`host-tests/benches/baseline.json`，由 `scripts/record_bench_baseline.py` 按「k 次采样中位 × 10 向上取整到两位有效数字」与读数同批钉下），判定在 `host-tests/tests/perf_metric_test.rs`（release 实测 vs 预算，基线缺条目与条目已消失双向判红），由 `make -f Makefile.ci ci-bench` 与 `bash ci/audit.sh full` 步骤 2f 执行。**不**要求每次 PR 更新读数；算法改进 / 依赖或工具链升级后用 `make -f Makefile.ci ci-bench-record`（每项 5 次取中位）重录，预算随本次中位重算。**不**再用「与单份基线比 15%」的相对判据——宿主抖动（短测量窗条目 5 次采样摆幅可达 1.43 倍）会被读成回归.
 
 ## 9. 预存问题处理
 

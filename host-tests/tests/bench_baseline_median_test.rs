@@ -4,29 +4,30 @@
 //! 口径来源: `docs/plan/multithreading-project.md` §7 台账「2026-11-04 宿主环境
 //! 跨版本升级」条的 bench 基线部分.
 //!
-//! 本锁钉的是**记录器**的行为, 不是 15% 判据本身. 触发原因是实测到的失效形态:
+//! 本锁钉的是**记录器**的行为, 不是 ×10 预算倍数本身 (那由 `perf_metric_test.rs` 钉).
+//! 触发原因是实测到的失效形态:
 //! fc45 上按单样本重录后, `attribution_classify` 被一次离群低读数钉成 5.268ns,
-//! 而该项 5 次真实采样落在 5.177–7.423ns (1.43 倍), 于是 `ci-bench` 对刚提交的
+//! 而该项 5 次真实采样落在 5.177–7.423ns (1.43 倍), 于是当时的相对判据腿对刚提交的
 //! 基线当场自红 (+41.7%). 短测量窗条目 (迭代数 × 单次耗时 < 1ms) 的抖动本来就大,
 //! 单样本基线把抖动写成了判据.
 //!
 //! 三条静默通道逐处收口:
 //!
 //! 1. **聚合口径漂移**: 记录器若改用 min / mean, 基线会被系统性压低或拉高, 而
-//!    `ci-bench` 仍绿 —— 由 `--self-test` 真调 `aggregate_runs` 的判定用例锁死
+//!    性能指标腿仍绿 —— 由 `--self-test` 真调 `aggregate_runs` 的判定用例锁死
 //!    (自检在 `main()` 里先于任何写文件执行, 自检红 ⇒ 不产基线).
 //! 2. **跨运行漂移**: N 次采样里条目名集合或 `iterations` 变了还取中位数, 等于
 //!    对不同工作量的读数求中位并静默改变基线覆盖面 —— `aggregate_runs` fail-closed.
-//! 3. **基线覆盖面缩水**: `check_bench_regression.py` 对「baseline 中缺失」的条目
-//!    只打 WARN 不计回归 ⇒ 基线条目越少越"干净", 空基线会让该腿恒绿 —— 用「基线
-//!    条目数 == bench 源码 `measure(` 调用点数」跨源钉死.
+//! 3. **基线覆盖面缩水**: 判据腿只对「基线里有的条目」打分 ⇒ 条目越少越"干净",
+//!    空基线会让该腿恒绿 —— 用「基线条目数 == bench 源码 `measure(` 调用点数」
+//!    跨源钉死 (`perf_metric_test.rs` 的运行期例另做双向对账).
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 const RECORDER_PY: &str = "scripts/record_bench_baseline.py";
-const CHECKER_PY: &str = "scripts/check_bench_regression.py";
+const PERF_TEST_RS: &str = "host-tests/tests/perf_metric_test.rs";
 const BENCH_RS: &str = "host-tests/src/framekernel_bench.rs";
 const BASELINE_JSON: &str = "host-tests/benches/baseline.json";
 
@@ -180,8 +181,7 @@ fn committed_baseline_records_median_and_full_coverage() {
         results.len() as u64,
         call_sites,
         "baseline.json 条目数 ({}) != framekernel_bench.rs 的 measure( 调用点数 ({}) —— \
-         有 bench 掉出基线; check_bench_regression.py 对缺失条目只打 WARN 不计回归, \
-         条目丢失不会让那条腿变红",
+         有 bench 掉出基线; 判据腿只对基线里有的条目打分, 条目丢失不会让它变红",
         results.len(),
         call_sites
     );
@@ -218,7 +218,7 @@ fn committed_baseline_records_median_and_full_coverage() {
         assert!(
             (ps / 1000.0 - ns).abs() <= 0.0005,
             "条目 {name} 的 ps_per_op 与 ns_per_op_frac 不自洽 (ps={ps}, ns={ns}) —— \
-             check_bench_regression.py 只读 ns, 两者分叉说明聚合改了一个没改另一个"
+             两者由同一次读数派生, 分叉说明聚合改了一个没改另一个"
         );
         assert!(
             r["iterations"].as_u64().unwrap_or(0) > 0,
@@ -226,11 +226,12 @@ fn committed_baseline_records_median_and_full_coverage() {
         );
     }
 
-    // ④ 对比侧仍按同一字段取数 (记录器与检查器不得各写一套字段名).
-    let checker = read_src(CHECKER_PY);
+    // ④ 判定侧仍按同一字段取数 (记录器与判据腿不得各写一套字段名).
+    let perf_test = read_src(PERF_TEST_RS);
     assert!(
-        checker.contains("base[\"ns_per_op_frac\"]"),
-        "check_bench_regression.py 不再读 ns_per_op_frac —— 与记录器写入的字段不同源"
+        perf_test.contains("item[\"ns_per_op_frac\"]") && perf_test.contains("budget_ns_per_op"),
+        "perf_metric_test.rs 不再读 ns_per_op_frac / budget_ns_per_op —— 与记录器写入的\
+         字段不同源, 预算判定会对着不存在的字段放行"
     );
 }
 

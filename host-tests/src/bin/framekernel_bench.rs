@@ -4,9 +4,9 @@
 //! stdout 格式 (单行, 便于管道):
 //!   `{"version":1,"results":[{"name":"...","ns_per_op":N,"ops_per_sec":N}, ...]}`
 //!
-//! 配套脚本:
-//! - `scripts/record_bench_baseline.py`  记录 baseline.json
-//! - `scripts/check_bench_regression.py`  对比回归 (15% 阈值)
+//! 配套判据:
+//! - `scripts/record_bench_baseline.py`  记录 baseline.json (读数 + 绝对预算)
+//! - `host-tests/tests/perf_metric_test.rs`  按预算判定 (release 实测 vs `budget_ns_per_op`)
 
 use std::process::ExitCode;
 

@@ -3,175 +3,199 @@
   "machine": "x86_64-Linux-7.2.15-300.fc45.x86_64",
   "python": "3.15.0",
   "runs_per_item": 5,
-  "recorded_at": "2026-11-04T10:15:21Z",
+  "recorded_at": "2026-11-04T11:01:28Z",
   "results": [
     {
       "name": "page_flags_bits",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 1.284,
-      "ps_per_op": 1284
+      "ns_per_op_frac": 1.282,
+      "ps_per_op": 1282,
+      "budget_ns_per_op": 13.0
     },
     {
       "name": "pte_set_flags",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 3.644,
-      "ps_per_op": 3644
+      "ns_per_op_frac": 3.607,
+      "ps_per_op": 3607,
+      "budget_ns_per_op": 37.0
     },
     {
       "name": "iomem_alias_check",
       "category": "iomem",
       "iterations": 100000,
-      "ns_per_op_frac": 52.08,
-      "ps_per_op": 52080
+      "ns_per_op_frac": 51.797,
+      "ps_per_op": 51797,
+      "budget_ns_per_op": 520.0
     },
     {
       "name": "capability_check",
       "category": "sgeg",
       "iterations": 100000,
-      "ns_per_op_frac": 2.273,
-      "ps_per_op": 2273
+      "ns_per_op_frac": 2.234,
+      "ps_per_op": 2234,
+      "budget_ns_per_op": 23.0
     },
     {
       "name": "dma_state_machine",
       "category": "dma",
       "iterations": 100000,
-      "ns_per_op_frac": 0.296,
-      "ps_per_op": 296
+      "ns_per_op_frac": 0.293,
+      "ps_per_op": 293,
+      "budget_ns_per_op": 3.0
     },
     {
       "name": "sha256_block",
       "category": "sgeg",
       "iterations": 1000,
-      "ns_per_op_frac": 461.292,
-      "ps_per_op": 461292
+      "ns_per_op_frac": 459.619,
+      "ps_per_op": 459619,
+      "budget_ns_per_op": 4600.0
     },
     {
       "name": "attribution_classify",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 5.858,
-      "ps_per_op": 5858
+      "ns_per_op_frac": 5.297,
+      "ps_per_op": 5297,
+      "budget_ns_per_op": 53.0
     },
     {
       "name": "recovery_decide",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 69.883,
-      "ps_per_op": 69883
+      "ns_per_op_frac": 69.443,
+      "ps_per_op": 69443,
+      "budget_ns_per_op": 700.0
     },
     {
       "name": "bitmap_scan",
       "category": "pmm",
       "iterations": 100000,
-      "ns_per_op_frac": 454.62,
-      "ps_per_op": 454620
+      "ns_per_op_frac": 448.363,
+      "ps_per_op": 448363,
+      "budget_ns_per_op": 4500.0
     },
     {
       "name": "eevdf_pick_requeue",
       "category": "sched",
       "iterations": 10000,
-      "ns_per_op_frac": 553.743,
-      "ps_per_op": 553743
+      "ns_per_op_frac": 548.911,
+      "ps_per_op": 548911,
+      "budget_ns_per_op": 5500.0
     },
     {
       "name": "socket_wait_queue",
       "category": "net",
       "iterations": 10000,
-      "ns_per_op_frac": 32.603,
-      "ps_per_op": 32603
+      "ns_per_op_frac": 32.53,
+      "ps_per_op": 32530,
+      "budget_ns_per_op": 330.0
     },
     {
       "name": "virtio_blk_io",
       "category": "storage",
       "iterations": 10000,
-      "ns_per_op_frac": 35.102,
-      "ps_per_op": 35102
+      "ns_per_op_frac": 35.019,
+      "ps_per_op": 35019,
+      "budget_ns_per_op": 360.0
     },
     {
       "name": "bpf_verifier_dispatch",
       "category": "ebpf",
       "iterations": 100000,
-      "ns_per_op_frac": 12.829,
-      "ps_per_op": 12829
+      "ns_per_op_frac": 12.921,
+      "ps_per_op": 12921,
+      "budget_ns_per_op": 130.0
     },
     {
       "name": "sysctl_rw",
       "category": "config",
       "iterations": 10000,
-      "ns_per_op_frac": 29.912,
-      "ps_per_op": 29912
+      "ns_per_op_frac": 29.785,
+      "ps_per_op": 29785,
+      "budget_ns_per_op": 300.0
     },
     {
       "name": "blk_dev_dispatch",
       "category": "block",
       "iterations": 100000,
-      "ns_per_op_frac": 27.482,
-      "ps_per_op": 27482
+      "ns_per_op_frac": 27.209,
+      "ps_per_op": 27209,
+      "budget_ns_per_op": 280.0
     },
     {
       "name": "vfs_poll_dispatch",
       "category": "epoll",
       "iterations": 100000,
-      "ns_per_op_frac": 1.772,
-      "ps_per_op": 1772
+      "ns_per_op_frac": 1.776,
+      "ps_per_op": 1776,
+      "budget_ns_per_op": 18.0
     },
     {
       "name": "zap_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 172.018,
-      "ps_per_op": 172018
+      "ns_per_op_frac": 169.877,
+      "ps_per_op": 169877,
+      "budget_ns_per_op": 1700.0
     },
     {
       "name": "txg_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 29.337,
-      "ps_per_op": 29337
+      "ns_per_op_frac": 29.078,
+      "ps_per_op": 29078,
+      "budget_ns_per_op": 300.0
     },
     {
       "name": "dmu_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 189.741,
-      "ps_per_op": 189741
+      "ns_per_op_frac": 188.368,
+      "ps_per_op": 188368,
+      "budget_ns_per_op": 1900.0
     },
     {
       "name": "spa_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 11.874,
-      "ps_per_op": 11874
+      "ns_per_op_frac": 11.845,
+      "ps_per_op": 11845,
+      "budget_ns_per_op": 120.0
     },
     {
       "name": "raidz_dispatch",
       "category": "egfs",
       "iterations": 100000,
       "ns_per_op_frac": 1.423,
-      "ps_per_op": 1423
+      "ps_per_op": 1423,
+      "budget_ns_per_op": 15.0
     },
     {
       "name": "arc_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 67.149,
-      "ps_per_op": 67149
+      "ns_per_op_frac": 66.862,
+      "ps_per_op": 66862,
+      "budget_ns_per_op": 670.0
     },
     {
       "name": "zil_log_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 19.35,
-      "ps_per_op": 19350
+      "ns_per_op_frac": 19.249,
+      "ps_per_op": 19249,
+      "budget_ns_per_op": 200.0
     },
     {
       "name": "zil_persist_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 7332.724,
-      "ps_per_op": 7332724
+      "ns_per_op_frac": 7315.708,
+      "ps_per_op": 7315708,
+      "budget_ns_per_op": 74000.0
     }
   ],
   "sched_criteria": {

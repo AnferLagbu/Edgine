@@ -3,7 +3,7 @@
 //! ## 目标
 //! 测量 Edgine 框内核关键路径的纯算法性能, 建立可重复的回归基线.
 //! 所有实现都 host-runnable (std 可用), 与内核版本位一致, 便于:
-//! - CI 跑回归检查 (vs. baseline.json)
+//! - CI 跑性能指标判定 (release 实测 vs. baseline.json 的绝对预算)
 //! - 优化前后对比
 //! - 论文性能数据采集
 //!
@@ -23,9 +23,9 @@
 //!   `{"version": 1, "results": [{"name": "...", "ns_per_op": ...}, ...]}`
 //!
 //! ## 集成
-//! - `scripts/record_bench_baseline.py` 生成 baseline.json
-//! - `scripts/check_bench_regression.py` 对比并报告 > 15% 退化
-//! - `make -f Makefile.ci bench-baseline` / `bench-check`
+//! - `scripts/record_bench_baseline.py` 生成 baseline.json (每项 k 次采样取中位 + 派生预算)
+//! - `host-tests/tests/perf_metric_test.rs` 按 `budget_ns_per_op` 判定绝对预算
+//! - `make -f Makefile.ci ci-bench` / `ci/audit.sh` 步骤 2f (full 档)
 
 // G-07 (2026-09-06): 原 `#![allow(dead_code)]` (F9 违规) 删除 — 实测移除后 0 个
 // dead_code 警告 (全部 23 个 bench 均被 run_all() 与 tests 使用, 属防御性历史残留).

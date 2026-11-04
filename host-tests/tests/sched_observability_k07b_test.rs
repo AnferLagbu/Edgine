@@ -2,7 +2,7 @@
 //! K-07b 批3 调度观测面与多线程交叉验证.
 //!
 //! 判据来源: `host-tests/benches/baseline.json` 顶层 `sched_criteria`
-//! (机器可读基线; `scripts/check_bench_regression.py` 只读 `results`, 互不干扰).
+//! (机器可读基线; 性能指标腿 `host-tests/tests/perf_metric_test.rs` 只读 `results`, 互不干扰).
 //!
 //! 验收点:
 //! - IE1 具名用例: 账目/V/lag/切片全在 Q16.16 单时基上, 参考模型对账通过;
