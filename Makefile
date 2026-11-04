@@ -87,11 +87,34 @@ KERNEL_FEATURES ?=
 
 # P-62 甲: feature 值切换必须使 RUST_LIB 失效. RUST_LIB 规则只以源文件为前置,
 # 特征切换不改任何源文件 mtime ⇒ 曾经静默复用上一次的库与镜像 (实测: 默认构建
-# 后 `make KERNEL_FEATURES=smp all` 直接输出「无需做任何事」). 以内容戳记补这条
-# 边: 值变化时重写戳记, 戳记新于 .a 即触发 cargo 重建; 值不变则不挂前置, 增量
-# 构建行为不变. 戳记按架构落 ARCH_BUILD_DIR, `make clean` 一并清除.
+# 后 `make KERNEL_FEATURES=smp all` 直接输出「无需做任何事」).
+#
+# 戳记边必须是**规则级**而非解析期 (实测缺陷, 反向更危险): 原实现把
+# `cmp || 重写戳记` 放进解析期的 `$(shell ...)`, 于是**任何**一次 make 调用
+# (哪怕目标与构建无关, 如 `make test-host`) 都在读取 Makefile 时消费掉「值已变化」
+# 这个信号 —— 随后的构建腿看到 CHANGED 为空 ⇒ 不挂戳记前置 ⇒ cargo 不重跑 ⇒
+# `make KERNEL_FEATURES=lockdep all` 之后 `./ci/build.sh all` 打印 "Passed: 6 /
+# Failed: 0" 而 kernel.flat 仍是 lockdep 版 (strings 探针 circular=1、字节数与
+# feature 构建完全一致). 门禁的「复原默认构建」由此整条失效.
+# 现改为: 戳记文件恒为 $(RUST_LIB)/kernel.bin 的前置, 由自身规则做内容比较 ——
+# 内容与当前 KERNEL_FEATURES 相同则不重写 (mtime 不变 ⇒ 增量语义不变),
+# 不同则重写 (mtime 变新 ⇒ 库与镜像失效). 谁先读 Makefile 不再决定要不要重编.
 KERNEL_FEATURES_STAMP := $(ARCH_BUILD_DIR)/.kernel_features
-KERNEL_FEATURES_CHANGED := $(shell mkdir -p $(ARCH_BUILD_DIR); printf '%s' '$(KERNEL_FEATURES)' | cmp -s - $(KERNEL_FEATURES_STAMP) 2>/dev/null || { printf '%s' '$(KERNEL_FEATURES)' > $(KERNEL_FEATURES_STAMP); echo 1; })
+
+# 戳记规则: 内容 == 当前 KERNEL_FEATURES 则保持文件不动 (mtime 不变 ⇒ 下游增量);
+# 不同 (含文件不存在) 则重写 ⇒ mtime 变新 ⇒ $(RUST_LIB) 与 kernel.bin 失效重编.
+# FORCE 保证每次都做这次内容比较, 比较本身开销 = 一次 cmp.
+$(KERNEL_FEATURES_STAMP): FORCE
+	@mkdir -p $(ARCH_BUILD_DIR)
+	@printf '%s' '$(KERNEL_FEATURES)' | cmp -s - $@ || printf '%s' '$(KERNEL_FEATURES)' > $@
+
+# 显式默认目标: 上一条戳记规则是本文件里最先出现的规则, 不钉这一行则 `make` (无
+# 参数) 的默认目标变成戳记本身 —— 只写戳记不构建镜像, 外部脚本的裸 `make` 会静默
+# 产出陈旧制品 (与本要修的缺陷同一族, 判据 = `make -n` 首行是否打印 all 的配方).
+.DEFAULT_GOAL := all
+
+.PHONY: FORCE
+FORCE:
 
 # ============================================================================
 # 网络子系统已迁移至 smoltcp (纯 Rust)
@@ -231,10 +254,11 @@ endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
 # 改脚本必须重链 —— 否则旧镜像与新布局静默共存 (ld 对失配模式不报错).
-# 末尾 $(if ...) = P-62 甲 的第二条边: cargo 命中 feature 缓存时会把 .a 硬链成
+# 末尾 $(KERNEL_FEATURES_STAMP) = P-62 甲 的第二条边: cargo 命中 feature 缓存时会把 .a 硬链成
 # 旧 mtime, make 因此认为 kernel.bin 尚新而跳过重链 ⇒ 镜像滞留默认构建.
-# 戳记是本轮解析期新写入的文件, 必然新于 kernel.bin, 用它强制重链.
-$(ARCH_BUILD_DIR)/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB) $(LDSCRIPT) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
+# 戳记规则每次调用都做内容比较: 值变化则重写 ⇒ 戳记新于 kernel.bin ⇒ 强制重链;
+# 值不变则不重写 ⇒ 不触发无谓重链 (与改造前只挂 $(if ...) 时的增量语义一致).
+$(ARCH_BUILD_DIR)/kernel.bin: $(KERNEL_OBJS) $(RUST_LIB) $(LDSCRIPT) $(KERNEL_FEATURES_STAMP)
 	@mkdir -p $(ARCH_BUILD_DIR)
 	@echo "[LINK] Linking kernel..."
 	$(LD) $(LDFLAGS) --allow-multiple-definition -o $@ --whole-archive $(RUST_LIB) --no-whole-archive $(KERNEL_OBJS)
@@ -291,15 +315,16 @@ $(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
 
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
-# 末尾 $(if ...) = P-62 甲 的 feature 戳记: 仅当 KERNEL_FEATURES 值变化时才挂前置.
-$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
+# 末尾 $(KERNEL_FEATURES_STAMP) = P-62 甲 的 feature 戳记边 (规则级, 见文件顶部说明):
+# 恒挂前置, 由戳记规则自己做内容比较 —— 值不变则不重写, 增量行为与改造前一致.
+$(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(KERNEL_FEATURES_STAMP)
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
-$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))
+$(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(KERNEL_FEATURES_STAMP)
 	@echo "Building Rust kernel module..."
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif

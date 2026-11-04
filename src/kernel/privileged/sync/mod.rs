@@ -104,8 +104,9 @@ pub use types::{
 
 // lockdep 公共接口 re-export — 避免跨子系统直接访问 sync::lockdep 内部
 pub use lockdep::{
-    LockClassDesc, LockClassId, LockKind, acquire, deadlock_detected, dump_state, held_depth,
-    in_irq_context, irq_enter, irq_exit, num_classes, num_violations, register_class, release,
+    LockClassDesc, LockClassId, LockKind, LockdepStats, acquire, deadlock_detected, dump_state,
+    held_depth, in_irq_context, irq_enter, irq_exit, num_classes, num_violations, register_class,
+    release, stats,
 };
 
 // ============================================================================

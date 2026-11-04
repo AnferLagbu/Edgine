@@ -213,6 +213,21 @@ Lockdep 类由构造点自动注册，无需手动维护锁类 ID：`SpinLock::n
 ——只写 `debug_assertions` 的锁在 release + `KERNEL_FEATURES=lockdep` 构建里会静默不跟踪，
 锁序图缺边（由 `host-tests/tests/lockdep_cfg_mask_test.rs` 拦回归）。
 
+记账路径的开销形态（低开销化首批 M1+M2+M5+M6）：一次有名锁获取只进入**一次** `LOCK_DEP_MAP`
+全局临界区（检查 1/2/2.5/3 与压栈同临界区完成）、只开一个 per-CPU 持有栈的关中断窗口，遍历持有栈
+直读切片而非 `to_vec()` 堆分配，AB-BA 的 BFS 只对**首次出现**的边执行（已知边在 `add_dependency`
+开头短路）。违规报告一律登记进栈上定长队列 `PendingReports`，`LOCK_DEP_MAP` guard 释放后才发射，
+因此 lockdep 不再在全局锁临界区内写控制台——与 `LOG_EMIT_LOCK` 的「发射点不持其它全局锁」立场一致。
+`stats()`（经 `functions::sync::lockdep` 安全代理转发）给出 `acquire_ops` / `map_sections` /
+`edge_attempts` / `new_edges` 四个读数：前两者相等即「每 op 单次临界区」未退化，`new_edges` 远小于
+`edge_attempts` 即「稳态不进 BFS」未退化。结构判据由 `host-tests/tests/lockdep_low_overhead_test.rs`
+锁住（源码契约面，非计时读数）。
+
+门控关闭的收益只在「调用点不编译」这一层，**体积不省**：lockdep 模块本体仍参与编译（内部只有
+per-CPU 持栈与依赖图段被同一掩码 cfg 掉），而内核链接是 `--whole-archive` 且 `LDFLAGS` 无
+`--gc-sections`，归档目标文件全量入镜像——默认 release 归档里 `lockdep::acquire` 仍是 `T` 导出
+符号。实测读数与后续处置见 `docs/plan/multithreading-project.md` 的 A-1 详情。
+
 ## 参考
 
 - Linux kernel `Documentation/locking/lockdep-design.txt`

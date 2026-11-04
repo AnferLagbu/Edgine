@@ -813,8 +813,9 @@ fn test_p61_repr_c_is_tree_level_discovery() {
 /// 判据:
 /// ① 脚本含 feature 清单、逐位期望能力行、默认构建全 off 断言与复原步骤;
 /// ② 运行维只在 `ARCH=all` 执行 (逐架构快查不重复付构建成本);
-/// ③ Makefile 两处 `RUST_LIB` 规则 + kernel.bin 重链规则都挂特征内容戳记
-///    (feature 变化强制 cargo 重建; cargo 命中缓存时 .a 可能带旧 mtime, 需戳记强制重链);
+/// ③ Makefile 两处 `RUST_LIB` 规则 + kernel.bin 重链规则都**恒挂**特征内容戳记
+///    (戳记规则自己做内容比较: feature 变化则重写强制 cargo 重建, cargo 命中缓存时
+///    .a 可能带旧 mtime, 新戳记亦强制重链; 解析期判定已退役, 见低开销化首批记录);
 /// ④ AGENTS §2.3 门槛 5 点名 P-62 feature 运行维.
 #[test]
 fn test_p62_feature_caps_runtime_dimension_is_wired() {
@@ -842,14 +843,40 @@ fn test_p62_feature_caps_runtime_dimension_is_wired() {
 
     let mk = read("../Makefile");
     assert!(
-        mk.contains("KERNEL_FEATURES_STAMP") && mk.contains("KERNEL_FEATURES_CHANGED"),
-        "Makefile 缺 KERNEL_FEATURES 内容戳记 —— 特征切换会静默复用陈旧 .a/镜像"
+        mk.contains("KERNEL_FEATURES_STAMP") && mk.contains("$(KERNEL_FEATURES_STAMP): FORCE"),
+        "Makefile 缺 KERNEL_FEATURES 内容戳记规则 —— 特征切换会静默复用陈旧 .a/镜像"
     );
-    let stamp_edge = "$(if $(KERNEL_FEATURES_CHANGED),$(KERNEL_FEATURES_STAMP))";
+    // 戳记边必须**恒挂**且由规则自己做内容比较: 原形态把「值是否变化」写在解析期
+    // `$(shell ...)` 里, 任何一次 make (含无关目标与 -n 干跑) 都会消费掉该信号,
+    // 随后的构建腿因此不挂前置 ⇒ feature 构建后的默认构建静默复用特性镜像.
+    // 行为面由 kernel_features_stamp_test.rs 锁; 这里锁文本面不复活解析期判定.
+    assert!(
+        !mk.contains("KERNEL_FEATURES_CHANGED"),
+        "Makefile 又出现解析期判定 KERNEL_FEATURES_CHANGED —— 戳记边退回 `$(if ...)` 条件形态"
+    );
+    let stamp_edge_sites: Vec<&str> = mk
+        .lines()
+        .filter(|l| l.trim_end().ends_with("$(KERNEL_FEATURES_STAMP)"))
+        .collect();
     assert_eq!(
-        mk.matches(stamp_edge).count(),
+        stamp_edge_sites.len(),
         3,
-        "两处 RUST_LIB 规则 (x86_64 / aarch64) 与 kernel.bin 重链规则都必须挂特征戳记前置"
+        "两处 RUST_LIB 规则 (x86_64 / aarch64) 与 kernel.bin 重链规则都必须恒挂特征戳记前置 \
+         (实测挂点: {stamp_edge_sites:?})"
+    );
+    assert_eq!(
+        stamp_edge_sites
+            .iter()
+            .filter(|l| l.starts_with("$(RUST_LIB):"))
+            .count(),
+        2,
+        "两架构的 $(RUST_LIB) 规则都得挂戳记前置, 否则该架构的库沿用旧 feature"
+    );
+    assert!(
+        stamp_edge_sites
+            .iter()
+            .any(|l| l.starts_with("$(ARCH_BUILD_DIR)/kernel.bin:")),
+        "kernel.bin 重链规则没挂戳记前置 —— cargo 命中 feature 缓存把 .a 硬链成旧 mtime 时镜像不重链"
     );
 
     let agents = read(AGENTS_MD);

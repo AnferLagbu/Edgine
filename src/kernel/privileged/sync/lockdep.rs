@@ -28,10 +28,17 @@
 //!
 //! ## 性能
 //!
-//! - 生产构建 (`release`, 无 `lockdep` feature): 所有入口为 `#[inline]`
-//!   空操作, 零开销
-//! - 调试构建: 每次获取锁时 O(n²) 环检测 (n = 已注册锁类数), 仅在首次
-//!   观察到新依赖边时执行; 已知边直接跳过
+//! - 门控关闭 (`release` 且未开 `lockdep` feature): 五把同步原语的调用点整体
+//!   不编译, 运行时零检查开销. 但**体积不省**: 模块本体仍参与编译 (内部只有
+//!   per-CPU 持栈与依赖图段被同一掩码 cfg 掉), 且链接为 `--whole-archive` 且
+//!   无 `--gc-sections`, 归档目标文件全量入镜像 —— `nm` 在默认 release 归档
+//!   (`strings` 探针确认未含 lockdep 特性) 里看得到 `lockdep::acquire` 的 `T`
+//!   符号. 故关闭门控只省下调用, 不省下镜像占用
+//! - 门控开启: 每次有名锁获取只进入 **一次** `LOCK_DEP_MAP` 全局临界区,
+//!   记账路径 **零堆分配** (持有栈快照用定长栈数组), 依赖图 BFS 只在
+//!   **首次观察到新边** 时执行 (已知边直接跳过)
+//! - 违规打印一律延迟到临界区之后 (`PendingReports`), 不在持有全局 map
+//!   guard 时写串口
 //!
 //! ## 框内核契约
 //!
@@ -160,6 +167,32 @@ impl Default for LockClassEntry {
 // 全局锁依赖图
 // ============================================================================
 
+/// lockdep 记账计数 (M6: 让每项低开销化改动的增益可归因)
+///
+/// 只在 `LOCK_DEP_MAP` guard 内更新, 故为非原子字段; 读取走 [`stats`]。
+#[derive(Debug, Clone, Copy)]
+pub struct LockdepStats {
+    /// 进入记账的有名锁获取次数
+    pub acquire_ops: u64,
+    /// acquire 记账进入 `LOCK_DEP_MAP` 全局临界区的次数 (低开销化判据: 应恒等于
+    /// `acquire_ops`; 每 op 多次即临界区未合并。release 只在违规时取锁, 不计入)
+    pub map_sections: u64,
+    /// AB-BA 检查遍历的持有条目数 (随持有深度线性增长)
+    pub edge_attempts: u64,
+    /// 首次出现的新边数 —— 即真正触发 BFS 的次数
+    pub new_edges: u64,
+}
+
+impl LockdepStats {
+    /// 全零快照 (门控关闭构建下 [`stats`] 的返回值)
+    pub const ZERO: Self = Self {
+        acquire_ops: 0,
+        map_sections: 0,
+        edge_attempts: 0,
+        new_edges: 0,
+    };
+}
+
 /// 全局锁依赖图
 ///
 /// 邻接矩阵 `adjacency[i][j]` 表示 "持有锁类 i 时获取锁类 j" 的依赖关系。
@@ -171,10 +204,12 @@ struct LockDepMap {
     class_count: usize,
     /// 邻接矩阵: adjacency[i][j] = 依赖标记
     adjacency: [[u8; MAX_LOCK_CLASSES]; MAX_LOCK_CLASSES],
-    /// 是否已检测到死锁 (一旦检测到, 后续 acquire 直接 panic 防止数据损坏)
+    /// 是否已检测到死锁 (仅置位 + 打印, 不 panic; 处置由调用方与观测面决定)
     deadlock_detected: AtomicBool,
     /// 检测到的死锁计数
     violation_count: AtomicU32,
+    /// 记账计数
+    stats: LockdepStats,
 }
 
 impl LockDepMap {
@@ -189,6 +224,7 @@ impl LockDepMap {
             adjacency: [[0u8; MAX_LOCK_CLASSES]; MAX_LOCK_CLASSES],
             deadlock_detected: AtomicBool::new(false),
             violation_count: AtomicU32::new(0),
+            stats: LockdepStats::ZERO,
         }
     }
 
@@ -240,6 +276,9 @@ impl LockDepMap {
 
         // 添加新边, 标记为待检测
         self.adjacency[fi][ti] = DEPENDENCY_NEW;
+
+        // BFS 只对**新边**执行 (已知边在上面短路) —— 稳态成本与 BFS 无关。
+        self.stats.new_edges += 1;
 
         // BFS 检测: 从 to 出发能否回到 from (即 to → ... → from 的路径)
         if self.has_path(ti, fi) {
@@ -378,9 +417,11 @@ impl HeldLockStack {
     }
 
     /// 压入一个锁 (记录类 + 实例)
+    ///
+    /// 溢出返回 false 且**不打印** —— 发射由调用方排入 `PendingReports`
+    /// (M5: 不在任何全局锁临界区内写串口)。
     fn push(&mut self, class_id: LockClassId, instance: usize, in_irq: bool) -> bool {
         if self.depth >= MAX_HELD_LOCKS {
-            lockdep_log!("lockdep: held lock stack overflow (depth={})", self.depth);
             return false;
         }
         self.entries[self.depth] = HeldLockEntry {
@@ -495,6 +536,120 @@ pub fn in_irq_context() -> bool {
 }
 
 // ============================================================================
+// 违规发射队列 (M5: 打印延迟到全局锁临界区之外)
+// ============================================================================
+
+/// 单次记账可积压的发射数: AB-BA 报告上限 = 持有深度, 另加睡眠锁告警与
+/// 持有栈溢出各一条 (release 路径每 op 至多一条)。
+#[cfg(any(debug_assertions, feature = "lockdep"))]
+const PENDING_CAPACITY: usize = MAX_HELD_LOCKS + 2;
+
+/// 门控关闭的构建只剩检查 1 一条发射路径。
+#[cfg(not(any(debug_assertions, feature = "lockdep")))]
+const PENDING_CAPACITY: usize = 1;
+
+/// 延迟发射的违规记录 (载荷全 `Copy` ⇒ 队列是栈上定长数组, 零堆分配)
+#[derive(Clone, Copy)]
+enum PendingReport {
+    /// 空槽 (队列按前缀密排, 首个 `Idle` 即结束)
+    Idle,
+    /// 检查 1: 中断上下文获取睡眠锁
+    SleepInIrq { name: &'static str, kind: LockKind },
+    /// 检查 2.5: 持有 IRQ 上下文锁时获取睡眠锁
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    SleepWhileHeldInIrq { name: &'static str },
+    /// 检查 3: AB-BA 环
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    Circular {
+        from: &'static str,
+        to: &'static str,
+    },
+    /// 检查 2: 递归获取非递归锁
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    Recursive { name: &'static str },
+    /// 释放了当前上下文未持有的锁
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    ReleasedNotHeld { name: &'static str },
+    /// 持有栈溢出 (该锁本轮起不再被跟踪)
+    #[cfg(any(debug_assertions, feature = "lockdep"))]
+    HeldStackOverflow { depth: usize },
+}
+
+impl PendingReport {
+    /// 在 `LOCK_DEP_MAP` guard 释放之后发射。
+    fn emit(self) {
+        match self {
+            Self::Idle => {}
+            Self::SleepInIrq { name, kind } => lockdep_log!(
+                "lockdep VIOLATION: acquiring sleep lock '{}' ({:?}) in IRQ context!",
+                name,
+                kind
+            ),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            Self::SleepWhileHeldInIrq { name } => lockdep_log!(
+                "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
+                name
+            ),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            Self::Circular { from, to } => lockdep_log!(
+                "lockdep DEADLOCK: circular dependency detected: {} → {} (AB-BA)",
+                from,
+                to
+            ),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            Self::Recursive { name } => lockdep_log!(
+                "lockdep VIOLATION: recursive acquire of non-recursive lock '{}'!",
+                name
+            ),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            Self::ReleasedNotHeld { name } => lockdep_log!(
+                "lockdep VIOLATION: releasing lock '{}' not held by current context!",
+                name
+            ),
+            #[cfg(any(debug_assertions, feature = "lockdep"))]
+            Self::HeldStackOverflow { depth } => {
+                lockdep_log!("lockdep: held lock stack overflow (depth={})", depth);
+            }
+        }
+    }
+}
+
+/// 栈上定长发射队列。
+struct PendingReports {
+    items: [PendingReport; PENDING_CAPACITY],
+    len: usize,
+}
+
+impl PendingReports {
+    const fn new() -> Self {
+        Self {
+            items: [PendingReport::Idle; PENDING_CAPACITY],
+            len: 0,
+        }
+    }
+
+    /// SIMPLIFIED: 队列满即丢弃该条报告; 影响面 = 同一次 acquire 内违规条数超过
+    /// `PENDING_CAPACITY` 时少打一行 (`violation_count` 与 `deadlock_detected`
+    /// 不受影响, 不丢判定); 何时需扩展 = 单 op 可能贡献多于容量条报告时
+    /// (当前上限 = 持有深度 + 2, 与容量同式, 实际不可达)。
+    fn record(&mut self, report: PendingReport) {
+        if self.len < PENDING_CAPACITY {
+            self.items[self.len] = report;
+            self.len += 1;
+        }
+    }
+
+    fn emit_all(self) {
+        for report in self.items {
+            if matches!(report, PendingReport::Idle) {
+                break;
+            }
+            report.emit();
+        }
+    }
+}
+
+// ============================================================================
 // 公开 API
 // ============================================================================
 
@@ -531,87 +686,83 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
         return true;
     }
 
-    // 检查 1: 中断上下文获取睡眠锁
-    let kind = {
-        let map = LOCK_DEP_MAP.lock();
-        map.class_kind(class_id)
-    };
-
-    if let Some(k) = kind
-        && irq_context
-        && k.may_sleep()
+    // M2: 检查 1/2/2.5/3 与压栈收进**同一次** `LOCK_DEP_MAP` 临界区 (原形态是
+    // 1 + 持有深度 次全局加锁); M1: 遍历持有栈直读切片, 不再 `to_vec()` 堆分配;
+    // M5: 违规只登记进栈上队列, 临界区释放后才发射。
+    let mut reports = PendingReports::new();
+    let mut proceed = true;
     {
-        let map = LOCK_DEP_MAP.lock();
-        let name = map.class_name(class_id);
-        lockdep_log!(
-            "lockdep VIOLATION: acquiring sleep lock '{}' ({:?}) in IRQ context!",
-            name,
-            k
-        );
-        map.violation_count.fetch_add(1, Ordering::Relaxed);
-        return false;
-    }
+        let mut map = LOCK_DEP_MAP.lock();
+        map.stats.acquire_ops += 1;
+        map.stats.map_sections += 1;
+        let kind = map.class_kind(class_id);
 
-    // 检查 2/2.5/3 + 压栈: 操作当前 CPU 的 per-CPU 持有锁栈 (仅 lockdep 激活时).
-    #[cfg(any(debug_assertions, feature = "lockdep"))]
-    {
-        let outcome = with_current_stack(|stack| {
-            // 检查 2: 递归获取非递归锁 — 同一物理实例重入才算递归
-            // (不同实例同类 — 如 per-CPU cfs_rq 成对持有 — 是合法的, 不算递归).
-            if stack.contains_instance(instance) {
-                return false;
-            }
-            // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
-            if !irq_context
-                && stack.any_in_irq()
-                && let Some(k) = kind
-                && k.may_sleep()
-            {
-                let map = LOCK_DEP_MAP.lock();
-                let name = map.class_name(class_id);
-                lockdep_log!(
-                    "lockdep WARNING: acquiring sleep lock '{}' while holding IRQ-context lock",
-                    name
-                );
-            }
-            // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边.
-            // 跳过同类边 (同一 class, 不同 instance: per-CPU 数组锁成对持有, 此类边
-            // 无跨类顺序信息, 且会构成 has_path 自环假阳性).
-            let held = stack.held_classes().to_vec();
-            for entry in &held {
-                if entry.class_id == class_id {
-                    continue;
-                }
-                let mut map = LOCK_DEP_MAP.lock();
-                if !map.add_dependency(entry.class_id, class_id) {
-                    let from_name = map.class_name(entry.class_id);
-                    let to_name = map.class_name(class_id);
-                    lockdep_log!(
-                        "lockdep DEADLOCK: circular dependency detected: {} → {} (AB-BA)",
-                        from_name,
-                        to_name
-                    );
-                    // 不 return, 继续记录但标记违规
-                }
-            }
-            // 压入持有栈
-            stack.push(class_id, instance, irq_context);
-            true
-        });
-        // Some(false): 检测到递归获取非递归锁 → 违规; None (CPU 越界): 保守放行
-        if outcome == Some(false) {
-            let map = LOCK_DEP_MAP.lock();
-            let name = map.class_name(class_id);
-            lockdep_log!(
-                "lockdep VIOLATION: recursive acquire of non-recursive lock '{}'!",
-                name
-            );
+        // 检查 1: 中断上下文获取睡眠锁
+        if let Some(k) = kind
+            && irq_context
+            && k.may_sleep()
+        {
             map.violation_count.fetch_add(1, Ordering::Relaxed);
-            return false;
+            reports.record(PendingReport::SleepInIrq {
+                name: map.class_name(class_id),
+                kind: k,
+            });
+            proceed = false;
+        }
+
+        // 检查 2/2.5/3 + 压栈: 操作当前 CPU 的 per-CPU 持有锁栈 (仅 lockdep 激活时).
+        #[cfg(any(debug_assertions, feature = "lockdep"))]
+        if proceed {
+            let stack_verdict = with_current_stack(|stack| {
+                // 检查 2: 递归获取非递归锁 — 同一物理实例重入才算递归
+                // (不同实例同类 — 如 per-CPU cfs_rq 成对持有 — 是合法的, 不算递归).
+                if stack.contains_instance(instance) {
+                    return false;
+                }
+                // 检查 2.5: 持有 IRQ 上下文锁时获取 sleep lock → 潜在死锁
+                if !irq_context
+                    && stack.any_in_irq()
+                    && let Some(k) = kind
+                    && k.may_sleep()
+                {
+                    reports.record(PendingReport::SleepWhileHeldInIrq {
+                        name: map.class_name(class_id),
+                    });
+                }
+                // 检查 3: AB-BA 依赖检测 — 对持有栈中每个锁添加 "held → new" 依赖边.
+                // 跳过同类边 (同一 class, 不同 instance: per-CPU 数组锁成对持有, 此类边
+                // 无跨类顺序信息, 且会构成 has_path 自环假阳性).
+                for entry in stack.held_classes() {
+                    if entry.class_id == class_id {
+                        continue;
+                    }
+                    map.stats.edge_attempts += 1;
+                    if !map.add_dependency(entry.class_id, class_id) {
+                        // 不中断记账: 其余边继续登记, 全部报告一起在 guard 外打印
+                        reports.record(PendingReport::Circular {
+                            from: map.class_name(entry.class_id),
+                            to: map.class_name(class_id),
+                        });
+                    }
+                }
+                // 压入持有栈 (溢出只登记报告, 打印在 guard 外)
+                if !stack.push(class_id, instance, irq_context) {
+                    reports.record(PendingReport::HeldStackOverflow { depth: stack.len() });
+                }
+                true
+            });
+            // Some(false): 检测到递归获取非递归锁 → 违规; None (CPU 越界): 保守放行
+            if stack_verdict == Some(false) {
+                map.violation_count.fetch_add(1, Ordering::Relaxed);
+                reports.record(PendingReport::Recursive {
+                    name: map.class_name(class_id),
+                });
+                proceed = false;
+            }
         }
     }
-
-    true
+    reports.emit_all();
+    proceed
 }
 
 /// 锁释放通知
@@ -630,13 +781,15 @@ pub fn release(class_id: LockClassId, instance: usize) {
         let popped = with_current_stack(|stack| stack.pop(class_id, instance));
         // Some(false): 释放了当前上下文未持有的锁 → 违规
         if popped == Some(false) {
-            let map = LOCK_DEP_MAP.lock();
-            let name = map.class_name(class_id);
-            lockdep_log!(
-                "lockdep VIOLATION: releasing lock '{}' not held by current context!",
-                name
-            );
-            map.violation_count.fetch_add(1, Ordering::Relaxed);
+            let mut reports = PendingReports::new();
+            {
+                let map = LOCK_DEP_MAP.lock();
+                map.violation_count.fetch_add(1, Ordering::Relaxed);
+                reports.record(PendingReport::ReleasedNotHeld {
+                    name: map.class_name(class_id),
+                });
+            }
+            reports.emit_all();
         }
     }
 }
@@ -672,6 +825,15 @@ pub fn deadlock_detected() -> bool {
     map.deadlock_detected.load(Ordering::Acquire)
 }
 
+/// 读取记账计数 (`LOCK_DEP_MAP` guard 内快照)
+///
+/// 低开销化的归因入口: `map_sections == acquire_ops` 即「每 op 单次全局临界区」
+/// 成立; `new_edges` 远小于 `edge_attempts` 即「BFS 只对新边执行」成立。
+#[must_use]
+pub fn stats() -> LockdepStats {
+    LOCK_DEP_MAP.lock().stats
+}
+
 /// 打印当前锁依赖状态 (调试用)
 pub fn dump_state() {
     lockdep_log!("=== Lockdep State Dump ===");
@@ -679,22 +841,29 @@ pub fn dump_state() {
         let map = LOCK_DEP_MAP.lock();
         lockdep_log!("Registered classes: {}", map.num_classes());
         lockdep_log!("Violations: {}", map.num_violations());
+        lockdep_log!("Stats: {:?}", map.stats);
         lockdep_log!(
             "Deadlock detected: {}",
             map.deadlock_detected.load(Ordering::Relaxed)
         );
     }
 
-    // 当前 CPU 持有锁栈 (仅 lockdep 激活时).
+    // 当前 CPU 持有锁栈 (仅 lockdep 激活时). 定长栈快照 —— 与记账路径同一口径:
+    // 不在持有栈的借用期内做堆分配.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     {
-        let held = with_current_stack(|stack| (stack.len(), stack.held_classes().to_vec()));
-        if let Some((depth, held)) = held {
+        let held = with_current_stack(|stack| {
+            let mut snap = [(LockClassId::INVALID, false); MAX_HELD_LOCKS];
+            for (i, entry) in stack.held_classes().iter().enumerate() {
+                snap[i] = (entry.class_id, entry.in_irq);
+            }
+            (stack.len(), snap)
+        });
+        if let Some((depth, snap)) = held {
             lockdep_log!("Held locks (depth={}):", depth);
-            for entry in &held {
-                let map = LOCK_DEP_MAP.lock();
-                let name = map.class_name(entry.class_id);
-                lockdep_log!("  {} (irq={})", name, entry.in_irq);
+            for &(class_id, in_irq) in snap.iter().take(depth) {
+                let name = LOCK_DEP_MAP.lock().class_name(class_id);
+                lockdep_log!("  {} (irq={})", name, in_irq);
             }
         }
     }
@@ -890,5 +1059,62 @@ mod tests {
         assert!(in_irq_context());
         irq_exit();
         assert!(!in_irq_context());
+    }
+
+    /// M6 记账: `new_edges` 只统计**首次出现**的边 —— 已知边在 `add_dependency`
+    /// 开头短路, 不进 BFS。这条即「稳态成本与 BFS 无关」的可执行判据.
+    #[test]
+    fn test_stats_new_edges_count_only_unseen_pairs() {
+        let mut map = LockDepMap::new();
+        let id_a = map.register(LockClassDesc {
+            name: "A",
+            kind: LockKind::Mutex,
+        });
+        let id_b = map.register(LockClassDesc {
+            name: "B",
+            kind: LockKind::Mutex,
+        });
+        assert_eq!(map.stats.new_edges, 0);
+
+        assert!(map.add_dependency(id_a, id_b));
+        assert_eq!(map.stats.new_edges, 1);
+
+        // 同一对再来一次: 已知边短路, 既不记新边也不进 BFS.
+        assert!(map.add_dependency(id_a, id_b));
+        assert_eq!(map.stats.new_edges, 1);
+
+        // 成环的边: 确实进了一次 BFS (回滚不影响它被计入).
+        assert!(!map.add_dependency(id_b, id_a));
+        assert_eq!(map.stats.new_edges, 2);
+    }
+
+    /// M5 发射队列: 满即丢该条报告, 不 panic、不越界.
+    #[test]
+    fn test_pending_reports_overflow_drops_extra() {
+        let mut queue = PendingReports::new();
+        for i in 0..PENDING_CAPACITY {
+            queue.record(PendingReport::HeldStackOverflow { depth: i });
+        }
+        queue.record(PendingReport::HeldStackOverflow { depth: 0xFFFF });
+        assert_eq!(queue.len, PENDING_CAPACITY);
+    }
+
+    /// M2: 一次 acquire 记账恰好进入一次 `LOCK_DEP_MAP` 全局临界区.
+    ///
+    /// 两个计数器在同一条临界区内成对自增, 故任一快照下恒相等 —— 该不变式不受
+    /// host 测试并行线程干扰 (它们各自的临界区同样成对).
+    #[test]
+    fn test_acquire_enters_map_once_per_op() {
+        let id = register_class(LockClassDesc {
+            name: "stats_acquire_probe",
+            kind: LockKind::SpinLock,
+        });
+        let before = stats();
+        assert!(acquire(id, 0x5A00, false));
+        release(id, 0x5A00);
+        let after = stats();
+        assert_eq!(after.acquire_ops - before.acquire_ops, 1);
+        assert_eq!(after.map_sections - before.map_sections, 1);
+        assert_eq!(after.map_sections, after.acquire_ops);
     }
 }

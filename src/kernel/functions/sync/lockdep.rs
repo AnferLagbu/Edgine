@@ -29,7 +29,7 @@
 #![deny(unsafe_code)]
 
 // Re-export 类型
-pub use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind};
+pub use crate::privileged::sync::{LockClassDesc, LockClassId, LockKind, LockdepStats};
 
 /// 注册锁类
 ///
@@ -93,6 +93,15 @@ pub fn held_depth() -> usize {
 #[must_use]
 pub fn num_classes() -> usize {
     crate::privileged::sync::num_classes()
+}
+
+/// 读取记账计数 (低开销化归因入口)
+///
+/// `map_sections == acquire_ops` 即「每次有名锁获取只进一次全局临界区」成立;
+/// `new_edges` 远小于 `edge_attempts` 即「BFS 只对新边执行」成立。
+#[must_use]
+pub fn stats() -> LockdepStats {
+    crate::privileged::sync::stats()
 }
 
 /// 查询检测到的违规数
