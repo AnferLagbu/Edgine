@@ -45,9 +45,13 @@ build_arch() {
     local target=$2
     echo -e "${YELLOW}[CI] Building ARCH=${arch} (target: ${target})...${NC}"
 
-    pushd src/rust > /dev/null
-    # 方案 D: 内核独立 crate, 裸机 build 指向 kernel manifest (edgine 壳仅 host).
-    if cargo build --manifest-path ../kernel/Cargo.toml --release --target "${target}" --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
+    pushd src/kernel > /dev/null
+    # A-12 丙 (2026-11-04): 与 Makefile 的 $(RUST_LIB) 配方同一 cwd —— cargo 的
+    # .cargo/config.toml 按 cwd 向上合并, 与 --manifest-path 无关. 原写法在本目录的
+    # 上一级 src/rust 里起 cargo, 于是本入口吃到那边那份 rustflags 而 make 入口吃不到
+    # ⇒ 同一棵树、同一 KERNEL_FEATURES 编出两种机器码. 现裸机 rustflags 随内核 crate
+    # 声明 (src/kernel/.cargo/config.toml), 两条入口同 cwd 同配置, 分叉从根上消失.
+    if cargo build --release --target "${target}" --target-dir ../../other/target "${BUILD_STD_CFG[@]}" 2>&1 | tail -5; then
         echo -e "${GREEN}[CI] ARCH=${arch}: build passed${NC}"
         popd > /dev/null
         return 0

@@ -11,3 +11,28 @@ target-dir = "../../other/target"
 # 构建+链接通过. 官方支持 env 选择后端.
 [env]
 CARGO_CFG_CURVE25519_DALEK_BACKEND = "serial"
+
+# A-12 丙 (2026-11-04 用户裁定): 内核镜像的裸机 rustflags 随本 crate 声明.
+# 原先 -C relocation-model=static 只写在 src/rust/.cargo/config.toml, 而 cargo 按
+# **当前工作目录向上**合并配置 (与 --manifest-path 无关) ⇒ `make` (cd src/kernel)
+# 与 `./ci/build.sh` (pushd src/rust) 两条入口对同一棵树编出两种机器码 (GOTPCREL
+# 23269 对 2008). 现在两条入口统一从 src/kernel 起 cargo, 该段即镜像的唯一 rustflags
+# 来源; 三个三元组的取值必须与 src/rust 那份逐字一致 (由 host-tests 的
+# kernel_build_entry_config_test.rs 对账, 防单源漂移).
+[target.x86_64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-nostdlib",
+]
+
+[target.aarch64-unknown-none]
+rustflags = [
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-nostdlib",
+]
+
+[target.aarch64-unknown-none-softfloat]
+rustflags = [
+    "-C", "relocation-model=static",
+    "-C", "link-arg=-nostdlib",
+]

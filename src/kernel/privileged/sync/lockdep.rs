@@ -1,29 +1,40 @@
 //! Lockdep — 运行时锁依赖检测器
 //!
 //! 在 `debug_assertions` 或 `feature = "lockdep"` 启用时, 跟踪每个锁的
-//! 获取/释放, 构建锁序图, 检测以下问题:
+//! 获取/释放, 构建锁序图, 检测以下问题 (标号与 `acquire` / `release` 内注释逐字对应):
 //!
-//! 1. **AB-BA 死锁**: 线程 A 持锁 L1 再获取 L2, 线程 B 持锁 L2 再获取 L1
-//! 2. **中断上下文睡眠**: 在硬中断中获取 Mutex (会 yield)
-//! 3. **递归获取非递归锁**: 同一线程对同一 SpinLock/Mutex 重复 lock
-//! 4. **释放未持有的锁**: unlock 时当前线程并非持有者
+//! - **检查 1 · 中断上下文睡眠**: 在硬中断中获取 `Mutex` / `PiMutex` (会 yield).
+//!   门控关闭的构建里只剩这一条发射路径
+//! - **检查 2 · 递归获取非递归锁**: 同一 CPU 对**同一物理实例**重复 lock; 同类
+//!   不同实例 (如 per-CPU 数组锁成对持有) 是合法的
+//! - **检查 2.5 · 跨上下文睡眠**: 进程上下文持有「曾在中断上下文获取过的锁」时
+//!   再取睡眠锁 —— 只发 WARNING, 不计入违规数
+//! - **检查 3 · AB-BA 死锁**: 持有 L1 时获取 L2, 而依赖图上已存在 L2 → L1 路径
+//! - **release 侧 · 释放未持有的锁**: 当前持有栈中没有该实例
+//!
+//! 检查 1/2/3 与 release 侧那条计入 `num_violations()`; 检查 2.5 与一条容量告警
+//! (持有栈深度超过 `MAX_HELD_LOCKS` ⇒ 该锁本轮起不再被跟踪) 只发报告.
 //!
 //! ## 架构
 //!
 //! ```text
-//! ┌──────────────────────────────────────────────────────┐
-//! │ LockDepMap (全局, IrqSpinLock 守护)                   │
-//! │  ├── lock_classes: [LockClass; MAX_CLASSES]          │
-//! │  ├── adjacency: [[bool; MAX_CLASSES]; MAX_CLASSES]   │
-//! │  └── class_count: usize                              │
-//! ├──────────────────────────────────────────────────────┤
-//! │ HeldLocks (per-CPU / per-thread)                     │
-//! │  └── stack: [LockClassId; MAX_HELD]                  │
-//! ├──────────────────────────────────────────────────────┤
-//! │ 检测入口 (每个锁的 lock/unlock 路径调用)              │
-//! │  ├── lockdep_acquire(class_id, irq_context)          │
-//! │  └── lockdep_release(class_id)                       │
-//! └──────────────────────────────────────────────────────┘
+//! ┌────────────────────────────────────────────────────────────┐
+//! │ LockDepMap (全局, IrqSpinLock 守护)                        │
+//! │  ├── classes: [LockClassEntry; MAX_LOCK_CLASSES]           │
+//! │  ├── adjacency: [[u8; MAX_LOCK_CLASSES]; MAX_LOCK_CLASSES] │
+//! │  │     值域 0=无边 / 1=已验证 / 2=新边, BFS 只跑新边       │
+//! │  └── class_count, stats: LockdepStats                      │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ HeldLockStack (per-CPU 一格, 关中断独占本格)               │
+//! │  ├── entries: [HeldLockEntry; MAX_HELD_LOCKS]              │
+//! │  │     每条含 class_id (名) + instance (物理地址) + in_irq │
+//! │  └── depth                                                 │
+//! ├────────────────────────────────────────────────────────────┤
+//! │ 检测入口 (五把同步原语的 lock/unlock 路径调用)             │
+//! │  ├── register_class(desc) -> LockClassId                   │
+//! │  ├── acquire(class_id, instance, irq_context) -> bool      │
+//! │  └── release(class_id, instance)                           │
+//! └────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! ## 性能
@@ -656,7 +667,9 @@ impl PendingReports {
 /// 注册锁类
 ///
 /// 返回 `LockClassId`, 后续 acquire/release 使用此 ID。
-/// 同名锁类只注册一次 (幂等)。
+/// 同名锁类只注册一次 (幂等)。类表满 (`MAX_LOCK_CLASSES`) 时返回
+/// [`LockClassId::INVALID`], 而 acquire/release 对该 ID 一律短路放行 ——
+/// 即注册失败只丢失观测, 不影响锁本身。
 pub fn register_class(desc: LockClassDesc) -> LockClassId {
     let mut map = LOCK_DEP_MAP.lock();
     map.register(desc)
@@ -664,10 +677,11 @@ pub fn register_class(desc: LockClassDesc) -> LockClassId {
 
 /// 锁获取通知
 ///
-/// 在锁成功获取后调用。检查:
-/// 1. 与当前持有锁的依赖关系 (AB-BA 检测)
-/// 2. 中断上下文获取睡眠锁
-/// 3. 递归获取非递归锁
+/// 在锁成功获取后调用。一次全局临界区内依次做:
+/// - **检查 1**: 中断上下文获取睡眠锁
+/// - **检查 2**: 递归获取非递归锁 (按 `instance` 判同一物理实例)
+/// - **检查 2.5**: 持有中断上下文锁时获取睡眠锁 (只发 WARNING)
+/// - **检查 3**: 与当前持有锁的依赖关系 (AB-BA 检测, 只对新边跑 BFS)
 ///
 /// # 参数
 /// - `class_id`: 锁类 ID (名字, 依赖图用)
@@ -675,8 +689,10 @@ pub fn register_class(desc: LockClassDesc) -> LockClassId {
 /// - `irq_context`: 是否在中断上下文中获取 (由调用方判断)
 ///
 /// # 返回
-/// - `true`: 正常
-/// - `false`: 检测到违规 (已打印警告)
+/// - `true`: 放行 (含仅命中检查 2.5 / 3 的情形 —— 环检测不改写返回值,
+///   违规只体现在报告与 `num_violations()` 上)
+/// - `false`: 命中检查 1 或检查 2 —— 纯诊断信号, 锁的真实持有状态不受影响,
+///   五把原语的调用点也一律不据此回退
 pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> bool {
     // 门控关闭 (release, 无 lockdep feature) 时下方 per-CPU 持有栈段被 cfg 掉,
     // instance 仅在该段使用 → 显式消费避免 unused 警告.
@@ -767,7 +783,9 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
 
 /// 锁释放通知
 ///
-/// 在锁释放前调用。从持有栈中移除。
+/// 在锁释放前调用。按 (`class_id`, `instance`) 从当前 CPU 的持有栈中移除;
+/// 栈中没有该实例即「释放未持有的锁」, 计入 `num_violations()`.
+/// 门控关闭的构建里本函数只消费参数, 不进 `LOCK_DEP_MAP`.
 pub fn release(class_id: LockClassId, instance: usize) {
     // 默认 boot (两门皆关): 不持有锁栈, 仅消费参数避免 unused.
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
