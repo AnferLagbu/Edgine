@@ -5,19 +5,25 @@
 # record_bench_baseline.py — 记录 framekernel-bench 当前的性能基线
 #
 # 用法:
-#   python3 scripts/record_bench_baseline.py [out_path]
+#   python3 scripts/record_bench_baseline.py [out_path] [--runs N]
 #
 # 行为:
-#   1. 调用 `cargo run --release --bin framekernel-bench` 收集 JSON 结果
-#   2. 提取每条目的 ns_per_op_frac 作为基线
+#   1. 调用 `cargo run --release --bin framekernel-bench` 收集 JSON 结果 N 次
+#   2. 按条目取 N 次读数的**中位数**作为基线 (N=1 时即该次读数, 与历史行为一致)
 #   3. 写入 out_path (默认 host-tests/benches/baseline.json)
 #   4. 同时打印简洁摘要
+#
+# 为什么取中位数: 单样本基线会把一次离群的低读数钉成判据, 之后正常读数即被判成
+# 回归 (fc45 宿主复录实测: attribution_classify 5 次采样 5.177–7.423ns、1.43 倍
+# 摆幅, 据此钉下的基线当场让 ci-bench 自红). 摆幅来自「迭代数 × 单次耗时 < 1ms」
+# 的短测量窗, 中位数对单点离群不敏感.
 #
 # 基线文件结构 (与 BenchReport 兼容):
 #   {
 #     "version": 1,
 #     "machine": "<hostinfo>",
 #     "rustc": "<rustc version>",
+#     "runs_per_item": N,
 #     "recorded_at": "<ISO8601>",
 #     "results": [ { "name": "...", "category": "...", "ns_per_op_frac": ..., "iterations": ... }, ... ]
 #   }
@@ -26,6 +32,7 @@ import argparse
 import json
 import os
 import platform
+import statistics
 import subprocess
 import sys
 import time
@@ -56,7 +63,59 @@ def run_bench() -> dict:
         raise
 
 
-def build_baseline(report: dict, sched_criteria: dict | None = None) -> dict:
+def _items_by_name(report: dict, label: str) -> dict[str, dict]:
+    """把一份 BenchReport 的 results 转成 name → 条目; 重名即失败 (重名会让中位数悄悄合并两个条目)."""
+    items: dict[str, dict] = {}
+    for r in report.get("results", []):
+        name = r["name"]
+        if name in items:
+            raise ValueError(f"{label}读数里条目 {name} 重复, 无法按条目聚合")
+        items[name] = r
+    if not items:
+        raise ValueError(f"{label}读数没有任何条目")
+    return items
+
+
+def aggregate_runs(reports: list[dict]) -> dict:
+    """把 N 次 bench 读数按条目取中位数, 合成一份 BenchReport 形态的 dict.
+
+    fail-closed 面: 条目名集合在两次运行间漂移 (会静默丢条目) 或同一条目的
+    iterations 漂移 (对不同工作量的读数取中位数没有意义) 都直接抛错, 不写基线.
+    """
+    if not reports:
+        raise ValueError("aggregate_runs: 没有任何 bench 读数")
+    base_items = _items_by_name(reports[0], "第 1 次")
+    ns_values: dict[str, list[float]] = {n: [r["ns_per_op_frac"]] for n, r in base_items.items()}
+    for idx, report in enumerate(reports[1:], start=2):
+        items = _items_by_name(report, f"第 {idx} 次")
+        if items.keys() != base_items.keys():
+            lost = base_items.keys() - items.keys()
+            gained = items.keys() - base_items.keys()
+            raise ValueError(
+                f"第 {idx} 次读数条目集合与第 1 次不一致 (缺失 {sorted(lost)}, 新增 {sorted(gained)}); "
+                "跨运行漂移时取中位数会静默改变基线覆盖的条目"
+            )
+        for name, item in items.items():
+            if item["iterations"] != base_items[name]["iterations"]:
+                raise ValueError(
+                    f"条目 {name} 的 iterations 在两次运行间漂移 "
+                    f"({base_items[name]['iterations']} -> {item['iterations']}); "
+                    "对不同工作量的读数取中位数没有意义"
+                )
+            ns_values[name].append(item["ns_per_op_frac"])
+
+    results = []
+    for name, item in base_items.items():
+        # ps_per_op 由中位 ns 反推, 保持 bench 侧的 ps == ns * 1000 自洽约定
+        median_ns = statistics.median(ns_values[name])
+        entry = dict(item)
+        entry["ns_per_op_frac"] = median_ns
+        entry["ps_per_op"] = int(round(median_ns * 1000))
+        results.append(entry)
+    return {"version": reports[0].get("version", 1), "results": results}
+
+
+def build_baseline(report: dict, sched_criteria: dict | None = None, runs: int = 1) -> dict:
     """从 BenchReport 提取基线条目, 附加机器 / 编译器信息."""
     entries = []
     for r in report.get("results", []):
@@ -71,6 +130,9 @@ def build_baseline(report: dict, sched_criteria: dict | None = None) -> dict:
         "version": report.get("version", 1),
         "machine": f"{platform.machine()}-{platform.system()}-{platform.release()}",
         "python": platform.python_version(),
+        # 读数来源: 每个条目由几次采样取中位数. 写进文件是为了让读者能分辨
+        # 「单样本钉下」与「中位数钉下」—— 两者对短测量窗条目的稳定性不同.
+        "runs_per_item": runs,
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "results": entries,
     }
@@ -102,6 +164,124 @@ def print_summary(baseline: dict) -> None:
         print(f"  {r['name']:<24} {r['category']:<10} {ns_str:>14} {r['iterations']:>12}")
 
 
+def _synthetic_run(samples: list[float], iterations: int = 1000) -> dict:
+    """把同一份条目读数包成一条 BenchReport (自检用; ps 与 ns 保持 *1000 自洽)."""
+    return {
+        "version": 1,
+        "results": [
+            {
+                "name": f"item{i}",
+                "category": "selftest",
+                "iterations": iterations,
+                "ns_per_op_frac": ns,
+                "ps_per_op": int(round(ns * 1000)),
+            }
+            for i, ns in enumerate(samples)
+        ],
+    }
+
+
+def _multi_run(values: dict[str, list[float]], iterations: int = 1000) -> list[dict]:
+    """把「条目 → N 次读数」转成 N 份 BenchReport."""
+    names = list(values)
+    return [
+        {
+            "version": 1,
+            "results": [
+                {
+                    "name": name,
+                    "category": "selftest",
+                    "iterations": iterations,
+                    "ns_per_op_frac": values[name][round_idx],
+                    "ps_per_op": int(round(values[name][round_idx] * 1000)),
+                }
+                for name in names
+            ],
+        }
+        for round_idx in range(len(next(iter(values.values()))))
+    ]
+
+
+def _expect_raises(fn, label: str, failures: list[str]) -> None:
+    try:
+        fn()
+    except ValueError:
+        return
+    except Exception as exc:  # 形态错的异常也算自检失败
+        failures.append(f"{label}: 抛的是 {type(exc).__name__} 而非 ValueError ({exc})")
+        return
+    failures.append(f"{label}: 期望 fail-closed 抛 ValueError, 实际正常返回")
+
+
+def self_test() -> list[str]:
+    """聚合器自检: 真调 aggregate_runs / build_baseline, 不复制中位数算法."""
+    failures: list[str] = []
+
+    def check(label: str, got, want) -> None:
+        if got != want:
+            failures.append(f"{label}: 期望 {want!r}, 实得 {got!r}")
+
+    # 1. runs=1 与历史行为一致: 单样本原样透传.
+    single = aggregate_runs([_synthetic_run([2.5, 0.75])])
+    check("单样本透传 ns[0]", single["results"][0]["ns_per_op_frac"], 2.5)
+    check("单样本透传 ps[0]", single["results"][0]["ps_per_op"], 2500)
+    check("单样本透传条目数", len(single["results"]), 2)
+
+    # 2. 中位数对单点离群不敏感 (fc45 症状: 一次离群读数把基线钉死在低点).
+    outlier = _multi_run({"a": [5.0, 5.0, 5.0, 5.0, 100.0], "b": [1.0, 1.0, 1.0, 1.0, 0.01]})
+    agg = aggregate_runs(outlier)
+    check("离群高读数不抬高基线", agg["results"][0]["ns_per_op_frac"], 5.0)
+    check("离群低读数不压低基线", agg["results"][1]["ns_per_op_frac"], 1.0)
+
+    # 3. 偶数次采样取中间两值均值 (不是 min / 不是 mean).
+    even = aggregate_runs(_multi_run({"a": [1.0, 2.0, 3.0, 4.0]}))
+    check("偶数采样取中位", even["results"][0]["ns_per_op_frac"], 2.5)
+    check("中位反推 ps", even["results"][0]["ps_per_op"], 2500)
+
+    # 4. 条目名 / 分类 / 迭代数从首次读数保留, 顺序不变.
+    check("条目名保留", [r["name"] for r in agg["results"]], ["a", "b"])
+    check("迭代数保留", [r["iterations"] for r in agg["results"]], [1000, 1000])
+
+    # 5. fail-closed 四形: 无读数 / 条目集合漂移 / iterations 漂移 / 重名.
+    _expect_raises(lambda: aggregate_runs([]), "空读数", failures)
+
+    def drift_names():
+        a = _synthetic_run([1.0, 2.0])
+        b = _synthetic_run([1.0])
+        return aggregate_runs([a, b])
+
+    _expect_raises(drift_names, "条目集合漂移", failures)
+
+    def drift_iters():
+        return aggregate_runs([_synthetic_run([1.0], 1000), _synthetic_run([1.0], 10000)])
+
+    _expect_raises(drift_iters, "iterations 漂移", failures)
+
+    def dup_name():
+        report = _synthetic_run([1.0])
+        report["results"].append(dict(report["results"][0]))
+        return aggregate_runs([report])
+
+    _expect_raises(dup_name, "条目重名", failures)
+
+    # 6. build_baseline 记录采样次数, 并原样保留 sched_criteria (K-07b 批3 判据).
+    criteria = {"fairness_max_ratio": 2}
+    baseline = build_baseline(agg, criteria, runs=5)
+    check("采样次数落档", baseline["runs_per_item"], 5)
+    check("sched_criteria 保留", baseline.get("sched_criteria"), criteria)
+    check("基线条目数", len(baseline["results"]), 2)
+    check(
+        "基线条目字段",
+        sorted(baseline["results"][0]),
+        sorted(["name", "category", "iterations", "ns_per_op_frac", "ps_per_op"]),
+    )
+    # 缺省 runs=1: 老调用点 (不传参数) 行为不变.
+    check("runs 缺省为 1", build_baseline(agg)["runs_per_item"], 1)
+    check("缺省时不带 sched_criteria", "sched_criteria" in build_baseline(agg), False)
+
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="记录 framekernel-bench 性能基线")
     parser.add_argument(
@@ -110,20 +290,42 @@ def main() -> int:
         default=str(DEFAULT_OUT),
         help="输出 JSON 路径 (默认: " + str(DEFAULT_OUT) + ")",
     )
+    parser.add_argument(
+        "--runs",
+        "-n",
+        type=int,
+        default=1,
+        help="每项取多少次采样的中位数 (默认 1 = 单样本; 短测量窗条目建议 5)",
+    )
+    parser.add_argument("--self-test", action="store_true", help="只跑聚合器自检")
     args = parser.parse_args()
+
+    if args.runs < 1:
+        print(f"ERROR: --runs 必须 >= 1, 实得 {args.runs}", file=sys.stderr)
+        return 2
+
+    failures = self_test()
+    if failures:
+        for msg in failures:
+            print(f"自检失败: {msg}", file=sys.stderr)
+        return 2
+    if args.self_test:
+        print("自检通过: 单样本透传 + 中位数抗离群 + fail-closed 四形 + sched_criteria 保留")
+        return 0
 
     if not HOST_TESTS_DIR.is_dir():
         print(f"ERROR: 未找到 host-tests 目录: {HOST_TESTS_DIR}", file=sys.stderr)
         return 1
 
-    report = run_bench()
+    reports = [run_bench() for _ in range(args.runs)]
+    report = aggregate_runs(reports)
     out_path = Path(args.out)
-    baseline = build_baseline(report, load_sched_criteria(out_path))
+    baseline = build_baseline(report, load_sched_criteria(out_path), runs=args.runs)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(baseline, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    print(f"\n[baseline] 已写入: {out_path}")
+    print(f"\n[baseline] 已写入: {out_path} (每项 {args.runs} 次采样取中位)")
     print_summary(baseline)
     return 0
 

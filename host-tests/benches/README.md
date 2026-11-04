@@ -45,6 +45,8 @@ cargo run --release --bin framekernel-bench
 # 记录基线
 python3 scripts/record_bench_baseline.py
 # 自定义输出: python3 scripts/record_bench_baseline.py path/to/baseline.json
+# 每项取 N 次采样的中位数 (缺省 1 = 单样本): python3 scripts/record_bench_baseline.py --runs 5
+# 聚合器自检 (不跑 bench): python3 scripts/record_bench_baseline.py --self-test
 
 # 回归检查 (默认阈值 15% + 1ns 绝对噪声过滤)
 python3 scripts/check_bench_regression.py

@@ -1,155 +1,149 @@
 {
   "version": 1,
-  "machine": "x86_64-Linux-7.2.11-200.fc44.x86_64",
-  "python": "3.14.8",
-  "recorded_at": "2026-11-01T12:53:33Z",
-  "sched_criteria": {
-    "lag_bound_permille": 500,
-    "wake_credit_bound_permille": 1000,
-    "wake_turnaround_schedules": 2,
-    "fairness_window_ticks": 600,
-    "fairness_spread_permille": 50
-  },
+  "machine": "x86_64-Linux-7.2.15-300.fc45.x86_64",
+  "python": "3.15.0",
+  "runs_per_item": 5,
+  "recorded_at": "2026-11-04T10:15:21Z",
   "results": [
     {
       "name": "page_flags_bits",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 1.24,
-      "ps_per_op": 1240
+      "ns_per_op_frac": 1.284,
+      "ps_per_op": 1284
     },
     {
       "name": "pte_set_flags",
       "category": "mm",
       "iterations": 100000,
-      "ns_per_op_frac": 4.366,
-      "ps_per_op": 4366
+      "ns_per_op_frac": 3.644,
+      "ps_per_op": 3644
     },
     {
       "name": "iomem_alias_check",
       "category": "iomem",
       "iterations": 100000,
-      "ns_per_op_frac": 53.067,
-      "ps_per_op": 53067
+      "ns_per_op_frac": 52.08,
+      "ps_per_op": 52080
     },
     {
       "name": "capability_check",
       "category": "sgeg",
       "iterations": 100000,
-      "ns_per_op_frac": 2.359,
-      "ps_per_op": 2359
+      "ns_per_op_frac": 2.273,
+      "ps_per_op": 2273
     },
     {
       "name": "dma_state_machine",
       "category": "dma",
       "iterations": 100000,
-      "ns_per_op_frac": 0.295,
-      "ps_per_op": 295
+      "ns_per_op_frac": 0.296,
+      "ps_per_op": 296
     },
     {
       "name": "sha256_block",
       "category": "sgeg",
       "iterations": 1000,
-      "ns_per_op_frac": 465.29,
-      "ps_per_op": 465290
+      "ns_per_op_frac": 461.292,
+      "ps_per_op": 461292
     },
     {
       "name": "attribution_classify",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 5.088,
-      "ps_per_op": 5088
+      "ns_per_op_frac": 5.858,
+      "ps_per_op": 5858
     },
     {
       "name": "recovery_decide",
       "category": "freg",
       "iterations": 100000,
-      "ns_per_op_frac": 69.846,
-      "ps_per_op": 69846
+      "ns_per_op_frac": 69.883,
+      "ps_per_op": 69883
     },
     {
       "name": "bitmap_scan",
       "category": "pmm",
       "iterations": 100000,
-      "ns_per_op_frac": 459.257,
-      "ps_per_op": 459257
+      "ns_per_op_frac": 454.62,
+      "ps_per_op": 454620
     },
     {
       "name": "eevdf_pick_requeue",
       "category": "sched",
       "iterations": 10000,
-      "ns_per_op_frac": 550.367,
-      "ps_per_op": 550367
+      "ns_per_op_frac": 553.743,
+      "ps_per_op": 553743
     },
     {
       "name": "socket_wait_queue",
       "category": "net",
       "iterations": 10000,
-      "ns_per_op_frac": 32.619,
-      "ps_per_op": 32619
+      "ns_per_op_frac": 32.603,
+      "ps_per_op": 32603
     },
     {
       "name": "virtio_blk_io",
       "category": "storage",
       "iterations": 10000,
-      "ns_per_op_frac": 35.145,
-      "ps_per_op": 35145
+      "ns_per_op_frac": 35.102,
+      "ps_per_op": 35102
     },
     {
       "name": "bpf_verifier_dispatch",
       "category": "ebpf",
       "iterations": 100000,
-      "ns_per_op_frac": 12.736,
-      "ps_per_op": 12736
+      "ns_per_op_frac": 12.829,
+      "ps_per_op": 12829
     },
     {
       "name": "sysctl_rw",
       "category": "config",
       "iterations": 10000,
-      "ns_per_op_frac": 29.7,
-      "ps_per_op": 29700
+      "ns_per_op_frac": 29.912,
+      "ps_per_op": 29912
     },
     {
       "name": "blk_dev_dispatch",
       "category": "block",
       "iterations": 100000,
-      "ns_per_op_frac": 29.407,
-      "ps_per_op": 29407
+      "ns_per_op_frac": 27.482,
+      "ps_per_op": 27482
     },
     {
       "name": "vfs_poll_dispatch",
       "category": "epoll",
       "iterations": 100000,
-      "ns_per_op_frac": 2.257,
-      "ps_per_op": 2257
+      "ns_per_op_frac": 1.772,
+      "ps_per_op": 1772
     },
     {
       "name": "zap_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 171.554,
-      "ps_per_op": 171554
+      "ns_per_op_frac": 172.018,
+      "ps_per_op": 172018
     },
     {
       "name": "txg_dispatch",
       "category": "egfs",
       "iterations": 10000,
-      "ns_per_op_frac": 31.241,
-      "ps_per_op": 31241
+      "ns_per_op_frac": 29.337,
+      "ps_per_op": 29337
     },
     {
       "name": "dmu_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 189.871,
-      "ps_per_op": 189871
+      "ns_per_op_frac": 189.741,
+      "ps_per_op": 189741
     },
     {
       "name": "spa_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 11.885,
-      "ps_per_op": 11885
+      "ns_per_op_frac": 11.874,
+      "ps_per_op": 11874
     },
     {
       "name": "raidz_dispatch",
@@ -162,22 +156,29 @@
       "name": "arc_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 67.283,
-      "ps_per_op": 67283
+      "ns_per_op_frac": 67.149,
+      "ps_per_op": 67149
     },
     {
       "name": "zil_log_dispatch",
       "category": "egfs",
       "iterations": 100000,
-      "ns_per_op_frac": 21.74,
-      "ps_per_op": 21740
+      "ns_per_op_frac": 19.35,
+      "ps_per_op": 19350
     },
     {
       "name": "zil_persist_dispatch",
       "category": "egfs",
       "iterations": 1000,
-      "ns_per_op_frac": 7325.615,
-      "ps_per_op": 7325615
+      "ns_per_op_frac": 7332.724,
+      "ps_per_op": 7332724
     }
-  ]
+  ],
+  "sched_criteria": {
+    "lag_bound_permille": 500,
+    "wake_credit_bound_permille": 1000,
+    "wake_turnaround_schedules": 2,
+    "fairness_window_ticks": 600,
+    "fairness_spread_permille": 50
+  }
 }
