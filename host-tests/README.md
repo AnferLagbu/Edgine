@@ -251,6 +251,7 @@ criterion_main!(benches);
 |------|------|------|
 | `audit_comment_language_test.rs` | 注释语言一致性 audit | TD-24 / TD-25 |
 | `safety_boilerplate_test.rs` | SAFETY 注释 boilerplate | I-04 |
+| `ci_p62_lockdep_probe_leg_test.rs` | lockdep 构建面探针腿的接线形状锁（探针串同源 / 双向判据 / 双架构产物 / audit 挂路 / feature 转发） | P-62 #125 |
 
 #### 杂项
 

@@ -963,6 +963,30 @@ if [ "$MODE" = "full" ]; then
         else
             err "initramfs 载体启动失败 (exit=$CPIO_RC, 全量输出见 $CPIO_EVIDENCE)"
         fi
+
+        # #125 (P-62 甲 第五项 feature 腿): lockdep 构建面探针 (scripts/lockdep_feature_probe.sh).
+        # lockdep 是默认关闭的诊断 feature, 且不在启动日志 capabilities 行里 (该行只有
+        # smp/preempt/kaslr/kpti/freg) —— 起一趟证不了它真编进了镜像, 故判据取构建面
+        # 字符串双向: lockdep 构建含 "circular dependency" 恰 1 段、默认构建 0 段
+        # (用户 2026-11-05 裁定 ⑤). 正向钉「feature 真编进去」, 反向钉「该串确实由
+        # feature 门控」—— 只判正向时, 串哪天与 lockdep 脱钩 (被无条件文本覆盖或 A-1
+        # 选常开) 读数仍是 1, 腿照样绿.
+        # 排在本步骤最后: 本腿同样切 KERNEL_FEATURES (双架构各一次 feature 构建 + 一次
+        # 默认重建), 跑完自行复原默认镜像, 不把 feature 产物留给后续腿.
+        # 附带后果: 若 A-1 选「lockdep 常开」, 反向判据失效, 本腿须重指 (需再裁).
+        LOCKDEP_EVIDENCE="$EVIDENCE_DIR/audit_lockdep_probe.log"
+        set +e
+        LOCKDEP_OUT=$("$PROJECT_ROOT/scripts/lockdep_feature_probe.sh" all 2>&1)
+        LOCKDEP_RC=$?
+        set -e
+        printf '%s\n' "$LOCKDEP_OUT" > "$LOCKDEP_EVIDENCE"
+        printf '%s\n' "$LOCKDEP_OUT" | tail -6
+        printf '   全量输出: %s\n' "$LOCKDEP_EVIDENCE"
+        if [ "$LOCKDEP_RC" -eq 0 ]; then
+            ok "lockdep 构建面探针: 双架构正/负双向符合 (P-62 #125)"
+        else
+            err "lockdep 构建面探针失败 (exit=$LOCKDEP_RC, 全量输出见 $LOCKDEP_EVIDENCE)"
+        fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi
