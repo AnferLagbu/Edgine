@@ -13,7 +13,7 @@ B01-24 返工: audit 脚本统一自测.
   (P-50 ③): 此前用例在自测文件里复制检测算法, 检测器失效时自测仍全绿 —
   自测与检测器不同源就没有判别力.
 - 注入面只有模块级路径常量 (block_registration.BASE / audit_unsafe.PROJECT_ROOT /
-  audit_deadlock_matrix.LOCK_ORDER_TABLE 与 .LOCK_ORDER_DOC):
+  audit_deadlock_matrix.LOCK_ORDER_TABLE 与 .LOCK_ORDER_DOC 与 .LIMITS_SOURCE):
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
@@ -25,9 +25,11 @@ B01-24 返工: audit 脚本统一自测.
 5. audit_coupling.py: scan_cross_module_deps(base, layer) + detect_circular_deps(matrix, layer)
 6. audit_coupling.py: scan_reference_level_deps(base, layer) (P-73 丙 只报告矩阵)
 7. audit_coupling.py: check_internal_access(base, layer, cross_layer) (P-74 甲 跨层穿透)
-8. audit_deadlock_matrix.py: check_lock_order(真仓库根) —— 真序表三方对账必须零违规
-9. audit_deadlock_matrix.py: check_lock_order(临时 fixture) —— 六类失同步各判对应红,
-   并含反向负控制 (括号内的失效名不该被判)
+8. audit_deadlock_matrix.py: check_lock_order(真仓库根) —— 真序表三方对账必须零违规,
+   且摘要的容量读数取自 limits.rs 实值
+9. audit_deadlock_matrix.py: check_lock_order(临时 fixture) —— 九条失同步各判对应红
+   (含跨行注册与容量到顶 / 上限单源不可解析), 并含反向负控制 (括号内的失效名与
+   注释里的示例注册点都不该被判)
 """
 from __future__ import annotations
 
@@ -147,8 +149,9 @@ def _order_doc_body(entries: dict[int, str]) -> str:
 
 
 def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=None,
-                      doc_entries=None, code=None) -> set[str]:
-    """注入临时序表 / 文档 / 代码根, 真调 check_lock_order 取违规类型集合."""
+                      doc_entries=None, code=None, limits=None,
+                      limits_absent=False) -> set[str]:
+    """注入临时序表 / 文档 / 代码根 / 容量上限单源, 真调 check_lock_order 取违规类型集合."""
     root = Path(tmpdir) / tag
     table_path = root / "lock_class_order.json"
     table_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,15 +171,30 @@ def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=N
     src_root.mkdir(parents=True, exist_ok=True)
     (src_root / "fixture.rs").write_text(code if code is not None else _ORDER_CODE,
                                         encoding="utf-8")
-    # 两个路径常量绑定仓库位置, fixture 在临时目录 ⇒ 注入后调真实检测器
+    # 三个路径常量绑定仓库位置, fixture 在临时目录 ⇒ 注入后调真实检测器.
+    # 容量判据的上限必须可注入: 真实上限 (64) 远高于 fixture 条目数, 不改指向就构造不出
+    # 「到顶即红」; 每个 case 都要显式复原, 否则上一条 case 的 fixture 会污染下一条.
+    if limits is not None:
+        limits_path = root / "limits.rs"
+        limits_path.write_text(
+            "".join(f"pub const {name}: usize = {value};\n"
+                    for name, value in limits.items()),
+            encoding="utf-8",
+        )
+    elif limits_absent:
+        limits_path = root / "no-such-limits.rs"
+    else:
+        limits_path = (PROJECT_ROOT / "src" / "kernel" / "privileged"
+                       / "constants" / "limits.rs")
     detector.LOCK_ORDER_TABLE = table_path
     detector.LOCK_ORDER_DOC = doc_path
+    detector.LIMITS_SOURCE = limits_path
     issues, _summary = detector.check_lock_order([src_root])
     return {issue["type"] for issue in issues}
 
 
 def test_lock_order_self_reconcile() -> bool:
-    """A-3 丙 正向自检: 真序表与真代码 / 真文档三方对账必须零违规."""
+    """A-3 丙 + A-127c 正向自检: 真序表与真代码 / 真文档对账零违规, 容量读数在位."""
     print("\n[Test 8/9] audit_deadlock_matrix.py 锁类序表 (真单源)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     issues, summary = detector.check_lock_order(
@@ -185,13 +203,23 @@ def test_lock_order_self_reconcile() -> bool:
     ok = _check("真序表三方对账零违规", not issues,
                 f"实测违规 {[i['message'] for i in issues][:3]}")
     line = summary[0] if summary else ""
-    return ok and _check(
-        "摘要报出序表 lockdep 类与代码具名类等量 (12 / 12)",
-        "lockdep 类 12" in line and "代码具名类 12" in line, line)
+    counts_ok = _check(
+        "摘要报出序表 lockdep 类与代码具名类等量 (16 / 16)",
+        "lockdep 类 16" in line and "代码具名类 16" in line, line)
+    # 容量读数必须由 limits.rs 实值拼出 (自测复用检测器同一个读数函数, 不抄数):
+    # 上限一改, 摘要与判据同源跟随 —— 本断言因此不会挡住「提高上限」那次改动.
+    limits = detector.read_capacity_limits()
+    return (ok and counts_ok and _check(
+        "摘要报出的容量读数取自 limits.rs 实值",
+        limits is not None
+        and f"类表上限 {limits['MAX_LOCK_CLASSES']}" in line
+        and f"持栈上限 {limits['MAX_HELD_LOCKS']}" in line,
+        f"上限读数 {limits}, 摘要行 {line}"))
 
 
 def test_lock_order_negative_controls() -> bool:
-    """A-3 丙 负控制: 六类失同步各判对应红, 另含基准形态与括号豁免两例不判."""
+    """A-3 丙 + A-127c 负控制: 九条失同步各判对应红 (含跨行注册与两条容量判据),
+    另含基准形态、括号豁免与注释豁免三例不判."""
     print("\n[Test 9/9] audit_deadlock_matrix.py 锁类序表 (负控制)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     # 局部列表的变量名要避开 main() 里那个结果列表: 契约锁 ci_entrypoint_unified_test
@@ -204,6 +232,12 @@ def test_lock_order_negative_controls() -> bool:
             ("代码新增未声明锁类即红", {"LOCK_ORDER_UNDECLARED_CLASS"},
              None, None, None,
              _ORDER_CODE + 'static EXTRA: Mutex<Z> = Mutex::named_lazy("NEW_CLASS", Z);\n'),
+            # A-127a: 构造与类名字面量分行是 freg 域内锁 4 处的真实形态; 逐行扫会把
+            # 它们看成「代码里没注册」, 上一条判据随即对跨行失效.
+            ("跨行注册的锁类同样必须入表", {"LOCK_ORDER_UNDECLARED_CLASS"},
+             None, None, None,
+             _ORDER_CODE + 'static DOM: IrqSpinLock<W> = IrqSpinLock::named_lazy(\n'
+             '    "CROSS_LINE_CLASS",\n    [None; 4],\n);\n'),
             ("序表 lockdep 类已无注册点即红", {"LOCK_ORDER_CLASS_STALE"},
              {0: "MY_LOCK", 1: "GONE_LOCK, OTHER_SYM"},
              _ORDER_CLASSES + [{"level": 1, "name": "GONE_LOCK", "anchor": "lockdep"}],
@@ -223,6 +257,12 @@ def test_lock_order_negative_controls() -> bool:
              [{"level": 0, "domain": "Zero"}, {"level": 2, "domain": "Two"}], None),
             ("括号内的失效名不判红", set(),
              {0: "MY_LOCK", 1: "OTHER_SYM（原 GONE_SYM 已删除）"}, None, None, None),
+            # 整文件匹配带来的反面: 文档示例里的 `::named("X")` 不是注册点, 注释行
+            # 必须整体跳过, 否则写一段用法说明就会凭空造出「未声明的锁类」.
+            ("注释里的示例注册点不判红", set(),
+             None, None, None,
+             _ORDER_CODE + '//! 用法: static A = Mutex::named("DOC_ONLY_CLASS", ..);\n'
+             '// Mutex::named("ALSO_DOC_CLASS", ..)\n'),
         ]
         for idx, (label, expected, doc_entries, classes, levels, code) in enumerate(
                 cases, start=1):
@@ -233,7 +273,32 @@ def test_lock_order_negative_controls() -> bool:
             case_checks.append(_check(
                 label, got == expected,
                 f"期望 {sorted(expected) or '零违规'}, 实测 {sorted(got) or '零违规'}"))
-    return all(case_checks)
+    # 判据 ④ 容量对账的两条负控制. 上限走 fixture: 真实上限 64 远高于 fixture 条目数,
+    # 直接把 fixture 撑到 64 条要造 64 个类名, 那夹具本身的噪声会盖过判据.
+    two_lockdep_classes = [
+        {"level": 0, "name": "MY_LOCK", "anchor": "lockdep"},
+        {"level": 1, "name": "OTHER_SYM", "anchor": "lockdep"},
+    ]
+    two_named_code = (
+        "//! fixture\n"
+        'static TABLE: Mutex<X> = Mutex::named("MY_LOCK", X::new());\n'
+        'static OTHER: IrqSpinLock<Y> = IrqSpinLock::named("OTHER_SYM", Y::new());\n'
+    )
+    cap_checks: list[bool] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cap_checks.append(_check(
+            "具名类数到达类表上限即判容量红 (序表与代码两侧同判)",
+            _order_violations(detector, tmpdir, "cap_full", classes=two_lockdep_classes,
+                              code=two_named_code,
+                              limits={"MAX_LOCK_CLASSES": 2, "MAX_HELD_LOCKS": 8})
+            == {"LOCK_CAPACITY_TABLE_FULL", "LOCK_CAPACITY_CODE_FULL"},
+            "两侧计数都到 fixture 上限 2, 应各判一类容量红"))
+        cap_checks.append(_check(
+            "容量上限单源不可解析即判红 (fail-closed)",
+            _order_violations(detector, tmpdir, "cap_unreadable", limits_absent=True)
+            == {"LOCK_CAPACITY_LIMITS_UNREADABLE"},
+            "limits.rs 定位不到时容量腿必须哑响成红, 不能静默放行"))
+    return all(case_checks) and all(cap_checks)
 
 
 def test_block_registration() -> bool:

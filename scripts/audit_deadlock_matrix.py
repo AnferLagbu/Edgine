@@ -11,7 +11,8 @@ M6.2 死锁检测矩阵扫描脚本 — 锁顺序/中断上下文/不可重入�
   (6) 锁类序表对账 (A-3 丙, 2026-11-05): 机器可读单源 scripts/lock_class_order.json
       与 ① 代码侧 ::named / ::named_lazy 类名字面量 双向一致, ② 序表 symbol 锚
       仍可在 src/kernel 定位, ③ docs/explain/ref-lock-order.md 的「锁层级」表
-      与该单源双向一致. 未声明的新锁类即红, 已失效的表条目同样即红.
+      与该单源双向一致, ④ 类表容量与 limits.rs 上限对账 (A-127c). 未声明的新锁类
+      即红, 已失效的表条目同样即红, 具名类数到顶亦即红.
 
 未实现项 (本期不在范围内, 留作未来增强):
   - AB-BA 死锁环检测: 锁顺序声明机制已由 (6) 建立, 环检测本身仍待独立批
@@ -25,6 +26,7 @@ import os
 import re
 import sys
 import json
+from bisect import bisect_right
 from collections import defaultdict
 from pathlib import Path
 
@@ -531,9 +533,19 @@ def scan_directory(base):
 LOCK_ORDER_TABLE = PROJECT_ROOT / 'scripts' / 'lock_class_order.json'
 LOCK_ORDER_DOC = PROJECT_ROOT / 'docs' / 'explain' / 'ref-lock-order.md'
 
+# 容量上限单源: lockdep 的类表与持有栈是定长数组, 其实值定义在 limits.rs.
+# 序表 lockdep 条目数与代码具名类数都必须容得下 —— 满表在运行时只留一条粘滞失效
+# 读数 (丢注册 + 该类全程脱离检测), 门禁必须在到顶之前判红, 而不是等启动读数.
+LIMITS_SOURCE = PROJECT_ROOT / 'src' / 'kernel' / 'privileged' / 'constants' / 'limits.rs'
+CAPACITY_LIMIT_NAMES = ('MAX_LOCK_CLASSES', 'MAX_HELD_LOCKS')
+
 # 代码侧具名锁类注册点: SpinLock/Mutex/RwLock/PiMutex/IrqSpinLock 的
-# ::named("X") 与 IrqSpinLock 的惰性 ::named_lazy("X").
+# ::named("X") 与 IrqSpinLock 的惰性 ::named_lazy("X"). `\s` 含换行 ⇒ 构造与
+# 类名字面量分行也能匹配 (模式本身跨行, 但扫描必须整文件做, 见下).
 NAMED_CLASS_PATTERN = re.compile(r'::named(?:_lazy)?\s*\(\s*"([^"]+)"')
+
+# 注释行整体跳过: 文档示例 (`//! ... ::named("demo")`) 里的形态不是注册点.
+COMMENT_LINE_PATTERN = re.compile(r'^(?://|/?\*|/\*)')
 
 # 文档层级表: 「## 锁层级」 标题后的第一个围栏代码块; 块内 `层级 N:` 为表头行,
 # 缩进行为条目行 —— 只有条目行参与受控 token 判定 (表头含域名大写缩写, 如 FREG).
@@ -552,7 +564,13 @@ BRACKET_SPAN_PATTERN = re.compile(r'（[^）]*）|\([^)]*\)')
 
 
 def collect_named_lock_classes(roots):
-    """收集代码侧具名锁类字面量 -> 出现位置列表."""
+    """收集代码侧具名锁类字面量 -> 出现位置列表.
+
+    扫描必须**整文件**做, 不能逐行: `::named_lazy(` 与类名字面量分行是既有形态
+    (freg/domain.rs 的 4 把域内锁即如此), 逐行扫会把它们看成「代码里没注册」——
+    判据 ① 的「未声明的新锁类即红」随即对跨行形态失效, 序表也会少治理真锁.
+    注释行跳过: 文档示例里的 `::named("demo")` 不是注册点.
+    """
     sites = defaultdict(list)
     for base in roots:
         for path in sorted(base.rglob('*.rs')):
@@ -562,9 +580,16 @@ def collect_named_lock_classes(roots):
                 text = path.read_text(encoding='utf-8', errors='replace')
             except OSError:
                 continue
-            for lineno, line in enumerate(text.splitlines(), start=1):
-                for match in NAMED_CLASS_PATTERN.finditer(line):
-                    sites[match.group(1)].append((str(path), lineno))
+            line_starts = [0]
+            for idx, char in enumerate(text):
+                if char == '\n':
+                    line_starts.append(idx + 1)
+            for match in NAMED_CLASS_PATTERN.finditer(text):
+                lineno = bisect_right(line_starts, match.start())
+                head = text[line_starts[lineno - 1]:].split('\n', 1)[0].lstrip()
+                if COMMENT_LINE_PATTERN.match(head):
+                    continue
+                sites[match.group(1)].append((str(path), lineno))
     return sites
 
 
@@ -641,6 +666,25 @@ def parse_doc_level_entries(path):
             # 层级块之间的空行: 条目行归属到此为止, 防跨块粘连
             current = None
     return entries, headers
+
+
+def read_capacity_limits():
+    """读取 limits.rs 的容量上限**实值** (单源, 不在脚本里抄数).
+
+    任一常量定位不到即返回 None —— 容量判据按 fail-closed 走红: 上限被改名/挪走时
+    这条腿必须哑掉而不是静默放行, 否则「到顶即红」会在最需要它的时候失效.
+    """
+    try:
+        text = LIMITS_SOURCE.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return None
+    limits = {}
+    for name in CAPACITY_LIMIT_NAMES:
+        match = re.search(rf'pub const {name}: usize = (\d+);', text)
+        if not match:
+            return None
+        limits[name] = int(match.group(1))
+    return limits
 
 
 def check_lock_order(roots):
@@ -720,6 +764,38 @@ def check_lock_order(roots):
              f'序表声明的 lockdep 类 "{stale}" 在代码里已无注册点 (改名或删除)',
              str(LOCK_ORDER_TABLE))
 
+    # 判据 ④ 容量对账: 类表是定长数组, 到顶之后的第 N+1 个类在运行时只表现为
+    # 「注册被丢弃 + 一条粘滞失效读数」(A-127b), 门禁必须在到顶当刻就判红 ——
+    # 不设「80% 阈值」这类人工数, 上限一律取 limits.rs 实值.
+    limits = read_capacity_limits()
+    if limits is None:
+        fail('LOCK_CAPACITY_LIMITS_UNREADABLE',
+             f'容量上限单源不可解析: {LIMITS_SOURCE} 里定位不到 '
+             f'{" / ".join(CAPACITY_LIMIT_NAMES)} 的 `pub const ...: usize = N;`',
+             str(LIMITS_SOURCE))
+        capacity_note = '容量上限不可解析'
+    else:
+        max_classes = limits['MAX_LOCK_CLASSES']
+        max_held = limits['MAX_HELD_LOCKS']
+        for count, label, kind in (
+            (len(lockdep_declared), '序表 lockdep 条目', 'LOCK_CAPACITY_TABLE_FULL'),
+            (len(named_code), '代码具名类', 'LOCK_CAPACITY_CODE_FULL'),
+        ):
+            if count >= max_classes:
+                fail(kind,
+                     f'{label}数 {count} 已到/超类表上限 MAX_LOCK_CLASSES={max_classes} —— '
+                     f'再增一个具名锁类就会被 lockdep 丢弃注册 (该类全程脱离检测, 只留'
+                     f'粘滞失效读数); 请提高上限或合并锁类',
+                     str(LIMITS_SOURCE))
+        # 层级数 vs 持栈深度: 严格升序取锁时一条合法长链可在每层各持一把, 而持有栈只
+        # 跟得住 MAX_HELD_LOCKS 把 —— 这是覆盖面读数, 不是判据 (抬上限要动 boot BSS
+        # 定长数组尺寸, 属另一轮裁定; 溢出本身已由运行时粘滞读数执法).
+        capacity_note = (
+            f'容量: 类表上限 {max_classes} (序表 {len(lockdep_declared)} · '
+            f'代码 {len(named_code)}) · 持栈上限 {max_held} vs 层级 {len(level_set)}'
+            f'{" · 深链超出持栈覆盖面 (由运行时粘滞读数执法)" if len(level_set) > max_held else ""}'
+        )
+
     corpus = build_code_corpus(roots)
     for name in symbol_declared:
         missing = [seg for seg in identifier_segments(name)
@@ -764,8 +840,8 @@ def check_lock_order(roots):
     summary.append(
         f'锁类序表对账: 层级 {len(level_set)} 条 / 条目 {len(classes)} 个 '
         f'(lockdep 类 {len(lockdep_declared)} · symbol 锚 {len(symbol_declared)}) '
-        f'/ 代码具名类 {len(named_code)} 个 / 文档受控条目层级 {len(doc_entries)} 段 '
-        f'→ 违规 {len(issues)} 项'
+        f'/ 代码具名类 {len(named_code)} 个 / 文档受控条目层级 {len(doc_entries)} 段'
+        f' / {capacity_note} → 违规 {len(issues)} 项'
     )
     return issues, summary
 

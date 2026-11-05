@@ -1010,7 +1010,38 @@ fn boot_syscall_and_launch() {
 
     // 12. Launch first user process
 
+    report_lockdep_coverage();
     crate::functions::init::launch_first_user_process();
 
     // 不可达: launch_first_user_process 不会返回
+}
+
+/// 进用户态前打一条 lockdep 覆盖面读数行 (A-1 前置 ② 已裁: 接一个真实消费者).
+///
+/// 判据一律取**硬零**: `detected=false` / `violations=0` / 两个粘滞失效读数为 0 —— 任一非零
+/// 就说明本轮启动路径要么真触发了锁序违规、要么检测面有损 (满表丢注册 / 持栈溢出), 而这两者
+/// 过去都只是内核里无人读取的字段. 消费方 = `scripts/qemu_boot_test.sh` 的双架构断言.
+///
+/// 门控关闭的默认 release 构建里 `classes=0` 且读数全零, 该行仍证明「读数在位且为零」;
+/// `debug_assertions` 或 `KERNEL_FEATURES=lockdep` 构建里 `classes>0`, 同一硬零判据覆盖真正
+/// 的检测期.
+///
+/// 取值走 `functions::sync::lockdep` 安全代理 (docs/explain/ref-lock-order.md 记的即该路径) ——
+/// 读数本身是纯策略侧的观测, 不必让启动编排直接握 privileged 内部接口.
+#[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
+fn report_lockdep_coverage() {
+    use crate::functions::sync::lockdep;
+
+    let stats = lockdep::stats();
+    crate::klog_boot_info!(
+        "[LOCKDEP] coverage classes={} violations={} detected={} acquire_ops={} new_edges={} \
+         class_table_dropped={} held_stack_overflowed={}",
+        lockdep::num_classes(),
+        lockdep::num_violations(),
+        lockdep::deadlock_detected(),
+        stats.acquire_ops,
+        stats.new_edges,
+        stats.class_table_dropped,
+        stats.held_stack_overflowed,
+    );
 }

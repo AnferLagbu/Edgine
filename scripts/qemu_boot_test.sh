@@ -246,6 +246,50 @@ feature_caps_boot() {
 }
 
 # ---------------------------------------------------------------------------
+# A-127d: lockdep 覆盖面读数行的硬零断言 (双架构共用).
+#
+# 病灶: `deadlock_detected()` / `num_violations()` 与 A-127b 新增的两个粘滞失效读数
+# 在内核里长期零消费者 —— 启动路径真触发锁序违规、或真丢了检测覆盖 (类表满丢注册 /
+# 持栈溢出), 门禁面毫无感知, 文案承诺的行为也无从对账. 内核侧现在于进用户态前的最后
+# 一点打一行读数 (`report_lockdep_coverage`), 本函数把它变成判据.
+#
+# 判据 = 读数行在位 + 四项硬零: `detected=false` / `violations=0` /
+# `class_table_dropped=0` / `held_stack_overflowed=0`. `classes=` 与两个记账计数
+# (`acquire_ops` / `new_edges`) 不参与判定: 默认 release 构建门控关闭时 classes 恒为 0,
+# `debug_assertions` / `KERNEL_FEATURES=lockdep` 构建下 > 0, 两种形态共用同一硬零判据.
+# 非零即「本轮 lockdep 有结论或有损」, 不受 FAIL_OK 放宽 (与 P-62 能力行同档).
+# 参数: $1=架构  $2=日志文件; 返回: 0 = 在位且四项硬零.
+# ---------------------------------------------------------------------------
+lockdep_coverage_check() {
+    local arch="$1" logfile="$2"
+    local line
+    line=$(grep -aoE "\[LOCKDEP\] coverage classes=[0-9]+ violations=[0-9]+ detected=(true|false) acquire_ops=[0-9]+ new_edges=[0-9]+ class_table_dropped=[0-9]+ held_stack_overflowed=[0-9]+" \
+        "$logfile" | head -1 || true)
+    if [ -z "$line" ]; then
+        err "[$arch] 未观察到 lockdep 覆盖面读数行 (A-127d: 内核侧 report_lockdep_coverage 未接线, 或未落到进用户态前的最后一点)"
+        return 1
+    fi
+
+    local field val want bad=""
+    for field in detected violations class_table_dropped held_stack_overflowed; do
+        case "$field" in
+            detected) want="false" ;;
+            *) want="0" ;;
+        esac
+        val=$(printf '%s' "$line" | grep -oE "(^| )${field}=[^ ]+" | head -1 | cut -d= -f2 || true)
+        if [ "$val" != "$want" ]; then
+            bad="${bad} ${field}=${val:-缺失}(期望 ${want})"
+        fi
+    done
+    if [ -n "$bad" ]; then
+        err "[$arch] lockdep 覆盖面硬零判据未过:${bad# }"
+        return 1
+    fi
+    ok "[$arch] lockdep 覆盖面读数行在位且四项硬零 (${line})"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # 宿主侧 TCP echo 客户端 (arch 无关, x86 硬门禁与 a64 软观测共用)
 # 参数: $1=宿主端口  $2=轮数  $3=载荷
 # 返回: 0 = 全部轮回显一致
@@ -577,6 +621,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 err "[x86_64] P-62 默认能力行不符 — 期望 'smp=off preempt=off kaslr=off kpti=on freg=off', 实测 '${CAPS_LINE:-无}'"
                 RESULT=1
             fi
+            # A-127d: lockdep 覆盖面读数行 + 四项硬零 (与 aarch64 分支同判据).
+            lockdep_coverage_check "x86_64" "$X64_LOG" || RESULT=1
             # e1000 驱动初始化里程碑 (ISSUE-RT-001 回归断言)
             if grep -q "e1000: 初始化完成" "$X64_LOG"; then
                 ok "[x86_64] e1000 驱动初始化完成 (ISSUE-RT-001 回归通过)"
@@ -787,6 +833,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
             -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img \
             -device virtio-net-device,netdev=n0 \
             -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}"; then
+            # A-127d: lockdep 覆盖面读数行 + 四项硬零 (与 x86_64 分支同判据).
+            lockdep_coverage_check "aarch64" "$A64_LOG" || RESULT=1
             # ISSUE-RT-002: GICv3 初始化成功里程碑 (初始化后置条件自检通过).
             # 缺失即表示 GIC 初始化 fail-fast 或回退静默路径 (fail-closed).
             if grep -q "GICv3 ready" "$A64_LOG"; then

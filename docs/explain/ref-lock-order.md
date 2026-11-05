@@ -15,6 +15,8 @@
 层级 0: FREG / Recovery（中断安全）
   RECOVERY_MANAGER, FREG.ROLLBACK_LOG, FREG.PANIC_MSG,
   FREG.domain.capture_cb, FREG.domain.rollback_cb, FREG.domain.undo,
+  FREG.domain.depends_on, FREG.domain.depended_by,
+  FREG.domain.freg_stack, FREG.domain.addr_ranges,
   RESET_AUDIT_LOG, DEVICE_SNAPSHOTS
 
 层级 1: PMM（物理内存）
@@ -66,9 +68,9 @@
   NVME_CONTROLLERS, AHCI_CONTROLLERS, ATA_CONTROLLERS, HOTPLUG_MANAGER
 ```
 
-本表不再是手写清单：它的**机器可读单源**是 `scripts/lock_class_order.json`（层级定义 + 每条锁类的锚点与归属层级），`scripts/audit_deadlock_matrix.py` 的第 (6) 项检查对本表做双向对账并把三条判据执法——① 代码里 `::named` / `::named_lazy` 注册的锁类若序表未声明即红（新锁类必须先入表）；② 序表声明的 `lockdep` 类在代码里已无注册点、或 `symbol` 锚在代码里定位不到即红（本表因此能抓住改名与删锁，序表对账首跑即抓出 `COW_REFS` 已删、`NET_LOCK` 已改名 `NET_STATE`、层级 14 四名从无实现）；③ 本表的条目集合与序表逐层级双向不符即红（括号内的说明文字不参与判定）。改锁的顺序归属 = 改序表 + 改本表，两处同批提交，红在门禁而不是在下一次读文档时。
+本表不再是手写清单：它的**机器可读单源**是 `scripts/lock_class_order.json`（层级定义 + 每条锁类的锚点与归属层级），`scripts/audit_deadlock_matrix.py` 的第 (6) 项检查对本表做双向对账并把四条判据执法——① 代码里 `::named` / `::named_lazy` 注册的锁类若序表未声明即红（新锁类必须先入表）；② 序表声明的 `lockdep` 类在代码里已无注册点、或 `symbol` 锚在代码里定位不到即红（本表因此能抓住改名与删锁，序表对账首跑即抓出 `COW_REFS` 已删、`NET_LOCK` 已改名 `NET_STATE`、层级 14 四名从无实现）；③ 本表的条目集合与序表逐层级双向不符即红（括号内的说明文字不参与判定）；④ 容量对账（A-127c）：序表 `lockdep` 条目数与代码具名类数任一到达 `limits.rs` 的 `MAX_LOCK_CLASSES` 实值即红，上限不在脚本里抄数、单源不可解析即 fail-closed。判据 ④ 之所以必要：类表是定长数组，到顶之后的第 N+1 个类在运行时只表现为「注册被丢弃 + 一条粘滞失效读数」，静态侧必须当场拦住而不是等读数行。`MAX_HELD_LOCKS` 与本表层级数的差只进摘要读数不进取决（当前 8 vs 15，即「一条合法长链可每层持一把、而持有栈只跟得住 8 把」）——抬高上限牵动 boot BSS 定长数组尺寸，属另一轮裁定，溢出本身由运行时粘滞读数执法。改锁的顺序归属 = 改序表 + 改本表，两处同批提交，红在门禁而不是在下一次读文档时。
 
-序表的锚点有两种口径：`lockdep` 锚要求名称与代码类名字面量完全一致（12 个，见下文 Lockdep 集成）；`symbol` 锚只要求该标识符仍能在 `src/kernel` 定位，用于尚未具名化的锁——`PhysicalMemoryManager::lock` 与 `VMM_LOCK` 是 `AtomicBool` 手递自旋标志、不进 lockdep 类表，`PAGE_CACHE` / `PROC_SNAPSHOT` / `TIMER_MANAGER` 等仍是未具名 `static` 构造。全仓未具名构造点共 242 处，一律不被具名化纳入本表（2026-11-05 裁定：先建表再改名，避免把改名噪声与表条目失效混在首轮读数里）。
+序表的锚点有两种口径：`lockdep` 锚要求名称与代码类名字面量完全一致（16 个，见下文 Lockdep 集成；该计数**必须整文件匹配**——`IrqSpinLock::named_lazy(` 与类名字面量分行的 4 处 FREG 域内锁，逐行扫会看成「代码里没注册」而同时漏掉判据 ① 与表条目，注释行则整体跳过）；`symbol` 锚只要求该标识符仍能在 `src/kernel` 定位，用于尚未具名化的锁——`PhysicalMemoryManager::lock` 与 `VMM_LOCK` 是 `AtomicBool` 手递自旋标志、不进 lockdep 类表，`PAGE_CACHE` / `PROC_SNAPSHOT` / `TIMER_MANAGER` 等仍是未具名 `static` 构造。全仓未具名构造点共 242 处，一律不被具名化纳入本表（2026-11-05 裁定：先建表再改名，避免把改名噪声与表条目失效混在首轮读数里）。
 
 ## 规则
 
@@ -227,10 +229,22 @@ Lockdep 类由构造点自动注册，无需手动维护锁类 ID：`SpinLock::n
 直读切片而非 `to_vec()` 堆分配，AB-BA 的 BFS 只对**首次出现**的边执行（已知边在 `add_dependency`
 开头短路）。违规报告一律登记进栈上定长队列 `PendingReports`，`LOCK_DEP_MAP` guard 释放后才发射，
 因此 lockdep 不再在全局锁临界区内写控制台——与 `LOG_EMIT_LOCK` 的「发射点不持其它全局锁」立场一致。
-`stats()`（经 `functions::sync::lockdep` 安全代理转发）给出 `acquire_ops` / `map_sections` /
-`edge_attempts` / `new_edges` 四个读数：前两者相等即「每 op 单次临界区」未退化，`new_edges` 远小于
-`edge_attempts` 即「稳态不进 BFS」未退化。结构判据由 `host-tests/tests/lockdep_low_overhead_test.rs`
+`stats()`（经 `functions::sync::lockdep` 安全代理转发）给出六个读数：`acquire_ops` / `map_sections` /
+`edge_attempts` / `new_edges` 四个记账读数加两个**粘滞失效读数** `class_table_dropped` /
+`held_stack_overflowed`（只增不减，只在 `LOCK_DEP_MAP` guard 内更新）。前两者相等即「每 op 单次临界区」
+未退化，`new_edges` 远小于 `edge_attempts` 即「稳态不进 BFS」未退化；末两项非零即「本轮 lockdep 覆盖面
+有损」——类表满丢弃注册与持有栈溢出都不再静默（A-1 前置 ①/③ 已裁为「显式失败」），但显式失败的出口是
+**读数而不是 panic**：锁的语义与返回值一律不受影响。结构判据由 `host-tests/tests/lockdep_low_overhead_test.rs`
 锁住（源码契约面，非计时读数）。
+
+消费面（A-1 前置 ② 已裁为「接一个真实消费者」）：内核在进用户态前的最后一点——`boot_syscall_and_launch`
+里晚于 boot 栈 canary 复核、早于 `launch_first_user_process`——由 `report_lockdep_coverage()` 打一行
+`[LOCKDEP] coverage classes=… violations=… detected=… acquire_ops=… new_edges=… class_table_dropped=…
+held_stack_overflowed=…`，取值同样走 `functions::sync::lockdep` 安全代理。`scripts/qemu_boot_test.sh`
+双架构分支各消费一次，判据是**四项硬零**（`detected=false` / `violations=0` / 两个粘滞失效读数为 0），
+非零或读数行缺失即 `RESULT=1` 且不受 `FAIL_OK` 放宽。`classes=` 与两个记账计数不参与判定：门控关闭的
+默认 release 构建里 `classes` 恒为 0、`debug_assertions` 或 `KERNEL_FEATURES=lockdep` 构建里大于 0，
+同一硬零判据要在两种形态下同形。接线形状由 `host-tests/tests/lockdep_coverage_boot_line_test.rs` 锁住。
 
 门控关闭的收益只在「调用点不编译」这一层，**体积不省**：lockdep 模块本体仍参与编译（内部只有
 per-CPU 持栈与依赖图段被同一掩码 cfg 掉），而内核链接是 `--whole-archive` 且 `LDFLAGS` 无

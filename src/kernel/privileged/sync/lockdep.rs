@@ -12,8 +12,15 @@
 //! - **检查 3 · AB-BA 死锁**: 持有 L1 时获取 L2, 而依赖图上已存在 L2 → L1 路径
 //! - **release 侧 · 释放未持有的锁**: 当前持有栈中没有该实例
 //!
-//! 检查 1/2/3 与 release 侧那条计入 `num_violations()`; 检查 2.5 与一条容量告警
-//! (持有栈深度超过 `MAX_HELD_LOCKS` ⇒ 该锁本轮起不再被跟踪) 只发报告.
+//! 检查 1/2/3 与 release 侧那条计入 `num_violations()`; 检查 2.5 只发报告.
+//!
+//! ## 覆盖面有损时的处置 (A-1 前置 ①/③ 已裁: 显式失败, 不 panic)
+//!
+//! 两处容量截断**不静默**: 类表满 (`MAX_LOCK_CLASSES`) 丢弃注册、持有栈满
+//! (`MAX_HELD_LOCKS`) 丢失跟踪, 都累加 [`LockdepStats`] 的粘滞失效读数 (单调不减),
+//! 并发一条报告. 锁的语义与返回值一律不受影响 (不 panic、不回退), 失效只体现在读数上
+//! —— 启动末段读数行打印它, 门禁按「硬零」判红 (静态侧另有容量对账判据, 见
+//! `scripts/audit_deadlock_matrix.py`).
 //!
 //! ## 架构
 //!
@@ -181,6 +188,10 @@ impl Default for LockClassEntry {
 /// lockdep 记账计数 (M6: 让每项低开销化改动的增益可归因)
 ///
 /// 只在 `LOCK_DEP_MAP` guard 内更新, 故为非原子字段; 读取走 [`stats`]。
+///
+/// 末两项是**观测面失效读数** (A-1 前置 ①/③): 容量截断不再静默 —— 满表丢弃注册与
+/// 持栈溢出各累加一个粘滞计数 (单调不减, 不 panic、不改写锁语义), 由启动末段读数行
+/// 与门禁硬零断言消费; 任一非零即「本轮 lockdep 覆盖面有损」。
 #[derive(Debug, Clone, Copy)]
 pub struct LockdepStats {
     /// 进入记账的有名锁获取次数
@@ -192,6 +203,12 @@ pub struct LockdepStats {
     pub edge_attempts: u64,
     /// 首次出现的新边数 —— 即真正触发 BFS 的次数
     pub new_edges: u64,
+    /// 类表满 (`MAX_LOCK_CLASSES`) 时被丢弃的注册次数 —— 每丢一次, 该锁类全程脱离检测
+    /// (本构建的 `register_class` 调用点仍可命中, 与门控无关)
+    pub class_table_dropped: u64,
+    /// 持有栈满 (`MAX_HELD_LOCKS`) 的次数 —— 每次溢出, 该锁自本次获取起不再被跟踪
+    /// (仅门控激活的构建可能非零: 默认构建不维护持有栈, 也就没有可丢失的覆盖)
+    pub held_stack_overflowed: u64,
 }
 
 impl LockdepStats {
@@ -201,6 +218,8 @@ impl LockdepStats {
         map_sections: 0,
         edge_attempts: 0,
         new_edges: 0,
+        class_table_dropped: 0,
+        held_stack_overflowed: 0,
     };
 }
 
@@ -250,10 +269,14 @@ impl LockDepMap {
 
         // 新注册
         if self.class_count >= MAX_LOCK_CLASSES {
+            // 显式失败 (不静默): 粘滞计数 + 告警. 返回 INVALID 后 acquire/release
+            // 对该 ID 短路 —— 锁本身照常工作, 丢的是检测覆盖, 故必须留下可读的账.
+            self.stats.class_table_dropped += 1;
             lockdep_log!(
-                "lockdep: MAX_LOCK_CLASSES ({}) exceeded, skipping '{}'",
+                "lockdep: MAX_LOCK_CLASSES ({}) exceeded, skipping '{}' (dropped={})",
                 MAX_LOCK_CLASSES,
-                desc.name
+                desc.name,
+                self.stats.class_table_dropped
             );
             return LockClassId::INVALID;
         }
@@ -669,7 +692,8 @@ impl PendingReports {
 /// 返回 `LockClassId`, 后续 acquire/release 使用此 ID。
 /// 同名锁类只注册一次 (幂等)。类表满 (`MAX_LOCK_CLASSES`) 时返回
 /// [`LockClassId::INVALID`], 而 acquire/release 对该 ID 一律短路放行 ——
-/// 即注册失败只丢失观测, 不影响锁本身。
+/// 即注册失败只丢失观测, 不影响锁本身; 该丢失**不静默**: 每次都累加
+/// [`LockdepStats::class_table_dropped`] 粘滞读数 (判据见模块文档).
 pub fn register_class(desc: LockClassDesc) -> LockClassId {
     let mut map = LOCK_DEP_MAP.lock();
     map.register(desc)
@@ -761,8 +785,11 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
                         });
                     }
                 }
-                // 压入持有栈 (溢出只登记报告, 打印在 guard 外)
+                // 压入持有栈 (溢出登记报告 + 粘滞失效计数, 打印仍在 guard 外)
                 if !stack.push(class_id, instance, irq_context) {
+                    // 显式失败 (不静默): 该锁自此不在持有栈里 —— 后续同类锁的递归/
+                    // AB-BA 判定都看不到它, 覆盖面有损, 必须留下可读的账.
+                    map.stats.held_stack_overflowed += 1;
                     reports.record(PendingReport::HeldStackOverflow { depth: stack.len() });
                 }
                 true
@@ -847,6 +874,9 @@ pub fn deadlock_detected() -> bool {
 ///
 /// 低开销化的归因入口: `map_sections == acquire_ops` 即「每 op 单次全局临界区」
 /// 成立; `new_edges` 远小于 `edge_attempts` 即「BFS 只对新边执行」成立。
+///
+/// 覆盖面归因入口: `class_table_dropped` / `held_stack_overflowed` 是**粘滞失效读数**
+/// (只增不减), 任一非零即本轮检测覆盖有损 —— 启动末段读数行与门禁硬零断言消费它们。
 #[must_use]
 pub fn stats() -> LockdepStats {
     LOCK_DEP_MAP.lock().stats
@@ -1117,10 +1147,76 @@ mod tests {
         assert_eq!(queue.len, PENDING_CAPACITY);
     }
 
+    /// A-127b ①: 类表满的丢弃必须留下粘滞读数 —— 显式失败, 不静默、不 panic.
+    ///
+    /// 白盒: 直接把 `class_count` 填到上限, 免得为凑 64 个 `&'static str` 类名造无关
+    /// 夹具 (表满分支只看 `class_count`, 与条目 `used` 无关).
+    #[test]
+    fn test_register_full_table_counts_as_dropped() {
+        let mut map = LockDepMap::new();
+        map.class_count = MAX_LOCK_CLASSES;
+        let before = map.stats.class_table_dropped;
+
+        // 满表 → INVALID, 且读数 +1 (锁语义不受影响, 丢的是检测覆盖)
+        assert_eq!(
+            map.register(LockClassDesc {
+                name: "full_table_probe_a",
+                kind: LockKind::SpinLock,
+            }),
+            LockClassId::INVALID
+        );
+        assert_eq!(map.class_count, MAX_LOCK_CLASSES, "满表注册不得改写类表");
+        assert_eq!(map.stats.class_table_dropped, before + 1);
+
+        // 再来一次: 计数逐次累加 (粘滞, 只增不减)
+        assert_eq!(
+            map.register(LockClassDesc {
+                name: "full_table_probe_b",
+                kind: LockKind::SpinLock,
+            }),
+            LockClassId::INVALID
+        );
+        assert_eq!(map.stats.class_table_dropped, before + 2);
+    }
+
+    /// A-127b ③: 持有栈溢出的丢失同样必须留下粘滞读数.
+    ///
+    /// 判据取 `>= +1` 而非相等: 持有栈变动全部发生在 `LOCK_DEP_MAP` 临界区内, 故
+    /// 本线程连压 `MAX_HELD_LOCKS + 1` 个不同实例时第 9 次必然落空 (别的线程只会让
+    /// 它更早落空), 而别的线程若也撞满栈会额外贡献读数 —— 相等判据会被无关流量打断.
+    #[test]
+    fn test_acquire_held_stack_overflow_counts_as_dropped() {
+        let id = register_class(LockClassDesc {
+            name: "held_overflow_probe",
+            kind: LockKind::SpinLock,
+        });
+        let before = stats().held_stack_overflowed;
+
+        // 实例键取未映射低位页 (与 0x5A00 探针同族), 不会撞上真实锁地址
+        let mut instances = [0usize; MAX_HELD_LOCKS + 1];
+        for (i, slot) in instances.iter_mut().enumerate() {
+            *slot = 0x5B00 + i;
+            assert!(acquire(id, *slot, false));
+        }
+        let after = stats().held_stack_overflowed;
+        assert!(
+            after >= before + 1,
+            "持有栈溢出未累加粘滞读数 (before={before}, after={after})"
+        );
+
+        // 逐一归还: 满栈那一条没进持有栈, release 会对它报一条 released_not_held
+        // (host-test 下 klog 为 no-op, 且无用例断言全局违规数为零) —— 不影响本判据.
+        for instance in instances {
+            release(id, instance);
+        }
+    }
+
     /// M2: 一次 acquire 记账恰好进入一次 `LOCK_DEP_MAP` 全局临界区.
     ///
-    /// 两个计数器在同一条临界区内成对自增, 故任一快照下恒相等 —— 该不变式不受
-    /// host 测试并行线程干扰 (它们各自的临界区同样成对).
+    /// 「恰好一次」由全局等式 `map_sections == acquire_ops` 执法 —— 两计数器在同一条
+    /// 临界区内背靠背自增, 任一完整快照下必然相等; 若某次 op 多进了一次临界区, 等式即
+    /// 破裂. 本测试线程的增量只判 `>= 1`: 计数器是全局的, 并行用例 (含持栈溢出探针)
+    /// 的 acquire 会落进同一个采样窗口, 写死 `== 1` 会把无关流量读成失败 (P-43 口径).
     #[test]
     fn test_acquire_enters_map_once_per_op() {
         let id = register_class(LockClassDesc {
@@ -1131,8 +1227,16 @@ mod tests {
         assert!(acquire(id, 0x5A00, false));
         release(id, 0x5A00);
         let after = stats();
-        assert_eq!(after.acquire_ops - before.acquire_ops, 1);
-        assert_eq!(after.map_sections - before.map_sections, 1);
+        let acquired = after.acquire_ops - before.acquire_ops;
+        let sections = after.map_sections - before.map_sections;
+        assert!(
+            acquired >= 1,
+            "本线程的 acquire 未被计入 (acquired={acquired})"
+        );
+        assert_eq!(
+            acquired, sections,
+            "采样窗口内 acquire 与临界区增量不等: 每 op 单次临界区已失效"
+        );
         assert_eq!(after.map_sections, after.acquire_ops);
     }
 }

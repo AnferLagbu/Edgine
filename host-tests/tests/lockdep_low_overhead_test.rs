@@ -10,6 +10,8 @@
 //   - M5: 违规报告只登记进栈上队列, 临界区释放后才发射 (原形态在持有全局锁期间打印)
 //   - M6: `map_sections` 与 `acquire_ops` 同临界区成对自增 (临界区数未被合并的证据),
 //     `new_edges` 只在新边处自增 (BFS 只对**新边**执行的证据)
+//   - A-127b: 两处容量截断 (类表满 / 持有栈满) 各自就地累加粘滞失效读数, 不 panic
+//     —— 「静默截断改显式失败」的结构判据
 //   - 报告文本逐条不变: 低开销化不得改变用户可见的告警面
 //
 // 全部为源码契约测试: 被测面只在裸机记账热路径上才有语义, host 侧无法用运行期
@@ -203,7 +205,14 @@ fn stats_accessor_is_exposed() {
         text.contains("pub fn stats() -> LockdepStats"),
         "缺 `stats()` 归因入口: 无法量化「每 op 几次临界区」, A-1 常开裁定失去读数"
     );
-    for field in ["acquire_ops", "map_sections", "edge_attempts", "new_edges"] {
+    for field in [
+        "acquire_ops",
+        "map_sections",
+        "edge_attempts",
+        "new_edges",
+        "class_table_dropped",
+        "held_stack_overflowed",
+    ] {
         assert!(
             text.contains(&format!("pub {field}: u64")),
             "LockdepStats 缺字段 `{field}`"
@@ -220,4 +229,62 @@ fn stats_accessor_is_exposed() {
         proxy.contains("LockdepStats") || proxy.contains("pub fn stats"),
         "functions 层安全代理未暴露 stats/LockdepStats (F2 禁止直连 privileged 内部)"
     );
+}
+
+/// A-127b ①+③: 两处容量截断必须就地累加粘滞失效读数 —— 显式失败, 不静默、不 panic.
+///
+/// 判据是**位置**而不是存在性: 计数只有在满表分支内、`return INVALID` 之前自增才
+/// 意味着「每一次丢弃都被记账」; 掉到分支外即变成常数偏置, 启动读数与门禁硬零断言
+/// 就失去「覆盖面有损」的含义.
+#[test]
+fn capacity_loss_is_counted_sticky_at_both_limits() {
+    let text = src();
+    // ① 类表满: register() 的满表分支内自增, 且在返回 INVALID 之前
+    let register = strip_line_comments(&fn_body(&text, "fn register(&mut self,"));
+    let full = register
+        .find("if self.class_count >= MAX_LOCK_CLASSES")
+        .expect("register() 的满表分支已改写, 本契约需同步");
+    let counted = register
+        .find("self.stats.class_table_dropped += 1")
+        .expect("register() 不再累加 class_table_dropped: 满表丢弃重新变回静默截断");
+    let invalid = register
+        .find("return LockClassId::INVALID")
+        .expect("register() 的满表返回值已改写, 本契约需同步");
+    assert!(
+        full < counted && counted < invalid,
+        "class_table_dropped 自增点不在满表分支内 (满={full}, 计数={counted}, 返回={invalid})"
+    );
+    assert!(
+        !register.contains("panic!"),
+        "register() 的满表分支出现 panic: A-1 裁定为「显式失败但不 panic」"
+    );
+
+    // ③ 持有栈满: acquire() 的 push 失败分支内自增, 且只有一处
+    let acquire = strip_line_comments(&fn_body(&text, "pub fn acquire("));
+    let push_fail = acquire
+        .find("if !stack.push(")
+        .expect("acquire() 的持有栈压入分支已改写, 本契约需同步");
+    let counted = acquire
+        .find("stats.held_stack_overflowed += 1")
+        .expect("acquire() 不再累加 held_stack_overflowed: 持栈溢出重新变回静默截断");
+    assert_eq!(
+        count_of(&acquire, "stats.held_stack_overflowed += 1"),
+        1,
+        "held_stack_overflowed 自增点应有且只有一处 (在 push 失败分支内)"
+    );
+    assert!(
+        push_fail < counted,
+        "held_stack_overflowed 自增点跑到 push 失败分支之前, 未溢出也会被计"
+    );
+
+    // 粘滞读数的零初值必须在 ZERO 里钉死: 门控关闭构建的 stats() 走该常量,
+    // 漏一项即编译失败, 但漏「= 0」的初值会让默认构建读出脏数.
+    for token in ["class_table_dropped: 0", "held_stack_overflowed: 0"] {
+        assert_eq!(
+            count_of(&text, token),
+            1,
+            "LockdepStats::ZERO 的 `{token}` 初值应恰好一处, 实测 {} 处",
+            count_of(&text, token)
+        );
+    }
 }

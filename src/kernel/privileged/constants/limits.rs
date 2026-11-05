@@ -18,13 +18,17 @@ pub const MAX_MMIO_MAPPINGS: usize = 64;
 
 /// Lockdep 锁类最大数量
 ///
-/// **超限行为**: lockdep 满时**静默截断** (放弃检测), 不 panic. 锁
-/// 仍正常工作, 仅失去死锁检测覆盖.
+/// **超限行为**: 满表时 `LockDepMap::register` 返回 `LockClassId::INVALID` 并累加
+/// 粘滞失效读数 `LockdepStats::class_table_dropped` (lockdep.rs), 不 panic; 锁仍正常
+/// 工作, 仅失去该类的死锁检测覆盖. 该读数由启动末段 lockdep 行打印, 门禁按硬零判红,
+/// 静态侧另有容量对账判据 (`scripts/audit_deadlock_matrix.py` 的序表第四条判据).
 pub const MAX_LOCK_CLASSES: usize = 64;
 
 /// 每线程/每 CPU 最大持有锁深度
 ///
-/// **超限行为**: 同 `MAX_LOCK_CLASSES`, 静默截断.
+/// **超限行为**: 同 `MAX_LOCK_CLASSES` —— 溢出时该锁自本次获取起不再被跟踪, 同时累加
+/// 粘滞失效读数 `LockdepStats::held_stack_overflowed` 并发一条报告, 不 panic.
+/// 门控关闭的构建不维护持有栈, 该读数恒为 0.
 pub const MAX_HELD_LOCKS: usize = 8;
 
 /// 每 PWM 配额表最大条目数 (调度器定额)

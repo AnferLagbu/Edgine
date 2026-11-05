@@ -1,6 +1,6 @@
 {
   "schema": "edgine-lock-class-order/v1",
-  "authority": "全局锁顺序层级表的机器可读单源。人读视图 = docs/explain/ref-lock-order.md 的「锁层级（从高到低）」表；两条判据 (序表↔代码具名类双向、序表↔文档表格双向) 由 scripts/audit_deadlock_matrix.py 执行。",
+  "authority": "全局锁顺序层级表的机器可读单源。人读视图 = docs/explain/ref-lock-order.md 的「锁层级（从高到低）」表；四条判据 (序表↔代码具名类双向、symbol 锚存在性、序表↔文档表格双向、容量对账) 由 scripts/audit_deadlock_matrix.py 执行。",
   "acquire_direction": "ascending",
   "levels": [
     { "level": 0, "domain": "FREG / Recovery（中断安全）" },
@@ -26,6 +26,15 @@
     { "level": 0, "name": "FREG.domain.capture_cb", "anchor": "lockdep" },
     { "level": 0, "name": "FREG.domain.rollback_cb", "anchor": "lockdep" },
     { "level": 0, "name": "FREG.domain.undo", "anchor": "lockdep" },
+    {
+      "level": 0,
+      "name": "FREG.domain.depends_on",
+      "anchor": "lockdep",
+      "note": "域依赖名单锁; 注册点跨行 (`::named_lazy(` 与类名分行), 由 A-127a 补入"
+    },
+    { "level": 0, "name": "FREG.domain.depended_by", "anchor": "lockdep" },
+    { "level": 0, "name": "FREG.domain.freg_stack", "anchor": "lockdep" },
+    { "level": 0, "name": "FREG.domain.addr_ranges", "anchor": "lockdep" },
     { "level": 0, "name": "RESET_AUDIT_LOG", "anchor": "symbol" },
     { "level": 0, "name": "DEVICE_SNAPSHOTS", "anchor": "symbol" },
     { "level": 1, "name": "PMM_SNAPSHOT", "anchor": "symbol" },
@@ -83,6 +92,7 @@
     "层级 5 (COW) 无锁条目: 原 COW_REFS 计数表已删除, 帧持有计数收敛进层级 1 的 PMM 计数面.",
     "调度域成文例外: 变更队列成员身份时取锁方向为 cfs_rq(层级 8) → PROCESS_TABLE.processes(层级 7), 被保护不变式由 rq 名单方面确立; 严禁在持进程表锁的临界区内取任何 rq 锁. 该例外与「双 rq 按 cpu index 升序」的定序由文档持有, 静态判据属后置的 AB-BA 环检测批.",
     "本表 anchor 二选一: lockdep = 名称须与 src/kernel 里 ::named / ::named_lazy 的类名字面量双向一致; symbol = 名称的各段标识符须能在 src/kernel 定位 (存在性判据, 非类型判据).",
-    "全仓另有 242 处未具名锁构造点 (lockdep 侧一律记作 (unnamed)), 本批不纳入序表 (2026-11-05 裁定); 具名化与 MAX_LOCK_CLASSES = 64 上限的张力另批处置."
+    "全仓另有 242 处未具名锁构造点 (lockdep 侧一律记作 (unnamed)), 本批不纳入序表 (2026-11-05 裁定); 具名化与 MAX_LOCK_CLASSES = 64 上限的张力由「容量对账」判据执法: 序表 lockdep 条目数或代码具名类数到达 limits.rs 里的上限即门禁判红 (上限单源, 脚本不抄数), 运行时满表丢弃则由 lockdep 的粘滞失效读数 class_table_dropped 记账并被启动读数行与门禁硬零断言消费.",
+    "MAX_HELD_LOCKS = 8 与序表层级数 (15) 的差只作读数不作判据: 深链超出持栈覆盖面时门禁摘要报出该事实, 真正的溢出由运行时粘滞读数 held_stack_overflowed 执法; 抬高上限会牵动 boot BSS 定长数组尺寸, 属另轮裁定."
   ]
 }
