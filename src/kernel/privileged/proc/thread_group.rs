@@ -63,6 +63,11 @@ pub struct ThreadGroup {
     /// `exec` `de_thread` 标记：兄弟线程收到 SIGKILL 后按单线程退出而非组退出，
     /// 避免把正在 exec 的调用线程一并带走。
     exec_de_thread: AtomicBool,
+    /// 「组未收齐」取证行的上一条签名（§6③a）；0 表示尚未打印过。
+    ///
+    /// 只作诊断限流，**不参与任何收割判据**：签名由未收齐成员的 `tid|state`
+    /// 导出，同一状态被轮询方反复读到时只放行首行。
+    reap_diag: AtomicU64,
 }
 
 impl ThreadGroup {
@@ -82,6 +87,7 @@ impl ThreadGroup {
             requested_exit_code: AtomicU32::new(0),
             reap_claimed: AtomicBool::new(false),
             exec_de_thread: AtomicBool::new(false),
+            reap_diag: AtomicU64::new(0),
         }
     }
 
@@ -260,6 +266,21 @@ impl ThreadGroup {
         !self.reap_claimed.swap(true, Ordering::AcqRel)
     }
 
+    /// 记录「组未收齐」签名，返回它是否首次出现（§6③a 取证行限流）。
+    ///
+    /// 未收齐状态会被轮询方（`wait4` 非阻塞腿 / tick 兜底回收）反复读到，不去重
+    /// 即每轮一行刷屏；签名由成员 `tid|state` 快照导出，成员增减或状态改变即重新
+    /// 放行一行。两个核同时首见同一签名时认领失败者静默，最多丢一行重复打印。
+    /// `sig` 约定非 0（0 是"尚未打印过"的初值）。
+    pub fn note_reap_diag(&self, sig: u64) -> bool {
+        let prev = self.reap_diag.load(Ordering::Acquire);
+        prev != sig
+            && self
+                .reap_diag
+                .compare_exchange(prev, sig, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+
     /// 置 `exec` `de_thread` 标记并返回当时的成员快照。
     ///
     /// 标记与快照在同一把成员表锁内完成：快照之后不可能再有人入组
@@ -422,6 +443,30 @@ mod tests {
         let group = ThreadGroup::new_leader(7);
         assert!(group.claim_reap(), "首个认领者应成功");
         assert!(!group.claim_reap(), "后续认领者不得重复回收同一组");
+    }
+
+    #[test]
+    fn note_reap_diag_passes_only_new_signatures() {
+        let group = ThreadGroup::new_leader(7);
+        assert!(group.note_reap_diag(0x100), "首个签名应放行");
+        assert!(
+            !group.note_reap_diag(0x100),
+            "同一未收齐状态被轮询方反复读到, 不得重复放行"
+        );
+        assert!(
+            group.note_reap_diag(0x200),
+            "成员快照变化 (新签名) 必须重新放行一行"
+        );
+        assert!(!group.note_reap_diag(0x200), "新签名之后回到重复态仍须静默");
+        assert!(
+            group.note_reap_diag(0x100),
+            "签名回到更早见过的值也应视为新一次状态变化"
+        );
+        // 初值语义: 从未打印过的组存的是 0, 写入 0 不算状态变化 (不得把
+        // "尚未记录"误判成一次新签名而放行一行).
+        let fresh = ThreadGroup::new_leader(9);
+        assert!(!fresh.note_reap_diag(0), "初值 0 重复写入不得放行");
+        assert!(fresh.note_reap_diag(0x300), "新组的首个真实签名应放行");
     }
 
     #[test]

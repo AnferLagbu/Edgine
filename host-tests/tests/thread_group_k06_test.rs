@@ -18,7 +18,12 @@
 //! - 致命信号默认动作在 `de_thread` 期间只结束目标线程, 其余场景终止整组;
 //! - 内核等待循环经 `Scheduler::yield_current` 感知组退出或 `de_thread` 的 SIGKILL;
 //! - `exit_group` 与 `clone` 并发: 入组与退出请求在成员表锁内互斥, 快照漏掉的
-//!   线程入队前自挂 SIGKILL, 登记前失败路径归还 PID 槽位.
+//!   线程入队前自挂 SIGKILL, 登记前失败路径归还 PID 槽位;
+//! - §6③a 收割取证: 「已请求组退出但整组未收齐」才落 `pid|state` 取证行, 签名去重,
+//!   取证名单按 tgid 扫进程表 (成员账在 `leave` 后已空, 看不到「收齐却被卡在非
+//!   Zombie」的 L-2 形态), 且取证不改收割判据
+//!   (`reap_evidence_records_signature_only_after_exit_is_requested` 与
+//!   `reap_evidence_diag_shape_contract_locked`).
 //!
 //! 镜像 `destroy` 与 `Process::drop` 对同一 cr3 的重复 `frame_dec` 是 K-06 阶段
 //! 发现的预存问题 (§11.5), 已由 A-8 收口 (`Process::drop` 唯一减计点); 回归锁见
@@ -214,6 +219,121 @@ fn group_reap_requires_all_members_and_clears_parent_ledger() {
     assert!(
         !PROCESS_TABLE.reap_zombie_group(child_pid),
         "同一组不得被重复收割"
+    );
+}
+
+/// §6③a 甲 收割取证: 「已请求组退出但整组未收齐」落取证签名, 未请求时不落;
+/// 诊断全程只读 —— 收割判据 (`None` → 收齐后 `Some(code)`) 逐字未变.
+///
+/// 取证覆盖 `group_zombie_exit_code` 的两个 `None` 出口: 出口①组未整体退出 (兄弟
+/// 线程始终没走到退出收尾), 出口②组已收齐 (成员账空) 但某个 TCB 仍非 Zombie ——
+/// 已登记的 L-2「Zombie 被重新投入」形态只有进程表扫描看得见, 成员账为空表.
+///
+/// host-test 下 klog 是 no-op (`privileged::klog` 的 B08-14 前置), 打印本身不可观测,
+/// 故用哨兵签名反证「内核路径是否写了签名」: 写了 ⇒ 哨兵被替换 ⇒ 再写哨兵返回
+/// `true`; 没写 ⇒ 哨兵仍在 ⇒ 再写哨兵返回 `false`.
+#[test]
+fn reap_evidence_records_signature_only_after_exit_is_requested() {
+    const SENTINEL: u64 = u64::MAX;
+    let _serial = lock_table();
+    let parent_pid = PROCESS_TABLE.allocate_pid().expect("parent PID");
+    let child_pid = PROCESS_TABLE.allocate_pid().expect("child leader PID");
+    let tid = PROCESS_TABLE.allocate_pid().expect("child thread PID");
+
+    let parent = Process::new(parent_pid, "reap-diag-parent", None);
+    let _parent = TableProc::insert_owned(parent);
+
+    let leader = Process::new(child_pid, "reap-diag-leader", None);
+    let child_group = Arc::clone(leader.group());
+    let mut thread = Process::new(tid, "reap-diag-thread", None);
+    assert!(thread.join_thread_group(Arc::clone(&child_group)));
+    let _leader_guard = TableProc::insert_owned(leader);
+    let _thread_guard = TableProc::insert_owned(thread);
+
+    assert_eq!(
+        PROCESS_TABLE.group_non_zombie_members(child_pid),
+        vec![
+            (child_pid, ProcessState::Created),
+            (tid, ProcessState::Created)
+        ],
+        "取证名单按 tgid 扫进程表, 组长与兄弟线程都在内"
+    );
+
+    // 判据收窄①: 未请求组退出的轮询 (整组仍活着) 不得落取证签名.
+    assert!(child_group.note_reap_diag(SENTINEL), "哨兵写入应放行");
+    assert_eq!(
+        PROCESS_TABLE.group_zombie_exit_code(child_pid),
+        None,
+        "组未退出不可收割"
+    );
+    assert!(
+        !child_group.note_reap_diag(SENTINEL),
+        "§6③a: 未请求组退出时诊断不得写签名 (否则哨兵已被替换)"
+    );
+
+    // 出口①: 请求组退出 + 组长已收尾离开成员账并落 Zombie, 兄弟线程仍未退出.
+    child_group.request_exit(42);
+    assert!(
+        !child_group.leave(child_pid),
+        "组长离开后仍有兄弟线程, `leave` 返回的是「组是否已无成员」"
+    );
+    set_zombie(child_pid);
+    assert_eq!(
+        PROCESS_TABLE.group_non_zombie_members(child_pid),
+        vec![(tid, ProcessState::Created)],
+        "已落 Zombie 的组长不得再出现在取证名单"
+    );
+    assert_eq!(
+        PROCESS_TABLE.group_zombie_exit_code(child_pid),
+        None,
+        "§6③a: 取证行不改变收割判据"
+    );
+    assert!(
+        child_group.note_reap_diag(SENTINEL),
+        "§6③a: 出口① (组未整体退出) 的未收齐态必须由内核路径记下签名 (诊断已接线)"
+    );
+
+    // 出口② (L-2 形态): 成员账已清空且组已标退出, 兄弟线程 TCB 却被重新投入 Ready.
+    assert!(child_group.leave(tid), "最后成员离开成员账");
+    child_group.mark_exited(42);
+    assert!(
+        child_group.members().is_empty(),
+        "成员账已空: 取证名单不能取自成员账"
+    );
+    PROCESS_TABLE.with_process(tid, |p| {
+        p.set_state_safe(ProcessState::Ready)
+            .expect("Created → Ready (重新投入)");
+    });
+    assert_eq!(
+        PROCESS_TABLE.group_non_zombie_members(child_pid),
+        vec![(tid, ProcessState::Ready)],
+        "§6③a: 表扫描必须列出「组已收齐却被卡在非 Zombie」的 TCB"
+    );
+    assert_eq!(
+        PROCESS_TABLE.group_zombie_exit_code(child_pid),
+        None,
+        "§6③a: 出口② 仍判不可收割 (判据未变)"
+    );
+    assert!(
+        child_group.note_reap_diag(SENTINEL),
+        "§6③a: 出口② 的未收齐态同样必须记下签名 (取证覆盖两个 None 出口)"
+    );
+
+    // 整组落 Zombie: 判据按原口径返回组退出码, 取证名单清空.
+    PROCESS_TABLE.with_process(tid, |p| {
+        p.set_state_safe(ProcessState::Running)
+            .expect("Ready → Running");
+        p.set_state_safe(ProcessState::Zombie)
+            .expect("Running → Zombie");
+    });
+    assert!(
+        PROCESS_TABLE.group_non_zombie_members(child_pid).is_empty(),
+        "全员落 Zombie 后取证名单为空"
+    );
+    assert_eq!(
+        PROCESS_TABLE.group_zombie_exit_code(child_pid),
+        Some(42),
+        "§6③a: 收齐后的组退出码读数不受诊断影响"
     );
 }
 
@@ -570,13 +690,15 @@ fn wait4_reaps_thread_groups_only() {
         "pub fn group_zombie_exit_code(&self, tgid: Pid) -> Option<u32>",
     );
     assert!(
-        has(&zombie_code, "if !group.has_exited() { return None; }")
+        has(&zombie_code, "if !group.has_exited() {")
+            && has(&zombie_code, "return None;")
             && has(
                 &zombie_code,
                 "if p.thread_group.tgid() == tgid && p.get_state() != ProcessState::Zombie {"
             ),
         "K-06: 组未退出或仍有成员退出途中都不可收割"
     );
+    // §6③a 取证行自身的形状锁见 `reap_evidence_diag_shape_contract_locked`.
 
     let reap = fn_body(
         &process,
@@ -598,6 +720,59 @@ fn wait4_reaps_thread_groups_only() {
     assert!(
         has(&reap, "let _ = p.set_state_safe(ProcessState::Terminated);"),
         "K-06: 回收前先落 Terminated (Zombie → Terminated 是唯一合法迁移)"
+    );
+}
+
+/// §6③a 甲 取证形状锁: `group_zombie_exit_code` 的两个 `None` 出口都调取证, 收窄判据
+/// (`exit_requested` / 空名单 / 签名去重) 与只读性 (不触碰认领与回收) 逐条钉住;
+/// 取证名单来源钉为进程表扫描, 不得退回成员账.
+#[test]
+fn reap_evidence_diag_shape_contract_locked() {
+    let process = code_only(&read_src(PROCESS_SRC));
+    let zombie_code = fn_body(
+        &process,
+        "pub fn group_zombie_exit_code(&self, tgid: Pid) -> Option<u32>",
+    );
+    assert!(
+        has(
+            &zombie_code,
+            "if !group.has_exited() { self.diag_unreaped_group(tgid, &group); return None; }"
+        ) && has(
+            &zombie_code,
+            "if all_zombie { return Some(group.exit_code()); } \
+             self.diag_unreaped_group(tgid, &group); None"
+        ),
+        "§6③a: 未收齐的两类现场都要取证, 且随后照旧返回 None"
+    );
+
+    let diag = fn_body(
+        &process,
+        "fn diag_unreaped_group(&self, tgid: Pid, group: &ThreadGroup)",
+    );
+    assert!(
+        has(&diag, "if !group.exit_requested() { return; }")
+            && has(&diag, "if stuck.is_empty() { return; }")
+            && has(&diag, "if !group.note_reap_diag(sig) { return; }")
+            && has(&diag, "\"[REAP] tgid={} unreaped pid={} state={}\"")
+            && has(&diag, "state.name()"),
+        "§6③a: 取证行必须 exit_requested 收窄 + 空名单静默 + 签名去重后才打印 pid|state"
+    );
+    assert!(
+        !has(&diag, "claim_reap(") && !has(&diag, "remove_and_free("),
+        "§6③a: 取证行只读, 不得触碰认领与回收"
+    );
+
+    let stuck_list = fn_body(
+        &process,
+        "pub fn group_non_zombie_members(&self, tgid: Pid) -> alloc::vec::Vec<(Pid, ProcessState)>",
+    );
+    assert!(
+        has(
+            &stuck_list,
+            "if proc.thread_group.tgid() == tgid { let state = proc.get_state(); \
+             if state != ProcessState::Zombie { out.push((proc.pid.0, state)); } }"
+        ) && !has(&stuck_list, ".members()"),
+        "§6③a: 取证名单必须按 tgid 扫进程表 (成员账在 L-2 形态下是空表, 看不到现场)"
     );
 }
 

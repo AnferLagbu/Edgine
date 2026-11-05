@@ -1108,10 +1108,17 @@ impl ProcessTable {
     ///
     /// `None` 表示尚不可收割: 组未退出、组长 TCB 已不在表中, 或仍有成员处于
     /// 退出途中 (未落 Zombie). 复用于 `wait4`/`waitid` 的就绪判定与周期回收.
+    ///
+    /// §6③a: 两个 `None` 出口都在「已请求组退出」时落非僵尸成员取证行 (见
+    /// `ProcessTable::diag_unreaped_group`) —— 登记的两类现场都要覆盖: 兄弟线程
+    /// 始终没走到退出收尾 (`has_exited` 恒假), 以及整组已收齐却被某个 TCB 卡在非
+    /// Zombie (已登记的 L-2「Zombie 被重新投入」形态). **只读诊断**, 本函数的判据
+    /// 与返回值逐字未变.
     #[must_use]
     pub fn group_zombie_exit_code(&self, tgid: Pid) -> Option<u32> {
         let group = self.with_process(tgid, |p| Arc::clone(p.group()))?;
         if !group.has_exited() {
+            self.diag_unreaped_group(tgid, &group);
             return None;
         }
         let mut all_zombie = true;
@@ -1122,7 +1129,65 @@ impl ProcessTable {
             }
             true
         });
-        all_zombie.then(|| group.exit_code())
+        if all_zombie {
+            return Some(group.exit_code());
+        }
+        self.diag_unreaped_group(tgid, &group);
+        None
+    }
+
+    /// 列出该线程组尚未落 Zombie 的 TCB 及其状态 (§6③a 取证的成员面).
+    ///
+    /// 取「按 tgid 扫进程表」而不是「读成员账」: 成员账由 `Scheduler::exit` 的
+    /// `leave` 摘除, Zombie 却在其**之后**才落, 且已退出的 TCB 也不再在账里 ——
+    /// 整组已收齐 (账空) 却被某个 TCB 卡在非 Zombie 的形态只有表扫描看得见.
+    /// 遍历全程持进程表锁, 返回即放锁, 打印由调用方在锁外完成.
+    #[must_use]
+    pub fn group_non_zombie_members(&self, tgid: Pid) -> alloc::vec::Vec<(Pid, ProcessState)> {
+        let mut out = alloc::vec::Vec::new();
+        self.for_each(|proc| {
+            if proc.thread_group.tgid() == tgid {
+                let state = proc.get_state();
+                if state != ProcessState::Zombie {
+                    out.push((proc.pid.0, state));
+                }
+            }
+            true
+        });
+        out
+    }
+
+    /// 落「组未收齐」取证行: 每个非僵尸成员一行, 同一成员快照只放行一次 (§6③a).
+    ///
+    /// 判据收窄两处: ①`exit_requested` 为假即静默 (父进程在子组正常存活期的轮询
+    /// 是背景噪声, 不是现场); ②签名去重 (`wait4` 每毫秒轮询一次且 tick 兜底也读
+    /// 同一判据, 不去重即同一状态每次刷一行). 成员快照为空 (整组已落 Zombie 只是
+    /// 无人收割) 同样静默. 打印在进程表锁**之外**完成, 不持表锁取控制台锁.
+    fn diag_unreaped_group(&self, tgid: Pid, group: &ThreadGroup) {
+        if !group.exit_requested() {
+            return;
+        }
+        let stuck = self.group_non_zombie_members(tgid);
+        if stuck.is_empty() {
+            return;
+        }
+        let mut sig = u64::from(tgid);
+        for (tid, state) in &stuck {
+            sig = sig.wrapping_mul(1_000_003) ^ u64::from(*tid);
+            sig = sig.wrapping_mul(1_000_003) ^ u64::from(*state as u32);
+        }
+        if !group.note_reap_diag(sig) {
+            return;
+        }
+        for (tid, state) in stuck {
+            crate::klog_info!(
+                Process,
+                "[REAP] tgid={} unreaped pid={} state={}",
+                tgid,
+                tid,
+                state.name()
+            );
+        }
     }
 
     /// 收割一个已整体退出的线程组: 回收其全部僵尸 TCB 与 TID.
