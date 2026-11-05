@@ -8,12 +8,17 @@ M6.2 死锁检测矩阵扫描脚本 — 锁顺序/中断上下文/不可重入�
   (3) 标记非中断安全的锁 (应为 IrqSpinLock 而非 spin::Mutex)
   (4) 扫描裸类型锁名 (如 `SpinMutex` / `MyMutex` 等, 通过 import 解析收集)
   (5) 检测 sleep 锁 (Mutex) 在原子上下文的使用
+  (6) 锁类序表对账 (A-3 丙, 2026-11-05): 机器可读单源 scripts/lock_class_order.json
+      与 ① 代码侧 ::named / ::named_lazy 类名字面量 双向一致, ② 序表 symbol 锚
+      仍可在 src/kernel 定位, ③ docs/explain/ref-lock-order.md 的「锁层级」表
+      与该单源双向一致. 未声明的新锁类即红, 已失效的表条目同样即红.
 
 未实现项 (本期不在范围内, 留作未来增强):
-  - AB-BA 死锁环检测: 需先建立锁顺序声明机制 (如 lockdep-style annotation)
+  - AB-BA 死锁环检测: 锁顺序声明机制已由 (6) 建立, 环检测本身仍待独立批
+    (要先给全仓 242 处未具名锁构造点逐项标序位, 否则首轮会把真环与漏标混读)
   - 不可重入函数检测: 需 Rust 类型系统级分析
 
-退出码: 0 = 无严重风险, 1 = 有高风险 (中断上下文非安全锁)
+退出码: 0 = 无严重风险, 1 = 有高风险 (中断上下文非安全锁 / 锁类序表失同步)
 """
 
 import os
@@ -22,6 +27,8 @@ import sys
 import json
 from collections import defaultdict
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 扫描范围 (2026-09-13 用户裁决扩展): privileged + functions 双子树.
 # 扩展背景: 第二十六批 egfs/dedup.rs ABBA 死锁位于 functions 子树, 原单根
@@ -515,6 +522,254 @@ def scan_directory(base):
     return all_issues, len(files)
 
 
+# ===========================================================================
+# (6) 锁类序表对账 (A-3 丙)
+# ===========================================================================
+
+# 机器可读单源与人读视图. 序表是数据源, 文档层级表必须与它双向一致;
+# 锚点路径按脚本位置解析 (不依赖 CWD), 缺失即 fail-closed 判红.
+LOCK_ORDER_TABLE = PROJECT_ROOT / 'scripts' / 'lock_class_order.json'
+LOCK_ORDER_DOC = PROJECT_ROOT / 'docs' / 'explain' / 'ref-lock-order.md'
+
+# 代码侧具名锁类注册点: SpinLock/Mutex/RwLock/PiMutex/IrqSpinLock 的
+# ::named("X") 与 IrqSpinLock 的惰性 ::named_lazy("X").
+NAMED_CLASS_PATTERN = re.compile(r'::named(?:_lazy)?\s*\(\s*"([^"]+)"')
+
+# 文档层级表: 「## 锁层级」 标题后的第一个围栏代码块; 块内 `层级 N:` 为表头行,
+# 缩进行为条目行 —— 只有条目行参与受控 token 判定 (表头含域名大写缩写, 如 FREG).
+DOC_SECTION_HEADING = '## 锁层级'
+DOC_LEVEL_HEADING_PATTERN = re.compile(r'^层级\s+(\d+):')
+
+# 受控 token 形态: 全大写标识符 (≥3 字符) / Type::field / a.b / A.b.
+# 括号内 (中英皆算) 的内容整体豁免 —— 该位置用于写「已删除」「原子量」这类说明,
+# 把失效名留在说明里不该被当成一次锁顺序声明.
+TOKEN_PATTERNS = (
+    re.compile(r'\b[A-Z][A-Z0-9_]{2,}\b'),
+    re.compile(r'\b[A-Za-z_][A-Za-z0-9_]*::[a-z_][A-Za-z0-9_]*\b'),
+    re.compile(r'\b[A-Za-z_][A-Za-z0-9_]*\.[a-z_][A-Za-z0-9_]*\b'),
+)
+BRACKET_SPAN_PATTERN = re.compile(r'（[^）]*）|\([^)]*\)')
+
+
+def collect_named_lock_classes(roots):
+    """收集代码侧具名锁类字面量 -> 出现位置列表."""
+    sites = defaultdict(list)
+    for base in roots:
+        for path in sorted(base.rglob('*.rs')):
+            if 'smoltcp' in str(path):
+                continue
+            try:
+                text = path.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                for match in NAMED_CLASS_PATTERN.finditer(line):
+                    sites[match.group(1)].append((str(path), lineno))
+    return sites
+
+
+def build_code_corpus(roots):
+    """把扫描根下全部 .rs 文本合成一个语料串, 供 symbol 锚做存在性检查.
+
+    symbol 判据是「该标识符仍在代码里」(抓删锁/改名导致的表条目失效), 不是类型
+    判据 —— 序表条目里 `lock` / `cwd` 这类短段名会恒真, 这是刻意的弱判据,
+    与 §2.2「定点回归锁 vs 树级防线」的口径一致: 本腿只证明清单未丢, 不证明
+    同类新风险点会被发现.
+    """
+    chunks = []
+    for base in roots:
+        for path in sorted(base.rglob('*.rs')):
+            if 'smoltcp' in str(path):
+                continue
+            try:
+                chunks.append(path.read_text(encoding='utf-8', errors='replace'))
+            except OSError:
+                continue
+    return '\n'.join(chunks)
+
+
+def identifier_segments(name):
+    """把序表条目名拆成可 grep 的标识符段 (去 `::` / `.` / `[..]`)."""
+    stripped = re.sub(r'\[[^\]]*\]', '', name)
+    parts = re.split(r'::|[./]', stripped)
+    return [part for part in parts if part and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', part)]
+
+
+def controlled_tokens(text):
+    """从文档条目文本提取受控 token."""
+    without_brackets = BRACKET_SPAN_PATTERN.sub(' ', text)
+    tokens = set()
+    for pattern in TOKEN_PATTERNS:
+        tokens.update(pattern.findall(without_brackets))
+    return tokens
+
+
+def parse_doc_level_entries(path):
+    """解析文档「锁层级」围栏块 -> (层级 -> 条目文本, 层级 -> 表头存在)."""
+    try:
+        lines = path.read_text(encoding='utf-8', errors='replace').splitlines()
+    except OSError:
+        return None, None
+    start = None
+    for idx, line in enumerate(lines):
+        if line.startswith(DOC_SECTION_HEADING):
+            start = idx
+            break
+    if start is None:
+        return None, None
+    fence = None
+    for idx in range(start + 1, len(lines)):
+        if lines[idx].strip().startswith('```'):
+            fence = idx
+            break
+    if fence is None:
+        return None, None
+    entries = {}
+    headers = set()
+    current = None
+    for line in lines[fence + 1:]:
+        if line.strip().startswith('```'):
+            break
+        heading = DOC_LEVEL_HEADING_PATTERN.match(line.strip())
+        if heading:
+            current = int(heading.group(1))
+            headers.add(current)
+            continue
+        if line[:1].isspace() and current is not None:
+            entries.setdefault(current, []).append(line.strip())
+        elif not line.strip():
+            # 层级块之间的空行: 条目行归属到此为止, 防跨块粘连
+            current = None
+    return entries, headers
+
+
+def check_lock_order(roots):
+    """执行锁类序表对账, 返回 (issues, 摘要行)."""
+    issues = []
+    summary = []
+
+    def fail(kind, message, where):
+        issues.append({
+            'file': where,
+            'line': 0,
+            'severity': SEVERITY_CRITICAL,
+            'type': kind,
+            'lock': message,
+            'function': None,
+            'message': message,
+            'code': '锁类序表对账 (scripts/lock_class_order.json)',
+        })
+
+    if not LOCK_ORDER_TABLE.exists():
+        fail('LOCK_ORDER_TABLE_MISSING', f'机器可读序表不存在: {LOCK_ORDER_TABLE}',
+             str(LOCK_ORDER_TABLE))
+        return issues, ['锁类序表对账: 单源缺失, fail-closed 判红']
+    try:
+        table = json.loads(LOCK_ORDER_TABLE.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail('LOCK_ORDER_TABLE_MALFORMED', f'序表不可解析: {exc}', str(LOCK_ORDER_TABLE))
+        return issues, ['锁类序表对账: 单源不可解析, fail-closed 判红']
+
+    levels = [entry['level'] for entry in table.get('levels', [])]
+    classes = table.get('classes', [])
+    if levels != list(range(len(levels))):
+        fail('LOCK_ORDER_TABLE_MALFORMED',
+             f'层级号必须从 0 连续递增, 实测 {levels}', str(LOCK_ORDER_TABLE))
+    level_set = set(levels)
+    tokens_by_level = defaultdict(set)
+    names = set()
+    doc_tokens = set()
+    lockdep_declared = set()
+    symbol_declared = []
+    for entry in classes:
+        name = entry.get('name', '')
+        level = entry.get('level')
+        anchor = entry.get('anchor')
+        doc_token = entry.get('doc_token', name)
+        if not name or name in names:
+            fail('LOCK_ORDER_TABLE_MALFORMED', f'条目名缺失或重复: {name!r}', name)
+        names.add(name)
+        if doc_token in doc_tokens:
+            fail('LOCK_ORDER_TABLE_MALFORMED', f'doc_token 重复: {doc_token!r}', name)
+        doc_tokens.add(doc_token)
+        if anchor not in ('lockdep', 'symbol'):
+            fail('LOCK_ORDER_TABLE_MALFORMED', f'anchor 非法: {anchor!r} ({name})', name)
+            continue
+        if level is None:
+            # 无 level 的条目 = 刻意不参与层级递增判定的域 (如最内层发射锁);
+            # 仍要过锚点对账, 只是不写进文档层级表.
+            pass
+        elif level not in level_set:
+            fail('LOCK_ORDER_TABLE_MALFORMED', f'条目层级未定义: {level} ({name})', name)
+        else:
+            tokens_by_level[level].add(doc_token)
+        if anchor == 'lockdep':
+            lockdep_declared.add(name)
+        else:
+            symbol_declared.append(name)
+
+    named_sites = collect_named_lock_classes(roots)
+    named_code = set(named_sites)
+    for undeclared in sorted(named_code - lockdep_declared):
+        sites = named_sites[undeclared]
+        fail('LOCK_ORDER_UNDECLARED_CLASS',
+             f'代码注册了序表未声明的锁类 "{undeclared}" ({sites[0][0]}:{sites[0][1]})'
+             f' —— 新锁类必须先入序表', str(sites[0][0]))
+    for stale in sorted(lockdep_declared - named_code):
+        fail('LOCK_ORDER_CLASS_STALE',
+             f'序表声明的 lockdep 类 "{stale}" 在代码里已无注册点 (改名或删除)',
+             str(LOCK_ORDER_TABLE))
+
+    corpus = build_code_corpus(roots)
+    for name in symbol_declared:
+        missing = [seg for seg in identifier_segments(name)
+                   if not re.search(rf'\b{re.escape(seg)}\b', corpus)]
+        if missing:
+            fail('LOCK_ORDER_SYMBOL_MISSING',
+                 f'序表 symbol 锚 "{name}" 在代码里定位不到段 {missing} (条目已失效)',
+                 str(LOCK_ORDER_TABLE))
+
+    doc_entries, doc_headers = parse_doc_level_entries(LOCK_ORDER_DOC)
+    if doc_entries is None:
+        fail('LOCK_ORDER_DOC_UNREADABLE',
+             f'文档层级表不可解析: 未找到「{DOC_SECTION_HEADING}」后的围栏块',
+             str(LOCK_ORDER_DOC))
+        summary.append('锁类序表对账: 序表已解析, 文档侧不可对账 ⇒ 判红')
+        return issues, summary
+
+    for level in sorted(level_set):
+        if level not in doc_headers:
+            fail('LOCK_ORDER_DOC_MISSING_LEVEL', f'文档层级表缺少层级 {level}',
+                 str(LOCK_ORDER_DOC))
+    for level in sorted(doc_headers - level_set):
+        fail('LOCK_ORDER_DOC_UNKNOWN_LEVEL', f'文档出现序表未定义的层级 {level}',
+             str(LOCK_ORDER_DOC))
+
+    doc_text_by_level = {level: ' '.join(lines) for level, lines in doc_entries.items()}
+    for level in sorted(tokens_by_level):
+        text = doc_text_by_level.get(level, '')
+        for doc_token in sorted(tokens_by_level[level]):
+            if doc_token not in text:
+                fail('LOCK_ORDER_DOC_MISSING_ENTRY',
+                     f'序表层级 {level} 的条目 "{doc_token}" 未出现在文档该层级条目行',
+                     str(LOCK_ORDER_DOC))
+    for level in sorted(doc_text_by_level):
+        declared = tokens_by_level.get(level, set())
+        for token in sorted(controlled_tokens(doc_text_by_level[level])):
+            if not any(token in item for item in declared):
+                fail('LOCK_ORDER_DOC_UNDECLARED_ENTRY',
+                     f'文档层级 {level} 出现序表未登记的条目 "{token}"',
+                     str(LOCK_ORDER_DOC))
+
+    summary.append(
+        f'锁类序表对账: 层级 {len(level_set)} 条 / 条目 {len(classes)} 个 '
+        f'(lockdep 类 {len(lockdep_declared)} · symbol 锚 {len(symbol_declared)}) '
+        f'/ 代码具名类 {len(named_code)} 个 / 文档受控条目层级 {len(doc_entries)} 段 '
+        f'→ 违规 {len(issues)} 项'
+    )
+    return issues, summary
+
+
 def generate_report(issues, file_count):
     """生成报告."""
     by_severity = defaultdict(list)
@@ -569,8 +824,16 @@ def main():
         root_issues, root_files = scan_directory(base)
         issues.extend(root_issues)
         file_count += root_files
+
+    # (6) 锁类序表对账: 根路径按脚本位置取绝对路径, 不随 CWD 漂移.
+    order_roots = [PROJECT_ROOT / base for base in BASES]
+    order_issues, order_summary = check_lock_order(order_roots)
+    issues.extend(order_issues)
+
     report = generate_report(issues, file_count)
     print(report)
+    for line in order_summary:
+        print(line)
 
     # 保存 JSON 报告 (gitignored other/target/audit/)
     json_path = Path('other/target/audit/deadlock-matrix.json')

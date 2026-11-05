@@ -13,31 +13,33 @@
 
 ```
 层级 0: FREG / Recovery（中断安全）
-  RECOVERY_MANAGER, ROLLBACK_LOG, RESET_AUDIT_LOG, DEVICE_SNAPSHOTS
+  RECOVERY_MANAGER, FREG.ROLLBACK_LOG, FREG.PANIC_MSG,
+  FREG.domain.capture_cb, FREG.domain.rollback_cb, FREG.domain.undo,
+  RESET_AUDIT_LOG, DEVICE_SNAPSHOTS
 
 层级 1: PMM（物理内存）
-  PMM_SNAPSHOT, buddy allocator 内部锁
+  PMM_SNAPSHOT, PhysicalMemoryManager::lock（buddy 分配器面）
 
 层级 2: Slab / Kmalloc（内核堆）
-  slab free-list 锁, kmalloc 内部锁
+  GENERAL_CACHES, GLOBAL_KMALLOC
 
 层级 3: VMM / VMA（虚拟内存）
-  VMM 页表锁, VMA 链表锁（MmStruct::vmas）
+  VMM_LOCK, MmStruct::vmas
 
 层级 4: Page Cache（页缓存）
-  PAGE_CACHE[hash_bucket] 锁
+  PAGE_CACHE[hash_bucket]
 
 层级 5: COW（写时复制）
-  COW_REFS 锁
+  （原 COW_REFS 锁已删除：帧持有计数并入层级 1 的 PMM 计数面）
 
 层级 6: Swap（换页）
   SWAP.lock
 
 层级 7: Process Table（进程表）
-  PROC_SNAPSHOT, ProcessTable::processes 锁
+  PROCESS_TABLE.processes, PROC_SNAPSHOT
 
 层级 8: Scheduler（调度器）
-  PER_CPU_SCHED[idx] 锁, CFS/RT/DL 队列锁
+  cfs_rq（per-CPU 运行队列锁；跨核搬动按 cpu index 升序取两把）
 
 层级 9: 进程属性
   sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy,
@@ -46,20 +48,27 @@
   fs_context.cwd / fs_context.root（进程 FS 上下文; umask 为原子量）
 
 层级 10: POSIX Timer
-  TIMER_MANAGER 锁
+  TIMER_MANAGER
 
 层级 11: VFS / FS（文件系统）
-  VFS 全局锁, 文件系统特定锁（EGFS, ramfs, devfs）
+  DCACHE, ICACHE, RAMFS_DATA（文件系统特定锁的代表条目；EGFS / devfs 走各自对象锁）
 
 层级 12: Network（网络）
-  NET_LOCK, socket 锁, NET_SNAPSHOT_LOCK
+  NET_STATE（原 NET_LOCK 与 12 个 static mut 的替代单源）, NET_SNAPSHOT_LOCK,
+  NET_STACK_INSTANCE（smoltcp 栈锁）, UDS_STATE（unix socket 表）
 
 层级 13: Driver（驱动）
-  设备特定锁（AHCI/NVMe/E1000/VirtIO/Keyboard 等）
+  UEFI.gop_mode, UEFI.memory_map, UEFI.variables,
+  KEYBOARD_DEVICE, GLOBAL_FRAMEBUFFER（设备特定锁的代表条目；AHCI / NVMe / E1000 /
+  VirtIO 走各自设备锁）
 
 层级 14: Block Device Registry（块设备注册表）
-  REGISTRY, DEVICE_NAMES, IO_REFS, REMOVING
+  NVME_CONTROLLERS, AHCI_CONTROLLERS, ATA_CONTROLLERS, HOTPLUG_MANAGER
 ```
+
+本表不再是手写清单：它的**机器可读单源**是 `scripts/lock_class_order.json`（层级定义 + 每条锁类的锚点与归属层级），`scripts/audit_deadlock_matrix.py` 的第 (6) 项检查对本表做双向对账并把三条判据执法——① 代码里 `::named` / `::named_lazy` 注册的锁类若序表未声明即红（新锁类必须先入表）；② 序表声明的 `lockdep` 类在代码里已无注册点、或 `symbol` 锚在代码里定位不到即红（本表因此能抓住改名与删锁，序表对账首跑即抓出 `COW_REFS` 已删、`NET_LOCK` 已改名 `NET_STATE`、层级 14 四名从无实现）；③ 本表的条目集合与序表逐层级双向不符即红（括号内的说明文字不参与判定）。改锁的顺序归属 = 改序表 + 改本表，两处同批提交，红在门禁而不是在下一次读文档时。
+
+序表的锚点有两种口径：`lockdep` 锚要求名称与代码类名字面量完全一致（12 个，见下文 Lockdep 集成）；`symbol` 锚只要求该标识符仍能在 `src/kernel` 定位，用于尚未具名化的锁——`PhysicalMemoryManager::lock` 与 `VMM_LOCK` 是 `AtomicBool` 手递自旋标志、不进 lockdep 类表，`PAGE_CACHE` / `PROC_SNAPSHOT` / `TIMER_MANAGER` 等仍是未具名 `static` 构造。全仓未具名构造点共 242 处，一律不被具名化纳入本表（2026-11-05 裁定：先建表再改名，避免把改名噪声与表条目失效混在首轮读数里）。
 
 ## 规则
 

@@ -12,11 +12,12 @@ B01-24 返工: audit 脚本统一自测.
 - 每个用例在临时目录合成最小 fixture, 直接调用**检测器自身**的函数
   (P-50 ③): 此前用例在自测文件里复制检测算法, 检测器失效时自测仍全绿 —
   自测与检测器不同源就没有判别力.
-- 注入面只有模块级路径常量 (block_registration.BASE / audit_unsafe.PROJECT_ROOT):
+- 注入面只有模块级路径常量 (block_registration.BASE / audit_unsafe.PROJECT_ROOT /
+  audit_deadlock_matrix.LOCK_ORDER_TABLE 与 .LOCK_ORDER_DOC):
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-七项真调入口:
+九项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
@@ -24,12 +25,16 @@ B01-24 返工: audit 脚本统一自测.
 5. audit_coupling.py: scan_cross_module_deps(base, layer) + detect_circular_deps(matrix, layer)
 6. audit_coupling.py: scan_reference_level_deps(base, layer) (P-73 丙 只报告矩阵)
 7. audit_coupling.py: check_internal_access(base, layer, cross_layer) (P-74 甲 跨层穿透)
+8. audit_deadlock_matrix.py: check_lock_order(真仓库根) —— 真序表三方对账必须零违规
+9. audit_deadlock_matrix.py: check_lock_order(临时 fixture) —— 六类失同步各判对应红,
+   并含反向负控制 (括号内的失效名不该被判)
 """
 from __future__ import annotations
 
 import contextlib
 import importlib.util
 import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -64,7 +69,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/7] audit_functions_boundary.py")
+    print("\n[Test 1/9] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -89,7 +94,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/7] audit_deadlock_matrix.py")
+    print("\n[Test 2/9] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -113,9 +118,127 @@ def test_deadlock_matrix() -> bool:
     )
 
 
+# ===========================================================================
+# 锁类序表对账 (A-3 丙) 的正反控制
+# ===========================================================================
+
+# fixture 的基准形态: 一个 lockdep 锚 + 一个 symbol 锚, 序表 / 代码 / 文档三方一致.
+_ORDER_LEVELS = [{"level": 0, "domain": "Zero"}, {"level": 1, "domain": "One"}]
+_ORDER_CLASSES = [
+    {"level": 0, "name": "MY_LOCK", "anchor": "lockdep"},
+    {"level": 1, "name": "OTHER_SYM", "anchor": "symbol"},
+]
+_ORDER_CODE = (
+    "//! fixture\n"
+    'static TABLE: Mutex<X> = Mutex::named("MY_LOCK", X::new());\n'
+    "static OTHER_SYM: IrqSpinLock<Y> = IrqSpinLock::new(Y::new());\n"
+)
+
+
+def _order_doc_body(entries: dict[int, str]) -> str:
+    """按层级 -> 条目文本渲染文档「锁层级」围栏块."""
+    lines = ["# fixture", "", "## 锁层级（从高到低）", "```"]
+    for level in sorted(entries):
+        lines.append(f"层级 {level}: 域")
+        lines.append(f"  {entries[level]}")
+        lines.append("")
+    lines += ["```", "", "## 规则"]
+    return "\n".join(lines)
+
+
+def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=None,
+                      doc_entries=None, code=None) -> set[str]:
+    """注入临时序表 / 文档 / 代码根, 真调 check_lock_order 取违规类型集合."""
+    root = Path(tmpdir) / tag
+    table_path = root / "lock_class_order.json"
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    table_path.write_text(
+        json.dumps({"levels": levels or _ORDER_LEVELS,
+                    "classes": classes if classes is not None else _ORDER_CLASSES},
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+    doc_path = root / "ref-lock-order.md"
+    doc_path.write_text(
+        _order_doc_body(doc_entries if doc_entries is not None else {0: "MY_LOCK",
+                                                                    1: "OTHER_SYM"}),
+        encoding="utf-8",
+    )
+    src_root = root / "src" / "privileged"
+    src_root.mkdir(parents=True, exist_ok=True)
+    (src_root / "fixture.rs").write_text(code if code is not None else _ORDER_CODE,
+                                        encoding="utf-8")
+    # 两个路径常量绑定仓库位置, fixture 在临时目录 ⇒ 注入后调真实检测器
+    detector.LOCK_ORDER_TABLE = table_path
+    detector.LOCK_ORDER_DOC = doc_path
+    issues, _summary = detector.check_lock_order([src_root])
+    return {issue["type"] for issue in issues}
+
+
+def test_lock_order_self_reconcile() -> bool:
+    """A-3 丙 正向自检: 真序表与真代码 / 真文档三方对账必须零违规."""
+    print("\n[Test 8/9] audit_deadlock_matrix.py 锁类序表 (真单源)")
+    detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
+    issues, summary = detector.check_lock_order(
+        [PROJECT_ROOT / "src" / "kernel" / "privileged",
+         PROJECT_ROOT / "src" / "kernel" / "functions"])
+    ok = _check("真序表三方对账零违规", not issues,
+                f"实测违规 {[i['message'] for i in issues][:3]}")
+    line = summary[0] if summary else ""
+    return ok and _check(
+        "摘要报出序表 lockdep 类与代码具名类等量 (12 / 12)",
+        "lockdep 类 12" in line and "代码具名类 12" in line, line)
+
+
+def test_lock_order_negative_controls() -> bool:
+    """A-3 丙 负控制: 六类失同步各判对应红, 另含基准形态与括号豁免两例不判."""
+    print("\n[Test 9/9] audit_deadlock_matrix.py 锁类序表 (负控制)")
+    detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
+    # 局部列表的变量名要避开 main() 里那个结果列表: 契约锁 ci_entrypoint_unified_test
+    # 按文件中**首个**「results 紧跟方括号赋值」的位置定位 main() 的结果列表, 局部同名
+    # 会让定位指到本函数, 三条自测腿契约 (P-65/P-73/P-74) 随即判红.
+    case_checks: list[bool] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cases = [
+            ("基准形态不判红", set(), None, None, None, None),
+            ("代码新增未声明锁类即红", {"LOCK_ORDER_UNDECLARED_CLASS"},
+             None, None, None,
+             _ORDER_CODE + 'static EXTRA: Mutex<Z> = Mutex::named_lazy("NEW_CLASS", Z);\n'),
+            ("序表 lockdep 类已无注册点即红", {"LOCK_ORDER_CLASS_STALE"},
+             {0: "MY_LOCK", 1: "GONE_LOCK, OTHER_SYM"},
+             _ORDER_CLASSES + [{"level": 1, "name": "GONE_LOCK", "anchor": "lockdep"}],
+             None, None),
+            ("序表 symbol 锚定位不到即红", {"LOCK_ORDER_SYMBOL_MISSING"},
+             {0: "MY_LOCK", 1: "GONE_SYM"},
+             [{"level": 0, "name": "MY_LOCK", "anchor": "lockdep"},
+              {"level": 1, "name": "GONE_SYM", "anchor": "symbol"}], None, None),
+            ("文档缺序表已声明的条目即红", {"LOCK_ORDER_DOC_MISSING_ENTRY"},
+             {0: "（本层条目待补）", 1: "OTHER_SYM"}, None, None, None),
+            ("文档出现序表未登记条目即红", {"LOCK_ORDER_DOC_UNDECLARED_ENTRY"},
+             {0: "MY_LOCK, STRAY_SYM", 1: "OTHER_SYM"}, None, None, None),
+            ("层级号不连续即判结构错", {"LOCK_ORDER_TABLE_MALFORMED"},
+             {0: "MY_LOCK", 2: "OTHER_SYM"},
+             [{"level": 0, "name": "MY_LOCK", "anchor": "lockdep"},
+              {"level": 2, "name": "OTHER_SYM", "anchor": "symbol"}],
+             [{"level": 0, "domain": "Zero"}, {"level": 2, "domain": "Two"}], None),
+            ("括号内的失效名不判红", set(),
+             {0: "MY_LOCK", 1: "OTHER_SYM（原 GONE_SYM 已删除）"}, None, None, None),
+        ]
+        for idx, (label, expected, doc_entries, classes, levels, code) in enumerate(
+                cases, start=1):
+            got = _order_violations(detector, tmpdir, f"case{idx}", classes=classes,
+                                    levels=levels, doc_entries=doc_entries, code=code)
+            # 判据取**相等**而非包含: 每条负控制只该触发自己那一类红,
+            # 混进别类说明 fixture 或检测器把不相关的失同步也判了.
+            case_checks.append(_check(
+                label, got == expected,
+                f"期望 {sorted(expected) or '零违规'}, 实测 {sorted(got) or '零违规'}"))
+    return all(case_checks)
+
+
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/7] audit_block_registration.py")
+    print("\n[Test 3/9] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -146,7 +269,7 @@ def test_block_registration() -> bool:
 
 def test_audit_unsafe() -> bool:
     """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
-    print("\n[Test 4/7] tools/audit_unsafe.py")
+    print("\n[Test 4/9] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -178,7 +301,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/7] audit_coupling.py")
+    print("\n[Test 5/9] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -222,7 +345,7 @@ def test_coupling_reference_edges() -> bool:
     计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
     D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
     """
-    print("\n[Test 6/7] audit_coupling.py (P-73 丙 D 类引用级边)")
+    print("\n[Test 6/9] audit_coupling.py (P-73 丙 D 类引用级边)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -276,7 +399,7 @@ def test_coupling_cross_layer_access() -> bool:
     导入被拦); (b) 具名豁免路径 (`functions/mm/numa.rs`) 放行; (c) `syscall::raw`
     穿透被拦, 而公开出口 `syscall::api` 不匹配内部清单.
     """
-    print("\n[Test 7/7] audit_coupling.py (P-74 甲 跨层内部访问)")
+    print("\n[Test 7/9] audit_coupling.py (P-74 甲 跨层内部访问)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "functions"
@@ -331,6 +454,8 @@ def main() -> int:
         test_coupling_edges(),
         test_coupling_reference_edges(),
         test_coupling_cross_layer_access(),
+        test_lock_order_self_reconcile(),
+        test_lock_order_negative_controls(),
     ]
     passed = sum(results)
     total = len(results)
