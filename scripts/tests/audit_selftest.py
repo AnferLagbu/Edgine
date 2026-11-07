@@ -17,7 +17,7 @@ B01-24 返工: audit 脚本统一自测.
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-九项真调入口:
+十项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
@@ -30,6 +30,9 @@ B01-24 返工: audit 脚本统一自测.
 9. audit_deadlock_matrix.py: check_lock_order(临时 fixture) —— 九条失同步各判对应红
    (含跨行注册与容量到顶 / 上限单源不可解析), 并含反向负控制 (括号内的失效名与
    注释里的示例注册点都不该被判)
+10. audit_vacuous_needle.py: scan_text(text) + violations_of(rows) —— 恒真反向针形态腿
+    (2026-11-07 裁定): 反向 + 纯正则记号判红, 正向与「针内含引号 (逐字源码文本)」各有
+    判白理由, 无记号 / 首参非字面量 / 注释内形态 / `!=` 合取的 `!` 一律不计
 """
 from __future__ import annotations
 
@@ -71,7 +74,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/9] audit_functions_boundary.py")
+    print("\n[Test 1/10] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -96,7 +99,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/9] audit_deadlock_matrix.py")
+    print("\n[Test 2/10] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -195,7 +198,7 @@ def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=N
 
 def test_lock_order_self_reconcile() -> bool:
     """A-3 丙 + A-127c 正向自检: 真序表与真代码 / 真文档对账零违规, 容量读数在位."""
-    print("\n[Test 8/9] audit_deadlock_matrix.py 锁类序表 (真单源)")
+    print("\n[Test 8/10] audit_deadlock_matrix.py 锁类序表 (真单源)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     issues, summary = detector.check_lock_order(
         [PROJECT_ROOT / "src" / "kernel" / "privileged",
@@ -220,7 +223,7 @@ def test_lock_order_self_reconcile() -> bool:
 def test_lock_order_negative_controls() -> bool:
     """A-3 丙 + A-127c 负控制: 九条失同步各判对应红 (含跨行注册与两条容量判据),
     另含基准形态、括号豁免与注释豁免三例不判."""
-    print("\n[Test 9/9] audit_deadlock_matrix.py 锁类序表 (负控制)")
+    print("\n[Test 9/10] audit_deadlock_matrix.py 锁类序表 (负控制)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     # 局部列表的变量名要避开 main() 里那个结果列表: 契约锁 ci_entrypoint_unified_test
     # 按文件中**首个**「results 紧跟方括号赋值」的位置定位 main() 的结果列表, 局部同名
@@ -303,7 +306,7 @@ def test_lock_order_negative_controls() -> bool:
 
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/9] audit_block_registration.py")
+    print("\n[Test 3/10] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -334,7 +337,7 @@ def test_block_registration() -> bool:
 
 def test_audit_unsafe() -> bool:
     """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
-    print("\n[Test 4/9] tools/audit_unsafe.py")
+    print("\n[Test 4/10] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -366,7 +369,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/9] audit_coupling.py")
+    print("\n[Test 5/10] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -410,7 +413,7 @@ def test_coupling_reference_edges() -> bool:
     计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
     D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
     """
-    print("\n[Test 6/9] audit_coupling.py (P-73 丙 D 类引用级边)")
+    print("\n[Test 6/10] audit_coupling.py (P-73 丙 D 类引用级边)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -464,7 +467,7 @@ def test_coupling_cross_layer_access() -> bool:
     导入被拦); (b) 具名豁免路径 (`functions/mm/numa.rs`) 放行; (c) `syscall::raw`
     穿透被拦, 而公开出口 `syscall::api` 不匹配内部清单.
     """
-    print("\n[Test 7/9] audit_coupling.py (P-74 甲 跨层内部访问)")
+    print("\n[Test 7/10] audit_coupling.py (P-74 甲 跨层内部访问)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "functions"
@@ -506,6 +509,156 @@ def test_coupling_cross_layer_access() -> bool:
     )
 
 
+# (判据文案, 被扫的 Rust 源码文本, 期望「带正则记号的针」条数, 期望违规条数, 期望判白面)
+# want_exempt: "" = 不查 / "source" = 逐字源码文本判白 / "positive" = 正向自带证明判白
+_NEEDLE_CASES: list[tuple[str, str, int, int, str]] = [
+    (
+        "反向 + 正则记号 = 恒真针判红",
+        r'''fn t() {
+    assert!(!src.contains(r"$r_i.*$R_MAX"), "合格线读数残留");
+}''',
+        1, 1, "",
+    ),
+    (
+        "跨行的反向针同样判红",
+        r'''fn t() {
+    assert!(
+        !sh.contains(r"\d{2,3}"),
+        "读数缺失",
+    );
+}''',
+        1, 1, "",
+    ),
+    (
+        "闭包内的反向针同样判红",
+        r'''fn t() {
+    let hits: Vec<&str> = lines.iter().filter(|l| !l.contains("(?:pub fn)")).collect();
+}''',
+        1, 1, "",
+    ),
+    (
+        "链式接收者的反向针同样判红",
+        r'''fn t() {
+    assert!(!text.trim().contains(r"\w+"), "字段缺失");
+}''',
+        1, 1, "",
+    ),
+    (
+        "matches 与 find 同族各判一次红",
+        r'''fn t() {
+    assert!(!s.matches("(.*?)").is_empty(), "m");
+    assert!(!hay.find(r".+x").is_some(), "m");
+}''',
+        2, 2, "",
+    ),
+    (
+        "转义串解码后含记号即判红",
+        r'''fn t() {
+    assert!(!src.contains("\\s*use"), "旧正则行残留");
+}''',
+        1, 1, "",
+    ),
+    (
+        "解码后是退格符 (运行时无记号) 即不计",
+        r'''fn t() {
+    assert!(!src.contains("\b"), "退格字符");
+}''',
+        0, 0, "",
+    ),
+    (
+        "针内含引号 => 逐字源码文本, 判白不判红",
+        r'''fn t() {
+    assert!(!py.contains(r#"re.match(r"\s+", line)"#), "旧实现残留");
+}''',
+        1, 0, "source",
+    ),
+    (
+        "反向但针内无正则记号 => 不进射程",
+        r'''fn t() {
+    assert!(!src.contains("plain text"), "字面判据");
+}''',
+        0, 0, "",
+    ),
+    (
+        "首参是常量 (静态不可判) => 不计, 断言文案里的记号不算针",
+        r'''fn t() {
+    const NEEDLE: &str = "a.*b";
+    assert!(!src.contains(NEEDLE), "含 \\d 的说明文案");
+}''',
+        0, 0, "",
+    ),
+    (
+        "首参是 format! => 不计 (被搜索的是运行期拼出的串)",
+        r'''fn t() {
+    assert!(!src.contains(&format!("{}.*{}", prefix, suffix)), "m");
+}''',
+        0, 0, "",
+    ),
+    (
+        "注释与文档串里的同形态不成判据",
+        r'''//! 说明: assert!(!x.contains(r".*")) 是恒真针, 不要照抄
+fn t() {
+    // assert!(!y.contains(".+"), "m");
+}''',
+        0, 0, "",
+    ),
+    (
+        "正向针自带证明 => 判白",
+        r'''fn t() {
+    assert!(src.contains(r"\[.+?bar\]"), "记号在位");
+}''',
+        1, 0, "positive",
+    ),
+    (
+        "`!=` 合取里的 `!` 不得读成反向",
+        r'''fn t() {
+    assert!(a != b && c.contains(r".*"), "m");
+}''',
+        1, 0, "positive",
+    ),
+]
+
+
+def test_vacuous_needle() -> bool:
+    r"""2026-11-07 裁定「树级形态腿」fixture 测试 10: 真调 scan_text 判恒真反向针.
+
+    病灶: contains/matches/find 收**逐字文本**不收正则, 于是写成正则形态的**反向**针永远
+    匹配不到 —— 而那正是它想要的"通过". M7 合格线批的 `$r_i.*$R_MAX` 就是恒真针, 暴露它
+    的是 clippy 的 needless_raw_string_hashes 恰好路过, 与"判据咬不咬得住"毫无因果关系.
+
+    钉三面: ①判得出 (反向 + 记号 + 跨行 / 闭包 / 链式 / matches 与 find / 转义解码),
+    ②不越界 (正向自带证明、针内含引号是逐字源码文本、无记号、首参非常量、注释内形态、
+    `!=` 合取都不得判红), ③判白必须有**理由**而非"没命中" —— 两种绿在日志里同形,
+    只有理由串能区分「按口径放行」与「检测器没看到」.
+    """
+    print("\n[Test 10/10] audit_vacuous_needle.py")
+    detector = _load("audit_vacuous_needle", SCRIPTS_DIR / "audit_vacuous_needle.py")
+    needle_checks: list[bool] = []
+    for label, src, want_rows, want_bad, want_exempt in _NEEDLE_CASES:
+        rows = detector.scan_text("fixture.rs", src)
+        bad = detector.violations_of(rows)
+        reason_ok = True
+        if want_exempt == "source":
+            reason_ok = bool(rows) and rows[0]["exempt"] == detector.EXEMPT_SOURCE_TEXT
+        elif want_exempt == "positive":
+            reason_ok = bool(rows) and rows[0]["exempt"] == detector.EXEMPT_POSITIVE
+        needle_checks.append(_check(
+            label,
+            len(rows) == want_rows and len(bad) == want_bad and reason_ok,
+            f"期望 记号针 {want_rows} / 违规 {want_bad}, 实测 {len(rows)} / {len(bad)}"
+            + (f", 判白面 {[r['exempt'] for r in rows]}" if want_exempt else ""),
+        ))
+    # 违规条目必须说清是哪根针 (file/line/method/needle 四项齐备), 否则红了无法施工.
+    bad = detector.violations_of(detector.scan_text("probe.rs", _NEEDLE_CASES[0][1]))
+    needle_checks.append(_check(
+        "违规条目带可定位的 文件/行/方法/针",
+        len(bad) == 1 and bad[0]["file"] == "probe.rs" and bad[0]["line"] == 2
+        and bad[0]["method"] == "contains" and "$R_MAX" in bad[0]["needle"],
+        f"实测条目 {bad}",
+    ))
+    return all(needle_checks)
+
+
 def main() -> int:
     print("=" * 60)
     print("B01-24 audit 脚本自测 (按 docs/plan/audit-fix-01 §B01-24)")
@@ -521,6 +674,7 @@ def main() -> int:
         test_coupling_cross_layer_access(),
         test_lock_order_self_reconcile(),
         test_lock_order_negative_controls(),
+        test_vacuous_needle(),
     ]
     passed = sum(results)
     total = len(results)

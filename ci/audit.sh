@@ -79,7 +79,13 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 # 作准 (AGENTS §5 原写的 `clippy::missing_docs_in_crate_items` 是不存在的 lint 名, 故编译器
 # 执法长期为零), 本腿取该口径读数与存量债册双向对账, 只拦新增不豁免存量 —— 每批补写完
 # 就把该模块转 `#![deny(missing_docs)]` 硬执法 (清零工程 P-66).
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py"
+# 第 10 条 vacuous_needle 是 2026-11-07 裁定「树级形态腿」的执行点: 反向针 (接收者被 `!`
+# 否定的 contains/matches/find) 里出现纯正则记号即恒真 —— 正向针匹配不到当场红, 自带证明,
+# 反向针永远绿, 在 CI 日志里与真判据不可区分. 病灶实测来自 lockdep A/B 合格线那条
+# `$r_i.*$R_MAX` 针, 当时只是被 clippy 的 needless_raw_string_hashes 顺带撞见, 不是执法.
+# 判白只有「针内含引号字符 ⇒ 被搜索的是逐字源码文本」一条内在规则, 不设人工豁免表;
+# 曾考虑的「针文本在仓内别处逐字存在」已实测否决 —— 台账会原文引用被修掉的恒真针.
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py vacuous_needle:audit_vacuous_needle.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -742,6 +748,10 @@ fi
 # / reverse_deps 0.4 / public_api_docs 7.8 / missing_docs_debt 15.8 / smoltcp_purity 3.7 /
 # obsolete_naming 1.0; 实测时本机 load avg ~17, 绝对值随负载浮动, 只有量级可比 —— P-49 当年
 # 空闲机的八腿合计口径是 ~14.5s).
+# 第 10 条 vacuous_needle (2026-11-07) 亦纯文本扫描: 一次 git ls-files + 全仓 .rs 读一遍,
+# 实测 1.8s (820 个受检文件). 它与 obsolete_naming 同为「扫描面 = 受控文件全集」的腿,
+# 差异在取数范围: 本腿只取 .rs (判据是 Rust 断言形态), 且用 `--cached --others
+# --exclude-standard` 把未提交的在制品一并纳入 —— 已 staged 但没提交的恒真针同样是红.
 # 只有 smoltcp_purity 会浅克隆上游 + ls-remote ⇒ 受网络影响; 该腿的联网检查在脚本内降级为
 # WARN (audit_smoltcp_purity.py:230-273), 断网只改耗时不改判据, 不会因环境转红.
 # public_api_docs 在 P-59 裁定 ② 后每次裸调都要逐 pub fn 判 impl 归属 (默认面硬零 + impl 面

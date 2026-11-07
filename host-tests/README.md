@@ -252,6 +252,7 @@ criterion_main!(benches);
 | `audit_comment_language_test.rs` | 注释语言一致性 audit | TD-24 / TD-25 |
 | `safety_boilerplate_test.rs` | SAFETY 注释 boilerplate | I-04 |
 | `ci_p62_lockdep_probe_leg_test.rs` | lockdep 构建面探针腿的接线形状锁（探针串同源 / 双向判据 / 双架构产物 / audit 挂路 / feature 转发） | P-62 #125 |
+| `vacuous_needle_gate_test.rs` | 恒真反向针形态腿的接线形状锁（full 清单接线 / 九项记号与判白面 / 射程与三档退出码 / 自测真调与判白存量） | P-79 #147 |
 
 #### 杂项
 
