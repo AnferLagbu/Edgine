@@ -201,6 +201,8 @@ pub trait MetaStore {
     fn bitmap_test(&self, bit: usize) -> bool;
     /// 统计 bitmap 空闲位数 (清零位个数)
     fn bitmap_count_free(&self) -> u64;
+    /// bitmap 长度 (u32 word 数; 载体未就绪返回 0)
+    fn bitmap_words(&self) -> usize;
 
     /// 读 `buddy_meta[idx]` (0xFF=已分配, `0..=MAX_BUDDY_ORDER=空闲块头阶数`)
     fn meta_read(&self, idx: usize) -> u8;
@@ -378,6 +380,10 @@ impl MetaStore for RawMetaStore {
             }
         }
         free
+    }
+
+    fn bitmap_words(&self) -> usize {
+        self.bitmap_words
     }
 
     fn meta_read(&self, idx: usize) -> u8 {
@@ -617,6 +623,10 @@ impl MetaStore for VecMetaStore {
         b.iter().map(|&x| u64::from((!x).count_ones())).sum()
     }
 
+    fn bitmap_words(&self) -> usize {
+        self.bitmap_words
+    }
+
     fn meta_read(&self, idx: usize) -> u8 {
         let meta = self.meta.borrow();
         meta.as_ref()
@@ -800,11 +810,9 @@ pub(crate) type MetaStoreImpl = VecMetaStore;
 /// 虽有 `addr_of`! 修复, repr(C) 提供额外防御层.
 #[repr(C)]
 pub struct PhysicalMemoryManager {
-    // ---- Bitmap (reserved 跟踪 + 统计) ----
-    /// bitmap 长度 (u32 word 数), `count_free_pages` 的尾部余位修正使用
-    bitmap_size: Cell<usize>,
+    // ---- 内存规模 (u64 单元, 访问走 volatile: LTO 字段错位防线) ----
     mem_size: Cell<u64>,
-    kernel_end: Cell<u64>,
+    // ---- 统计快照 ----
     info: Cell<MemoryInfo>,
     // ---- 锁与生命周期 ----
     lock: AtomicBool,
@@ -841,7 +849,7 @@ pub struct PhysicalMemoryManager {
 // SAFETY: PhysicalMemoryManager 使用 Cell/UnsafeCell 实现内部可变性.
 // 所有公开修改都通过 pmm_alloc_pages/pmm_free_pages 进行, 它们
 // 获取内部锁 (AtomicBool 自旋锁). 锁保证互斥, 多线程并发访问安全.
-// buddy_heads/store 仅在持锁时访问; bitmap_size 仅在初始化时设置,
+// buddy_heads/store 仅在持锁时访问, 初始化后只读.
 // SAFETY: PhysicalMemoryManager 含 UnsafeCell, 但初始化完成后只读.
 unsafe impl Sync for PhysicalMemoryManager {}
 // SAFETY: 同上, 初始化后只读, 无并发写风险.
@@ -850,7 +858,6 @@ unsafe impl Send for PhysicalMemoryManager {}
 /// `init_bitmap` 计算出的元数据区布局 (物理地址 / 字节数 / 页数).
 struct MetaLayout {
     total_pages: usize,
-    bitmap_words: usize,
     bitmap_bytes: usize,
     bitmap_aligned: u64,
     buddy_meta_phys: u64,
@@ -884,9 +891,7 @@ impl PhysicalMemoryManager {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            bitmap_size: Cell::new(0),
             mem_size: Cell::new(0),
-            kernel_end: Cell::new(0),
             info: Cell::new(MemoryInfo::const_default()),
             lock: AtomicBool::new(false),
             initialized: AtomicBool::new(false),
@@ -903,6 +908,23 @@ impl PhysicalMemoryManager {
             buddy_heads: UnsafeCell::new([SENTINEL; MAX_BUDDY_ORDER as usize + 1]),
             buddy_reserve_deferred: UnsafeCell::new(alloc::vec::Vec::new()),
         }
+    }
+
+    /// 读物理内存总字节数.
+    ///
+    /// `mem_size` 为 `Cell<u64>`, `as_ptr` 指向对齐有效的 u64; `init` 单线程
+    /// 写入后只读. 访问走 volatile: LTO 字段错位防线 (`audit_volatile_access`).
+    #[inline]
+    fn read_mem_size(&self) -> u64 {
+        // SAFETY: 见函数级说明; 指针来自 Cell::as_ptr, 对齐且未越界.
+        unsafe { core::ptr::read_volatile(self.mem_size.as_ptr()) }
+    }
+
+    /// 写物理内存总字节数 (仅 `init` 单线程调用).
+    #[inline]
+    fn write_mem_size(&self, value: u64) {
+        // SAFETY: 见 `read_mem_size`; 写 volatile 到对齐有效的 u64.
+        unsafe { core::ptr::write_volatile(self.mem_size.as_ptr(), value) }
     }
 
     // ==================== 公开 API (不变) ====================
@@ -930,8 +952,7 @@ impl PhysicalMemoryManager {
     ///
     /// 启动期单线程调用; 已初始化时直接返回.
     pub fn init(&self, mem_size: u64, kernel_end: u64) {
-        self.mem_size.set(mem_size);
-        self.kernel_end.set(kernel_end);
+        self.write_mem_size(mem_size);
 
         let total_pages = mem_size / PAGE_SIZE;
 
@@ -1083,7 +1104,6 @@ impl PhysicalMemoryManager {
 
         MetaLayout {
             total_pages,
-            bitmap_words,
             bitmap_bytes,
             bitmap_aligned,
             buddy_meta_phys,
@@ -1119,10 +1139,13 @@ impl PhysicalMemoryManager {
             #[cfg(not(any(test, feature = "host-test")))]
             if slot.is_none() {
                 // SAFETY: 生产路径单线程启动期创建 RawMetaStore; heads 指针经
-                // UnsafeCell::get 指向宿主 buddy_heads 字段 (self 不移动, init_bitmap
+                // addr_of! 指向宿主 buddy_heads 字段 (self 不移动, init_bitmap
                 // 后稳定, buddy 就绪后仅在 PMM 锁下访问).
                 // 方案 B: 载体直接存储于 store 字段, 无 Box 堆分配.
-                *slot = Some(RawMetaStore::new(self.buddy_heads.get()));
+                let heads = core::ptr::addr_of!(self.buddy_heads)
+                    .cast_mut()
+                    .cast::<[u64; MAX_BUDDY_ORDER as usize + 1]>();
+                *slot = Some(RawMetaStore::new(heads));
             }
             // 注入或新建必然成功 (slot 刚保证非 None); 原实现 bitmap_virt=0 的
             // FATAL 分支在真实内核不可达 (KERNEL_BASE 映射地址恒非零).
@@ -1135,7 +1158,6 @@ impl PhysicalMemoryManager {
         store.setup_counts(layout.counts_phys, layout.counts_bytes);
         store.setup_owner(layout.owner_phys, layout.owner_bytes);
         store.setup_cow(layout.cow_phys, layout.cow_bytes);
-        self.bitmap_size.set(layout.bitmap_words);
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
             layout.buddy_meta_bytes,
@@ -1170,7 +1192,7 @@ impl PhysicalMemoryManager {
     /// 在 bitmap 中标记内核镜像 / 预留区 / 元数据六区为已用, 返回预留总页数.
     fn mark_reserved_pages(&self, layout: &MetaLayout) -> usize {
         // ---- 在 bitmap 中标记 reserved 区 ----
-        let kernel_end_val = self.kernel_end.get();
+        let kernel_end_val = self.info.get().kernel_end;
         let kernel_pages =
             crate::privileged::glue::usize_from_u64(phys_to_page(kernel_end_val + PAGE_SIZE - 1));
         let reserved_pages = (layout.reserved_aligned / PAGE_SIZE) as usize;
@@ -1977,7 +1999,7 @@ impl PhysicalMemoryManager {
         klog_pmm!("=== PMM (Buddy) ===");
         klog_pmm!(
             "Total: {} MB  Pages: {} total / {} free / {} used",
-            self.mem_size.get() / (1024 * 1024),
+            self.read_mem_size() / (1024 * 1024),
             info.total_pages,
             info.free_pages,
             info.used_pages
@@ -2057,7 +2079,7 @@ impl PhysicalMemoryManager {
         let free = self.meta_store().map_or(0, MetaStore::bitmap_count_free);
         // 截断到 total (bitmap 在 total_pages 之外可能还有剩余位)
         let extra = crate::privileged::glue::low_u32_from_usize(
-            (self.bitmap_size.get() * 32).saturating_sub(total),
+            (self.meta_store().map_or(0, MetaStore::bitmap_words) * 32).saturating_sub(total),
         );
         if extra > 0 {
             free.saturating_sub(u64::from(extra))
@@ -2615,7 +2637,7 @@ impl PhysicalMemoryManager {
                 (*a).size = PAGE_SIZE;
             }
         }
-        if aligned >= RAM_BASE + self.mem_size.get() {
+        if aligned >= RAM_BASE + self.read_mem_size() {
             klog_pmm!("[PMM] Error: early alloc OOM");
             return None;
         }
@@ -2637,7 +2659,7 @@ impl PhysicalMemoryManager {
                 (*a).size = size;
             }
         }
-        if aligned + size > RAM_BASE + self.mem_size.get() {
+        if aligned + size > RAM_BASE + self.read_mem_size() {
             klog_pmm!("[PMM] Error: early multi alloc OOM");
             return None;
         }

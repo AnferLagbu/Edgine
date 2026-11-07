@@ -590,9 +590,10 @@ impl<T: ?Sized> PiMutex<T> {
             let chain_arr = chain.0;
             let cl = chain.1;
             if cl > 0 {
-                // SAFETY: chain is UnsafeCell; single-threaded access guaranteed by lock
+                // SAFETY: chain is UnsafeCell; 持锁期间单线程访问; volatile 写
+                // 为 LTO 字段错位防线 (audit_volatile_access).
                 unsafe {
-                    *self.inner.chain.get() = chain_arr;
+                    core::ptr::write_volatile(self.inner.chain.get(), chain_arr);
                 }
                 self.inner.chain_len.store(cl, Ordering::Relaxed);
             } else {
@@ -737,13 +738,8 @@ impl<T: ?Sized> PiMutex<T> {
         // v2.2: 链式捐赠传播 — unlock 时, 如果有捐赠链, 传递给下一个持有者
         // 链式: C→B→A, 当 A unlock M1, B 成为 holder, B 的链是 [C]
         // 需要把 [C] 传递到 B 持有的其他 mutex, 提升 C 的优先级
-        let old_chain_len = self.inner.chain_len.load(Ordering::Relaxed);
-        if old_chain_len > 0 {
-            // SAFETY: chain is UnsafeCell; single-threaded access guaranteed by lock
-            let _ = unsafe { *self.inner.chain.get() };
-            // 重置链 (为下次 lock 做准备)
-            self.inner.chain_len.store(0, Ordering::Relaxed);
-        }
+        // 链内容在 unlock 路径不读取 (传播由持锁方的 lock 路径写入), 仅重置长度.
+        self.inner.chain_len.store(0, Ordering::Relaxed);
 
         // 所有权落账: holder / locked / 优先级一次落给 next (locked 始终为 true).
         self.inner.holder.store(next_pid, Ordering::Release);
@@ -760,17 +756,6 @@ impl<T: ?Sized> PiMutex<T> {
 
         // 定向移交标记 (最后写, 保证 next 看到标记时 holder/locked 已就绪).
         self.inner.handoff.store(next_pid, Ordering::Release);
-
-        // v2.2: 如果有捐赠链, 传递给下一个持有者
-        // 链式: C→B→A, 当 A unlock M1, B 成为 holder, B 的链是 [C]
-        // 需要把 [C] 传递到 B 持有的其他 mutex, 提升 C 的优先级
-        let old_chain_len = self.inner.chain_len.load(Ordering::Relaxed);
-        if old_chain_len > 0 {
-            // SAFETY: chain is UnsafeCell; single-threaded access guaranteed by lock
-            let _old_chain = unsafe { *self.inner.chain.get() };
-            // 重置链 (为下次 lock 做准备)
-            self.inner.chain_len.store(0, Ordering::Relaxed);
-        }
 
         // v2.1: 统一走 recompute_and_notify 助手, 检查剩余等待者是否需要捐赠
         //  (recompute 内部会对比 prev 与 new_effective, 仅在升高时通知)

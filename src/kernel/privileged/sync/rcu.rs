@@ -466,11 +466,11 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
     let flags = crate::privileged::sync::disable_interrupts();
 
     // SAFETY: Interrupts disabled — callback list manipulation is atomic
-    let tail = unsafe { *data.callback_tail.get() };
+    let tail = unsafe { ptr::read_volatile(data.callback_tail.get()) };
     if tail.is_null() {
         // SAFETY: Callbacks list empty — write to head via UnsafeCell
         unsafe {
-            *data.callbacks.get() = head;
+            ptr::write_volatile(data.callbacks.get(), head);
         }
     } else {
         // SAFETY: tail != null → dereference safe; writing next ptr
@@ -480,7 +480,7 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
     }
     // SAFETY: data.callback_tail is an UnsafeCell, interrupts disabled
     unsafe {
-        *data.callback_tail.get() = head;
+        ptr::write_volatile(data.callback_tail.get(), head);
     }
 
     data.callback_count.fetch_add(1, Ordering::Relaxed);
@@ -508,11 +508,11 @@ pub fn process_callbacks() {
     let flags = crate::privileged::sync::disable_interrupts();
 
     // SAFETY: Interrupts disabled — exclusive access to callback list
-    let head = unsafe { *data.callbacks.get() };
+    let head = unsafe { ptr::read_volatile(data.callbacks.get()) };
     // SAFETY: Clearing callbacks under interrupt lock
     unsafe {
-        *data.callbacks.get() = ptr::null_mut();
-        *data.callback_tail.get() = ptr::null_mut();
+        ptr::write_volatile(data.callbacks.get(), ptr::null_mut());
+        ptr::write_volatile(data.callback_tail.get(), ptr::null_mut());
     }
     data.callback_count.store(0, Ordering::Relaxed);
     data.need_callback_process.store(false, Ordering::Release);
