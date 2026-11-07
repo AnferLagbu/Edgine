@@ -1232,16 +1232,63 @@ impl ProcessTable {
         true
     }
 
-    /// 遍历所有进程 (回调返回 false 时提前终止)
-    pub fn for_each<F: FnMut(&Process) -> bool>(&self, mut f: F) {
+    /// 一次表锁内按槽位升序遍历在册 TCB (`f` 返回 false 时提前终止).
+    ///
+    /// 迭代面**唯一**的 `processes` 取锁点: `for_each` 与 `scan_into` 共用本函数,
+    /// 避免出现两处独立的"持表锁遍历"形态而各写各的契约.
+    fn walk_locked<F: FnMut(&Process) -> bool>(&self, mut f: F) {
         let table = self.processes.lock();
         for nn in table.iter().flatten() {
-            // SAFETY: nn is a valid NonNull pointer inserted by insert().
+            // SAFETY: nn 由 insert() 按 process.pid 写入, 指向仍在册的 TCB, 且
+            // `processes` 锁保证遍历期间该槽位不被摘除.
             let proc = unsafe { nn.as_ref() };
             if !f(proc) {
                 break;
             }
         }
+    }
+
+    /// 遍历所有进程 (回调返回 false 时提前终止)
+    pub fn for_each<F: FnMut(&Process) -> bool>(&self, f: F) {
+        self.walk_locked(f);
+    }
+
+    /// 一次表锁内的**有界快照**: 按槽位升序把满足 `pred` 的条目收进 `buf`, 返回实收条数.
+    ///
+    /// 用途是"锁内收、锁外做": 需要在锁内读的只有判据所需的原子字段, 而后续动作
+    /// (取 rq 锁 / 再取表锁 / 分配 / 打印) 全部留在锁外的结果集上做. 与
+    /// [`Self::for_each`] 的分工即在于此 —— 后者让回调就地作用于每个在册任务, 本函数
+    /// 只把满足判据的条目收进定长缓冲.
+    ///
+    /// # 谓词契约
+    ///
+    /// `pred` 在 `processes` 临界区内执行, 必须满足:
+    /// - 只读 `Process` 的原子字段与内联标量;
+    /// - **不得**回调 `PROCESS_TABLE` / `ProcessTable` 的任何方法 —— `processes`
+    ///   是不可重入锁, 持锁闭包内再取即同核自死锁 (K-04 的现场教训);
+    /// - **不得**分配 (含 `Vec`/`Arc` 触堆)、**不得**打印 (串口写出会把持锁窗口拉到毫秒级);
+    /// - **不得**获取任何运行队列锁 (层级 8 `cfs_rq` → 层级 7 `PROCESS_TABLE` 是
+    ///   单向例外, 见 `docs/explain/ref-lock-order.md`).
+    ///
+    /// 遍历范围 = 全部**非空**槽位升序 (含 0 号槽; 位图从 PID 2 起分配, 故 0 号槽
+    /// 实际不在册). 缓冲写满即停止调用谓词, 与旧形态"命中数达上限即 break"同形,
+    /// 故谓词内部的定长去重表可以与 `buf` 同长而不会越界.
+    pub fn scan_into<T, F>(&self, buf: &mut [T], mut pred: F) -> usize
+    where
+        F: FnMut(&Process) -> Option<T>,
+    {
+        let mut filled = 0;
+        self.walk_locked(|proc| {
+            if filled == buf.len() {
+                return false;
+            }
+            if let Some(item) = pred(proc) {
+                buf[filled] = item;
+                filled += 1;
+            }
+            true
+        });
+        filled
     }
 }
 

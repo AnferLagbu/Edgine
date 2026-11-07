@@ -92,6 +92,14 @@ const BALANCE_TICK_INTERVAL: u64 = 64;
 /// pid 走该路径即 double-free (见 [`LAST_REAP_TICK`]).
 const REAP_TICK_INTERVAL: u64 = 1_000;
 
+/// 僵尸回收单轮**候选**窗口 (去重后的线程组数).
+///
+/// SIMPLIFIED: 窗口上限硬编码 32 (= 2× 单轮选择上限 16); 影响面: 仅当同一轮里存在
+/// 多于 32 个不同孤儿僵尸组, 且前 32 个里不足 16 个通过锁外就绪判据时, 未进窗口的
+/// 组延后一轮 (≈1s) 回收 —— 选择上限本身与选中次序 (槽位升序) 均未变; 何时需扩展:
+/// 需要"一轮收齐全部在册槽位"时把窗口提到 `MAX_PROCESSES`, 或改按线程组索引回收.
+const REAP_CANDIDATE_WINDOW: usize = 32;
+
 /// 单次偷取的上限 (任务数). 与旧字面量 `4` 同值, 提为常量供候选缓冲定长.
 const LOAD_BALANCE_MAX_MOVE: usize = 4;
 
@@ -2510,31 +2518,37 @@ impl Scheduler {
         true
     }
 
-    /// tick 的睡眠唤醒扫描: 到期的 `Sleeping` 任务批量唤醒 (单轮上限 8).
-    fn tick_sleep_wake(current_ticks: u64) {
-        let mut to_wake: [Pid; 8] = [0; 8];
-        let mut wake_count = 0;
-        for pid in 1..=255 {
-            if wake_count >= 8 {
-                break;
-            }
-            if pid == Self::current().unwrap_or(0) {
-                continue;
-            }
-            PROCESS_TABLE.with_process(pid, |proc| {
-                let state = proc.get_state();
-                if state == ProcessState::Blocked {
-                    let reason = proc.block_reason.load(Ordering::Relaxed);
-                    if reason == BlockReason::Sleeping as u32 {
-                        let until = proc.sleep_until.load(Ordering::SeqCst);
-                        if until > 0 && current_ticks >= until {
-                            to_wake[wake_count] = pid;
-                            wake_count += 1;
-                        }
-                    }
-                }
-            });
+    /// tick 睡眠扫描的**入选判据**: 本核在跑的任务与未到期的睡眠一律不入选.
+    ///
+    /// 入选条件与改造前的逐槽循环逐字等价: 非当前任务 + `Blocked` +
+    /// `BlockReason::Sleeping` + `sleep_until > 0` + `current_ticks >= sleep_until`
+    /// (`until == 0` 是"未挂睡眠"哨兵, 不能按 `current_ticks >= 0` 收).
+    /// 单测入口见 `host-tests/tests/sched_tick_scan_m7_test.rs`.
+    #[must_use]
+    pub fn sleep_wake_due(process: &Process, current_pid: Pid, current_ticks: u64) -> Option<Pid> {
+        if process.pid.0 == current_pid || process.get_state() != ProcessState::Blocked {
+            return None;
         }
+        if process.block_reason.load(Ordering::Relaxed) != BlockReason::Sleeping as u32 {
+            return None;
+        }
+        let until = process.sleep_until.load(Ordering::SeqCst);
+        (until > 0 && current_ticks >= until).then_some(process.pid.0)
+    }
+
+    /// tick 的睡眠唤醒扫描: **一次表锁**取到期快照, 到期的 `Sleeping` 任务批量唤醒
+    /// (单轮上限 = `to_wake` 缓冲长度 8).
+    ///
+    /// 唤醒动作 (`Self::unblock` → `cfs_rq` 锁) 必须留在锁外: 层级 8 → 层级 7 是
+    /// 单向例外, 持表锁再取 rq 锁即反向锁序 (见 `docs/explain/ref-lock-order.md`).
+    fn tick_sleep_wake(current_ticks: u64) {
+        // 本核当前任务只读一次: tick 全程关中断, 切换发生在出口, 旧逐槽循环每槽重读
+        // 的本来就是同一个 per-CPU 原子.
+        let current_pid = Self::current().unwrap_or(0);
+        let mut to_wake: [Pid; 8] = [0; 8];
+        let wake_count = PROCESS_TABLE.scan_into(&mut to_wake, |proc| {
+            Self::sleep_wake_due(proc, current_pid, current_ticks)
+        });
         for &pid in &to_wake[..wake_count] {
             Self::unblock(pid);
         }
@@ -2549,46 +2563,49 @@ impl Scheduler {
                 .compare_exchange(last_reap, new_tick, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
         {
+            // 第一趟 (锁内, 一次表锁): 按槽位升序收出候选 `(tgid, 父 tgid)`, 并按
+            // tgid 去重 —— 窗口由此按**线程组**计量, 同组多个僵尸 TCB 不重复占位
+            // (旧形态的等价去重发生在选择侧的 `to_reap.contains`). `seen_tgids` 与
+            // `candidates` 同长是安全的: `scan_into` 缓冲写满即停止调用谓词.
+            // `processes` 为不可重入锁, 闭包内再取表锁即同核自死锁 (本轮 hang 根因),
+            // 故第二趟必须在锁外. K-04: 父进程关系归线程组.
+            let mut seen_tgids: [Pid; REAP_CANDIDATE_WINDOW] = [0; REAP_CANDIDATE_WINDOW];
+            let mut seen_count = 0;
+            let mut candidates: [(Pid, Pid); REAP_CANDIDATE_WINDOW] =
+                [(0, 0); REAP_CANDIDATE_WINDOW];
+            let candidate_count = PROCESS_TABLE.scan_into(&mut candidates, |p| {
+                let (tgid, parent) = (p.get_state() == ProcessState::Zombie)
+                    .then(|| (p.thread_group.tgid(), p.group().parent()))?;
+                if seen_tgids[..seen_count].contains(&tgid) {
+                    return None;
+                }
+                seen_tgids[seen_count] = tgid;
+                seen_count += 1;
+                Some((tgid, parent))
+            });
+            // 第二趟 (锁外): 父存活与组就绪两项都要再取表锁 (`group_zombie_exit_code`
+            // 内部 `with_process` + `for_each`), 只能在候选集上做.
+            // K-06: 回收以线程组为单位, 组长身份用于组就绪判定, 非组长僵尸随整组
+            // 一并回收; 父已死或父为 pid 1 才由 tick 兜底, 父存活时归其 wait4 收割.
+            // 组未整体退出或仍有成员退出途中时 `group_zombie_exit_code` 返回 `None`,
+            // 本组留待下一轮 (父仍死则届时整组回收).
             let mut to_reap: [Pid; 16] = [0; 16];
             let mut reap_count = 0;
-            for pid in 1..=255 {
-                if reap_count >= 16 {
+            for &(tgid, parent) in &candidates[..candidate_count] {
+                if reap_count >= to_reap.len() {
                     break;
                 }
-                if let Some(_proc) = PROCESS_TABLE.get(pid) {
-                    // 单次加锁取本 TCB 状态、所属 tgid 与父组 tgid, 父存活/组就绪
-                    // 另起加锁查询. `processes` 为不可重入锁, 在持锁闭包内再次
-                    // `with_process` 会同核自死锁 (本轮 hang 根因). K-04: 父进程
-                    // 关系归线程组.
-                    let zombie_info = PROCESS_TABLE
-                        .with_process(pid, |p| {
-                            (p.get_state() == ProcessState::Zombie)
-                                .then(|| (p.thread_group.tgid(), p.group().parent()))
+                let parent_alive = parent != 0
+                    && PROCESS_TABLE
+                        .with_process(parent, |pp| {
+                            let s = pp.get_state();
+                            s != ProcessState::Zombie && s != ProcessState::Terminated
                         })
-                        .flatten();
-                    let Some((tgid, parent)) = zombie_info else {
-                        continue;
-                    };
-                    // K-06: 回收以线程组为单位, 同组多个僵尸 TCB 只入列一次;
-                    // 组长身份用于组就绪判定, 非组长僵尸随整组一并回收.
-                    if to_reap[..reap_count].contains(&tgid) {
-                        continue;
-                    }
-                    let parent_alive = parent != 0
-                        && PROCESS_TABLE
-                            .with_process(parent, |pp| {
-                                let s = pp.get_state();
-                                s != ProcessState::Zombie && s != ProcessState::Terminated
-                            })
-                            .unwrap_or(false);
-                    // 父已死或父为 pid 1 才由 tick 兜底; 父存活时归其 wait4 收割.
-                    // 组未整体退出或仍有成员退出途中时 `group_zombie_exit_code`
-                    // 返回 `None`, 本 TCB 留待下一轮 (父仍死则届时整组回收).
-                    let orphaned = parent == 1 || (parent != 0 && !parent_alive);
-                    if orphaned && PROCESS_TABLE.group_zombie_exit_code(tgid).is_some() {
-                        to_reap[reap_count] = tgid;
-                        reap_count += 1;
-                    }
+                        .unwrap_or(false);
+                let orphaned = parent == 1 || (parent != 0 && !parent_alive);
+                if orphaned && PROCESS_TABLE.group_zombie_exit_code(tgid).is_some() {
+                    to_reap[reap_count] = tgid;
+                    reap_count += 1;
                 }
             }
             for &tgid in &to_reap[..reap_count] {
