@@ -5,8 +5,13 @@
 # 用途: 在**同一宿主窗口**内交替测量「默认构建 (D)」与「lockdep 构建 (L)」从 QEMU
 #       启动到 `[SCHED] SNAP END` 的墙钟, 逐轮给出相对倍率 r_i = L_i / D_i 与其
 #       中位数. 它是 A-1「lockdep 常开」与 M7 低开销化改动的**读数来源**,
-#       不是门禁 —— 本脚本不接入 `ci/audit.sh`, 判据阈值尚未裁定, 故脚本本身
-#       只对「测量是否可信」下结论, 不对 r 的下界下结论.
+#       不是门禁 —— 本脚本不接入 `ci/audit.sh` (把它接成 CI 腿属门禁改动, 未授权).
+#       合格线**已裁** (2026-11-07, 口径丙的数值档): 判据 = `median(r_i) ≤ 1.10`,
+#       统计量下限 = 5 对可比读数. 于是脚本既判「测量是否可信」也判「是否落在合格
+#       线内」, 且两档**用不同退出码分开** (1 = 测不出, 2 = 测得出但超线) —— 混成
+#       同一个红就把「真回归」和「宿主没跑起来」读成同一件事.
+#       线取 1.10 而非 1.05: M7 后实测中位 1.0247, 1.10 留约 7% 宿主抖动余量, 而
+#       改造前形态 (1.3403) 与"次数侧回潮"远在红线外, 抓得住.
 #
 # 为什么是相对倍率而不是绝对毫秒差 (用户 2026-11-06 裁定 ③, 口径丙):
 #   宿主墙钟抖动足以伪造几百毫秒 (单份基线的 15% 相对判据已被 §8 废弃), 而 D/L
@@ -40,10 +45,14 @@
 #   LOCKDEP_AB_KEEP     非空 = 保留工作目录 (默认清理)
 #   LOCKDEP_AB_MARKER   探针字符串 (默认 "circular dependency", 与 P-62 #125 同源)
 #   LOCKDEP_AB_SMP      -smp 值 (默认 2, 与 qemu_boot_test.sh x86_64 腿一致)
+#   LOCKDEP_AB_R_MAX    合格线 median(r_i) 上界 (默认 1.10 = 已裁数值)
+#   LOCKDEP_AB_MIN_PAIRS 判据生效所需的**最少配对读数** (默认 5; 不足即不判 —
+#                       判据不可用按退出码 1 走红, 不把"没测够"读成"合格")
 #
-# 退出码: 0 = 至少配成一对可比读数且镜像身份检查全过,
-#         1 = 前置条件不成立 / 镜像身份不符 / 一轮都没有配成可比读数.
-#       本脚本**不因 r 的大小**返回非零 —— 合格线待裁定.
+# 退出码: 0 = 配对数达标且 median(r_i) ≤ 合格线,
+#         1 = 前置条件不成立 / 镜像身份不符 / 合格线与下限值不可解析 /
+#             配对数不足 MIN_PAIRS (判据不可用, fail-closed),
+#         2 = 测量可信但 median(r_i) 超线 (真回归, 与"测不出"分档).
 #       单侧未到里程碑记 MISS 并继续 (启动挂死是 §6③/#130 已登记的预存缺口, 默认
 #       构建同样复现, 与本 harness 的测量对象无关); MISS 计数随汇总打印, 不静默吞掉.
 # ============================================================================
@@ -58,6 +67,11 @@ RUN_TIMEOUT="${LOCKDEP_AB_TIMEOUT:-60}"
 KEEP="${LOCKDEP_AB_KEEP:-}"
 MARKER="${LOCKDEP_AB_MARKER:-circular dependency}"
 SMP="${LOCKDEP_AB_SMP:-2}"
+# 合格线 (2026-11-07 裁定, 口径丙的数值档): 判据只建立在 median(r_i) 上, 单轮 r
+# 不参与判定 —— 取证轮与本批都出现过单轮 0.71 / 1.63 的离群点, 用均值或最小值都会
+# 把它们读成结论.
+R_MAX="${LOCKDEP_AB_R_MAX:-1.10}"
+MIN_PAIRS="${LOCKDEP_AB_MIN_PAIRS:-5}"
 ARCH="x86_64"
 IMAGE_SRC="other/build/x86_64/kernel.flat"
 MILESTONE='[SCHED] SNAP END'
@@ -83,6 +97,21 @@ done
 
 if ! [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]]; then
     err "LOCKDEP_AB_ROUNDS 需为正整数, 实测 '$ROUNDS'"
+    exit 1
+fi
+
+# 合格线的两个输入都必须可解析, 否则"判据不可用"会伪装成"合格": 空串/字母进 awk
+# 的比较会得到 0 ≤ 1.10 那样的假绿.
+if ! [[ "$MIN_PAIRS" =~ ^[1-9][0-9]*$ ]]; then
+    err "LOCKDEP_AB_MIN_PAIRS 需为正整数, 实测 '$MIN_PAIRS'"
+    exit 1
+fi
+if ! [[ "$R_MAX" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    err "LOCKDEP_AB_R_MAX 需是无符号小数 (如 1.10), 实测 '$R_MAX'"
+    exit 1
+fi
+if [ "$MIN_PAIRS" -gt "$ROUNDS" ]; then
+    err "MIN_PAIRS=$MIN_PAIRS 大于 ROUNDS=$ROUNDS — 该组合下判据永不成立, 请同批调两处"
     exit 1
 fi
 
@@ -176,9 +205,31 @@ run_once() {
     echo $(( (now - start) / 1000000 ))
 }
 
+# ---------------------------------------------------------------------------
+# guest_stamp <log>: 取里程碑行的 **guest 内核时标** (秒, stdout); 取不到返回非零.
+# 为什么要它: 墙钟 r 里混着宿主侧的 QEMU 初始化与调度抖动, guest 时标只数内核自己
+# 走过的时间. 两个口径同向变化才说明开销真落在 guest 执行里 —— 裁定②要求报数同时给
+# 这两项核对, 故在此自取, 不留给读日志的人手算.
+# SIMPLIFIED: 只取首个匹配行的行首时标, 且假定该行由串口原样落在最前面; 影响面 =
+# 若里程碑行被控制台行原子切开 (§6 风险栏②家族), 本函数记该侧为"无时标"而非猜一个
+# 数; 何时需扩展 = 串口格式改掉了行首单调时标时改为直接读内核快照行的显式字段.
+# ---------------------------------------------------------------------------
+guest_stamp() {
+    local log="$1" line
+    [ -s "$log" ] || return 1
+    line=$(grep -aF "$MILESTONE" "$log" | head -1 || true)
+    [ -n "$line" ] || return 1
+    # 行首时标形如 "2.369000 [INFO] ..."; 不匹配即视为取不到.
+    if [[ "$line" =~ ^[[:space:]]*([0-9]+\.[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+    return 1
+}
+
 echo "================================================================"
 info "lockdep 开销 A/B harness: ${ROUNDS} 轮交错 (x86_64, -smp ${SMP}, 里程碑 '${MILESTONE}')"
-info "口径 = 同窗口相对倍率 r_i = L_i / D_i; 合格线未裁, 本脚本只保证测量可信"
+info "口径 = 同窗口相对倍率 r_i = L_i / D_i; 合格线 = median(r_i) ≤ ${R_MAX} (≥${MIN_PAIRS} 对)"
 echo "================================================================"
 
 DEFAULT_IMG="$WORK/kernel-default.flat"
@@ -203,7 +254,10 @@ ok "出货路径已复原为默认构建"
 D_VALUES=()
 L_VALUES=()
 R_VALUES=()
+GUEST_D=()
+GUEST_L=()
 PAIRS=0
+GUEST_PAIRS=0
 MISS_DEFAULT=0
 MISS_LOCKDEP=0
 
@@ -249,7 +303,19 @@ for ((round = 1; round <= ROUNDS; round++)); do
     L_VALUES+=("$l_ms")
     R_VALUES+=("$r_i")
     PAIRS=$((PAIRS + 1))
-    printf '  轮 %-2d  default=%sms  lockdep=%sms  r=%s\n' "$round" "$d_ms" "$l_ms" "$r_i"
+    # guest 时标只作交叉核对, 不参与判定: 取不到就少一条核对读数, 不影响 r 的成立.
+    d_guest="$(guest_stamp "$WORK/run_default_${round}.log" || true)"
+    l_guest="$(guest_stamp "$WORK/run_lockdep_${round}.log" || true)"
+    if [ -n "$d_guest" ] && [ -n "$l_guest" ]; then
+        GUEST_D+=("$d_guest")
+        GUEST_L+=("$l_guest")
+        GUEST_PAIRS=$((GUEST_PAIRS + 1))
+        printf '  轮 %-2d  default=%sms  lockdep=%sms  r=%s  guest=%ss/%ss\n' \
+            "$round" "$d_ms" "$l_ms" "$r_i" "$d_guest" "$l_guest"
+    else
+        printf '  轮 %-2d  default=%sms  lockdep=%sms  r=%s  guest=无时标\n' \
+            "$round" "$d_ms" "$l_ms" "$r_i"
+    fi
 done
 
 # ---------------------------------------------------------------------------
@@ -274,13 +340,37 @@ if [ "$PAIRS" -eq 0 ]; then
     err "没有任何一对可比读数 — 本趟不产出 r, 请先看逐轮日志定位挂死侧"
     exit 1
 fi
+D_MED="$(median "${D_VALUES[@]}")"
+L_MED="$(median "${L_VALUES[@]}")"
+R_MED="$(median "${R_VALUES[@]}")"
 printf '  %-10s %-14s %-14s\n' "配置" "中位(ms)" "逐轮(ms, 仅配对轮)"
-printf '  %-10s %-14s %-14s\n' "default" "$(median "${D_VALUES[@]}")" "${D_VALUES[*]}"
-printf '  %-10s %-14s %-14s\n' "lockdep" "$(median "${L_VALUES[@]}")" "${L_VALUES[*]}"
-printf '  %-10s %-14s %-14s\n' "r=L/D" "$(median "${R_VALUES[@]}")" "${R_VALUES[*]}"
+printf '  %-10s %-14s %-14s\n' "default" "$D_MED" "${D_VALUES[*]}"
+printf '  %-10s %-14s %-14s\n' "lockdep" "$L_MED" "${L_VALUES[*]}"
+printf '  %-10s %-14s %-14s\n' "r=L/D" "$R_MED" "${R_VALUES[*]}"
+# 裁定②要求报数同时给绝对差与 guest 内核时标核对, 两项都在此自取免得手工对账.
+# %+.0f 而非 %+d: 偶数对的中位会是 x.5, 截断会把差值少报 1 (awk 的 %d 向零取整).
+printf '  %-10s %s\n' "绝对差" "$(awk -v l="$L_MED" -v d="$D_MED" 'BEGIN { printf "%+.0fms", l - d }')"
+if [ "$GUEST_PAIRS" -gt 0 ]; then
+    G_D_MED="$(median "${GUEST_D[@]}")"
+    G_L_MED="$(median "${GUEST_L[@]}")"
+    printf '  %-10s %s\n' "guest 中位" \
+        "$(awk -v d="$G_D_MED" -v l="$G_L_MED" -v gp="$GUEST_PAIRS" -v p="$PAIRS" \
+            'BEGIN { printf "%ss / %ss → %+.0fms (%d/%d 对有时标)", d, l, (l - d) * 1000, gp, p }')"
+else
+    warn "guest 时标一行都没有 — 交叉核对缺席 (里程碑行可能被串口切开, 见 §6 风险栏②)"
+fi
 if [ "$MISS_DEFAULT" -ne 0 ] || [ "$MISS_LOCKDEP" -ne 0 ]; then
     warn "存在 MISS 轮: 启动挂死读数已计入台账输入 (§6③ / #130), 不影响配对读数的口径"
 fi
 echo "================================================================"
-ok "测量可信: ${PAIRS}/${ROUNDS} 轮配对完成, 镜像身份与里程碑检查全过 (合格线待裁定)"
-exit 0
+# 判据只在配对数达到下限时成立: 2 对的中位与 7 对的中位不是同一个量的读数.
+if [ "$PAIRS" -lt "$MIN_PAIRS" ]; then
+    err "配对 ${PAIRS} 对 < 下限 ${MIN_PAIRS} 对 — 判据不可用, 不产出合格/超线结论 (不把没测够读成合格)"
+    exit 1
+fi
+if awk -v m="$R_MED" -v lim="$R_MAX" 'BEGIN { exit !(m <= lim) }'; then
+    ok "合格: ${PAIRS}/${ROUNDS} 轮配对、镜像身份与里程碑检查全过, median(r_i)=${R_MED} ≤ ${R_MAX}"
+    exit 0
+fi
+err "超线: median(r_i)=${R_MED} > 合格线 ${R_MAX} — 同窗口开销倍率已越过裁定值 (退出码 2, 与'测不出'的 1 分档)"
+exit 2
