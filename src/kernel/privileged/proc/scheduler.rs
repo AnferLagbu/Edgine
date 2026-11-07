@@ -86,6 +86,12 @@ const HOTPLUG_TICK_INTERVAL: u64 = 100;
 /// 各核同窗各自发起即双向互偷 (见 [`LAST_BALANCE_TICK`]).
 const BALANCE_TICK_INTERVAL: u64 = 64;
 
+/// L-2 重新投入诊断的**单站点**打印上限.
+///
+/// 症状形态是同一 TCB 每秒重复成百上千次, 逐次打印会把串口写成瓶颈并反过来改变
+/// 时序; 每个装点站点各自消费一份预算, 前若干行足够定性, 余量不再输出.
+const REDISPATCH_PRINT_BUDGET: u64 = 8;
+
 /// 僵尸回收周期 (ticks). 1000 ticks @ 1kHz timer = 1s.
 ///
 /// 同样每窗口只允许一个核执行: 回收路径末端是 `remove_and_free`, 两核同窗对同一
@@ -455,6 +461,27 @@ pub struct Scheduler {
     limits: Mutex<[PwidLimit; MAX_LIMITS]>,
     initialized: AtomicBool,
 }
+
+// ============================================================================
+// L-2 重新投入取证 (Zombie 被再次送进调度/搬定/唤醒的读数)
+// ============================================================================
+//
+// 症状: 同一 TCB 的 `exit:` 行反复出现且镜像从未重装载 ⇒ 已退出的 TCB 仍被
+// 调度器送进 CPU 再跑一遍用户代码. 本组装点只做**读数**: 不改变任何状态机转移,
+// 不修症状, 供崩溃现场归因 (任务 #129 裁定「纯取证」).
+//
+// 判据二选一, 任一成立即记一行 `[REDISPATCH]`:
+// - `state ∈ {Zombie, Terminated}`: TCB 已不可运行, 却仍出现在调度/搬定/唤醒面;
+// - `gexit == 1`: 线程组已整体退出 (`ThreadGroup::has_exited`), 其成员仍被送进 CPU.
+//
+// 与 #107 甲 的 `[REAP]` 行互补: `[REAP]` 从**进程表侧**报"组已退出但成员非 Zombie",
+// 本组行从**调度路径侧**报"谁把这具 TCB 又送了进去" —— 前者看得见状态残留,
+// 后者看得见触发路径.
+static RD_SCHEDULE: AtomicU64 = AtomicU64::new(0);
+static RD_UNBLOCK: AtomicU64 = AtomicU64::new(0);
+static RD_REQUEUE: AtomicU64 = AtomicU64::new(0);
+static RD_EXIT: AtomicU64 = AtomicU64::new(0);
+static RD_IRET: AtomicU64 = AtomicU64::new(0);
 
 // All fields (Mutex<[PwidQuota; N]>, Mutex<[PwidLimit; N]>, AtomicBool) auto-implement Send + Sync.
 
@@ -1468,13 +1495,23 @@ impl Scheduler {
         // 屏障的语义是"该任务正在占用本核", 而从写入 `current` 到真正切走 prev 之间
         // 已可被别核观察到 (它还是本核 `current`), 故在拣中的同一刻落下. 清位只在
         // `reap_off_cpu` (见其文档).
-        let next_kernel_stack = PROCESS_TABLE
-            .with_process(next, |proc| {
-                let _ = proc.set_state_safe(ProcessState::Running);
-                proc.cfs_on_cpu.store(true, Ordering::Release);
-                proc.kernel_stack.load(Ordering::SeqCst)
-            })
-            .unwrap_or(0);
+        let next_snap = PROCESS_TABLE.with_process(next, |proc| {
+            let state = proc.get_state();
+            let _ = proc.set_state_safe(ProcessState::Running);
+            proc.cfs_on_cpu.store(true, Ordering::Release);
+            (
+                proc.kernel_stack.load(Ordering::SeqCst),
+                state,
+                proc.group().tgid(),
+                proc.group().has_exited(),
+            )
+        });
+        if let Some((_, state, tgid, group_exited)) = next_snap {
+            // L-2 取证: 即将上核的 next 已是死 TCB / 其组已整体退出. `Running`
+            // 写入失败时状态原样保留, 快照读到的就是写入前的值.
+            Self::redispatch_emit(&RD_SCHEDULE, "schedule", next, tgid, state, group_exited);
+        }
+        let next_kernel_stack = next_snap.map_or(0, |(stack, ..)| stack);
         if next_kernel_stack != 0 {
             crate::privileged::cpu::arch::set_kernel_stack(next_kernel_stack);
         }
@@ -1711,9 +1748,29 @@ impl Scheduler {
                 PlacementKind::Requeue,
             );
         }
-        PROCESS_TABLE.with_process(current_pid, |p| {
-            let _ = p.set_state_safe(ProcessState::Ready);
+        let ready_snap = PROCESS_TABLE.with_process(current_pid, |p| {
+            let state = p.get_state();
+            (
+                p.set_state_safe(ProcessState::Ready).is_err(),
+                state,
+                p.group().tgid(),
+                p.group().has_exited(),
+            )
         });
+        if let Some((failed, state, tgid, group_exited)) = ready_snap
+            && failed
+        {
+            // L-2 取证: 置回 Ready 被状态机拒绝 (死 TCB), 或组已整体退出却仍在
+            // 重排 —— 两种形态都记一行, 判据口径见 `redispatch_emit`.
+            Self::redispatch_emit(
+                &RD_REQUEUE,
+                "requeue",
+                current_pid,
+                tgid,
+                state,
+                group_exited,
+            );
+        }
     }
 
     /// 更新切换目标的用户页表与内核栈顶页 (KPTI-08), 使 syscall/中断返回用户态时
@@ -1917,6 +1974,59 @@ impl Scheduler {
         if pid == 0 { None } else { Some(pid) }
     }
 
+    /// L-2 取证的唯一发射点: 判据成立时输出一行 `[REDISPATCH]` 并消费站点预算.
+    ///
+    /// 判据: TCB 已不可运行 (`Zombie`/`Terminated`) 或其线程组已整体退出;
+    /// 二者皆否时既不发射也不消费预算. 返回本次是否真的发射 —— host 侧单测
+    /// 以它反证"过滤 + 有界"两条语义 (host-test 下 klog 为 no-op, 打印不可观测).
+    ///
+    /// **发射点约束** (`docs/explain/ref-lock-order.md`): 调用方必须不持进程表锁
+    /// 与运行队列锁. 串口写出的持锁窗口会撑在层级 7/8 的临界区内, 故所有站点都
+    /// 把判据快照留在锁内、把本函数调用排在锁释放之后.
+    pub(super) fn redispatch_emit(
+        budget: &AtomicU64,
+        via: &'static str,
+        pid: Pid,
+        tgid: Pid,
+        state: ProcessState,
+        group_exited: bool,
+    ) -> bool {
+        let dead = matches!(state, ProcessState::Zombie | ProcessState::Terminated);
+        if !dead && !group_exited {
+            return false;
+        }
+        if budget.fetch_add(1, Ordering::Relaxed) >= REDISPATCH_PRINT_BUDGET {
+            return false;
+        }
+        crate::klog_info!(
+            Process,
+            "[REDISPATCH] via={} pid={} tgid={} state={} gexit={}",
+            via,
+            pid,
+            tgid,
+            state.name(),
+            u8::from(group_exited)
+        );
+        true
+    }
+
+    /// 读进程表取 L-2 判据快照, 在锁外判定是否发射; 进程已不在表内即跳过.
+    fn redispatch_probe(budget: &AtomicU64, via: &'static str, pid: Pid) -> bool {
+        let snap = PROCESS_TABLE.with_process(pid, |proc| {
+            (
+                proc.get_state(),
+                proc.group().tgid(),
+                proc.group().has_exited(),
+            )
+        });
+        match snap {
+            Some((state, tgid, group_exited)) => {
+                Self::redispatch_emit(budget, via, pid, tgid, state, group_exited)
+            }
+            None => false,
+        }
+    }
+
     /// 本核当前任务的 `Process` 指针; 无任务或 pid 不存在时返回 `None`
     pub fn get_current_process() -> Option<*mut Process> {
         let pid = per_cpu().current.load(Ordering::SeqCst);
@@ -1944,43 +2054,54 @@ impl Scheduler {
 
     /// 唤醒任务: 按策略重新放入运行队列 (已在可运行记账中的任务不重复投送)
     pub fn unblock(pid: Pid) {
-        let sched_policy = PROCESS_TABLE
-            .with_process(pid, |proc| {
-                let state = proc.get_state();
-                // 唤醒判据取"是否已在可运行记账中", 而非只看状态: 旧实现
-                // "状态非 Blocked/Frozen 即返回 None" 会吞掉"Ready 但未入队"的
-                // 唤醒, 使该任务在队列外永久隐形 (实测 boot 期 unb-skip).
-                // Running (已在核上) / Created (尚未启动) / Zombie / Terminated
-                // 一律不投送.
-                //
-                // 本闭包**不改状态** —— 置 Ready 是搬定成功后的结果 (CFS 路由由
-                // `place_locked` 写, RT/DL 路由在各自分支里写). 提前置 Ready 会直接
-                // 打断唤醒面的电平重扫自愈: `poll_network` / 睡眠扫描以
-                // `state == Blocked` 为选集条件, 一旦搬定失败, 该任务既不在树上
-                // 也不再会被重扫拾起 —— 一次可恢复的丢唤醒就变成永久隐形.
-                let need_enqueue = match state {
-                    ProcessState::Blocked | ProcessState::Frozen => true,
-                    ProcessState::Ready => !proc.cfs_on_rq.load(Ordering::Acquire),
-                    _ => false,
-                };
-                if !need_enqueue {
-                    return None;
-                }
-                let policy = proc.get_sched_policy();
-                if policy == SchedPolicy::Deadline {
-                    let dl_abs = proc.dl_abs.load(Ordering::Acquire);
-                    let runtime = proc.dl_runtime.load(Ordering::Acquire);
-                    let period = proc.dl_period.load(Ordering::Acquire);
-                    Some((
-                        policy,
-                        dl_abs,
-                        (runtime * 100).checked_div(period).unwrap_or(0),
-                    ))
-                } else {
-                    Some((policy, 0, 0))
-                }
-            })
-            .flatten();
+        let snap = PROCESS_TABLE.with_process(pid, |proc| {
+            let state = proc.get_state();
+            // 唤醒判据取"是否已在可运行记账中", 而非只看状态: 旧实现
+            // "状态非 Blocked/Frozen 即返回 None" 会吞掉"Ready 但未入队"的
+            // 唤醒, 使该任务在队列外永久隐形 (实测 boot 期 unb-skip).
+            // Running (已在核上) / Created (尚未启动) / Zombie / Terminated
+            // 一律不投送.
+            //
+            // 本闭包**不改状态** —— 置 Ready 是搬定成功后的结果 (CFS 路由由
+            // `place_locked` 写, RT/DL 路由在各自分支里写). 提前置 Ready 会直接
+            // 打断唤醒面的电平重扫自愈: `poll_network` / 睡眠扫描以
+            // `state == Blocked` 为选集条件, 一旦搬定失败, 该任务既不在树上
+            // 也不再会被重扫拾起 —— 一次可恢复的丢唤醒就变成永久隐形.
+            let need_enqueue = match state {
+                ProcessState::Blocked | ProcessState::Frozen => true,
+                ProcessState::Ready => !proc.cfs_on_rq.load(Ordering::Acquire),
+                _ => false,
+            };
+            let policy = proc.get_sched_policy();
+            let (dl_abs, util) = if policy == SchedPolicy::Deadline {
+                let runtime = proc.dl_runtime.load(Ordering::Acquire);
+                let period = proc.dl_period.load(Ordering::Acquire);
+                (
+                    proc.dl_abs.load(Ordering::Acquire),
+                    (runtime * 100).checked_div(period).unwrap_or(0),
+                )
+            } else {
+                (0, 0)
+            };
+            // L-2 判据随快照一并取出, 发射点留到表锁之外.
+            (
+                need_enqueue,
+                (policy, dl_abs, util),
+                state,
+                proc.group().tgid(),
+                proc.group().has_exited(),
+            )
+        });
+
+        let mut sched_policy = None;
+        if let Some((need_enqueue, plan, state, tgid, group_exited)) = snap {
+            if need_enqueue {
+                sched_policy = Some(plan);
+            } else {
+                // L-2 取证: 对已死 TCB / 已整体退出的组发起唤醒 (投送被拒).
+                Self::redispatch_emit(&RD_UNBLOCK, "unblock", pid, tgid, state, group_exited);
+            }
+        }
 
         match sched_policy {
             Some((SchedPolicy::Normal, _, _)) => {
@@ -2093,11 +2214,22 @@ impl Scheduler {
             // 否则退出进程会在已被释放的内核栈上完成最后一次 `schedule()`, 因
             // 拿不到 prev 上下文而不切换、直接返回用户态 (UAF). 自引用由本 CPU
             // 下一次 `schedule()` 入口的 `reap_off_cpu` 释放.
-            PROCESS_TABLE.with_process(pid, |proc| {
+            let entry = PROCESS_TABLE.with_process(pid, |proc| {
                 if proc.try_inc_ref() {
                     proc.exiting.store(true, Ordering::Release);
                 }
+                // L-2 判据随首次表访问一并取出, 发射点留到表锁之外.
+                (
+                    proc.get_state(),
+                    proc.group().tgid(),
+                    proc.group().has_exited(),
+                )
             });
+            if let Some((state, tgid, group_exited)) = entry {
+                // L-2 取证: 同一 TCB 再次走进退出路径 (正常退出时状态为
+                // Running/Ready, 死 TCB 重入才会命中).
+                Self::redispatch_emit(&RD_EXIT, "exit", pid, tgid, state, group_exited);
+            }
             // K-01/K-04: 退出即退出线程组. 最后一个成员离开时置组退出状态 (首个
             // 退出码生效); 组内存本身由最后一个 TCB 的 `Arc` 引用消失释放.
             // 取锁方向 7 → 9 (进程表 → 成员账), 与 `ref-lock-order.md` 层级一致.
@@ -3129,4 +3261,50 @@ pub fn init() {
     // `cpu_queue::mark_resched_pending_local`), 实际切换由中断退出路径在
     // `do_softirq()` 返回后经 `cpu_queue::run_pending_resched` 执行.
     SCHEDULER_READY.store(true, Ordering::Release);
+}
+
+/// L-2 取证: 用户态故障终止路径的返回点是否仍落回已死 TCB.
+///
+/// 两架构的 `TerminateProcess` 都是 `process_exit` + `scheduler_yield` 后返回
+/// 异常出口 (x86_64 走 IRET, aarch64 进入 `wfi` 死循环). 正常情形下
+/// `schedule()` 在其中切离, 本探测点要等该 TCB **下次**被调度才执行, 彼时状态
+/// 可运行、不发射; 一旦"没切走"或"死 TCB 又被调度", 这里就是直接读数.
+pub(crate) fn redispatch_diag_iret() {
+    if let Some(pid) = Scheduler::current() {
+        Scheduler::redispatch_probe(&RD_IRET, "iret", pid);
+    }
+}
+
+#[cfg(test)]
+mod redispatch_tests {
+    use super::{AtomicU64, Ordering, ProcessState, REDISPATCH_PRINT_BUDGET, Scheduler};
+
+    #[test]
+    fn emit_filters_runnable_state_and_bounds_budget() {
+        static BUDGET: AtomicU64 = AtomicU64::new(0);
+        assert!(
+            !Scheduler::redispatch_emit(&BUDGET, "test", 1, 1, ProcessState::Ready, false),
+            "可运行且组未退出: 不得发射"
+        );
+        assert_eq!(BUDGET.load(Ordering::Relaxed), 0, "不发射即不消费预算");
+        for i in 0..REDISPATCH_PRINT_BUDGET {
+            assert!(
+                Scheduler::redispatch_emit(&BUDGET, "test", 1, 1, ProcessState::Zombie, false),
+                "第 {i} 行仍在预算内"
+            );
+        }
+        assert!(
+            !Scheduler::redispatch_emit(&BUDGET, "test", 1, 1, ProcessState::Terminated, true),
+            "预算耗尽后同一站点不再发射"
+        );
+    }
+
+    #[test]
+    fn emit_reports_group_exit_even_when_state_is_runnable() {
+        static BUDGET: AtomicU64 = AtomicU64::new(0);
+        assert!(
+            Scheduler::redispatch_emit(&BUDGET, "test", 2, 2, ProcessState::Running, true),
+            "组已整体退出即 L-2 形态, 即便成员状态看着可运行"
+        );
+    }
 }

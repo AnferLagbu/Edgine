@@ -65,10 +65,15 @@
 //! - `do_signal_deliver`: 操作当前进程, 单 CPU 执行, 无竞争
 //! - `PROCESS_TABLE.get()` 返回 *mut Process, 需 unsafe 解引用
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::process::PROCESS_TABLE;
 use super::types::{Pid, ProcessState};
+
+/// L-2 取证站点预算: 信号默认动作 `Cont` 把死 TCB 直接写回 `Ready` 的读数.
+static RD_SIGNAL_CONT: AtomicU64 = AtomicU64::new(0);
+/// L-2 取证站点预算: 信号默认动作 `Stop` 把死 TCB 直接写回 `Blocked` 的读数.
+static RD_SIGNAL_STOP: AtomicU64 = AtomicU64::new(0);
 
 // ============================================================================
 // 信号栈帧与用户态异常帧抽象
@@ -773,16 +778,43 @@ pub fn do_signal_default_action(pid: Pid, sig: u8, frame_addr: u64) {
             if let Some(proc_ptr) = PROCESS_TABLE.get(pid) {
                 // SAFETY: PROCESS_TABLE 保证指针有效
                 let proc = unsafe { &*proc_ptr };
+                // L-2 取证 (只读): 本支绕过状态机直接写 `Ready`, 是内核里唯一能把
+                // `Zombie` 翻回可运行态的形态. 判据在写入前取, 锁外发射; 写入本身
+                // 逐字未变 (本轮纯读数, 不改语义).
+                let state = proc.get_state();
+                let tgid = proc.group().tgid();
+                let group_exited = proc.group().has_exited();
                 proc.state
                     .store(ProcessState::Ready as u32, Ordering::Release);
+                super::scheduler::Scheduler::redispatch_emit(
+                    &RD_SIGNAL_CONT,
+                    "signal-cont",
+                    pid,
+                    tgid,
+                    state,
+                    group_exited,
+                );
             }
         }
         SignalDefaultAction::Stop => {
             if let Some(proc_ptr) = PROCESS_TABLE.get(pid) {
                 // SAFETY: PROCESS_TABLE 保证指针有效, 进程在表中期间不会释放
                 let proc = unsafe { &*proc_ptr };
+                // L-2 取证: 同上, `Stop` 直接写 `Blocked` 会让死 TCB 既不是 Zombie
+                // 也不在可运行集, 变成无人收割的隐形态; 本行记录写入前状态.
+                let state = proc.get_state();
+                let tgid = proc.group().tgid();
+                let group_exited = proc.group().has_exited();
                 proc.state
                     .store(ProcessState::Blocked as u32, Ordering::Release);
+                super::scheduler::Scheduler::redispatch_emit(
+                    &RD_SIGNAL_STOP,
+                    "signal-stop",
+                    pid,
+                    tgid,
+                    state,
+                    group_exited,
+                );
             }
         }
         SignalDefaultAction::Core => {

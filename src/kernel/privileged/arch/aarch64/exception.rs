@@ -954,6 +954,9 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
         if pid != 0 {
             crate::privileged::proc::process_exit(pid);
             crate::privileged::proc::scheduler_yield();
+            // L-2 取证: 走到这里说明终止路径没有切离本核, 当前 TCB 仍是死态;
+            // 随后进入的 `wfi` 停机循环不再返回用户态, 但读数与 x86_64 同口径.
+            crate::privileged::proc::scheduler::redispatch_diag_iret();
         }
     }
 

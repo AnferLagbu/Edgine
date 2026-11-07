@@ -722,6 +722,10 @@ impl IdtManager {
                     process_exit(*exit_code);
                     scheduler_yield();
                 }
+                // L-2 取证: 终止路径若能返回到此处, 说明 `process_exit` +
+                // `scheduler_yield` 没有把本核切离 (或死 TCB 又被调度回来),
+                // 紧接着的异常出口会把僵尸上下文原样 IRET 回用户态.
+                crate::privileged::proc::scheduler::redispatch_diag_iret();
             }
 
             RecoveryAction::DomainRecovery => {
