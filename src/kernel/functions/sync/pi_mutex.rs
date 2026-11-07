@@ -59,15 +59,14 @@ pub type PiMutexResult<T> = Result<T, PiMutexError>;
 ///
 /// # 参数
 /// - `my_pid`: 当前线程 PID
-/// - `my_base_priority`: 当前线程的 `base_priority`
+/// - `my_base_weight`: 当前线程的基础 EEVDF 权重 (`cfs_weight`)
 ///
 /// # 返回
 /// RAII 守卫, drop 时自动释放
 ///
-/// 当前实现中 `lock()` 内部自旋直到获取成功, 不返回错误.
-pub fn lock<T>(mutex: &PiMutex<T>, my_pid: u32, my_base_priority: u32) -> fw::PiMutexGuard<'_, T> {
-    // 当前实现: lock() 不返回错误 (总会自旋直到成功)
-    mutex.lock(my_pid, my_base_priority)
+/// 被占用时在调度器阻塞等待 (`BlockReason::PiMutexWait`), 获赠/移交后返回.
+pub fn lock<T>(mutex: &PiMutex<T>, my_pid: u32, my_base_weight: u32) -> fw::PiMutexGuard<'_, T> {
+    mutex.lock(my_pid, my_base_weight)
 }
 
 /// 尝试获取锁 (非阻塞)
@@ -75,19 +74,15 @@ pub fn lock<T>(mutex: &PiMutex<T>, my_pid: u32, my_base_priority: u32) -> fw::Pi
 /// # Errors
 ///
 /// 当锁被其他线程持有时返回 `PiMutexError::Kernel(WouldBlock)`.
+/// 失败路径无副作用 (不登记等待者、不触发捐赠).
 pub fn try_lock<T>(
     mutex: &PiMutex<T>,
     my_pid: u32,
-    my_base_priority: u32,
+    my_base_weight: u32,
 ) -> PiMutexResult<fw::PiMutexGuard<'_, T>> {
-    if mutex.try_lock(my_pid, my_base_priority) {
-        Ok(mutex.lock(my_pid, my_base_priority))
-    } else {
-        Err(PiMutexError::Kernel(
+    mutex
+        .try_lock_guard(my_pid, my_base_weight)
+        .ok_or(PiMutexError::Kernel(
             crate::functions::error::KernelError::WouldBlock,
         ))
-    }
 }
-
-// 注: set_donation_callback / set_revoke_callback 是启动期 unsafe API,
-// 保留在 privileged/sync/pi_mutex 层 (TCB), 不通过 functions 包装.

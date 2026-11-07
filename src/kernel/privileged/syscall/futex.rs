@@ -11,7 +11,9 @@
 //!
 //! ## 等待队列
 //!
-//! 使用全局哈希表将 uaddr 映射到等待者, 哈希表以自旋锁保护.
+//! 使用全局哈希表将 uaddr 映射到等待者, 每个桶由一把 `PiMutex` 守护: 桶内临界区
+//! 极短, 但持有者可能被抢占, 自旋等待既浪费 CPU 又无法应对持锁线程退出, 故等待
+//! 者按 EEVDF 权重阻塞排队, 由定向移交唤醒; 持锁线程退出时由 PI 退出登记强制释放.
 //! 每个桶使用固定大小数组, 避免动态内存分配.
 //!
 //! ## 丢唤醒防线 (桶序号)
@@ -19,8 +21,10 @@
 //! 每个桶带一个唤醒序号: 唤醒/迁移在桶锁内推进它, 等待者按"快照序号 → 读等待字
 //! → 持桶锁复查序号并复查后入队"三步入睡. 只要快照之后发生过一次唤醒, 复查即
 //! 失败并返回 `EAGAIN` 重试 —— 唤醒不会落在"读字"与"入队"之间被丢掉.
-//! "入队 + 置 Blocked"还在同一桶锁域内完成 (临界区关中断): 否则两者之间的唤醒
-//! 会被 `Scheduler::unblock` 的 Running 判据丢弃, 等待者永久睡在队列外.
+//! "入队 + 置 Blocked"在同一桶锁域内完成: 否则两者之间的唤醒会被
+//! `Scheduler::unblock` 的 Running 判据丢弃, 等待者永久睡在队列外. 置 Blocked 到
+//! 释放桶锁之间还要关中断: 已 Blocked 的线程若被本核中断退出路径切走, 它会带着
+//! 桶锁离核且不在任何运行队列, 唤醒方再也拿不到桶锁.
 //!
 //! # Safety
 //!
@@ -29,9 +33,9 @@
 //! - 原子比较使用 `AtomicU32` 访问用户空间, 需确保页表映射有效
 
 use alloc::boxed::Box;
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use crate::privileged::sync::pi_mutex::PiMutex;
 use crate::privileged::sync::{OnceLock, disable_interrupts, restore_interrupts};
 use crate::privileged::timer::{get_ticks, get_uptime_ns, ms_to_ticks};
 
@@ -56,31 +60,6 @@ pub const FUTEX_PRIVATE_FLAG: i32 = edgine_abi::thread::FUTEX_PRIVATE_FLAG;
 /// 提取基础操作码 (去掉 `PRIVATE/CLOCK_REALTIME` 等标志)
 fn futex_op(op: i32) -> i32 {
     op & !FUTEX_PRIVATE_FLAG & !0x100 // 去掉 FUTEX_CLOCK_REALTIME
-}
-
-// ============================================================================
-// 简易自旋锁 (Interior Mutability)
-// ============================================================================
-
-/// 基于 `AtomicBool` 的简易自旋锁, 支持 &self 锁定
-struct SimpleSpinLock {
-    locked: AtomicBool,
-}
-
-impl SimpleSpinLock {
-    fn lock(&self) {
-        while self
-            .locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
-        }
-    }
-
-    fn unlock(&self) {
-        self.locked.store(false, Ordering::Release);
-    }
 }
 
 // ============================================================================
@@ -220,41 +199,30 @@ impl FutexBucket {
     }
 }
 
-/// 全局 futex 哈希表 (桶数组、桶序号与锁数组均在堆上, 避免约 16.5 KB 常驻 BSS)
+/// 全局 futex 哈希表 (桶数组与序号数组均在堆上, 避免约 16.5 KB 常驻 BSS)
 struct FutexHashTable {
-    locks: Box<[SimpleSpinLock]>,
     /// 每桶唤醒序号: 唤醒/迁移在桶锁内推进, 等待者在同一锁域内复查 ——
     /// 序号变化即"快照之后发生过唤醒", 等待者必须放弃入睡并重试.
     seqs: Box<[AtomicU64]>,
-    buckets: Box<[UnsafeCell<FutexBucket>]>,
+    /// 每桶一把 PI 互斥锁: 桶数据由它守护, 争用时按 EEVDF 权重阻塞排队.
+    buckets: Box<[PiMutex<FutexBucket>]>,
 }
 
 impl FutexHashTable {
-    /// 逐元素构造空表 (堆分配两个桶数组 + 序号数组).
+    /// 逐元素构造空表 (堆分配桶数组 + 序号数组; 桶锁不额外分配).
     fn new() -> Self {
         Self {
-            locks: (0..FUTEX_HASH_BUCKETS)
-                .map(|_| SimpleSpinLock {
-                    locked: AtomicBool::new(false),
-                })
-                .collect(),
             seqs: (0..FUTEX_HASH_BUCKETS).map(|_| AtomicU64::new(0)).collect(),
             buckets: (0..FUTEX_HASH_BUCKETS)
-                .map(|_| UnsafeCell::new(FutexBucket::empty()))
+                .map(|_| PiMutex::new(FutexBucket::empty()))
                 .collect(),
         }
     }
 }
 
-// SAFETY: FutexHashTable 的每个桶由独立的 SimpleSpinLock 保护,
-// SAFETY: FutexHashTable 含 UnsafeCell, 但不同桶可以并发访问, 同一桶内的访问通过 lock/unlock 序列化.
-unsafe impl Sync for FutexHashTable {}
-// SAFETY: 同上, 桶级锁保证并发安全.
-unsafe impl Send for FutexHashTable {}
-
 /// 全局 futex 哈希表 — 惰性堆置, `OnceLock` 内联仅数十字节。
 ///
-/// 首次 futex 系统调用时在 kmalloc 堆上逐元素构造桶数组、序号数组与锁数组。
+/// 首次 futex 系统调用时在 kmalloc 堆上逐元素构造桶数组、序号数组与桶锁。
 static FUTEX_TABLE: OnceLock<FutexHashTable> = OnceLock::new();
 
 /// 获取全局 futex 哈希表 (首次调用时惰性分配)。
@@ -268,6 +236,20 @@ fn futex_table() -> &'static FutexHashTable {
 fn hash_uaddr(uaddr: u64) -> usize {
     let hash = (uaddr.wrapping_mul(0x9E37_79B9_7F4A_7C15)) >> 58;
     (hash as usize) & (FUTEX_HASH_BUCKETS - 1)
+}
+
+/// futex 桶锁的基础权重缺省值 (nice 0 的 EEVDF 权重 = 1024); 进程表查不到时兜底.
+const FUTEX_DEFAULT_WEIGHT: u32 = 1024;
+
+/// 调用线程的基础 EEVDF 权重, 作为桶锁排队的捐赠输入.
+///
+/// 权重快照与 PI 等待者入队同源: 入队后线程再改 nice 不会刷新本桶的等待权重
+/// (与 `PiMutex` 的等待者权重快照口径一致).
+fn futex_task_weight(pid: u32) -> u32 {
+    crate::privileged::proc::PROCESS_TABLE
+        .with_process(pid, |p| p.cfs_weight.load(Ordering::Acquire))
+        .and_then(|weight| u32::try_from(weight).ok())
+        .unwrap_or(FUTEX_DEFAULT_WEIGHT)
 }
 
 // ============================================================================
@@ -386,12 +368,13 @@ pub fn sys_futex(uaddr: u64, op: i32, val: i32, timeout_or_uaddr2: u64, val2: u3
 /// `FUTEX_WAIT` / `FUTEX_WAIT_BITSET`: 原子比较并阻塞
 ///
 /// 睡前的三个动作 —— 复查桶序号、入队等待者、置 Blocked —— 在同一个桶锁域内
-/// 完成 (临界区关中断). 任何一项拆到锁外都会留下丢唤醒窗口:
+/// 完成. 任何一项拆到锁外都会留下丢唤醒窗口:
 /// - 只查序号不入队: 唤醒仍可落在检查与入队之间;
 /// - 先入队后阻塞: 落在两步之间的唤醒被 `Scheduler::unblock` 的 Running 判据
 ///   丢弃 (线程仍在核上), 等待者随后永久睡在队列外;
-/// - 关中断: 置 Blocked 后若被本核中断退出路径切走, 本线程既不在运行队列也没有
-///   唤醒者, 而唤醒方又必须取桶锁 —— 永久死锁.
+/// - 不关中断: 置 Blocked 后若被本核中断退出路径切走, 本线程既不在运行队列也没有
+///   唤醒者, 却仍持着桶锁 —— 唤醒方拿不到桶锁, 永久死锁. 故置 Blocked 到释放桶锁
+///   之间关中断 (桶锁本身是阻塞锁, 关中断只能包住这段收尾, 不能包住获取).
 ///
 /// `FUTEX_WAIT_BITSET` 的绝对超时按 `CLOCK_MONOTONIC` 解释, 与 `get_uptime_ns`
 /// 同纪元; 到期由 tick 睡眠扫描兜底唤醒, 醒来后仍留在队列中即返回 `-ETIMEDOUT`.
@@ -440,14 +423,11 @@ fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool) -> i64 {
         return ETIMEDOUT;
     }
 
-    let flags = disable_interrupts();
-    table.locks[bucket_idx].lock();
-    // SAFETY: 持桶锁访问本桶
-    let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
+    let mut bucket = table.buckets[bucket_idx].lock(current_pid, futex_task_weight(current_pid));
     let mut queued = enqueue_if_seq_unchanged(
         &table.seqs[bucket_idx],
         seq_snapshot,
-        bucket,
+        &mut bucket,
         FutexWaiter {
             uaddr,
             pid: current_pid,
@@ -461,13 +441,15 @@ fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool) -> i64 {
             crate::privileged::proc::BlockReason::FutexWait
         };
         let sleep_until = deadline_ns.map_or(0, sleep_until_ticks);
-        if !crate::privileged::proc::process_block_prepare(current_pid, reason, sleep_until) {
+        // 置 Blocked 与释放桶锁必须原子于中断: 中间被切走会带着桶锁离开运行队列.
+        let flags = disable_interrupts();
+        queued = crate::privileged::proc::process_block_prepare(current_pid, reason, sleep_until);
+        if !queued {
             bucket.remove_by_pid(current_pid);
-            queued = false;
         }
+        drop(bucket);
+        restore_interrupts(flags);
     }
-    table.locks[bucket_idx].unlock();
-    restore_interrupts(flags);
 
     if !queued {
         return EAGAIN; // 快照后被唤醒 / 桶满 / 非本核当前线程
@@ -478,10 +460,9 @@ fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool) -> i64 {
 
     // 醒来后移除自己: 唤醒路径已在同一锁域内清槽, 仍留在队列里说明是定时扫描
     // 唤醒; 再按截止时刻给出超时结论, 否则按被唤醒 (或伪唤醒) 返回 0.
-    table.locks[bucket_idx].lock();
-    // SAFETY: 持桶锁访问本桶
-    let still_queued = unsafe { (*table.buckets[bucket_idx].get()).remove_by_pid(current_pid) };
-    table.locks[bucket_idx].unlock();
+    let mut bucket = table.buckets[bucket_idx].lock(current_pid, futex_task_weight(current_pid));
+    let still_queued = bucket.remove_by_pid(current_pid);
+    drop(bucket);
 
     if still_queued && deadline_ns.is_some_and(|deadline| get_uptime_ns() >= deadline) {
         return ETIMEDOUT;
@@ -491,7 +472,12 @@ fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool) -> i64 {
 
 /// `FUTEX_WAKE`: 唤醒等待者
 ///
-/// 公开给 `privileged::proc::robust` 退出路径使用 (robust futex / CLEARTID 唤醒).
+/// 公开给 `privileged::proc::robust` 退出路径使用 (robust futex / CLEARTID 唤醒),
+/// 故**绝不睡眠**: 退出路径不可阻塞, 只能以 `pid 0` (内核上下文) 非阻塞抢桶锁,
+/// 抢不到就自旋重试. 桶内临界区本身只有等待者扫描与唤醒, 但 `PiMutex` 的定向
+/// 移交会把已释放的锁挂在尚未上核的目标名下; 内核上下文因此被允许接管未接收的
+/// 移交 (见 `PiMutex::try_acquire`), 重试循环只会撞上真正在执行临界区的持有者,
+/// 不会因移交目标等不到 CPU 而永久自旋 (A-7 冻结归因).
 #[must_use]
 pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
     if max_count == 0 {
@@ -500,13 +486,12 @@ pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
 
     let bucket_idx = hash_uaddr(uaddr);
     let table = futex_table();
-    let woken = {
-        table.locks[bucket_idx].lock();
-        // SAFETY: 持桶锁访问本桶
-        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        let w = wake_with_seq(&table.seqs[bucket_idx], bucket, uaddr, max_count);
-        table.locks[bucket_idx].unlock();
-        w
+    let woken = loop {
+        let Some(mut bucket) = table.buckets[bucket_idx].try_lock_guard(0, 0) else {
+            core::hint::spin_loop();
+            continue;
+        };
+        break wake_with_seq(&table.seqs[bucket_idx], &mut bucket, uaddr, max_count);
     };
 
     i64::from(woken)
@@ -516,21 +501,16 @@ pub fn futex_wake(uaddr: u64, max_count: u32) -> i64 {
 fn futex_requeue(uaddr: u64, max_wake: u32, uaddr2: u64, max_requeue: u32) -> i64 {
     let bucket_idx = hash_uaddr(uaddr);
     let table = futex_table();
-    let (woken, requeued) = {
-        table.locks[bucket_idx].lock();
-        // SAFETY: 持桶锁访问本桶
-        let bucket = unsafe { &mut *table.buckets[bucket_idx].get() };
-        let r = requeue_with_seq(
-            &table.seqs[bucket_idx],
-            bucket,
-            uaddr,
-            max_wake,
-            uaddr2,
-            max_requeue,
-        );
-        table.locks[bucket_idx].unlock();
-        r
-    };
+    let current_pid = crate::privileged::proc::process_get_current_pid();
+    let mut bucket = table.buckets[bucket_idx].lock(current_pid, futex_task_weight(current_pid));
+    let (woken, requeued) = requeue_with_seq(
+        &table.seqs[bucket_idx],
+        &mut bucket,
+        uaddr,
+        max_wake,
+        uaddr2,
+        max_requeue,
+    );
 
     i64::from(woken + requeued)
 }

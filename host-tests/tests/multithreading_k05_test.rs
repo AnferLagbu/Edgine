@@ -10,6 +10,8 @@
 //!   不能当作无主标记 (FFI 路径同口径);
 //! - `PiMutex` 退出登记在完全释放 / 移交 / 对象析构时摘除, 进程退出路径
 //!   按持有人强制释放, 重复调用幂等;
+//! - `PiMutex` 的 `try_lock` 失败零副作用、`lock` 走调度阻塞等待 (A-7),
+//!   退出清理先撤销等待再释放持有;
 //! - PID 复用负控制: 旧化身的退出清理先于 PID 回收, 复用的同一数值 PID
 //!   拿到的是无主锁, 而不是旧化身仍持有的锁;
 //! - futex 等待队列 / robust futex / `clear_child_tid` 的持有者比较均按 TID.
@@ -209,8 +211,13 @@ fn pi_exit_cleanup_is_pid_scoped_and_idempotent() {
     let other = 9_503u32;
 
     let m = PiMutex::new(0u32);
-    assert!(m.try_lock(holder, 1), "holder 应先取得锁");
-    assert!(!m.try_lock(next, 10), "next 应作为等待者注册");
+    assert!(m.try_lock(holder, 1024), "holder 应先取得锁");
+    // A-7: try_lock 失败零副作用, 等待关系必须显式登记.
+    assert!(
+        m.register_waiter_for_test(next, 1586),
+        "next 应作为等待者注册"
+    );
+    assert_eq!(pi_mutex::waiting_lock_count(next), 1);
 
     pi_mutex::pi_mutex_process_exit(other);
     assert!(m.is_locked(), "非持有者退出不得释放他人的锁");
@@ -218,9 +225,14 @@ fn pi_exit_cleanup_is_pid_scoped_and_idempotent() {
     assert_eq!(m.waiter_count(), 1);
 
     pi_mutex::pi_mutex_process_exit(holder);
-    assert_eq!(m.holder(), next, "持有者退出时按优先级定向移交给等待者");
+    assert_eq!(m.holder(), next, "持有者退出时按权重定向移交给等待者");
     assert_eq!(pi_mutex::held_lock_count(holder), 0);
     assert_eq!(pi_mutex::held_lock_count(next), 1);
+    assert_eq!(
+        pi_mutex::waiting_lock_count(next),
+        0,
+        "移交目标不得残留在等待登记里"
+    );
 
     pi_mutex::pi_mutex_process_exit(holder);
     assert_eq!(m.holder(), next, "重复的旧退出回调不得影响新持有者");
@@ -254,7 +266,7 @@ fn pid_reuse_after_exit_cannot_inherit_pi_ownership() {
 
     let mut old = TableProc::insert(reused, "k05-reuse-old");
     let m = PiMutex::new(0u32);
-    assert!(m.try_lock(reused, 5), "旧化身应能持锁");
+    assert!(m.try_lock(reused, 1024), "旧化身应能持锁");
     assert_eq!(pi_mutex::held_lock_count(reused), 1);
 
     old.remove_now();
@@ -271,7 +283,7 @@ fn pid_reuse_after_exit_cannot_inherit_pi_ownership() {
 
     let mut new = TableProc::insert(realloc2, "k05-reuse-new");
     assert!(
-        m.try_lock(realloc2, 5),
+        m.try_lock(realloc2, 1024),
         "新化身必须拿到无主锁, 而不是继承旧化身的持有权"
     );
     assert_eq!(m.holder(), realloc2);
@@ -286,48 +298,52 @@ fn pid_reuse_after_exit_cannot_inherit_pi_ownership() {
 fn pi_registry_lifecycle_is_closed() {
     let src = code_only(&read_src(PI_MUTEX_SRC));
 
-    let unlock = fn_body(&src, "fn do_unlock(&self)");
-    assert_eq!(
-        unlock.matches("untrack_hold(self, my_pid);").count(),
-        2,
+    let release = fn_body(&src, "fn release_holder(&self, pid: u32) -> bool");
+    assert!(
+        has(&release, "let _ = untrack_hold(self, pid);"),
         "K-05: 完全释放与定向移交两条路径都必须摘除原持有者登记"
     );
     assert!(
-        has(&unlock, "track_hold(self, next_pid);"),
+        has(&release, "let _ = track_hold(self, next.pid);"),
         "K-05: 定向移交必须为新持有者登记"
     );
-    let holder_at = index_of(
-        &unlock,
-        "self.inner.holder.store(next_pid, Ordering::Release);",
+    assert!(
+        has(&release, "let _ = untrack_wait(self, next.pid);"),
+        "K-05: 移交目标离开等待队列时必须同步摘除等待登记"
     );
-    let handoff_at = index_of(
-        &unlock,
-        "self.inner.handoff.store(next_pid, Ordering::Release);",
-    );
+    let holder_at = index_of(&release, "state.holder = next.pid;");
+    let handoff_at = index_of(&release, "state.handoff = next.pid;");
     assert!(
         holder_at < handoff_at,
         "K-05: 移交标记必须最后写, 目标看到标记时所有权已就绪"
     );
-    let release_holder_at = index_of(
-        &unlock,
-        "self.inner.holder.store(PID_NONE, Ordering::Release);",
+    let release_lock_at = index_of(&release, "state.locked = false;");
+    let release_holder_at = index_of(&release, "state.holder = PID_NONE;");
+    assert!(
+        release_lock_at < release_holder_at,
+        "K-05: 完全释放在同一临界区内先清 locked 再清 holder, 无锁空窗不可观测"
     );
-    let release_locked_at = index_of(
-        &unlock,
-        "self.inner.locked.store(false, Ordering::Release);",
+    let sync_at = index_of(&release, "self.sync_weights();");
+    let unblock_at = index_of(
+        &release,
+        "crate::privileged::proc::scheduler::Scheduler::unblock(next_pid);",
     );
     assert!(
-        release_holder_at < release_locked_at,
-        "K-05: 完全释放先清 holder 再清 locked, 不给并发 CAS 留下双持有窗口"
+        sync_at < unblock_at,
+        "A-7: 新持有者必须先带最终权重入队, 再被唤醒"
     );
 
-    let try_lock = fn_body(
+    let accept = fn_body(
         &src,
-        "pub fn try_lock(&self, my_pid: u32, my_base_priority: u32)",
+        "fn try_acquire(&self, my_pid: u32, my_base_weight: u32) -> bool",
     );
-    let accept_at = index_of(&try_lock, "if self.accept_handoff(my_pid) {");
-    let cas_at = index_of(&try_lock, "compare_exchange(false, true, Ordering::AcqRel");
-    assert!(accept_at < cas_at, "K-05: 定向移交必须先于自由竞争被确认");
+    let handoff_at = index_of(&accept, "state.handoff != my_pid");
+    let free_at = index_of(&accept, "state.locked = true;");
+    assert!(handoff_at < free_at, "K-05: 定向移交必须先于自由竞争被确认");
+    assert!(
+        has(&accept, "let _ = track_hold(self, my_pid);"),
+        "K-05: 持有登记与所有权落账在同一临界区, 退出清理不会漏账"
+    );
 
     let drop_impl = fn_body(&src, "impl<T: ?Sized> Drop for PiMutex<T> {");
     assert!(
@@ -336,11 +352,65 @@ fn pi_registry_lifecycle_is_closed() {
     );
 
     let exit = fn_body(&src, "pub fn pi_mutex_process_exit(pid: u32)");
-    let remove_at = index_of(&exit, "PI_MUTEX_HELD.lock().remove(&pid)");
-    let dispatch_at = index_of(&exit, "(h.dispatch)(h.ptr, pid)");
+    let wait_take_at = index_of(&exit, "take_record_for(&PI_MUTEX_WAITING, pid)");
+    let held_take_at = index_of(&exit, "take_record_for(&PI_MUTEX_HELD, pid)");
     assert!(
-        remove_at < dispatch_at,
-        "K-05: 退出回调先整体摘除该 pid 的登记, 再逐个强制解锁"
+        wait_take_at < held_take_at,
+        "K-05: 退出清理必须先撤销等待者, 再强制释放持有者"
+    );
+    // 两张表都是"取出即放锁, 再分派": 登记表锁不得跨状态锁持有.
+    assert!(
+        has(
+            &exit,
+            "take_record_for(&PI_MUTEX_WAITING, pid) { let _ = unsafe { (record.dispatch)(record.ptr, pid) }; }"
+        ) && has(
+            &exit,
+            "take_record_for(&PI_MUTEX_HELD, pid) { let _ = unsafe { (record.dispatch)(record.ptr, pid) }; }"
+        ),
+        "K-05: 登记先取出放锁, 再调用分派 (不在登记表锁内取状态锁)"
+    );
+}
+
+/// A-7 状态机: 单临界区收敛、`try_lock` 零副作用、`lock()` 阻塞等待.
+#[test]
+fn pi_state_machine_blocks_without_side_effects() {
+    let src = code_only(&read_src(PI_MUTEX_SRC));
+
+    assert!(
+        has(&src, "state: IrqSpinLock<PiMutexState>,"),
+        "A-7: 锁状态必须收敛到单一临界区"
+    );
+
+    let try_lock = fn_body(
+        &src,
+        "pub fn try_lock(&self, my_pid: u32, my_base_weight: u32) -> bool",
+    );
+    assert!(
+        has(&try_lock, "self.try_acquire(my_pid, my_base_weight)")
+            && !has(&try_lock, "upsert_waiter")
+            && !has(&try_lock, "track_wait"),
+        "A-7: try_lock 失败必须零副作用 (不入队/不捐赠/不登记)"
+    );
+
+    let blocking_lock = fn_body(
+        &src,
+        "pub fn lock(&self, my_pid: u32, my_base_weight: u32) -> PiMutexGuard<'_, T>",
+    );
+    assert!(
+        has(
+            &blocking_lock,
+            "crate::privileged::proc::process_block_finish(my_pid);"
+        ) && has(&blocking_lock, "EnqueueOutcome::Blocked"),
+        "A-7: lock() 必须阻塞等待, 不在自旋里轮询"
+    );
+    let enqueue = fn_body(
+        &src,
+        "fn enqueue_and_block(&self, my_pid: u32, my_base_weight: u32) -> EnqueueOutcome",
+    );
+    assert!(
+        has(&enqueue, "crate::privileged::proc::process_block_prepare(")
+            && has(&enqueue, "BlockReason::PiMutexWait"),
+        "A-7: 入队与阻塞置位必须在同一临界区完成"
     );
 }
 
@@ -364,6 +434,19 @@ fn process_exit_cleanup_precedes_pid_reuse() {
     let pi_at = index_of(&notify, "pi_mutex_process_exit(pid);");
     let callback_at = index_of(&notify, "func(pid);");
     assert!(pi_at < callback_at, "K-05: PI 锁释放先于外部驱动资源清理");
+
+    // A-7: 线程 exit 路径前移清理 —— 用户地址空间仍可访问时先撤销等待/释放持有.
+    let proc_ops = code_only(&read_src(PROC_OPS_SRC));
+    let exit = fn_body(
+        &proc_ops,
+        "pub extern \"C\" fn process_exit(exit_code: u32)",
+    );
+    let exit_pi_at = index_of(&exit, "pi_mutex_process_exit(current_pid);");
+    let locks_at = index_of(&exit, "release_pid_locks(current_pid);");
+    assert!(
+        exit_pi_at < locks_at,
+        "A-7: 线程退出必须在文件锁/fd 清理之前完成 PI 清理"
+    );
 }
 
 /// owner 记账口径: 内核各原语统一取 TID (`process_get_current_pid`), 不取 tgid.
@@ -444,6 +527,87 @@ fn owner_paths_use_tid_not_tgid() {
     assert!(
         has(&process, "pub clear_child_tid: AtomicU64,"),
         "K-05: clear_child_tid 属于每线程 TCB, 而不是线程组"
+    );
+}
+
+/// A-7 接线的真实使用者: futex 桶锁改用 `PiMutex` 阻塞等待, 唤醒路径绝不睡眠.
+#[test]
+fn a7_futex_bucket_uses_pi_blocking_lock() {
+    let futex = code_only(&read_src(FUTEX_SRC));
+
+    // 桶表不再自带自旋锁, 每桶一把 PiMutex.
+    let table = fn_body(&futex, "struct FutexHashTable {");
+    assert!(
+        has(&table, "buckets: Box<[PiMutex<FutexBucket>]>,")
+            && !has(&table, "locks: Box<[SimpleSpinLock]>,")
+            && !futex.contains("SimpleSpinLock"),
+        "A-7: futex 桶锁必须收敛为 PiMutex, 旧自旋锁删除干净"
+    );
+    let table_new = fn_body(&futex, "impl FutexHashTable {");
+    assert!(
+        has(&table_new, ".map(|_| PiMutex::new(FutexBucket::empty()))"),
+        "A-7: 桶表构造必须逐桶建 PiMutex"
+    );
+
+    // 等待路径: 阻塞入队 (EEVDF 权重), 置 Blocked 到释放桶锁之间关中断.
+    let wait = fn_body(
+        &futex,
+        "fn futex_wait(uaddr: u64, val: i32, timeout_ptr: u64, is_bitset: bool)",
+    );
+    assert!(
+        has(
+            &wait,
+            "table.buckets[bucket_idx].lock(current_pid, futex_task_weight(current_pid));"
+        ),
+        "A-7: futex 等待者必须按 EEVDF 权重阻塞获取桶锁"
+    );
+    let enqueue_at = index_of(&wait, "enqueue_if_seq_unchanged(");
+    let irq_off_at = index_of(&wait, "let flags = disable_interrupts();");
+    let prepare_at = index_of(
+        &wait,
+        "process_block_prepare(current_pid, reason, sleep_until)",
+    );
+    let drop_at = index_of(&wait, "drop(bucket);");
+    let irq_on_at = index_of(&wait, "restore_interrupts(flags);");
+    assert!(
+        enqueue_at < irq_off_at
+            && irq_off_at < prepare_at
+            && prepare_at < drop_at
+            && drop_at < irq_on_at,
+        "A-7: 置 Blocked 到释放桶锁必须夹在关中断区间内"
+    );
+
+    // 唤醒路径绝不睡眠 (robust 退出路径调用), 以 pid 0 非阻塞抢锁后自旋重试.
+    let wake = fn_body(
+        &futex,
+        "pub fn futex_wake(uaddr: u64, max_count: u32) -> i64",
+    );
+    assert!(
+        has(&wake, "try_lock_guard(0, 0)")
+            && has(&wake, "core::hint::spin_loop();")
+            && !has(&wake, ".lock("),
+        "A-7: futex_wake 不得阻塞 (退出路径调用)"
+    );
+
+    // 迁移路径同样走阻塞桶锁.
+    let requeue = fn_body(
+        &futex,
+        "fn futex_requeue(uaddr: u64, max_wake: u32, uaddr2: u64, max_requeue: u32) -> i64",
+    );
+    assert!(
+        has(
+            &requeue,
+            "table.buckets[bucket_idx].lock(current_pid, futex_task_weight(current_pid));"
+        ),
+        "A-7: futex_requeue 必须走阻塞桶锁"
+    );
+
+    // 权重取进程表 cfs_weight, 查不到时按 nice 0 兜底.
+    let weight = fn_body(&futex, "fn futex_task_weight(pid: u32) -> u32");
+    assert!(
+        has(&weight, "p.cfs_weight.load(Ordering::Acquire)")
+            && has(&weight, "FUTEX_DEFAULT_WEIGHT"),
+        "A-7: 桶锁权重必须取自 EEVDF cfs_weight"
     );
 }
 

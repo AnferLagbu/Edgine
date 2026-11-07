@@ -125,6 +125,8 @@ pub enum BlockReason {
     Sleeping = 3,
     /// 等待 futex 唤醒
     FutexWait = 4,
+    /// 等待 PI mutex (A-7: `lock()` 阻塞等待)
+    PiMutexWait = 5,
     /// 未知原因
     Unknown = 255,
 }
@@ -139,6 +141,7 @@ impl BlockReason {
             2 => Self::WaitingForSignal,
             3 => Self::Sleeping,
             4 => Self::FutexWait,
+            5 => Self::PiMutexWait,
             _ => Self::Unknown,
         }
     }

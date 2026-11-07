@@ -398,6 +398,11 @@ pub extern "C" fn process_get_pwm_by_pid(pid: u32) -> u64 {
 pub extern "C" fn process_exit(exit_code: u32) {
     let current_pid = Scheduler::current().unwrap_or(0);
     if current_pid != 0 {
+        // A-7: PI Mutex 退出清理前移到线程 exit —— 先撤销本线程的等待登记
+        // (否则持有者退出后无人再向它移交), 再强制释放它仍持有的锁. 收割期的
+        // `process_cleanup` 调用保留为兜底 (两边均幂等).
+        crate::privileged::sync::pi_mutex::pi_mutex_process_exit(current_pid);
+
         // 释放该进程持有的所有文件锁 (flock + POSIX lock)
         crate::privileged::fs::current_vfs_ops().release_pid_locks(current_pid);
 
