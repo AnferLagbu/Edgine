@@ -179,6 +179,19 @@ pub fn kpti_set_user_ttbr0(ttbr0: u64) {
     kpti_cpu_state().user_ttbr0.store(ttbr0, Ordering::Release);
 }
 
+/// 读取本核当前用户进程的 TTBR0 物理地址 (未进入过用户态时为 0).
+///
+/// 这是**真用户根表**, 与硬件 TTBR0 在异常上下文里不是一回事: `handle_el0_sync`
+/// 第三步把 TTBR0 精化为本进程 EL1 视图根 (其 L0 是用户 L0 槽位 1..255 的副本,
+/// 下级表共享), 视图槽位 0 与保留槽不镜像. 因此按视图根做的**新映射**只落在视图
+/// 侧、不回写用户表 ⇒ 双视图分叉; 缺页路径必须按本函数取到的用户根操作, 由
+/// `map_page_in_table` 的 `mirror_l0_slot_to_el1_view` 单向同步到视图.
+#[inline]
+#[must_use]
+pub fn kpti_get_user_ttbr0() -> u64 {
+    kpti_cpu_state().user_ttbr0.load(Ordering::Acquire)
+}
+
 /// 暂存进入 EL0 时 trampoline 无法直接恢复的用户寄存器 `x9`-`x11`.
 ///
 /// 仅 `enter_user` 快路径 (新建进程首次进入用户态, 无 `ProcessContext` 快照)

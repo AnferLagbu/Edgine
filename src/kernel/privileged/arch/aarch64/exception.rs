@@ -824,12 +824,20 @@ pub extern "C" fn irq_handler_el0(frame: &mut ExceptionFrame) {
 /// 两条调用路径共用本函数: `handle_el1h_sync` (内核态同 EL 异常) 与
 /// `handle_el0_sync` (EL0 非 SVC 同步异常)。行为按异常来源分派:
 ///
-/// - **EL0** (`frame.spsr` 的 `M[3:0] == 0`)：用户态越权访问 (翻译/权限失败)、
+/// - **EL0 缺页射程内** (`SPSR.M[3:0] == 0` 且 `ESR` 解码为翻译/权限故障)：进
+///   `mm::page_fault::handle_user_page_fault` 共用入口 (与 x86_64
+///   `idt::handlers::PageFaultHandler` 同一实现)。返回 `Fixed` 即**直接返回**, 由
+///   `handle_el0_sync` 以未改动的 `ELR_EL1` eret ⇒ 重试触发异常的那条指令 (写保护
+///   复制 / 匿名页首访 / 栈增长三类).
+/// - **EL0 射程外** (取指故障、AF/对齐/外部同步、或缺页入口未修复)：用户态越权访问、
 ///   未定义指令等 —— 一律**终止当前进程**并调度离去。不得返回 EL0: `ELR` 仍指向
 ///   触发异常的那条指令, 返回即再次触发同一异常 (死循环)。
-/// - **EL1** (内核态)：保持"打印现场 + 停机"。内核态同步异常是内核缺陷, 必须
+/// - **EL1** (内核态)：默认保持"打印现场 + 停机"。内核态同步异常是内核缺陷, 必须
 ///   暴露而不能被当作"某个进程的故障"掩盖 (对照 KPTI-17 的 `ESR=0x96000061`
-///   即 EC=0x25 同 EL 数据异常)。
+///   即 EC=0x25 同 EL 数据异常)。唯一例外是**核态 uaccess 写命中 fork 的 COW 只读页**
+///   (`ESR=0x9600004F` 形态): ARM 的 `AP[2]` 对 EL1 同样生效, 该故障有确定解释与确定修复
+///   动作 ⇒ 由 `mm::page_fault::break_cow_for_kernel_uaccess` 破 COW 后返回重试;
+///   其判据不含任一"猜测"分支, 不满足即原样停机。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
@@ -842,6 +850,51 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
         core::arch::asm!("mrs {}, far_el1", out(reg) far);
         core::arch::asm!("mrs {}, elr_el1", out(reg) elr);
     }
+
+    // ── 缺页恢复射程: EL0 来源 + 翻译/权限故障 ────────────────────────────
+    // 两条判据缺一不可:
+    // - EL0 来源 (判据与下方终止分支同一写法): 内核态故障是内核缺陷, 不得当作
+    //   "某个进程的缺页"来处理.
+    // - 故障类: 只有翻译故障 (未映射 ⇒ 按需分页/栈增长) 与权限故障 (写保护 ⇒ COW)
+    //   有恢复语义; AF / 对齐 / 外部同步 / 取指权限保持原有处置 (见 `A64FaultClass`).
+    //
+    // `Fixed` 表示页表已按**真用户根** (`read_user_cr3_asm` 取本核 KPTI 槽的
+    // `user_ttbr0`, 而非当前 TTBR0 —— 后者此刻是本进程 EL1 视图根, 经它建映射会与
+    // 用户表分叉) 改好, 返回即重试. 其余 `PfResult` (含 `UffdWait`) 一律不恢复:
+    // uffd 的出口需"x86 侧标记 Blocked + 置 need_reschedule 后返回"的配套, aarch64
+    // 未接线, 故沿用本函数今日的终止语义 (非回归 —— 本架构此前不存在缺页恢复路径).
+    //
+    // 裸 UART 现场打印在恢复判定**之后**: 常规 COW 与匿名页首访都是高频事件, 若沿用
+    // "先打 `SYNC!` 再处置"的次序, 每次正常缺页都会刷控制台. `SYNC!` 行由此成为
+    // "未被恢复的同步异常"专属签名 (既有取证判据的语义不变).
+    //
+    // 残留边界: 若某类故障被判"已修复"而重试仍触发同一异常, 会形成缺页风暴 (无重试
+    // 计数限界) —— 上面 EL0 射程与下面核态 uaccess 支路同形。x86_64 侧同形, 两架构一并
+    // 作为单独立项处理, 本批不引入计数器机制.
+    if frame.spsr.trailing_zeros() >= 4
+        && crate::privileged::mm::page_fault::A64FaultClass::from_esr(esr).is_demand_pageable()
+    {
+        let pf_info = crate::privileged::mm::PageFaultInfo::from_esr(esr, far);
+        let action = crate::privileged::mm::handle_user_page_fault(pf_info);
+        if action == crate::privileged::mm::PfResult::Fixed {
+            return;
+        }
+    }
+
+    // ── 核态 uaccess 写命中 COW 只读 → 破 COW 后重试 ──────────────────────
+    // 为什么"内核态故障"也有恢复语义 (与上面"内核态故障是内核缺陷"的立场不冲突):
+    // ARM stage-1 的 AP[2] 同时管 EL1 与 EL0 的写权限, 页表里没有"EL0 只读 / EL1 可写"
+    // 这一组合 ⇒ fork 的 COW 写保护把内核写用户页的那条 store 一起挡了 (x86_64 无此形).
+    // 判据 (解码面四条 + 页侧三条: 用户 leaf / 描述符只读 / 本帧带 COW 待破标) 全在
+    // `mm::page_fault::break_cow_for_kernel_uaccess` 内单点收窄; 不满足即返回 false,
+    // 下面"打印现场 + 停机"的内核故障兜底一字未改.
+    //
+    // 该支路只改**已映射**页的权限位 (计数 1 就地恢复可写 / >1 复制新页), 与 EL0 侧 COW
+    // 同一入口, 故帧记账口径不分叉; 重试同样以帧内未改动的 `ELR` eret, 汇编侧无需改动.
+    if crate::privileged::mm::page_fault::break_cow_for_kernel_uaccess(esr, far) {
+        return;
+    }
+
     // 直接 UART 输出以确保能观察同步异常
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     unsafe {
@@ -881,11 +934,10 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     // `process_exit` 内部经 `SCHEDULER.exit` 末尾的 `schedule()` 切离本栈, 本函数
     // 因此不会返回; 其后的 `scheduler_yield` 与停机循环为防御性兜底。
     //
-    // SIMPLIFIED: 不按 ESR.EC/DFSC 细分故障语义 (翻译/权限/未定义指令一律同等对待),
-    // 也不向用户态投递具体信号; 影响: 用户态无法区分 SIGSEGV/SIGILL/SIGBUS (与
-    // x86_64 侧"终止而不投递具体信号"现状一致); 何时需扩展: 需要按 ESR 分类生成
-    // siginfo 并投递具体信号时 —— 信号帧构建与 sigreturn 恢复已就绪 (A-10),
-    // 尚缺的只是 ESR→signum 映射。
+    // SIMPLIFIED: 到这里的故障一律 terminate, 不按 ESR 生成 siginfo 投递具体信号;
+    // 影响: 用户态无法区分 SIGSEGV/SIGILL/SIGBUS (与 x86_64 侧"终止而不投递具体信号"
+    // 现状一致); 何时需扩展: 需要按 ESR→signum 映射投递时 —— 信号帧构建与 sigreturn
+    // 恢复已就绪 (A-10), 尚缺的只是 ESR→signum 映射.
     //
     // SPSR_EL1.M[3:0] == 0 (EL0t) ⟺ 低 4 位全零 ⟺ `trailing_zeros() >= 4`;
     // 该判据用于区分 EL0 来源与内核态同 EL 异常 (内核态异常必须停机而非杀进程).

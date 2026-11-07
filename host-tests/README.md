@@ -203,6 +203,7 @@ criterion_main!(benches);
 | `demand_paging_test.rs` | Demand Paging 模型 | P0-I-26 / B13-FL-01 |
 | `page_fault_vma_flags_test.rs` | 缺页 VMA flags | I-26 |
 | `copy_user_exception_test.rs` | exception table 缺失修复 | P0-I-36/37/38 |
+| `aarch64_cow_fault_wiring_test.rs` | aarch64 缺页/COW 恢复路径接线 (AP 极性 + ESR 射程 + 真用户根 + 重试出口 + 核态 uaccess 支路准入 + FRAME_COW 标记区生命周期) | #108 丙 |
 
 #### 驱动 / 中断
 
@@ -252,6 +253,7 @@ criterion_main!(benches);
 | `audit_comment_language_test.rs` | 注释语言一致性 audit | TD-24 / TD-25 |
 | `safety_boilerplate_test.rs` | SAFETY 注释 boilerplate | I-04 |
 | `ci_p62_lockdep_probe_leg_test.rs` | lockdep 构建面探针腿的接线形状锁（探针串同源 / 双向判据 / 双架构产物 / audit 挂路 / feature 转发） | P-62 #125 |
+| `ci_aarch64_cow_boot_leg_test.rs` | aarch64 缺页/COW 真跑腿腿的接线形状锁（判据串与 init 探针同源 / 四判据各有判红分支 / EC 双向与前缀同源 / 真镜像+架构自检+x86_64 显式拒绝 / audit 挂路） | #108 丙 |
 | `vacuous_needle_gate_test.rs` | 恒真反向针形态腿的接线形状锁（full 清单接线 / 九项记号与判白面 / 射程与三档退出码 / 自测真调与判白存量） | P-79 #147 |
 
 #### 杂项

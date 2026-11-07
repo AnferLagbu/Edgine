@@ -997,6 +997,27 @@ if [ "$MODE" = "full" ]; then
         else
             err "lockdep 构建面探针失败 (exit=$LOCKDEP_RC, 全量输出见 $LOCKDEP_EVIDENCE)"
         fi
+
+        # #108 丙: aarch64 缺页 / COW 恢复路径真跑腿 (专项脚本 scripts/aarch64_cow_boot_test.sh).
+        # 用户 2026-11-07 裁定 丙 —— 新增独立脚本腿接入 full 档步骤 4, **不改** qemu_boot_test.sh
+        # 的任何既有判据. 分工: host 侧形状锁 (aarch64_cow_fault_wiring_test.rs) 只钉源码形态,
+        # 位极性 / 表根 / 重试链 / 射程四类写反都能编译且 host 全绿; 本腿证机器码语义真在跑.
+        # 判据四条: `[COW] PASS` 三腿全过 + 无 `[COW] FAIL` + EC=0x25 同 EL 数据异常硬零
+        # (核态 uaccess 破 COW 支路) + EC=0x24 读数 >=1 且 KPTI 收割行在 (反向: 射程未放宽).
+        # 排在本步骤最后: 前面的 feature 腿已把镜像复原成默认构建, 本腿自带构建与自检.
+        COW_EVIDENCE="$EVIDENCE_DIR/audit_aarch64_cow_boot.log"
+        set +e
+        COW_OUT=$("$PROJECT_ROOT/scripts/aarch64_cow_boot_test.sh" 2>&1)
+        COW_RC=$?
+        set -e
+        printf '%s\n' "$COW_OUT" > "$COW_EVIDENCE"
+        printf '%s\n' "$COW_OUT" | tail -6
+        printf '   全量输出: %s\n' "$COW_EVIDENCE"
+        if [ "$COW_RC" -eq 0 ]; then
+            ok "aarch64 缺页/COW 恢复路径真跑腿: 四判据全符合 (#108 丙)"
+        else
+            err "aarch64 缺页/COW 真跑腿失败 (exit=$COW_RC, 全量输出见 $COW_EVIDENCE)"
+        fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi

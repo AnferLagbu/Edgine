@@ -605,9 +605,23 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
 /// ⇒ 父子写同一物理页 (隔离失效). 新判据以**持有者数** (`>= 2` ⇒ 复制) 纠正之.
 #[cfg(not(feature = "host-test"))]
 fn test_cow_child_write_isolated_from_parent() -> TestResult {
+    use crate::privileged::mm::Vmm;
     use crate::privileged::mm::cow::{clone_user_page_table_cow, cow_handle_fault};
     use crate::privileged::mm::mechanism::{vmm_destroy_page_table, vmm_get_physical_in_table};
     use crate::privileged::mm::pmm::get_pmm;
+
+    // 权限位极性判据 (#128): `(掩码, 置只读值, 恢复可写值)`, 两架构各自成文 ——
+    // x86_64 是**清** WRITABLE(bit1) 得只读, aarch64 是**置** AP[2](bit7) 得只读
+    // (`AP_BOTH_RW`=0b01 → `AP_BOTH_RO`=0b11, 见 `vmm_aarch64::page_flags_to_descriptor`).
+    // 旧 aarch64 分支按 x86 直觉写成"清 bit7", 极性反了 ⇒ fork 后父子 leaf 都可写,
+    // 缺页永不触发. 掩码含 bits[1:0] (描述符类型) 以同时钉住"仍是 4KB 页 leaf";
+    // aarch64 的 bit6 (AP[1]) 保持置位亦是 `is_user_leaf` 判据位 —— 清掉它会让拆除侧
+    // 的 `frame_dec` 集合与 fork 侧的 `frame_inc` 失配.
+    #[cfg(target_arch = "x86_64")]
+    let (perm_mask, perm_readonly, perm_writable) = (0b111u64, 0b101u64, 0b111u64);
+    #[cfg(target_arch = "aarch64")]
+    let (perm_mask, perm_readonly, perm_writable) =
+        (0b1100_0011u64, 0b1100_0011u64, 0b0100_0011u64);
 
     let pmm = get_pmm();
     let (parent, phys) = match cow_setup_mapped_page() {
@@ -629,6 +643,18 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
         vmm_get_physical_in_table(child, COW_TEST_VA) == phys.as_u64(),
         "fork 后子页表应先共享同一帧"
     );
+    let (Some(child_pte), Some(parent_pte)) = (
+        Vmm::get_pte_value(child, VirtAddr(COW_TEST_VA)),
+        Vmm::get_pte_value(parent, VirtAddr(COW_TEST_VA)),
+    ) else {
+        vmm_destroy_page_table(child);
+        vmm_destroy_page_table(parent);
+        return TestResult::Fail("fork 后读不到父子两侧 leaf 描述符");
+    };
+    check!(
+        child_pte & perm_mask == perm_readonly && parent_pte & perm_mask == perm_readonly,
+        "fork 必须把父子两侧 leaf 同时置为 EL0 只读 (权限位极性见上)"
+    );
 
     // 子进程写入 ⇒ COW fault (计数 >= 2 ⇒ 必须复制)
     let Some(new_phys) = cow_handle_fault(child, COW_TEST_VA) else {
@@ -647,6 +673,12 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
     check!(
         vmm_get_physical_in_table(child, COW_TEST_VA) == new_phys,
         "子页表应改指新帧"
+    );
+    // 恢复路径必须把新 leaf 写回"EL0 可写", 否则重试的那条写指令会无限再触发缺页.
+    check!(
+        Vmm::get_pte_value(child, VirtAddr(COW_TEST_VA))
+            .is_some_and(|pte| pte & perm_mask == perm_writable),
+        "COW 复制后子 leaf 必须恢复 EL0 可写"
     );
 
     // SAFETY: 两帧均由 PMM 分配, 内核直接映射可读同一字节偏移

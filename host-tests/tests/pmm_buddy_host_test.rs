@@ -11,8 +11,9 @@
 //! 3. buddy 合并: order-9 块 free 后再分配同大小块成功 (验证合并正确)
 //! 4. `reserve_after_kernel`: `init_bitmap` 预留区不可被分配
 //! 5. 帧持有计数语义 (cr3 所有权, `docs/plan/archive/cr3-lifetime-ownership.md` §3.1/§5.6):
-//!    alloc 置 1、inc/dec 配对、归零恰好一次、未归零不归还、未计数帧拒绝登记、
-//!    `should_reuse` 判据边界 (§8.1)、pfn 越界 fail-closed (MMIO 地址)
+//!    alloc 置 1、inc/dec 配对、归零恰好一次、未归零不归还、
+//!    `should_reuse` 判据边界 (§8.1)、pfn 越界 fail-closed (MMIO 地址)、
+//!    连续多帧块**逐页**计数与块归还 fail-closed 判据 (§3.2 甲口径, #108 丙 根因)
 //! 6. 连续范围查找/预留/回滚 (B03-LEGACY-002): `find_contig_range` 连续扫描、
 //!    `reserve_range` 重叠与契约拒绝、`unreserve_range` 回滚语义 (swap init/deinit 依赖)
 
@@ -210,15 +211,119 @@ fn pmm_frame_out_of_range_pfn_rejected() {
     assert!(!pmm.frame_dec(mmio), "越界物理地址不得报告归零 (防误释放)");
 }
 
+/// 最大 order 块 (order-9) 的块头页同样处于计数态 (§3.2 甲口径).
 #[test]
-fn pmm_frame_uncounted_block_rejected() {
+fn pmm_frame_block_page_is_counted() {
     let pmm = setup_pmm(0);
     let blk = pmm.alloc_pages(ORDER9_PAGES).expect("order-9 分配应成功");
-    // §3.2: 连续多帧块视为单一 holder, 不逐页计数 ⇒ 块内帧计数 0, 拒绝登记/注销
-    assert_eq!(pmm.frame_ref_count(blk), 0, "order > 0 的块首帧不逐页计数");
-    assert!(!pmm.frame_inc(blk), "未计数帧不得被登记持有者");
-    assert!(!pmm.frame_dec(blk), "未计数帧不得报告归零 (防止误销毁)");
+    // §3.2 甲口径 (2026-11-07 裁定): 块内每一页与单页帧同法计数 ⇒ 块头页计数 1,
+    // 可正常登记/注销共享持有者. 判别力: 改造前 `alloc_pages(order > 0)` 不登记任何
+    // 计数, 此处 `frame_inc` 返回 false ⇒ fork 的用户栈页共享登记被静默拒绝,
+    // COW 破页判据 (`frame_ref_count <= 1`) 误判唯一持有者 ⇒ 不复制即共享写.
+    assert_eq!(
+        pmm.frame_ref_count(blk),
+        1,
+        "order > 0 的块内页同样处于计数态"
+    );
+    assert!(pmm.frame_inc(blk), "块内页应可登记共享持有者");
+    assert_eq!(pmm.frame_ref_count(blk), 2);
+    assert!(!pmm.frame_dec(blk), "仍有持有者时不得报告归零");
+    assert!(pmm.frame_dec(blk), "最后持有者注销应报告归零");
     pmm.free_pages(blk, ORDER9_PAGES);
+}
+
+/// 连续多帧块**逐页**计数 (§3.2 甲口径): 块内每一页 (不只块头) 各自持有计数 1.
+///
+/// 判别力: 只在块头页计数的形态下, 非头页的 `frame_inc` 被 fail-closed 拒绝,
+/// 而用户栈正是 `alloc_pages` 发放的多页块 ⇒ fork 的栈页共享登记丢失 (本轮真缺陷).
+#[test]
+fn pmm_frame_block_counts_every_page() {
+    let pmm = setup_pmm(0);
+    let blk = pmm.alloc_pages(4).expect("order-2 分配应成功");
+    for i in 0..4usize {
+        let page = PhysAddr(blk.0 + (i as u64 * PAGE_SIZE));
+        assert_eq!(
+            pmm.frame_ref_count(page),
+            1,
+            "块内第 {i} 页应由分配者持有计数 1"
+        );
+        assert!(pmm.frame_inc(page), "块内第 {i} 页应可登记共享持有者");
+        assert_eq!(pmm.frame_ref_count(page), 2);
+    }
+    // 逐页注销共享方 (仍剩分配者), 再整块归还
+    for i in 0..4usize {
+        let page = PhysAddr(blk.0 + (i as u64 * PAGE_SIZE));
+        assert!(!pmm.frame_dec(page), "仍有分配者持有时不得报告归零");
+        assert_eq!(pmm.frame_ref_count(page), 1);
+    }
+    pmm.free_pages(blk, 4);
+    for i in 0..4usize {
+        assert_eq!(
+            pmm.frame_ref_count(PhysAddr(blk.0 + (i as u64 * PAGE_SIZE))),
+            0,
+            "整块归还后块内页计数应归零"
+        );
+    }
+}
+
+/// 块归还的 fail-closed 判据 (§3.2 甲口径): **块内任一页计数 > 1 ⇒ 整块不归还**.
+///
+/// 判别力: 改造前 `free_pages(order > 0)` 无条件 `do_free` ⇒ 仍有共享持有者的块
+/// 直接回 buddy 池, 下一手分配者会把别人在用的页当空闲页发放 (跨进程覆写).
+#[test]
+fn pmm_frame_block_release_fail_closed_when_shared() {
+    let pmm = setup_pmm(0);
+    let free_before = pmm.get_free_pages();
+    let blk = pmm.alloc_pages(4).expect("order-2 分配应成功");
+    assert_eq!(pmm.get_free_pages(), free_before - 4, "分配应取走 4 页");
+    // 块内**中间一页**被共享 (计数 1 -> 2): 真实形态 = fork 共享用户栈的一页
+    let shared_page = PhysAddr(blk.0 + 2 * PAGE_SIZE);
+    assert!(pmm.frame_inc(shared_page), "共享登记应成功");
+
+    // 持有者之一归还整块: 该页仍有两个持有者 ⇒ 判据必须拒绝归还
+    pmm.free_pages(blk, 4);
+    assert_eq!(
+        pmm.get_free_pages(),
+        free_before - 4,
+        "块内仍有共享持有者时整块不得归还"
+    );
+    assert_eq!(
+        pmm.frame_ref_count(shared_page),
+        1,
+        "拒绝归还的这次释放应已丢弃一个持有者"
+    );
+
+    // 最后一个持有者注销后再归还: 页数守恒, 块回池
+    assert!(pmm.frame_dec(shared_page), "最后持有者注销报告归零");
+    pmm.free_pages(blk, 4);
+    assert_eq!(
+        pmm.get_free_pages(),
+        free_before,
+        "块内每页持有者均归零后应整块归还"
+    );
+}
+
+/// 计数 0 的多页块维持既有"整块直接归还"语义 (§3.2 甲口径的豁免面).
+///
+/// 判别力: 把 fail-closed 判据写成"计数 0 也算持有者"即误伤启动预留帧与早期分配块
+/// 的合法归还 (该收紧曾被明确否掉, 见 docs/plan/net-e2e-tcp-echo-flakiness.md 台账).
+#[test]
+fn pmm_frame_block_release_with_zero_counts_still_frees() {
+    let pmm = setup_pmm(0);
+    let free_before = pmm.get_free_pages();
+    let blk = pmm.alloc_pages(4).expect("order-2 分配应成功");
+    // 逐页注销到计数 0 (块内页全为未计数态), 再归还
+    for i in 0..4usize {
+        let page = PhysAddr(blk.0 + (i as u64 * PAGE_SIZE));
+        assert!(pmm.frame_dec(page), "唯一持有者注销应报告归零");
+    }
+    assert_eq!(pmm.frame_ref_count(blk), 0);
+    pmm.free_pages(blk, 4);
+    assert_eq!(
+        pmm.get_free_pages(),
+        free_before,
+        "块内页计数均为 0 时应照常整块归还"
+    );
 }
 
 // ---- 连续范围查找/预留/回滚 (B03-LEGACY-002) ----

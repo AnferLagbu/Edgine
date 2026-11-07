@@ -123,6 +123,12 @@ pub extern "C" fn _start() -> ! {
     // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
     exec_probe();
 
+    // ── #108 丙: aarch64 缺页 / COW 恢复路径真链探针 ─────────────────────
+    // 必须在 busy 忙等子进程 fork 之前同步完成: 三腿都靠父进程 wait4 收割子进程,
+    // 且 `reuse` 腿要求子进程页表**已拆除** (持有计数回到 1) 才成立.
+    #[cfg(target_arch = "aarch64")]
+    cow_probe();
+
     // ── APS-05: 双核并发 EL0 验证 ─────────────────────────────────────────
     // fork 一个**不 yield** 的忙等子进程: 父子各自长期占用一核并停留在 EL0
     // (fork 的任务投送路径会把子进程推到空闲次核). 忙等期间只以极低频率发
@@ -1183,6 +1189,179 @@ fn exec_leg_child(leg: &'static [u8]) -> ! {
     print_dec(exec_rc);
     print_char(b'\n');
     proc_exit(3);
+}
+
+// ============================================================
+// #108 丙: aarch64 缺页 / COW 恢复路径真链探针
+// ============================================================
+//
+// 只在 aarch64 编译: 本探针验的正是这条链 —— EL0 的写保护/未映射故障经
+// `sync_exception_handler` → `handle_user_page_fault` 改正页表与帧持有计数 →
+// `eret` 重试**同一条**指令. x86_64 侧同语义由 `idt::handlers` 那条链与既有
+// QEMU 断言覆盖, 不在此重复.
+//
+// 三腿各打一条互不重叠的分支, 任一腿红即可定位缺口:
+// - `copy` : fork 把父子两侧 leaf 同时置只读且帧持有计数 = 2 ⇒ 子侧首次写入走
+//            **分配 + 复制 + 旧帧递减**那条分支. 子侧写后回读必须读到新值 (证明
+//            重试执行的就是那条写指令 —— 返回时若跳过一条指令, 回读仍是旧值);
+//            父侧回读必须保持旧值 (证明真分了新帧, 而非父子继续共用).
+// - `reuse`: 子进程被收割后其页表已拆除 ⇒ 计数回到 1, 父侧再写走**就地恢复可写**
+//            那条分支 (§8.1: 计数 <= 1 不复制). 与 `copy` 互补, 两分支各自钉住.
+// - `stack`: 递归下降到装载期预映射的 64KB 栈之外 ⇒ **未映射页的翻译故障** ⇒
+//            匿名按需分页 / 栈增长分支. 这条腿与权限故障那条覆盖 `is_demand_pageable`
+//            的两个类 (Translation 与 Permission), 缺一类即另一类无从验证.
+//
+// 失败处置口径: 缺页未恢复时故障进程被内核终止 (EL0 同步异常 → terminate, 退出码
+// = pid), 故每腿的风险动作都放进**子进程**, "被杀"落在子进程而非 init, 父进程只看
+// 退出码 —— 启动日志因此仍能把后续探针跑完, 红机不掩盖其它判据.
+
+/// 探针靶格的三个取值: 父预写 / 子写 / 子收割后父再写.
+#[cfg(target_arch = "aarch64")]
+const COW_MAGIC_PARENT: u64 = 0xC0C0_A800_0000_0001;
+#[cfg(target_arch = "aarch64")]
+const COW_MAGIC_CHILD: u64 = 0xC0C0_A800_0000_0002;
+#[cfg(target_arch = "aarch64")]
+const COW_MAGIC_LATE: u64 = 0xC0C0_A800_0000_0003;
+/// 深栈腿每帧字节数与下降层数: 二者之积必须严格大于装载期预映射的用户栈
+/// (`config::memory::USER_STACK_SIZE` = 64KB) 才碰得到未映射页. 取 400 × 512
+/// = 200KB. 单帧小于页, 故不引入编译器栈探针 (probestack) 依赖.
+#[cfg(target_arch = "aarch64")]
+const COW_DESCEND_FRAME_BYTES: usize = 512;
+#[cfg(target_arch = "aarch64")]
+const COW_DESCEND_STEPS: u32 = 400;
+/// 深栈腿写入的标记字节 (任意非零值, 只判写后读回一致).
+#[cfg(target_arch = "aarch64")]
+const COW_STACK_MARK: u8 = 0x5A;
+/// 语义不符时子进程的退出码. 与"被内核终止"的退出码 (pid) 同为非零 ⇒ 判定都是
+/// 红, 此处只区分诊断粒度, 不参与通过/失败判据.
+#[cfg(target_arch = "aarch64")]
+const COW_EXIT_MISMATCH: i32 = 11;
+#[cfg(target_arch = "aarch64")]
+const COW_EXIT_STACK: i32 = 12;
+
+/// aarch64 缺页/COW 恢复路径探针入口: 三腿全过才打 PASS.
+#[cfg(target_arch = "aarch64")]
+fn cow_probe() {
+    let (copy_ok, reuse_ok) = cow_fault_legs();
+    let stack_ok = cow_stack_leg();
+    if copy_ok && reuse_ok && stack_ok {
+        println("[COW] PASS: cow-copy+cow-reuse+stack-grow");
+    } else {
+        print("[COW] FAIL: copy=");
+        print_dec(i64::from(copy_ok));
+        print(" reuse=");
+        print_dec(i64::from(reuse_ok));
+        print(" stack=");
+        print_dec(i64::from(stack_ok));
+        print_char(b'\n');
+    }
+}
+
+/// `copy` + `reuse` 两腿共用一个靶格: 它位于**已映射的可写用户栈页**内, 故 fork
+/// 时必然被置只读并与子进程共享 (帧持有计数 2), 两侧的首次写入都只能靠缺页恢复.
+///
+/// 返回 `(copy_ok, reuse_ok)`.
+#[cfg(target_arch = "aarch64")]
+fn cow_fault_legs() -> (bool, bool) {
+    // 预写: 让该页在 fork 前确定已映射且可写 (不依赖首触语义).
+    let mut cell = COW_MAGIC_PARENT;
+    let cell_ptr = core::ptr::from_mut(&mut cell);
+
+    let child = fork();
+    if child == 0 {
+        cow_child_body(cell_ptr);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        return (false, false);
+    };
+
+    // `copy` 腿: 子进程按 wstatus == 0 才算"写生效 + 重试到同一条指令".
+    let mut status = 0i32;
+    let child_reaped = wait_pid_status(pid, &mut status);
+    let child_ok = child_reaped == i64::from(pid) && status == 0;
+    // 父侧回读必须仍是预写值: 子侧写入若落在共用帧上 (只读位没置上 / 极性写反),
+    // 这里就会读到 COW_MAGIC_CHILD.
+    // SAFETY: cell_ptr 指向本帧内的 u64, 父子各自持副本; volatile 读写防止编译器
+    // 把"写后读"折叠成常量 —— 折叠后本判据就不再证明那条写指令真的落了页.
+    let parent_intact = unsafe { core::ptr::read_volatile(cell_ptr) } == COW_MAGIC_PARENT;
+    let copy_ok = child_ok && parent_intact;
+
+    // `reuse` 腿: 子进程页表已随收割拆除 ⇒ 本 leaf 的持有计数回到 1, 父侧再写
+    // 走"就地恢复可写"分支 (不复制).
+    // SAFETY: 同上, cell_ptr 指向本帧内有效 u64.
+    unsafe { core::ptr::write_volatile(cell_ptr, COW_MAGIC_LATE) };
+    let reuse_ok = unsafe { core::ptr::read_volatile(cell_ptr) } == COW_MAGIC_LATE;
+
+    (copy_ok, reuse_ok)
+}
+
+/// 子进程侧: 读回父预写值 → 写入自己的值 → 立即回读 → 按结果定退出码.
+///
+/// 回读不等价 ⇒ 恢复后没重试到那条写指令 (或复制来的是错页); 首读不等价 ⇒ fork
+/// 没把内容交接到子侧. 两种都记 `[COW] FAIL` 并以非零码退出, 由父侧的收割判据兜住.
+#[cfg(target_arch = "aarch64")]
+fn cow_child_body(cell_ptr: *mut u64) -> ! {
+    // SAFETY: 本进程与父进程共用同一 VA 布局 (fork 语义), cell_ptr 是本帧内 u64
+    // 的地址; 用 volatile 读写见 `cow_fault_legs` 的同一理由 (防值折叠).
+    let seen = unsafe { core::ptr::read_volatile(cell_ptr) };
+    unsafe { core::ptr::write_volatile(cell_ptr, COW_MAGIC_CHILD) };
+    // SAFETY: 同上.
+    let after = unsafe { core::ptr::read_volatile(cell_ptr) };
+    let seen_ok = seen == COW_MAGIC_PARENT;
+    let after_ok = after == COW_MAGIC_CHILD;
+    if !(seen_ok && after_ok) {
+        print("[COW] FAIL: child seen_ok=");
+        print_dec(i64::from(seen_ok));
+        print(" after_ok=");
+        print_dec(i64::from(after_ok));
+        print_char(b'\n');
+        proc_exit(COW_EXIT_MISMATCH);
+    }
+    // 成功路径不打印: 本进程退出后父进程才汇总, 避免交叉行.
+    proc_exit(0);
+}
+
+/// `stack` 腿: 深栈风险动作放进子进程 —— 未恢复的翻译故障会终止本进程.
+#[cfg(target_arch = "aarch64")]
+fn cow_stack_leg() -> bool {
+    let child = fork();
+    if child == 0 {
+        if !descend_touch(COW_DESCEND_STEPS) {
+            print("[COW] FAIL: stack not retained");
+            print_char(b'\n');
+            proc_exit(COW_EXIT_STACK);
+        }
+        proc_exit(0);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        return false;
+    };
+    let mut status = 0i32;
+    wait_pid_status(pid, &mut status) == i64::from(pid) && status == 0
+}
+
+/// 递归下降 `depth` 层 (每帧 [`COW_DESCEND_FRAME_BYTES`] 字节), 每层写并回读
+/// 本帧末字节.
+///
+/// 前 [`COW_DESCEND_FRAME_BYTES`] × 若干层落在预映射栈内 (无故障), 越过 64KB 后
+/// 每次触及新页都是**未映射页的写**: 恢复路径必须建页并重试那条写指令, 否则本层
+/// 回读不等价. 回溯时再读一次, 判"扩展出的映射在深层返回前没有失效".
+///
+/// `#[inline(never)]` 是判据的一部分: 内联会把帧合流, 下降量不再由层数决定.
+#[cfg(target_arch = "aarch64")]
+#[inline(never)]
+fn descend_touch(depth: u32) -> bool {
+    let mut pad = [core::mem::MaybeUninit::<u8>::uninit(); COW_DESCEND_FRAME_BYTES];
+    let byte_ptr = core::ptr::from_mut(&mut pad[COW_DESCEND_FRAME_BYTES - 1]).cast::<u8>();
+    // SAFETY: pad 是本帧内的栈数组, byte_ptr 指向其界内元素; 该字节由本函数先写
+    // 后读, 不存在读取未初始化内容的路径. volatile 保证写真的落页 (否则编译器可
+    // 把读折叠成常量), 也保证该页确实被访问 —— 未映射时这正是缺页的来源.
+    unsafe { byte_ptr.write_volatile(COW_STACK_MARK) };
+    let first_ok = unsafe { byte_ptr.read_volatile() } == COW_STACK_MARK;
+    let deep_ok = depth == 0 || descend_touch(depth - 1);
+    // SAFETY: 同上, byte_ptr 仍指向本帧 (未返回) 内元素.
+    let retain_ok = unsafe { byte_ptr.read_volatile() } == COW_STACK_MARK;
+    first_ok && deep_ok && retain_ok
 }
 
 /// 用户态 IPv6 UDP 收发探针 (P6a SLAAC 联调).

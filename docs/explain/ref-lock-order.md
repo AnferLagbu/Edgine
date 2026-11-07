@@ -20,7 +20,8 @@
   RESET_AUDIT_LOG, DEVICE_SNAPSHOTS
 
 层级 1: PMM（物理内存）
-  PMM_SNAPSHOT, PhysicalMemoryManager::lock（buddy 分配器面）
+  PMM_SNAPSHOT, PhysicalMemoryManager::lock（buddy 分配器面；帧持有计数与 COW 待破标
+  FRAME_COW 簿记区同在 PhysicalMemoryManager::lock 这一面内，不另开锁类）
 
 层级 2: Slab / Kmalloc（内核堆）
   GENERAL_CACHES, GLOBAL_KMALLOC

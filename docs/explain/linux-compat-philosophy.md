@@ -22,7 +22,7 @@
 内核内部实现保持 Rust 纯净，借鉴 Linux 但融入 EG 自己风格：
 
 - **进程状态**：使用 7 状态模型（Created/Ready/Running/Blocked/Zombie/Terminated/Frozen），比 Linux 的 TASK_RUNNING/TASK_INTERRUPTIBLE/TASK_UNINTERRUPTIBLE 更简洁
-- **COW 实现**：简化为全局 BTreeMap 跟踪引用计数，不引入 Linux 的 per-VMA anon_vma + rmap 反向映射
+- **COW 实现**：引用计数收敛到 PMM 的帧持有计数面（按 pfn 索引，块内逐页计数），不再有独立的 COW 计数表，也不引入 Linux 的 per-VMA anon_vma + rmap 反向映射
 - **Page Cache**：固定大小哈希表（64 桶 x 16 条目），不引入 Linux 的 xarray/radix tree
 - **Swap**：固定数组 LRU，不引入 Linux 的 zone-based multi-LRU
 - **EEVDF 调度器**：保留 vruntime + BTreeSet/BTreeMap + 权重表核心机制，在 CFS 之上加合格前缀与虚拟截止期（`vd = vr + slice`），不引入 load_weight/load_avg 等复杂度

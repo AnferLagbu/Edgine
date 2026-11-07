@@ -190,6 +190,8 @@ pub trait MetaStore {
     fn setup_counts(&mut self, phys: u64, bytes: usize);
     /// 预置帧所有权载体: 清零 `bytes` 字节并记录区段 (`init_bitmap` 调用)
     fn setup_owner(&mut self, phys: u64, bytes: usize);
+    /// 预置 COW 待破标记载体: 清零 `bytes` 字节并记录区段 (`init_bitmap` 调用)
+    fn setup_cow(&mut self, phys: u64, bytes: usize);
 
     /// 置位 bitmap 第 `bit` 位 (载体未就绪/越界时静默跳过)
     fn bitmap_set(&self, bit: usize);
@@ -216,6 +218,11 @@ pub trait MetaStore {
     fn owner_mark_alloc(&self, idx: usize, site: u64);
     /// 写帧归还点 (保留分配点归因)
     fn owner_mark_release(&self, idx: usize, site: u64);
+
+    /// 读 COW 待破标记 (按 pfn 索引; 0 = 该帧未被写保护待破, 见 `frame_cow_mark` 契约)
+    fn cow_read(&self, idx: usize) -> u8;
+    /// 写 COW 待破标记 (载体未就绪/越界时静默跳过)
+    fn cow_write(&self, idx: usize, val: u8);
 
     /// 读 `FREE_LINKS[idx].prev` (存前驱块头 pfn, SENTINEL=无前驱)
     fn links_read_prev(&self, idx: usize) -> u64;
@@ -249,6 +256,8 @@ pub struct RawMetaStore {
     counts: Option<NonNull<u8>>,
     /// 帧所有权槽段虚拟地址 (按 pfn 1 个 [`OwnerIndex`])
     owner: Option<NonNull<OwnerIndex>>,
+    /// COW 待破标记段虚拟地址 (按 pfn 1 字节)
+    cow: Option<NonNull<u8>>,
     /// `FREE_LINKS` 段虚拟地址 (`FreeIndex` = prev/next 各 u64)
     links: Option<NonNull<FreeIndex>>,
     /// 宿主 `PhysicalMemoryManager.buddy_heads` 字段地址
@@ -267,6 +276,7 @@ impl RawMetaStore {
             meta: None,
             counts: None,
             owner: None,
+            cow: None,
             links: None,
             heads,
         }
@@ -310,6 +320,13 @@ impl MetaStore for RawMetaStore {
         // SAFETY: 同上; 清零 = 两槽均为"无记录"(0), 与帧尚未被 PMM 分配一致
         unsafe { raw::zero_memory(virt, bytes) };
         self.owner = NonNull::new(virt as usize as *mut OwnerIndex);
+    }
+
+    fn setup_cow(&mut self, phys: u64, bytes: usize) {
+        let virt = phys_to_virt(phys) as *mut u8;
+        // SAFETY: 同上; 清零 = 全部帧"未标记", 与帧尚未被 fork 写保护一致
+        unsafe { raw::zero_memory(virt, bytes) };
+        self.cow = NonNull::new(virt);
     }
 
     fn bitmap_set(&self, bit: usize) {
@@ -428,6 +445,23 @@ impl MetaStore for RawMetaStore {
         }
     }
 
+    fn cow_read(&self, idx: usize) -> u8 {
+        let Some(cow) = self.cow else {
+            // 载体未就绪 (bitmap 就绪前): 视为未标记
+            return 0;
+        };
+        // SAFETY: 调用方保证 idx < total_pages; cow 在 setup_cow 中建立
+        unsafe { *cow.as_ptr().add(idx) }
+    }
+
+    fn cow_write(&self, idx: usize, val: u8) {
+        let Some(cow) = self.cow else { return };
+        // SAFETY: 调用方保证 idx < total_pages; cow 在 setup_cow 中建立
+        unsafe {
+            *cow.as_ptr().add(idx) = val;
+        }
+    }
+
     fn links_read_prev(&self, idx: usize) -> u64 {
         let Some(links) = self.links else {
             return SENTINEL;
@@ -495,6 +529,8 @@ pub struct VecMetaStore {
     counts: RefCell<Option<Vec<u8>>>,
     /// 帧所有权槽载体 (每项 16 字节 = 分配点/归还点 各 u64)
     owner: RefCell<Option<Vec<u8>>>,
+    /// COW 待破标记载体 (按 pfn 1 字节)
+    cow: RefCell<Option<Vec<u8>>>,
     /// `FREE_LINKS` 载体 (每项 16 字节 = prev/next 各 u64)
     links: RefCell<Option<Vec<u8>>>,
     /// `buddy_heads` 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
@@ -512,6 +548,7 @@ impl VecMetaStore {
             meta: RefCell::new(None),
             counts: RefCell::new(None),
             owner: RefCell::new(None),
+            cow: RefCell::new(None),
             links: RefCell::new(None),
             heads: RefCell::new(Vec::new()),
         }
@@ -606,6 +643,11 @@ impl MetaStore for VecMetaStore {
         *self.owner.borrow_mut() = Some(vec![0u8; bytes]);
     }
 
+    fn setup_cow(&mut self, _phys: u64, bytes: usize) {
+        // 清零 = 全部帧未标记 (与生产载体一致)
+        *self.cow.borrow_mut() = Some(vec![0u8; bytes]);
+    }
+
     fn counts_read(&self, idx: usize) -> u8 {
         let counts = self.counts.borrow();
         counts
@@ -659,6 +701,20 @@ impl MetaStore for VecMetaStore {
             return;
         }
         o[off..off + 8].copy_from_slice(&site.to_le_bytes());
+    }
+
+    fn cow_read(&self, idx: usize) -> u8 {
+        let cow = self.cow.borrow();
+        cow.as_ref().and_then(|c| c.get(idx)).copied().unwrap_or(0)
+    }
+
+    fn cow_write(&self, idx: usize, val: u8) {
+        let mut cow = self.cow.borrow_mut();
+        if let Some(c) = cow.as_mut()
+            && let Some(slot) = c.get_mut(idx)
+        {
+            *slot = val;
+        }
     }
 
     fn links_read_prev(&self, idx: usize) -> u64 {
@@ -809,6 +865,9 @@ struct MetaLayout {
     owner_phys: u64,
     owner_bytes: usize,
     owner_pages: u64,
+    cow_phys: u64,
+    cow_bytes: usize,
+    cow_pages: u64,
     reserved_aligned: u64,
 }
 
@@ -927,8 +986,8 @@ impl PhysicalMemoryManager {
         self.update_stats();
     }
 
-    /// 计算 bitmap / buddy 元数据 / `FREE_LINKS` / 帧持有计数 / 帧所有权槽五区布局,
-    /// 并推进 `early_current`. 返回各区的物理地址与字节数.
+    /// 计算 bitmap / buddy 元数据 / `FREE_LINKS` / 帧持有计数 / 帧所有权槽 / COW 待破
+    /// 标记六区布局, 并推进 `early_current`. 返回各区的物理地址与字节数.
     fn plan_meta_layout(&self, reserved_after_kernel: u64) -> MetaLayout {
         let reserved_aligned = (reserved_after_kernel + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
         self.early_current
@@ -1006,6 +1065,22 @@ impl PhysicalMemoryManager {
             Ordering::Relaxed,
         );
 
+        // ---- COW 待破标记布局 (位于所有权槽区之后, 页对齐) ----
+        // 按 pfn 索引, 每页 1 字节: 0 = 未被写保护待破, 1 = fork 已置只读且尚未破.
+        // 与计数区并列而非复用其字节: 计数回答"几个持有者", 标记回答"这批持有者是否
+        // 处于写保护等待", 二者生命周期不同步 (破 COW 的复制路径计数 -1 但标记必须
+        // 留给其余持有者). 语义与契约见 `frame_cow_mark` / `frame_cow_clear`.
+        let cow_bytes = total_pages;
+        let cow_phys = (owner_phys + owner_pages * PAGE_SIZE + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+        let cow_pages =
+            cow_bytes.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE)) as u64;
+
+        // 将 early_current 推过 COW 标记区
+        self.early_current.store(
+            cow_phys + cow_pages * PAGE_SIZE + PAGE_SIZE,
+            Ordering::Relaxed,
+        );
+
         MetaLayout {
             total_pages,
             bitmap_words,
@@ -1023,11 +1098,14 @@ impl PhysicalMemoryManager {
             owner_phys,
             owner_bytes,
             owner_pages,
+            cow_phys,
+            cow_bytes,
+            cow_pages,
             reserved_aligned,
         }
     }
 
-    /// 建立元数据载体并把五区指针交给 `MetaStoreImpl`, 随后打印各区日志.
+    /// 建立元数据载体并把六区指针交给 `MetaStoreImpl`, 随后打印各区日志.
     fn install_meta_store(&self, layout: &MetaLayout) {
         // H-04 (2026-09-09): 三区内存预置统一经 MetaStore 载体 —
         // 生产自动创建 RawMetaStore (基于 phys + KERNEL_BASE 裸指针, 行为不变),
@@ -1056,6 +1134,7 @@ impl PhysicalMemoryManager {
         store.setup_links(layout.free_links_phys, layout.free_links_bytes);
         store.setup_counts(layout.counts_phys, layout.counts_bytes);
         store.setup_owner(layout.owner_phys, layout.owner_bytes);
+        store.setup_cow(layout.cow_phys, layout.cow_bytes);
         self.bitmap_size.set(layout.bitmap_words);
         klog_pmm!(
             "[PMM] Buddy meta: {} B at 0x{:X}",
@@ -1080,9 +1159,15 @@ impl PhysicalMemoryManager {
             phys_to_virt(layout.owner_phys),
             layout.owner_pages
         );
+        klog_pmm!(
+            "[PMM] FRAME_COW: {} B at 0x{:X} ({} pages)",
+            layout.cow_bytes,
+            phys_to_virt(layout.cow_phys),
+            layout.cow_pages
+        );
     }
 
-    /// 在 bitmap 中标记内核镜像 / 预留区 / 元数据五区为已用, 返回预留总页数.
+    /// 在 bitmap 中标记内核镜像 / 预留区 / 元数据六区为已用, 返回预留总页数.
     fn mark_reserved_pages(&self, layout: &MetaLayout) -> usize {
         // ---- 在 bitmap 中标记 reserved 区 ----
         let kernel_end_val = self.kernel_end.get();
@@ -1142,6 +1227,15 @@ impl PhysicalMemoryManager {
             crate::privileged::glue::usize_from_u64(phys_to_page(layout.owner_phys));
         for i in owner_start_page
             ..(owner_start_page + crate::privileged::glue::usize_from_u64(layout.owner_pages))
+                .min(layout.total_pages)
+        {
+            self.set_bit(i);
+        }
+
+        // 标记 COW 待破标记页已用
+        let cow_start_page = crate::privileged::glue::usize_from_u64(phys_to_page(layout.cow_phys));
+        for i in cow_start_page
+            ..(cow_start_page + crate::privileged::glue::usize_from_u64(layout.cow_pages))
                 .min(layout.total_pages)
         {
             self.set_bit(i);
@@ -1313,9 +1407,9 @@ impl PhysicalMemoryManager {
 
     /// 登记一个帧持有者 (共享方使用).
     ///
-    /// # 契约 (§3.2 大页计数语义)
-    /// - 只接受**单页帧** (由 `alloc_page` / `alloc_pages(1)` 产生, 计数 >= 1);
-    ///   连续多帧块 (order > 0) 内页未计数, 传入时返回 `false` (拒绝登记).
+    /// # 契约 (§3.2 甲口径: 单页帧与连续多帧块的页同法计数)
+    /// - 接受任何**处于计数态**的页: `alloc_page` 与 `alloc_pages` 发放的页计数均 >= 1
+    ///   (后者块内逐页登记, 见 `frame_counts_mark_block`).
     /// - **pfn 越界 fail-closed**: 非 PMM 分配的物理地址 (设备/MMIO 映射) 不在计数区
     ///   范围内, 拒绝登记 (否则会越界读写计数区).
     /// - 返回 `true` 表示计数已 +1; `false` 表示帧未处于计数态 (契约违反, 计数不变).
@@ -1384,12 +1478,92 @@ impl PhysicalMemoryManager {
         count
     }
 
+    /// 给单页帧打 **COW 待破标记** —— 语义 = "fork 已把引用该帧的用户 leaf 置只读,
+    /// 尚未破 COW".
+    ///
+    /// 为什么需要它 (x86_64 不需要): ARM stage-1 的 `AP[2]` 对 EL1 同样生效, 页表里
+    /// 没有"EL0 只读 / EL1 可写"组合 ⇒ 内核写用户页的 store 也会被 fork 的写保护挡住
+    /// (见 `mm::cow::mark_cow_readonly`), 故核态缺页支路必须能分辨"只读"到底是 COW
+    /// 还是真·只读映射. 页表描述符本身分辨不了 (`AP_BOTH_RO` 与 COW 标记同形), 帧计数
+    /// 也分辨不了 (子进程退出后计数回到 1, 父侧 leaf 仍是 COW 待破) ⇒ 单列一份标记.
+    ///
+    /// # 契约
+    /// - 值域与 [`Self::frame_inc`] 同一区 (`frame_counts_pfn` 同一边界): 越界地址
+    ///   (MMIO 等非 PMM 映射) **fail-closed** 返回 `false`, 不写元数据.
+    /// - 幂等: 重复置位仍为 1.
+    /// - 生命周期由三处闭合: fork 置位 (`mm::cow` 的 COW 标记分支) / 就地恢复可写时
+    ///   清位 (`cow_handle_fault_locked` 的 `should_reuse` 支) / 帧归还与再分配时清位
+    ///   (`do_free` / `do_alloc`).
+    pub fn frame_cow_mark(&self, addr: PhysAddr) -> bool {
+        if addr.0 == 0 {
+            return false;
+        }
+        let flags = self.acquire_lock();
+        let ok = match self.frame_counts_pfn(addr) {
+            Some(pfn) => {
+                self.frame_cow_write(pfn, 1);
+                true
+            }
+            None => false,
+        };
+        self.release_lock(flags);
+        ok
+    }
+
+    /// 清除单页帧的 COW 待破标记 (帧归还 / 就地恢复可写). 越界与未就绪均为空操作.
+    pub fn frame_cow_clear(&self, addr: PhysAddr) {
+        if addr.0 == 0 {
+            return;
+        }
+        let flags = self.acquire_lock();
+        if let Some(pfn) = self.frame_counts_pfn(addr) {
+            self.frame_cow_write(pfn, 0);
+        }
+        self.release_lock(flags);
+    }
+
+    /// 观测单页帧是否带 COW 待破标记 (缺页恢复支路的准入判据, 见
+    /// `mm::page_fault::break_cow_for_kernel_uaccess`).
+    #[must_use]
+    pub fn frame_cow_test(&self, addr: PhysAddr) -> bool {
+        if addr.0 == 0 {
+            return false;
+        }
+        let flags = self.acquire_lock();
+        let marked = self
+            .frame_counts_pfn(addr)
+            .is_some_and(|pfn| self.frame_cow_read(pfn) != 0);
+        self.release_lock(flags);
+        marked
+    }
+
+    /// 读 COW 待破标记 (载体未就绪时返回 0 = 未标记). 调用方须持 PMM 锁.
+    #[inline]
+    fn frame_cow_read(&self, pfn: usize) -> u8 {
+        self.meta_store().map_or(0, |store| store.cow_read(pfn))
+    }
+
+    /// 写 COW 待破标记 (载体未就绪时静默跳过). 调用方须持 PMM 锁.
+    #[inline]
+    fn frame_cow_write(&self, pfn: usize, val: u8) {
+        if let Some(store) = self.meta_store() {
+            store.cow_write(pfn, val);
+        }
+    }
+
     /// 帧计数索引前置校验: 返回 pfn; 越界 (非 PMM 分配的物理地址, 如 MMIO 设备
     /// 映射) 返回 `None` ⇒ 调用方 fail-closed (不计数, 也不报告归零).
     #[inline]
     fn frame_counts_pfn(&self, addr: PhysAddr) -> Option<usize> {
         let pfn = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
-        (pfn < crate::privileged::glue::usize_from_u64(self.get_total_pages())).then_some(pfn)
+        self.counts_in_range(pfn).then_some(pfn)
+    }
+
+    /// pfn 是否落在计数区内 (与 [`Self::frame_counts_pfn`] 同一边界口径: 计数区按
+    /// `total_pages` 逐页一槽, 越界即非 PMM 管理的物理地址).
+    #[inline]
+    fn counts_in_range(&self, pfn: usize) -> bool {
+        pfn < crate::privileged::glue::usize_from_u64(self.get_total_pages())
     }
 
     /// 读帧持有计数 (载体未就绪时返回 0 = 未计数)
@@ -1411,7 +1585,8 @@ impl PhysicalMemoryManager {
     /// 返回 `true` = 可归还 PMM:
     /// - 计数 >= 2: 递减后返回 `false` (仍有持有者, 不归还);
     /// - 计数 == 1: 递减到 0 并返回 `true`;
-    /// - 计数 == 0: 未计数帧 (连续多帧块内页 / reserved 页), 保持既有"直接归还"语义.
+    /// - 计数 == 0: 不处于计数态的帧 (启动预留页 / 计数载体就绪前的早期分配),
+    ///   保持既有"直接归还"语义.
     #[inline]
     fn frame_counts_release(&self, pfn: usize) -> bool {
         let cur = self.frame_counts_read(pfn);
@@ -1424,7 +1599,48 @@ impl PhysicalMemoryManager {
         }
     }
 
-    /// 分配连续 `count` 页 (整块视为单一持有者, 见 [`Self::alloc_pages`] 内 SIMPLIFIED 注).
+    /// 块内**逐页**登记「分配者持有一份」(计数 1) —— §3.2 甲口径 (2026-11-07 裁定).
+    ///
+    /// 连续多帧块的每一页与单页帧同法参与计数面, 故 `frame_inc` 能登记块内页:
+    /// 用户栈即由 `alloc_pages` 发放, 其页此前恒为计数 0 ⇒ fork 的共享登记被
+    /// fail-closed 拒绝 ⇒ COW 破页判据 (`frame_ref_count <= 1`) 误判"唯一持有者"
+    /// ⇒ 就地恢复可写、父子继续共用同一帧 (跨进程覆写).
+    ///
+    /// 调用方须持 PMM 锁. 越界页 (不在计数区) 静默跳过, 与 `frame_counts_write` 同口径.
+    #[inline]
+    fn frame_counts_mark_block(&self, base_pfn: usize, npages: usize) {
+        for i in 0..npages {
+            let pfn = base_pfn + i;
+            if self.counts_in_range(pfn) {
+                self.frame_counts_write(pfn, 1);
+            }
+        }
+    }
+
+    /// 块内**逐页**丢弃一个持有者, 返回是否可整块归还 —— §3.2 甲口径的 fail-closed 判据:
+    /// **块内任一页计数 > 1 ⇒ 整块不归还** (宁可让块滞留在分配态, 也不把仍有持有者的
+    /// 块交回 buddy 被二次发放).
+    ///
+    /// 计数 0 的页 (启动预留 / 早期分配) 递减为空操作且不计为持有者, 故此类块维持既有
+    /// "整块直接归还"语义, 不因收紧判据而泄漏.
+    ///
+    /// 调用方须持 PMM 锁.
+    #[inline]
+    fn frame_counts_release_block(&self, base_pfn: usize, npages: usize) -> bool {
+        let mut still_shared = false;
+        for i in 0..npages {
+            let pfn = base_pfn + i;
+            if !self.counts_in_range(pfn) {
+                continue;
+            }
+            let cur = self.frame_counts_read(pfn);
+            self.frame_counts_write(pfn, cur.saturating_sub(1));
+            still_shared |= cur > 1;
+        }
+        !still_shared
+    }
+
+    /// 分配连续 `count` 页 (块内逐页计入持有计数, 归还判据见 `frame_counts_release_block`).
     #[track_caller]
     pub fn alloc_pages(&self, count: usize) -> Option<PhysAddr> {
         if count == 0 {
@@ -1468,18 +1684,12 @@ impl PhysicalMemoryManager {
         let result = self.do_alloc(order);
         match result {
             Some(addr) => {
-                // 单页帧 (order == 0) 与 alloc_page 同语义: 分配者持有计数 1.
-                // 连续多帧块不逐页计数 (§3.2: 块视为单一 holder, 归还走 free_pages).
-                // SIMPLIFIED: 块首计数未实装; 影响面: order > 0 的块内页计数恒为 0,
-                // 其归还/共享不经计数面 (与既有语义一致); 何时需扩展: 出现大页共享
-                // (如透明大页拆分共享) 时按逐页计数扩展, 契约入口 frame_inc/frame_dec 不变.
-                if order == 0 {
-                    self.frame_counts_write(
-                        crate::privileged::glue::usize_from_u64(phys_to_page(addr.0)),
-                        1,
-                    );
-                }
-                // 块头页记归属 (与计数面同粒度: 块内页不逐页追踪)
+                // §3.2 甲口径: 块内每一页都登记持有计数 1 (order == 0 时即单页帧,
+                // 与 `alloc_page` 同语义).
+                let base_pfn = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
+                self.frame_counts_mark_block(base_pfn, npages);
+                // 归属面按块头页记录 (分配点归因按块; 归还侧的持有判据已逐页, 见
+                // `frame_counts_release_block`).
                 self.note_frame_alloc(addr);
                 self.total_allocs
                     .fetch_add(npages as u64, Ordering::Relaxed);
@@ -1510,9 +1720,13 @@ impl PhysicalMemoryManager {
                 self.total_frees.fetch_add(1, Ordering::Relaxed);
             }
         } else {
-            // 连续多帧块: 不逐页计数, 整块归还为单一 holder 语义
-            self.do_free(addr, order);
-            self.total_frees.fetch_add(npages as u64, Ordering::Relaxed);
+            // 连续多帧块: 块内逐页丢弃一个持有者, 全部归零才整块归还 (fail-closed 判据
+            // 与口径见 `frame_counts_release_block`).
+            let base_pfn = crate::privileged::glue::usize_from_u64(phys_to_page(addr.0));
+            if self.frame_counts_release_block(base_pfn, npages) {
+                self.do_free(addr, order);
+                self.total_frees.fetch_add(npages as u64, Ordering::Relaxed);
+            }
         }
         self.release_lock(flags);
     }
@@ -1688,8 +1902,9 @@ impl PhysicalMemoryManager {
     /// 分配大页 (按 `size_type` 分派到 `alloc_page` / `alloc_pages`).
     ///
     /// 标 `track_caller` 使 `Size4K` / `Size2M` 分支的所有权归因落到真正的分配者;
-    /// `Size1G` 走 `buddy_direct_alloc_aligned` 直分, 不逐页计数亦不记归属 (同
-    /// `alloc_pages` 的大块语义).
+    /// `Size1G` 走 `buddy_direct_alloc_aligned` 直分, 不逐页计数亦不记归属 (计数面按
+    /// 块逐页登记是 `alloc_pages` 的语义, 1GB = 262144 页的登记成本无真实使用者 ⇒
+    /// 该形态帧整体保持"未计数", 归还侧 fail-closed 见 `frame.rs` 的 `MAX_BUDDY_ORDER` 界).
     #[track_caller]
     pub fn alloc_huge_page(&self, size_type: PageSize) -> Option<PhysAddr> {
         match size_type {
@@ -2181,7 +2396,11 @@ impl PhysicalMemoryManager {
         let addr = page_to_phys(pfn);
         let npages = 1u64 << u64::from(order);
         for i in 0..crate::privileged::glue::usize_from_u64(npages) {
-            self.set_bit(crate::privileged::glue::usize_from_u64(pfn) + i);
+            let bit = crate::privileged::glue::usize_from_u64(pfn) + i;
+            self.set_bit(bit);
+            // 分配即无 COW 待破标: 标记只在 fork 置只读时产生, 归还侧 (`do_free`) 已
+            // 清一次, 此处再清一次把"新持有者不继承上一手的标记"钉成分配侧不变式.
+            self.frame_cow_write(bit, 0);
         }
         self.stats_alloc(npages);
         Some(PhysAddr(addr))
@@ -2236,6 +2455,14 @@ impl PhysicalMemoryManager {
             crate::privileged::glue::usize_from_u64(pfn),
             core::ptr::from_ref(Location::caller()).cast::<u8>() as u64,
         );
+
+        // COW 待破标记随帧归还一并清除: 标记的含义是"仍有一张被写保护的用户 leaf 指向
+        // 该帧", 帧回到 buddy 后该前提不再成立 —— 不清则下一手分配者可能把"只读 + 带标"
+        // 的映射误判成 COW 页, 复制一份无主数据.
+        let cow_npages = 1u64 << u64::from(order);
+        for i in 0..crate::privileged::glue::usize_from_u64(cow_npages) {
+            self.frame_cow_write(crate::privileged::glue::usize_from_u64(pfn) + i, 0);
+        }
 
         if !self.buddy_ready.load(Ordering::Acquire) {
             let npages = 1u64 << u64::from(order);

@@ -80,7 +80,7 @@ impl Frame {
 
     /// 登记一个额外持有者 (如被页表映射、DMA 缓冲引用)。
     ///
-    /// 返回 `false` = 帧不处于计数态 (未计数块 / MMIO 地址), 未登记成功。
+    /// 返回 `false` = 帧不处于计数态 (MMIO 地址 / 1GB 直分大块), 未登记成功。
     #[inline]
     #[must_use]
     pub fn inc_ref(&self) -> bool {
@@ -143,9 +143,12 @@ impl Frame {
 impl Clone for Frame {
     /// 派生一个共享同一物理帧的句柄 (持有者 +1)。
     ///
-    /// 帧不处于计数态 (MMIO / 未计数块 / 计数已归零) 时 **硬失败**：
+    /// 帧不处于计数态 (MMIO / 计数已归零 / 1GB 直分大块) 时 **硬失败**：
     /// 静默产生未计数句柄会让后续 `Drop` 把仍被使用的物理帧计入零。
     fn clone(&self) -> Self {
+        // SIMPLIFIED: 多页块句柄的 Clone 只在**块头页** +1 (Drop 侧按整块判据归还);
+        // 影响面: 块内其余页的持有者数少计 1, 但整块归还的 fail-closed 判据仍由块头页
+        // 把住 ⇒ 不会提前归还; 何时需扩展: 出现多页块句柄多手共享的真实调用点时改逐页登记.
         assert!(
             crate::privileged::mm::api::frame_inc(self.phys),
             "Frame::clone 要求帧处于持有计数态 (分配后未归零)"
@@ -173,8 +176,9 @@ impl Drop for Frame {
                     api::pmm_free_page_phys(self.phys);
                 }
             } else if self.order <= pmm::MAX_BUDDY_ORDER {
-                // 连续多帧块: 块内页不参与计数 (见 pmm::alloc_pages 的 SIMPLIFIED 契约),
-                // 整块视为单一持有者, 按阶整块归还
+                // 连续多帧块: 块内逐页计数 (§3.2 甲口径), 整块归还的判据是「块内每页
+                // 持有者均归零」, 任一页仍有持有者则整块不归还 (fail-closed 实现见
+                // `pmm::frame_counts_release_block`)
                 api::pmm_free_pages_phys(self.phys, 1usize << self.order);
             }
             // SIMPLIFIED: order > MAX_BUDDY_ORDER (1GB 大页, 经 alloc_huge(Size1G) 构造)

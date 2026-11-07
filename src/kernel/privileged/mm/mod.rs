@@ -21,10 +21,12 @@ unsafe extern "C" {
     static USER_CR3_SAVE_ASM: AtomicU64;
 }
 
-// 读取汇编层保存的用户 CR3 (page fault handler 使用)
+// 读取中断入口保存的用户 CR3 (page fault handler 使用)
 // x86_64: 从 isr.asm .bss 中的 USER_CR3_SAVE 读取, 汇编在 KPTI 切换前写入.
-// aarch64: 回退到硬件 CR3 (aarch64 KPTI 实现不同).
-/// 读取中断入口保存的用户态 CR3 (x86_64); aarch64 回退到当前页表.
+// aarch64: 读本核 KPTI 槽的 user_ttbr0 —— 异常上下文里硬件 TTBR0 已被精化为本进程
+// EL1 视图根 (L0 副本 + 下级表共享), 按视图根建新映射不会回写用户表, 故不能用
+// get_current_pml4() (与 x86_64 侧 user_root_for_kernel_view 的同一口径).
+/// 读取中断入口保存的用户态页表根 (x86_64 CR3 / aarch64 TTBR0).
 #[must_use]
 pub fn read_user_cr3_asm() -> u64 {
     // 符号桩化 (host-test): host 无 isr.asm 的 USER_CR3_SAVE 符号且不执行中断
@@ -41,7 +43,14 @@ pub fn read_user_cr3_asm() -> u64 {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        vmm::get_current_pml4()
+        // 槽位为 0 (尚未进入过用户态, 或上电路径未登记) 时回退硬件 TTBR0,
+        // 与改造前的取值一致, 不新增失效模式。
+        let user_ttbr0 = kpti::kpti_get_user_ttbr0();
+        if user_ttbr0 != 0 {
+            user_ttbr0
+        } else {
+            vmm::get_current_pml4()
+        }
     }
 }
 

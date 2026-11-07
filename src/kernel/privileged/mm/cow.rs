@@ -5,10 +5,17 @@
 //! `fork()` 时父子进程**共享**物理页，均标记为只读。
 //! 任意一方写入时触发 #PF → COW handler → 复制物理页。
 //!
-//! **架构边界**：置只读依赖缺页恢复路径。`x86_64` 侧完整；aarch64 无 page-fault
-//! 处理器（EL0 非 SVC 同步异常径直停机），故 aarch64 的 `fork` **只登记帧持有计数、
-//! 不置只读**（保持既有"共享写"语义）。补齐 aarch64 缺页路径是内核工程必需项，
-//! 见 [cr3-lifetime-ownership.md](../../docs/plan/archive/cr3-lifetime-ownership.md) D-13 登记项。
+//! **架构边界**：置只读依赖缺页恢复路径。两架构现均在位 —— `x86_64` 走
+//! `idt::handlers::PageFaultHandler`，aarch64 走
+//! `arch::aarch64::exception::sync_exception_handler`（EL0 权限故障 → 本模块
+//! `cow_handle_fault` → 返回原 `ELR` 重试那条写指令），故 fork **父子两侧都置只读**。
+//! 这推翻 docs/plan/archive/cr3-lifetime-ownership.md 裁定 7 的临时口径（"aarch64 只
+//! 登记帧持有计数、不置只读"，其唯一依据是本架构当时没有缺页处理器）。
+//!
+//! aarch64 侧另需一条**核态**恢复支路：ARM 的 `AP[2]` 对 EL1 同样生效（无"EL0 只读 / EL1
+//! 可写"组合），故写保护会把内核写用户页的 store 一起挡住，由
+//! `mm::page_fault::break_cow_for_kernel_uaccess` 破 COW 后重试闭合。缺它则 fork 之后任何
+//! 核态 uaccess 写都成了内核故障。
 //!
 //! ## 引用计数
 //!
@@ -30,13 +37,26 @@
 use super::vmm;
 use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, is_user_leaf};
 
-/// COW 标记: **用户可写** leaf → 只读; 其余情形**原值返回** (`x86_64` 非用户可写页,
-/// 以及 aarch64 全量).
+/// COW 标记: **用户可写** leaf → 只读; 其余情形**原值返回** (用户位未置、已只读、
+/// 非 leaf 描述符).
 ///
-/// 置只读的前提是"首次写入能被缺页处理器复制恢复". aarch64 无 page-fault 处理器
-/// (EL0 非 SVC 同步异常径直停机), 置只读会让 fork 后的首次写入挂死系统, 故 aarch64
-/// 分支恒返回原值 —— 保持既有"共享写"语义 (见 `docs/plan/archive/cr3-lifetime-ownership.md`
-/// D-13 详情与登记项).
+/// 置只读的前提是"首次写入能被缺页处理器复制恢复" —— 两架构的缺页恢复路径都在位
+/// (x86_64 `idt::handlers::PageFaultHandler`, aarch64 `arch::aarch64::exception::sync_exception_handler`).
+///
+/// 权限编码两架构不同形, 但都是"可写 → 只读"这一个方向:
+/// - `x86_64`: WRITABLE(bit1) 清零, USER(bit2) 保持. ring0 的写忽略 PTE 的 WRITABLE 位,
+///   故置只读**只**影响用户态写 —— 内核 `copy_to_user` 一类照常成功.
+/// - `aarch64`: AP[2](bit7) **置位** —— 用户可写 leaf 是 `AP_BOTH_RW`(`AP[2:1]=0b01`,
+///   即 bit6 置 / bit7 清), 只读是 `AP_BOTH_RO`(`0b11`, bit6 与 bit7 都置). 见
+///   `mm/vmm_aarch64.rs` 的 `AP_*` 常量与 `page_flags_to_descriptor`.
+///   bit6 必须保持置位: 它既是 EL0 可读性的条件, 也是 `is_user_leaf` 的判据位 ——
+///   清掉 bit6 会把该 leaf 读成"非用户页", 拆除侧的 `frame_dec` 集合随之失配.
+///
+/// **aarch64 的连带后果** (选 AP[2] 这条极性的代价, 必须与缺页侧配套才成立): ARM 没有
+/// "EL0 只读 / EL1 可写"的 AP 组合, `AP[2:1]=0b11` 对 **EL1** 同样是只读 ⇒ 内核写用户页
+/// 的那条 store 也会权限故障 (`ESR=0x9600004F`, ELR 落在 `write_struct_to_user` 一类).
+/// 该形态由 `mm::page_fault::break_cow_for_kernel_uaccess` 破 COW 后重试闭合; 缺了它,
+/// fork 之后的任何核态写用户页都是内核故障.
 #[inline]
 fn mark_cow_readonly(entry: u64) -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -50,10 +70,17 @@ fn mark_cow_readonly(entry: u64) -> u64 {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        // SIMPLIFIED: aarch64 无缺页处理器 ⇒ 不置只读, 仅登记帧持有计数;
-        // 影响面: fork 后父子为"共享写"而非真 COW, 跨进程写竞争需用户态自行避免;
-        // 何时扩展: 补齐 aarch64 缺页/COW 恢复路径后, 此分支改为清 AP[2] (bit7).
-        entry
+        // bits[1:0] = 0b11 为 4KB page leaf 描述符; bit6 = AP[1], bit7 = AP[2].
+        // 仅"用户可写"(bit6 置且 bit7 清) 需要置只读; 其余形态 (内核独占 0b00、
+        // 已只读 0b11、无效/表描述符) 原值返回.
+        let is_page_leaf = entry & 0b11 == 0b11;
+        let ap1_set = entry & (1 << 6) != 0;
+        let ap2_clear = entry & (1 << 7) == 0;
+        if is_page_leaf && ap1_set && ap2_clear {
+            entry | (1 << 7)
+        } else {
+            entry
+        }
     }
 }
 
@@ -149,11 +176,16 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
                 return;
             }
             // fork: 父子各持引用 (每 leaf 一次), PMM 帧持有计数 +1
-            pmm.frame_inc(PhysAddr(parent_pte & 0x000F_FFFF_FFFF_F000));
+            let leaf_phys = PhysAddr(parent_pte & 0x000F_FFFF_FFFF_F000);
+            pmm.frame_inc(leaf_phys);
 
-            // 仅当 COW 标记确有变化时才写回 (aarch64 分支恒为原值 ⇒ 两侧都不写)
+            // 仅当 COW 标记确有变化时才写回 (已只读页与非可写 leaf 不写)
             let ro_entry = mark_cow_readonly(parent_pte);
             if ro_entry != parent_pte {
+                // 与写保护同步登记"本帧待破": aarch64 的 AP[2] 对 EL1 同样生效, 核态
+                // 缺页支路只能靠这份标记把 COW 只读与真·只读映射分开 (判据见
+                // `mm::page_fault::break_cow_for_kernel_uaccess`).
+                pmm.frame_cow_mark(leaf_phys);
                 // SAFETY: 两槽位均为有效页表页内的 4KB leaf 槽位; 本函数外层持
                 // VMM_LOCK, 这两个槽位由本函数独占访问
                 unsafe {
@@ -484,6 +516,9 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
         // 唯一引用: 直接恢复 WRITABLE 位, 无需分配新页
         let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
         super::Vmm::map_page_in_table_locked(pml4, VirtAddr(page_aligned), old_phys, flags);
+        // 计数 <= 1 ⇒ 不存在"另一个仍被写保护的持有者", 待破标记就此了结.
+        // 复制支路 (下面) **不**清标: 旧帧还有别的持有者, 它们的 leaf 仍是只读待破.
+        pmm_inst.frame_cow_clear(PhysAddr(old_frame));
         return Some(old_phys.as_u64());
     }
 
