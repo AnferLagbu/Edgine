@@ -13,13 +13,19 @@ M6.2 死锁检测矩阵扫描脚本 — 锁顺序/中断上下文/不可重入�
       仍可在 src/kernel 定位, ③ docs/explain/ref-lock-order.md 的「锁层级」表
       与该单源双向一致, ④ 类表容量与 limits.rs 上限对账 (A-127c). 未声明的新锁类
       即红, 已失效的表条目同样即红, 具名类数到顶亦即红.
+  (7) 静态锁序倒序检测 (A-3b, 2026-11-08 裁定 乙+甲): 函数内按 guard 生命周期判
+      「持有 A 时取 B」, 跨函数只传播一跳 (持锁期间直接调用的被调函数自身所取的锁),
+      回调包装按 callee 入口锁覆盖闭包实参. 已知类之间降序即红 (例外白名单在序表
+      的 `exceptions` 里机器可读); 未分类取锁点按 (文件, 接收者) 冻结进机器派生基线
+      (scripts/lock_order_static.baseline.json), 新增/增加即红.
 
 未实现项 (本期不在范围内, 留作未来增强):
-  - AB-BA 死锁环检测: 锁顺序声明机制已由 (6) 建立, 环检测本身仍待独立批
-    (要先给全仓 242 处未具名锁构造点逐项标序位, 否则首轮会把真环与漏标混读)
+  - 多跳 / 调用图不动点传播: 本轮只做一跳 (乙); 闭包延迟执行、函数指针 / trait
+    动态派发、宏展开体、guard 被 move 后的提前释放亦在覆盖边界外, 见 (7) 段注释
   - 不可重入函数检测: 需 Rust 类型系统级分析
 
-退出码: 0 = 无严重风险, 1 = 有高风险 (中断上下文非安全锁 / 锁类序表失同步)
+退出码: 0 = 无严重风险, 1 = 有高风险 (中断上下文非安全锁 / 锁类序表失同步 /
+静态锁序倒序 / 未分类取锁点增长)
 """
 
 import os
@@ -846,6 +852,701 @@ def check_lock_order(roots):
     return issues, summary
 
 
+# ===========================================================================
+# (7) 静态锁序倒序检测 (A-3b, 2026-11-08 裁定)
+# ===========================================================================
+#
+# 裁定形态 = 乙 (一跳跨函数传播) + 甲 (硬判倒序 + 覆盖率棘轮):
+#   - 函数内: 用 `let` 绑定的 guard 生命周期 (到块尾或显式 drop) 判「持有 A 时取 B」;
+#     非 let 绑定的临时 guard 生命周期 = 一条语句 (Rust 临时量规则).
+#   - 跨函数一跳: 持 guard 期间直接调用的被调函数**自身**所取的锁, 合成外层边.
+#     被调函数再往下调用的层不传播 (多跳/不动点属 丙, 本轮不做, 见覆盖边界).
+#   - 回调包装: 被调函数的入口锁 (entry classes) 覆盖其闭包实参内的取锁点,
+#     处理 `PROCESS_TABLE.with_process(pid, |p| { ... })` 这类「锁在 callee、
+#     回调在 caller」的形态.
+#   - 执法: 已知类之间的降序即红 (例外白名单在 scripts/lock_class_order.json 里
+#     机器可读); 未分类取锁点冻结进机器派生基线, 新增/增加即红.
+#
+# 覆盖边界 (刻意不做, 不进判据): 闭包延迟执行 (guard 已释放后才跑)、函数指针 /
+# trait 动态派发、宏展开体、多跳传播、guard 被 move 进被调函数后的提前释放.
+# 未解析 / 歧义调用只进摘要读数, 不判红.
+
+LOCK_ORDER_STATIC_BASELINE = PROJECT_ROOT / 'scripts' / 'lock_order_static.baseline.json'
+
+ACQ_METHODS = ('lock', 'try_lock', 'read', 'write', 'lock_irqsave')
+ACQ_PATTERN = re.compile(
+    r'((?:[A-Za-z_]\w*\s*::\s*)*[A-Za-z_]\w*)\s*\.\s*('
+    + '|'.join(ACQ_METHODS)
+    + r')\s*\(\s*\)'
+)
+FN_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)')
+CALL_PATTERN = re.compile(r'\b([A-Za-z_]\w*)\s*\(')
+LET_NAME_PATTERN = re.compile(r'\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*=')
+# `let` 绑定只有在初值就是 guard 本身时才把生命周期延到块尾. 初值被解引用
+# (`let v = *m.lock()`)、接了方法 (`m.lock().clone()`) 或模式匹配 (`let Some(x) =`)
+# 时绑定的是值而非 guard, 临时 guard 仍在语句尾释放.
+# 接收者正则从末段字段开始匹配, 所以 `let m = self.mounts.lock()` 的头部残留是
+# ` self.` —— 允许纯字段链, 但不允许解引用 / 调用结果出现在链上.
+GUARD_INIT_HEAD = re.compile(
+    r'\s*(?:&\s*(?:mut\s+)?)?(?:[A-Za-z_]\w*\s*\.\s*)*$')
+GUARD_INIT_TAIL = re.compile(r'\s*;?\s*$')
+CONSTRUCT_PREFIX = re.compile(r'(?:if|while)\s+let\b|^match\b')
+CLOSURE_ARG_PATTERN = re.compile(
+    r'\|[^|\n]+\||(?:^|[,(])\s*(?:move\s+)?\|\|')
+# 不是函数调用的括号形态: 语言关键字 / 宏 / 被单独识别的取锁方法.
+CALL_DENYLIST = frozenset({
+    'if', 'while', 'for', 'match', 'return', 'loop', 'in', 'fn', 'let', 'move',
+    'unsafe', 'async', 'await', 'some', 'none', 'ok', 'err', 'drop',
+    'assert', 'assert_eq', 'assert_ne', 'debug_assert', 'debug_assert_eq',
+    'panic', 'unwrap', 'expect', 'vec', 'format', 'println', 'print', 'write',
+    'writeln', 'debug', 'trace', 'info', 'warn', 'error', 'cfg', 'derive',
+    *ACQ_METHODS,
+})
+# 太泛的接收者末段不进类映射: `PhysicalMemoryManager::lock` 是 AtomicBool 手递
+# 自旋标志 (从不以 `.lock()` 形态获取), 而 `self.lock.lock()` 这类同名字段会让
+# 它被误当成层级 1 —— 宁可记为未分类 (进棘轮), 不做错误归类.
+GENERIC_RECEIVER_KEYS = frozenset({'lock'})
+
+
+class _Function:
+    """一个函数体 (含嵌套 fn 时各自独立, 取锁点归最内层函数)."""
+
+    __slots__ = ('name', 'path', 'start', 'end', 'index')
+
+    def __init__(self, name, path, start, end, index):
+        self.name = name
+        self.path = path
+        self.start = start
+        self.end = end
+        self.index = index
+
+
+class _Acq:
+    """一处取锁点 (`.lock()` / `.try_lock()` / `.read()` / `.write()`)."""
+
+    __slots__ = ('path', 'offset', 'line', 'receiver', 'cls', 'func', 'hold_end',
+                 'block_end', 'stmt_end')
+
+    def __init__(self, path, offset, line, receiver, cls):
+        self.path = path
+        self.offset = offset
+        self.line = line
+        self.receiver = receiver
+        self.cls = cls
+        self.func = None
+        self.hold_end = offset
+        self.block_end = offset
+        self.stmt_end = offset
+
+
+class _Call:
+    """一处调用点; `has_closure` 标记实参里带闭包 (回调包装判定)."""
+
+    __slots__ = ('name', 'path', 'offset', 'line', 'args_start', 'args_end',
+                 'has_closure', 'func')
+
+    def __init__(self, name, path, offset, line, args_start, args_end, has_closure):
+        self.name = name
+        self.path = path
+        self.offset = offset
+        self.line = line
+        self.args_start = args_start
+        self.args_end = args_end
+        self.has_closure = has_closure
+        self.func = None
+
+
+def strip_code(text):
+    """把注释与字符串字面量替换为空格, 保留换行与字符偏移.
+
+    只用空格覆盖而不是删除: 后续所有匹配都按偏移定位行号, 偏移一变行号就跟着错.
+    Rust 块注释可嵌套, 这里按深度处理; 原始字符串 `r#"..."#` 未特化 (退化到普通
+    字符串扫描), 本仓内核代码没有在锁表达式里使用原始字符串.
+    """
+    out = list(text)
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == '/' and i + 1 < n and text[i + 1] == '/':
+            while i < n and text[i] != '\n':
+                out[i] = ' '
+                i += 1
+        elif c == '/' and i + 1 < n and text[i + 1] == '*':
+            depth = 1
+            out[i] = out[i + 1] = ' '
+            i += 2
+            while i < n and depth > 0:
+                if text.startswith('/*', i):
+                    depth += 1
+                    out[i] = out[i + 1] = ' '
+                    i += 2
+                elif text.startswith('*/', i):
+                    depth -= 1
+                    out[i] = out[i + 1] = ' '
+                    i += 2
+                else:
+                    if text[i] != '\n':
+                        out[i] = ' '
+                    i += 1
+        elif c == '"':
+            out[i] = ' '
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    out[i] = ' '
+                    if i + 1 < n and text[i + 1] != '\n':
+                        out[i + 1] = ' '
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    out[i] = ' '
+                    i += 1
+                    break
+                if text[i] != '\n':
+                    out[i] = ' '
+                i += 1
+        elif c == "'":
+            # 字符字面量剥掉; 生命周期 (`'a`) 与标签保留 —— 它们不含花括号.
+            match = re.match(r"'(?:\\.|[^\\'])'", text[i:])
+            if match:
+                for k in range(i, i + match.end()):
+                    if text[k] != '\n':
+                        out[k] = ' '
+                i += match.end()
+            else:
+                i += 1
+        else:
+            i += 1
+    return ''.join(out)
+
+
+def _line_starts(text):
+    starts = [0]
+    for idx, ch in enumerate(text):
+        if ch == '\n':
+            starts.append(idx + 1)
+    return starts
+
+
+def _brace_pairs(stripped):
+    """`{` 偏移 -> `}` 偏移 (两个方向都返回; 未配对的丢弃)."""
+    pairs = {}
+    stack = []
+    for idx, ch in enumerate(stripped):
+        if ch == '{':
+            stack.append(idx)
+        elif ch == '}' and stack:
+            pairs[stack.pop()] = idx
+    return pairs
+
+
+def _paren_pairs(stripped):
+    """`(` 偏移 -> `)` 偏移."""
+    pairs = {}
+    stack = []
+    for idx, ch in enumerate(stripped):
+        if ch == '(':
+            stack.append(idx)
+        elif ch == ')' and stack:
+            pairs[stack.pop()] = idx
+    return pairs
+
+
+def _enclosing_block(open_offsets, pairs, offset):
+    """返回包含 offset 的最内层块 `{...}` 的结束偏移; 无块时为文件尾."""
+    idx = bisect_right(open_offsets, offset) - 1
+    while idx >= 0:
+        close = pairs.get(open_offsets[idx])
+        if close is not None and close > offset:
+            return close
+        idx -= 1
+    return -1
+
+
+def _statement_start(stripped, offset):
+    """从取锁点向后找到本语句的起点 (上一个 `;` 或所在块的开括号之后).
+
+    必须按语句边界取, 不能按固定窗口回看: 窗口里残留的上一条 `let` 会让普通取锁点
+    被误判成 guard 绑定, 从而把生命周期错误地延长到块尾.
+    """
+    depth = 0
+    i = offset - 1
+    while i >= 0:
+        c = stripped[i]
+        if c == '}':
+            depth += 1
+        elif c == '{':
+            if depth == 0:
+                return i + 1
+            depth -= 1
+        elif c == ';' and depth == 0:
+            return i + 1
+        i -= 1
+    return 0
+
+
+def _statement_end(stripped, offset, block_end):
+    """从取锁点向前找到语句结束 (`;` 或所在块尾).
+
+    Rust 临时 guard 在语句尾释放, 所以非 `let` 绑定的取锁点只覆盖到语句尾;
+    `let` 绑定的 guard 覆盖到块尾 (见 `_guard_holds`).
+    """
+    depth = 0
+    i = offset
+    limit = len(stripped) if block_end < 0 else block_end
+    while i < limit:
+        c = stripped[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            if depth == 0:
+                return i
+            depth -= 1
+        elif c == ';' and depth == 0:
+            return i
+        i += 1
+    return limit
+
+
+def _body_start(stripped, from_offset):
+    """从头 `fn name` 之后找函数体 `{`; 先遇到声明分号则返回 None."""
+    paren = bracket = 0
+    i = from_offset
+    n = len(stripped)
+    while i < n:
+        c = stripped[i]
+        if c == '(':
+            paren += 1
+        elif c == ')':
+            paren -= 1
+        elif c == '[':
+            bracket += 1
+        elif c == ']':
+            bracket -= 1
+        elif c == '{' and paren == 0 and bracket == 0:
+            return i
+        elif c == ';' and paren == 0 and bracket == 0:
+            return None
+        i += 1
+    return None
+
+
+def _construct_body_end(stripped, pairs, offset, limit):
+    """`if let` / `while let` / `match` 体的结束偏移.
+
+    scrutinee 里的临时 guard 存活到整个构造结束. 取锁点之后第一个括号深度为 0
+    的 `{` 就是体开括号 (跳过实参里的闭包), 再用花括号配对取体尾.
+    """
+    paren = 0
+    i = offset
+    while i < limit:
+        c = stripped[i]
+        if c == '(':
+            paren += 1
+        elif c == ')':
+            paren -= 1
+        elif c == '{' and paren == 0:
+            return pairs.get(i, limit)
+        i += 1
+    return limit
+
+
+def build_lock_class_index(table):
+    """序表 -> 接收者末段名 -> `{name, level}`.
+
+    同名末段映射到两个不同类时按歧义处理 (不映射), 宁可算未分类也不误归类.
+    """
+    index = {}
+    ambiguous = set()
+    for entry in table.get('classes', []):
+        name = entry.get('name', '')
+        segments = identifier_segments(name)
+        if not segments:
+            continue
+        key = segments[-1]
+        if key in GENERIC_RECEIVER_KEYS:
+            continue
+        if key in index and index[key]['name'] != name:
+            ambiguous.add(key)
+            continue
+        index[key] = {'name': name, 'level': entry.get('level')}
+    for key in ambiguous:
+        index.pop(key, None)
+    return index, ambiguous
+
+
+def _index_file(path, text, class_index):
+    """解析单个文件 -> (函数列表, 取锁点列表, 调用点列表, 未分类计数)."""
+    stripped = strip_code(text)
+    pairs = _brace_pairs(stripped)
+    open_offsets = sorted(pairs)
+    parens = _paren_pairs(stripped)
+    line_starts = _line_starts(text)
+
+    funcs = []
+    for match in FN_PATTERN.finditer(stripped):
+        body = _body_start(stripped, match.end())
+        if body is None:
+            continue
+        end = pairs.get(body)
+        if end is None:
+            continue
+        funcs.append(_Function(match.group(1), str(path), body, end, len(funcs)))
+    func_starts = [f.start for f in funcs]
+
+    def innermost(offset):
+        idx = bisect_right(func_starts, offset) - 1
+        while idx >= 0:
+            fn = funcs[idx]
+            if fn.start < offset < fn.end:
+                return fn
+            idx -= 1
+        return None
+
+    acqs = []
+    unclassified = {}
+    for match in ACQ_PATTERN.finditer(stripped):
+        offset = match.start()
+        receiver_raw = match.group(1)
+        key = re.split(r'::', receiver_raw)[-1].strip()
+        info = class_index.get(key)
+        fn = innermost(offset)
+        line = bisect_right(line_starts, offset)
+        acq = _Acq(str(path), offset, line, key, info['name'] if info else None)
+        acq.func = fn.index if fn else None
+        block_end = _enclosing_block(open_offsets, pairs, offset)
+        acq.block_end = block_end
+        acq.stmt_end = _statement_end(stripped, offset, block_end)
+        prefix = stripped[_statement_start(stripped, offset):offset].lstrip()
+        let_match = LET_NAME_PATTERN.match(prefix)
+        if let_match and GUARD_INIT_HEAD.match(prefix[let_match.end():]) \
+                and GUARD_INIT_TAIL.match(stripped[match.end():acq.stmt_end]):
+            guard_name = let_match.group(1)
+            acq.hold_end = block_end if block_end >= 0 else acq.stmt_end
+            if guard_name != '_':
+                drop = re.search(
+                    rf'\bdrop\s*\(\s*{re.escape(guard_name)}\s*\)',
+                    stripped[offset:acq.hold_end],
+                )
+                if drop:
+                    acq.hold_end = offset + drop.start()
+        elif CONSTRUCT_PREFIX.match(prefix):
+            acq.hold_end = _construct_body_end(
+                stripped, pairs, match.end(),
+                block_end if block_end >= 0 else len(stripped))
+        else:
+            acq.hold_end = acq.stmt_end
+        acqs.append(acq)
+        if info is None:
+            unclassified[key] = unclassified.get(key, 0) + 1
+
+    calls = []
+    for match in CALL_PATTERN.finditer(stripped):
+        name = match.group(1)
+        if name in CALL_DENYLIST:
+            continue
+        before = stripped[max(0, match.start() - 8):match.start()]
+        if re.search(r'\bfn\s*$', before) or before.rstrip().endswith('!'):
+            continue
+        open_paren = match.end() - 1
+        close = parens.get(open_paren)
+        if close is None:
+            continue
+        fn = innermost(match.start())
+        call = _Call(
+            name, str(path), match.start(),
+            bisect_right(line_starts, match.start()), open_paren, close,
+            bool(CLOSURE_ARG_PATTERN.search(stripped[open_paren:close])),
+        )
+        call.func = fn.index if fn else None
+        calls.append(call)
+
+    return funcs, acqs, calls, unclassified
+
+
+def analyze_static_lock_order(roots, report=None):
+    """执行静态锁序倒序检测 + 未分类取锁点棘轮, 返回 (issues, 摘要行).
+
+    `report` 非 None 时走基线生成模式: 不回读/不比对棘轮, 把冻结结果填进
+    `report` 供 `--update-lock-order-baseline` 落盘.
+    """
+    issues = []
+    summary = []
+
+    def fail(kind, message, where, line=0):
+        issues.append({
+            'file': where,
+            'line': line,
+            'severity': SEVERITY_CRITICAL,
+            'type': kind,
+            'lock': message,
+            'function': None,
+            'message': message,
+            'code': '静态锁序检测 (A-3b)',
+        })
+
+    if not LOCK_ORDER_TABLE.exists():
+        fail('LOCK_ORDER_STATIC_TABLE_MISSING',
+             f'机器可读序表不存在, 静态锁序检测 fail-closed: {LOCK_ORDER_TABLE}',
+             str(LOCK_ORDER_TABLE))
+        return issues, ['静态锁序检测: 序表缺失, fail-closed 判红']
+    try:
+        table = json.loads(LOCK_ORDER_TABLE.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail('LOCK_ORDER_STATIC_TABLE_MALFORMED', f'序表不可解析: {exc}',
+             str(LOCK_ORDER_TABLE))
+        return issues, ['静态锁序检测: 序表不可解析, fail-closed 判红']
+
+    class_index, ambiguous_keys = build_lock_class_index(table)
+    level_by_class = {entry.get('name'): entry.get('level')
+                      for entry in table.get('classes', [])}
+    declared_names = {entry.get('name') for entry in table.get('classes', [])}
+    exceptions = set()
+    for exc in table.get('exceptions', []):
+        outer, inner = exc.get('outer'), exc.get('inner')
+        if not outer or not inner:
+            fail('LOCK_ORDER_STATIC_EXCEPTION_MALFORMED',
+                 f'例外条目缺 outer/inner: {exc!r}', str(LOCK_ORDER_TABLE))
+            continue
+        if outer not in declared_names or inner not in declared_names:
+            fail('LOCK_ORDER_STATIC_EXCEPTION_UNKNOWN',
+                 f'例外条目引用了序表未声明的类: {outer} -> {inner}',
+                 str(LOCK_ORDER_TABLE))
+            continue
+        exceptions.add((outer, inner))
+
+    per_file = []
+    all_funcs = []
+    unresolved_calls = 0
+    ambiguous_calls = 0
+    for base in roots:
+        for path in sorted(base.rglob('*.rs')):
+            if 'smoltcp' in str(path):
+                continue
+            try:
+                text = path.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            funcs, acqs, calls, unclassified = _index_file(path, text, class_index)
+            base_index = len(all_funcs)
+            for fn in funcs:
+                fn.index += base_index
+            for acq in acqs:
+                if acq.func is not None:
+                    acq.func += base_index
+            for call in calls:
+                if call.func is not None:
+                    call.func += base_index
+            all_funcs.extend(funcs)
+            per_file.append((path, funcs, acqs, calls, unclassified))
+
+    defs = defaultdict(list)
+    for fn in all_funcs:
+        defs[fn.name].append(fn)
+
+    def resolve(name):
+        candidates = defs.get(name, [])
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    entry_cache = {}
+
+    def entry_classes(fn, stack):
+        """被调函数的入口锁类: 自身顶层取锁类 + 首把锁之前委托调用的入口类 (保守近似)."""
+        if fn.index in entry_cache:
+            return entry_cache[fn.index]
+        if fn.index in stack:
+            return set()
+        stack = stack | {fn.index}
+        result = set()
+        first_acq = None
+        for path, funcs, acqs, calls, _unused in per_file:
+            if not funcs or funcs[0].path != fn.path:
+                continue
+            direct = [a for a in acqs if a.func == fn.index]
+            own_calls = [c for c in calls if c.func == fn.index]
+            top = [a for a in direct
+                   if not any(o.func == fn.index and o.offset < a.offset < o.hold_end
+                              for o in direct)]
+            result.update(a.cls for a in top if a.cls)
+            if direct:
+                first_acq = min(a.offset for a in direct)
+            for call in own_calls:
+                if first_acq is not None and call.offset > first_acq:
+                    continue
+                callee = resolve(call.name)
+                if callee is not None:
+                    result.update(entry_classes(callee, stack))
+            break
+        entry_cache[fn.index] = result
+        return result
+
+    edges = {}
+
+    def add_edge(outer, inner, path, line, kind):
+        if outer == inner:
+            return
+        key = (outer, inner)
+        if key not in edges:
+            edges[key] = {'outer': outer, 'inner': inner, 'path': str(path),
+                          'line': line, 'kind': kind, 'count': 1}
+        else:
+            edges[key]['count'] += 1
+
+    classified_sites = 0
+    total_sites = 0
+    for path, funcs, acqs, calls, _unclassified in per_file:
+        by_func = defaultdict(list)
+        for acq in acqs:
+            if acq.func is not None:
+                by_func[acq.func].append(acq)
+            if acq.cls:
+                classified_sites += 1
+            else:
+                total_sites += 1
+        for fn in funcs:
+            direct = by_func.get(fn.index, [])
+            if not direct:
+                continue
+            holds = [a for a in direct if a.cls]
+            for outer in holds:
+                for inner in direct:
+                    if inner.cls and outer.offset < inner.offset < outer.hold_end:
+                        add_edge(outer.cls, inner.cls, path, inner.line, 'lexical')
+            own_calls = [c for c in calls if c.func == fn.index]
+            for call in own_calls:
+                holders = [h for h in holds if h.offset < call.offset < h.hold_end]
+                callee = resolve(call.name)
+                if callee is None:
+                    if holders:
+                        candidates = defs.get(call.name, [])
+                        if candidates:
+                            ambiguous_calls += 1
+                        else:
+                            unresolved_calls += 1
+                    continue
+                callee_acqs = []
+                for _p, funcs2, acqs2, _c2, _u2 in per_file:
+                    if funcs2 and funcs2[0].path == callee.path:
+                        callee_acqs = [a for a in acqs2 if a.func == callee.index]
+                        break
+                for holder in holders:
+                    for target in callee_acqs:
+                        if target.cls:
+                            add_edge(holder.cls, target.cls, target.path,
+                                     target.line, 'call')
+                # 回调包装: callee 的入口锁覆盖闭包实参内的取锁点.
+                wrapper_classes = entry_classes(callee, frozenset())
+                if wrapper_classes and call.has_closure:
+                    span = [a for a in acqs
+                            if call.args_start < a.offset < call.args_end and a.cls]
+                    for wrapper in sorted(wrapper_classes):
+                        for holder in holders:
+                            add_edge(holder.cls, wrapper, path, call.line,
+                                     'wrapper-call')
+                        for target in span:
+                            add_edge(wrapper, target.cls, path, target.line,
+                                     'wrapper-callback')
+
+    for (outer, inner), info in sorted(edges.items()):
+        if (outer, inner) in exceptions:
+            continue
+        outer_level = level_by_class.get(outer)
+        inner_level = level_by_class.get(inner)
+        if outer_level is None:
+            fail('LOCK_ORDER_STATIC_INVERSION',
+                 f'持最内层锁 {outer} 期间取了 {inner} (层级 {outer_level} -> '
+                 f'{inner_level}); {outer} 之后不得再取任何锁, 除非在序表例外里 '
+                 f'(派生形态={info["kind"]}, 该组合共 {info["count"]} 处)',
+                 info['path'], info['line'])
+        elif inner_level is not None and inner_level < outer_level:
+            fail('LOCK_ORDER_STATIC_INVERSION',
+                 f'持层级 {outer_level} 的 {outer} 期间取了层级 {inner_level} 的 '
+                 f'{inner} (降序); 派生形态={info["kind"]}, 该组合共 '
+                 f'{info["count"]} 处',
+                 info['path'], info['line'])
+
+    frozen = defaultdict(int)
+    for path, _funcs, _acqs, _calls, unclassified in per_file:
+        try:
+            rel = str(path.resolve().relative_to(PROJECT_ROOT))
+        except ValueError:
+            rel = str(path)
+        for key, count in unclassified.items():
+            frozen[f'{rel}::{key}'] += count
+
+    baseline = None
+    baseline_error = None
+    if report is not None:
+        report['frozen'] = dict(sorted(frozen.items()))
+        report['edge_list'] = dict(sorted(edges.items()))
+        report['edges'] = len(edges)
+        report['classified'] = classified_sites
+        report['total'] = total_sites
+    else:
+        try:
+            baseline_raw = json.loads(
+                LOCK_ORDER_STATIC_BASELINE.read_text(encoding='utf-8'))
+            baseline = baseline_raw.get('unclassified', {})
+        except OSError:
+            baseline_error = f'基线不存在: {LOCK_ORDER_STATIC_BASELINE}'
+        except json.JSONDecodeError as exc:
+            baseline_error = f'基线不可解析: {exc}'
+
+    growth = []
+    if report is None:
+        if baseline is None:
+            fail('LOCK_ORDER_STATIC_BASELINE_MISSING',
+                 f'{baseline_error}; 新增未分类取锁点必须先归类, 或显式跑 '
+                 f'`python3 scripts/audit_deadlock_matrix.py '
+                 f'--update-lock-order-baseline` 并提交快照 '
+                 f'(判据在覆盖率上, 不静默放行)',
+                 str(LOCK_ORDER_STATIC_BASELINE))
+        else:
+            for key, count in sorted(frozen.items()):
+                base = baseline.get(key, 0)
+                if count > base:
+                    growth.append((key, count, base))
+                    fail('LOCK_ORDER_STATIC_UNCLASSIFIED_GROWTH',
+                         f'未分类取锁点新增/增加: {key} 实测 {count} 处, 基线 {base} 处 '
+                         f'—— 新取锁点必须能映射到序表类, 或走 '
+                         f'--update-lock-order-baseline 显式登记',
+                         key.rsplit('::', 1)[0])
+
+    baseline_total = sum(baseline.values()) if baseline else 0
+    summary.append(
+        f'静态锁序检测 (A-3b): 取锁点 {total_sites + classified_sites} '
+        f'(已分类 {classified_sites} · 未分类 {total_sites}) / 函数 {len(all_funcs)} '
+        f'/ 组合边 {len(edges)} / 例外 {len(exceptions)} '
+        f'/ 未解析调用 {unresolved_calls} · 歧义 {ambiguous_calls} '
+        f'/ 未分类棘轮 {sum(frozen.values())} vs 基线 {baseline_total} '
+        f'(新增/增加 {len(growth)} 项) → 违规 {len(issues)} 项'
+    )
+    return issues, summary
+
+
+def dump_lock_order_static_baseline(frozen, edges, classified_sites, total_sites):
+    """确定性序列化: 排序 + 固定缩进, 保证 --update 幂等到字节级."""
+    payload = {
+        'schema': 'edgine-lock-order-static-baseline/v1',
+        'generated_by': ('python3 scripts/audit_deadlock_matrix.py '
+                         '--update-lock-order-baseline'),
+        'note': ('A-3b 覆盖率棘轮: 未分类取锁点按 (文件, 接收者末段名) 冻结. '
+                 '新增/增加即门禁判红; 收缩时重跑 --update-lock-order-baseline. '
+                 '这份快照不是锁序判据 —— 倒序判定走 scripts/lock_class_order.json.'),
+        'totals': {
+            'unclassified_sites': sum(frozen.values()),
+            'classified_sites': classified_sites,
+            'acquisition_sites': total_sites + classified_sites,
+            'lock_class_edges': edges,
+        },
+        'unclassified': dict(sorted(frozen.items())),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False) + '\n'
+
+
 def generate_report(issues, file_count):
     """生成报告."""
     by_severity = defaultdict(list)
@@ -893,6 +1594,26 @@ def main():
             print(f'ERROR: {base} not found', file=sys.stderr)
             sys.exit(2)
 
+    order_roots = [PROJECT_ROOT / base for base in BASES]
+
+    # 基线生成模式: 只跑静态锁序检测并落盘覆盖率快照, 不比对棘轮也不判门禁.
+    if '--update-lock-order-baseline' in sys.argv[1:]:
+        baseline_report = {}
+        analyze_static_lock_order(order_roots, report=baseline_report)
+        LOCK_ORDER_STATIC_BASELINE.write_text(
+            dump_lock_order_static_baseline(
+                baseline_report.get('frozen', {}),
+                baseline_report.get('edges', 0),
+                baseline_report.get('classified', 0),
+                baseline_report.get('total', 0),
+            ),
+            encoding='utf-8',
+        )
+        print(f'已写入静态锁序覆盖率基线: {LOCK_ORDER_STATIC_BASELINE} '
+              f'(未分类 {sum(baseline_report.get("frozen", {}).values())} 处 / '
+              f'{len(baseline_report.get("frozen", {}))} 项)')
+        sys.exit(0)
+
     issues = []
     file_count = 0
     for base in BASES:
@@ -902,13 +1623,18 @@ def main():
         file_count += root_files
 
     # (6) 锁类序表对账: 根路径按脚本位置取绝对路径, 不随 CWD 漂移.
-    order_roots = [PROJECT_ROOT / base for base in BASES]
     order_issues, order_summary = check_lock_order(order_roots)
     issues.extend(order_issues)
+
+    # (7) 静态锁序倒序检测 (A-3b): 一跳跨函数传播 + 未分类取锁点棘轮.
+    static_issues, static_summary = analyze_static_lock_order(order_roots)
+    issues.extend(static_issues)
 
     report = generate_report(issues, file_count)
     print(report)
     for line in order_summary:
+        print(line)
+    for line in static_summary:
         print(line)
 
     # 保存 JSON 报告 (gitignored other/target/audit/)

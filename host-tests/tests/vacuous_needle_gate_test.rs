@@ -226,12 +226,12 @@ fn test_vacuous_needle_selftest_and_white_stock_are_locked() {
         "本腿的负控制没进 main() 的结果清单 —— 只有人手工跑的自测与零调用者脚本同病灶 (P-49 甲)"
     );
     assert!(
-        selftest.contains("[Test 10/10]"),
+        selftest.contains("[Test 12/12]"),
         "自测项数标注仍停在旧档位 —— 接线自测腿的到位读数与清单不一致"
     );
     assert!(
-        !selftest.contains("[Test 1/9]"),
-        "标注没随第 10 项一起改口 —— 报告读数与实际用例数分叉"
+        !selftest.contains("[Test 10/10]"),
+        "标注没随第 11/12 项一起改口 —— 报告读数与实际用例数分叉"
     );
 
     // 语料里唯一那条自动判白的针仍在位 (口径第 4 条的实测存量恰 1 条).

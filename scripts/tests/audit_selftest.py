@@ -17,7 +17,7 @@ B01-24 返工: audit 脚本统一自测.
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-十项真调入口:
+十二项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
@@ -33,6 +33,11 @@ B01-24 返工: audit 脚本统一自测.
 10. audit_vacuous_needle.py: scan_text(text) + violations_of(rows) —— 恒真反向针形态腿
     (2026-11-07 裁定): 反向 + 纯正则记号判红, 正向与「针内含引号 (逐字源码文本)」各有
     判白理由, 无记号 / 首参非字面量 / 注释内形态 / `!=` 合取的 `!` 一律不计
+11. audit_deadlock_matrix.py: analyze_static_lock_order(临时 fixture) —— A-3b 静态倒序:
+   词法 / 一跳跨函数 / 回调包装三条派生形态各判对应红, 序表例外放行, 并含 drop 截断 /
+   解引用绑定 / 升序 / 同层四条反向负控制
+12. audit_deadlock_matrix.py: analyze_static_lock_order(覆盖率基线) —— A-3b 棘轮:
+   未分类新增判红, dump 重录后放行, 基线缺失 fail-closed
 """
 from __future__ import annotations
 
@@ -74,7 +79,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/10] audit_functions_boundary.py")
+    print("\n[Test 1/12] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -99,7 +104,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/10] audit_deadlock_matrix.py")
+    print("\n[Test 2/12] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -198,7 +203,7 @@ def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=N
 
 def test_lock_order_self_reconcile() -> bool:
     """A-3 丙 + A-127c 正向自检: 真序表与真代码 / 真文档对账零违规, 容量读数在位."""
-    print("\n[Test 8/10] audit_deadlock_matrix.py 锁类序表 (真单源)")
+    print("\n[Test 8/12] audit_deadlock_matrix.py 锁类序表 (真单源)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     issues, summary = detector.check_lock_order(
         [PROJECT_ROOT / "src" / "kernel" / "privileged",
@@ -223,7 +228,7 @@ def test_lock_order_self_reconcile() -> bool:
 def test_lock_order_negative_controls() -> bool:
     """A-3 丙 + A-127c 负控制: 九条失同步各判对应红 (含跨行注册与两条容量判据),
     另含基准形态、括号豁免与注释豁免三例不判."""
-    print("\n[Test 9/10] audit_deadlock_matrix.py 锁类序表 (负控制)")
+    print("\n[Test 9/12] audit_deadlock_matrix.py 锁类序表 (负控制)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     # 局部列表的变量名要避开 main() 里那个结果列表: 契约锁 ci_entrypoint_unified_test
     # 按文件中**首个**「results 紧跟方括号赋值」的位置定位 main() 的结果列表, 局部同名
@@ -304,9 +309,203 @@ def test_lock_order_negative_controls() -> bool:
     return all(case_checks) and all(cap_checks)
 
 
+# ===========================================================================
+# 静态锁序倒序检测 (A-3b) 的正反控制
+# ===========================================================================
+
+_STATIC_LEVELS = [
+    {"level": 3, "domain": "Low"},
+    {"level": 5, "domain": "Mid"},
+    {"level": 7, "domain": "High"},
+]
+_STATIC_CLASSES = [
+    {"level": 5, "name": "OUTER_LOCK", "anchor": "lockdep"},
+    {"level": 5, "name": "PEER_LOCK", "anchor": "lockdep"},
+    {"level": 7, "name": "INNER_LOCK", "anchor": "lockdep"},
+    {"level": 3, "name": "LOW_LOCK", "anchor": "lockdep"},
+    {"level": 3, "name": "HIDDEN_LOCK", "anchor": "lockdep"},
+]
+_STATIC_PROLOGUE = (
+    "//! fixture\n"
+    "fn callee_low() {\n"
+    "    let c = LOW_LOCK.lock();\n"
+    "}\n"
+    "fn wrap<F: FnOnce()>(f: F) {\n"
+    "    let o = OUTER_LOCK.lock();\n"
+    "    f();\n"
+    "}\n"
+)
+
+
+def _static_violations(detector, tmpdir: str, tag: str, code: str, *,
+                       exceptions=None, baseline=None) -> set[str]:
+    """注入临时序表 / 覆盖率基线, 真调 analyze_static_lock_order 取违规类型集合.
+
+    `baseline=None` 落一份空基线 (只看倒序判据); `baseline` 是 dict 时按它落盘;
+    `baseline="missing"` 不落盘 (验证 fail-closed).
+    """
+    root = Path(tmpdir) / tag
+    root.mkdir(parents=True, exist_ok=True)
+    table = {"levels": _STATIC_LEVELS, "classes": _STATIC_CLASSES}
+    if exceptions is not None:
+        table["exceptions"] = exceptions
+    table_path = root / "lock_class_order.json"
+    table_path.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
+    src_root = root / "src"
+    src_root.mkdir(parents=True, exist_ok=True)
+    (src_root / "fixture.rs").write_text(code, encoding="utf-8")
+    baseline_path = root / "baseline.json"
+    if baseline != "missing":
+        baseline_path.write_text(
+            json.dumps({"unclassified": baseline if baseline is not None else {}},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+    detector.LOCK_ORDER_TABLE = table_path
+    detector.LOCK_ORDER_STATIC_BASELINE = baseline_path
+    issues, _summary = detector.analyze_static_lock_order([src_root])
+    return {issue["type"] for issue in issues}
+
+
+def test_static_lock_order_detection() -> bool:
+    """A-3b fixture 测试 11: 词法 / 一跳跨函数 / 回调包装三条派生形态的正反控制."""
+    print("\n[Test 11/12] audit_deadlock_matrix.py (A-3b 静态倒序)")
+    detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
+    inversion = {"LOCK_ORDER_STATIC_INVERSION"}
+    cases = [
+        ("升序取锁不判红",
+         "fn ok_ascend() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    let b = INNER_LOCK.lock();\n"
+         "}\n", set(), None),
+        ("同层不同类取锁不判红",
+         "fn ok_peer() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    let b = PEER_LOCK.lock();\n"
+         "}\n", set(), None),
+        ("词法降序即红",
+         "fn bad_lexical() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    let b = LOW_LOCK.lock();\n"
+         "}\n", inversion, None),
+        ("一跳跨函数降序即红",
+         "fn bad_call() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    callee_low();\n"
+         "}\n", inversion, None),
+        ("回调包装降序即红",
+         "fn bad_wrapper() {\n"
+         "    wrap(|| {\n"
+         "        let h = HIDDEN_LOCK.lock();\n"
+         "    });\n"
+         "}\n", inversion, None),
+        # `if let` 的 scrutinee 临时 guard 存活到整个构造结束, 体里的降序必须被看见.
+        ("if let 临时 guard 覆盖构造体",
+         "fn bad_iflet() {\n"
+         "    if let Some(_x) = OUTER_LOCK.lock().pop() {\n"
+         "        let c = LOW_LOCK.lock();\n"
+         "    }\n"
+         "}\n", inversion, None),
+        # 三条反向形态: 生命周期收紧后不得再报.
+        ("drop 之后的降序不判红",
+         "fn ok_drop() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    drop(a);\n"
+         "    let c = LOW_LOCK.lock();\n"
+         "}\n", set(), None),
+        ("解引用绑定不延长 guard 生命周期",
+         "fn ok_deref() {\n"
+         "    let v = *OUTER_LOCK.lock();\n"
+         "    let c = LOW_LOCK.lock();\n"
+         "}\n", set(), None),
+        # 序表例外: 同一形态登记后不判红 (调度域那条成文例外的机制自测).
+        ("序表例外登记后同一形态不判红",
+         "fn bad_call() {\n"
+         "    let a = OUTER_LOCK.lock();\n"
+         "    callee_low();\n"
+         "}\n", set(),
+         [{"outer": "OUTER_LOCK", "inner": "LOW_LOCK", "reason": "fixture"}]),
+    ]
+    checks: list[bool] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for idx, (label, body, expected, exceptions) in enumerate(cases, start=1):
+            got = _static_violations(detector, tmpdir, f"static{idx}",
+                                     _STATIC_PROLOGUE + body, exceptions=exceptions)
+            checks.append(_check(
+                label, got == expected,
+                f"期望 {sorted(expected) or '零违规'}, 实测 {sorted(got) or '零违规'}"))
+        # 三条派生形态各归各的 kind, 免得词法/跨函数/回调互相顶替也算过.
+        shapes = _STATIC_PROLOGUE + (
+            "fn shape_lexical() {\n"
+            "    let a = OUTER_LOCK.lock();\n"
+            "    let b = INNER_LOCK.lock();\n"
+            "}\n"
+            "fn shape_call() {\n"
+            "    let a = OUTER_LOCK.lock();\n"
+            "    callee_low();\n"
+            "}\n"
+            "fn shape_wrapper() {\n"
+            "    wrap(|| {\n"
+            "        let h = HIDDEN_LOCK.lock();\n"
+            "    });\n"
+            "}\n")
+        report: dict = {}
+        _static_violations(detector, tmpdir, "static_shapes", shapes)
+        detector.analyze_static_lock_order(
+            [Path(tmpdir) / "static_shapes" / "src"], report=report)
+        kinds = {(info["outer"], info["inner"]): info["kind"]
+                 for info in report.get("edge_list", {}).values()}
+        checks.append(_check(
+            "词法 / 跨函数 / 回调包装各派生对应 kind",
+            kinds == {("OUTER_LOCK", "INNER_LOCK"): "lexical",
+                      ("OUTER_LOCK", "LOW_LOCK"): "call",
+                      ("OUTER_LOCK", "HIDDEN_LOCK"): "wrapper-callback"},
+            f"实测边 {kinds}"))
+    return all(checks)
+
+
+def test_static_lock_order_ratchet() -> bool:
+    """A-3b fixture 测试 12: 未分类取锁点的覆盖率棘轮 (新增即红, 重录后放行, 缺失 fail-closed)."""
+    print("\n[Test 12/12] audit_deadlock_matrix.py (A-3b 覆盖率棘轮)")
+    detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
+    growth_code = _STATIC_PROLOGUE + (
+        "fn unknown_lock() {\n"
+        "    let g = mystery.lock();\n"
+        "}\n")
+    checks: list[bool] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        got = _static_violations(detector, tmpdir, "growth", growth_code, baseline={})
+        checks.append(_check(
+            "基线缺条目时新增未分类取锁点即红",
+            got == {"LOCK_ORDER_STATIC_UNCLASSIFIED_GROWTH"},
+            f"期望仅覆盖率红, 实测 {sorted(got) or '零违规'}"))
+        # 唯一写者是 dump 函数本身: 重录快照后同一形态必须放行.
+        report: dict = {}
+        detector.analyze_static_lock_order(
+            [Path(tmpdir) / "growth" / "src"], report=report)
+        detector.LOCK_ORDER_STATIC_BASELINE.write_text(
+            detector.dump_lock_order_static_baseline(
+                report["frozen"], report["edges"],
+                report["classified"], report["total"]),
+            encoding="utf-8",
+        )
+        issues, _summary = detector.analyze_static_lock_order(
+            [Path(tmpdir) / "growth" / "src"])
+        checks.append(_check(
+            "重录基线后同一形态不判红", not issues,
+            f"实测违规 {[i['type'] for i in issues]}"))
+        got = _static_violations(detector, tmpdir, "missing", _STATIC_PROLOGUE,
+                                 baseline="missing")
+        checks.append(_check(
+            "基线缺失即判红 (fail-closed)",
+            got == {"LOCK_ORDER_STATIC_BASELINE_MISSING"},
+            f"期望仅缺失红, 实测 {sorted(got) or '零违规'}"))
+    return all(checks)
+
+
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/10] audit_block_registration.py")
+    print("\n[Test 3/12] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -337,7 +536,7 @@ def test_block_registration() -> bool:
 
 def test_audit_unsafe() -> bool:
     """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
-    print("\n[Test 4/10] tools/audit_unsafe.py")
+    print("\n[Test 4/12] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -369,7 +568,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/10] audit_coupling.py")
+    print("\n[Test 5/12] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -413,7 +612,7 @@ def test_coupling_reference_edges() -> bool:
     计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
     D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
     """
-    print("\n[Test 6/10] audit_coupling.py (P-73 丙 D 类引用级边)")
+    print("\n[Test 6/12] audit_coupling.py (P-73 丙 D 类引用级边)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -467,7 +666,7 @@ def test_coupling_cross_layer_access() -> bool:
     导入被拦); (b) 具名豁免路径 (`functions/mm/numa.rs`) 放行; (c) `syscall::raw`
     穿透被拦, 而公开出口 `syscall::api` 不匹配内部清单.
     """
-    print("\n[Test 7/10] audit_coupling.py (P-74 甲 跨层内部访问)")
+    print("\n[Test 7/12] audit_coupling.py (P-74 甲 跨层内部访问)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "functions"
@@ -631,7 +830,7 @@ def test_vacuous_needle() -> bool:
     `!=` 合取都不得判红), ③判白必须有**理由**而非"没命中" —— 两种绿在日志里同形,
     只有理由串能区分「按口径放行」与「检测器没看到」.
     """
-    print("\n[Test 10/10] audit_vacuous_needle.py")
+    print("\n[Test 10/12] audit_vacuous_needle.py")
     detector = _load("audit_vacuous_needle", SCRIPTS_DIR / "audit_vacuous_needle.py")
     needle_checks: list[bool] = []
     for label, src, want_rows, want_bad, want_exempt in _NEEDLE_CASES:
@@ -674,6 +873,8 @@ def main() -> int:
         test_coupling_cross_layer_access(),
         test_lock_order_self_reconcile(),
         test_lock_order_negative_controls(),
+        test_static_lock_order_detection(),
+        test_static_lock_order_ratchet(),
         test_vacuous_needle(),
     ]
     passed = sum(results)
