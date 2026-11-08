@@ -172,6 +172,38 @@ pub fn is_initialized() -> bool {
 // Tick 管理
 // ============================================================================
 
+/// 心跳打印间隔 (全局 tick 计数; 各核累加同一计数器)
+///
+/// 5000 tick @ 1kHz 单核 ≈ 5s, 双核各 1kHz 时全局计数翻倍 ≈ 2.5s. 取低频而非
+/// 每 tick: 发射路径在 hardirq 内, 串口写实测 ≈ 2–5ms IRQ-off (同一约束见
+/// [`super::clockevent::rearm_local`] 的文档), 高频会自扰动时基与压力测试.
+const HEARTBEAT_INTERVAL_TICKS: u64 = 5_000;
+
+/// 是否到心跳发射点 (纯函数, 保持 host 侧可测)
+///
+/// 第 1 个 tick 也发射一次, 使「探针已接线且 tick 已启动」与「启动早期即停摆」
+/// 可区分——后者的日志里连第 1 条心跳都不会出现. `0` 排除在外: 它虽是任意数的
+/// 倍数, 但代表计数器尚未启动, 不该发射且免得调用方误用.
+fn heartbeat_due(total: u64) -> bool {
+    total != 0 && (total == 1 || total.is_multiple_of(HEARTBEAT_INTERVAL_TICKS))
+}
+
+/// 发射一条内核侧心跳读数
+///
+/// 判型用途: 心跳继续推进 ⇒ 至少一核仍在收 tick (内核活着, init 可能阻塞);
+/// 心跳停止 ⇒ 整机停摆 / tick 源停止 / 全核关中断. 纯只读, 不改变任何调度、
+/// 内存或时间语义.
+///
+/// 只在 [`on_timer_interrupt`] 末尾调用; 该路径处于 hardirq, 除 klog 自身的
+/// `LOG_EMIT_LOCK` / console 锁外不得再取任何锁 (`docs/explain/ref-lock-order.md`).
+fn heartbeat_emit(total: u64) {
+    if !heartbeat_due(total) {
+        return;
+    }
+    let cpu = crate::privileged::smp::current_cpu_index();
+    crate::klog_info!(Boot, "[HB] tick={} cpu={}", total, cpu);
+}
+
 /// 在 IRQ0 中断处理程序中调用此函数
 ///
 /// 递增全局 tick 计数器并更新内部状态。
@@ -190,7 +222,7 @@ pub fn on_timer_interrupt() {
     //          (b) 读到其他 CPU 的最新 tick 值 (Acquire)。
     // 之前 Relaxed 写 + Acquire 读 不能跨 CPU 严格同步 (Acquire 仅与 Release 配对),
     // 多核下其他 CPU 读到的 tick 可能滞后于实际中断计数。
-    TICK_IRQ_COUNT.fetch_add(1, Ordering::AcqRel);
+    let total = TICK_IRQ_COUNT.fetch_add(1, Ordering::AcqRel) + 1;
 
     // 更新 PIT 内部状态 (x86_64 only)
     #[cfg(target_arch = "x86_64")]
@@ -214,6 +246,10 @@ pub fn on_timer_interrupt() {
     // D9: 时钟渐进调整 — 消耗 adjtimex(ADJ_OFFSET) 登记的待调整偏移 (斜率推进).
     // 仅原子操作, 无锁/无分配, 因此可在 hardirq 上下文安全调用.
     super::time_sync::clock_adj_state().tick_adjust();
+
+    // 心跳读数置于末尾: 前面的时基/定时器簿记优先, 发射耗时只影响本核下一次
+    // 续期 (one-shot 到期按 now 起算, 不会补发一串 tick).
+    heartbeat_emit(total);
 }
 
 /// 安全的 64 位乘除: `(value * mul) / div`, 128 位中间值不溢出
@@ -865,6 +901,22 @@ mod tests {
         assert_eq!(mul_div_saturating(10, 10, 0), 0);
         // 最终结果确实超 u64::MAX 时饱和, 不 wrap
         assert_eq!(mul_div_saturating(u64::MAX, 2, 1), u64::MAX);
+    }
+
+    /// #130: 心跳判据 — 第 1 tick 一次 (接线证明) + 每 5000 tick 一次 (低频).
+    #[test]
+    fn test_heartbeat_due() {
+        assert!(!heartbeat_due(0), "0 不是发射点 (探针尚未启动)");
+        assert!(heartbeat_due(1), "第 1 tick 必须发射 (证明探针已接线)");
+        assert!(!heartbeat_due(2));
+        assert!(!heartbeat_due(HEARTBEAT_INTERVAL_TICKS - 1));
+        assert!(heartbeat_due(HEARTBEAT_INTERVAL_TICKS));
+        assert!(!heartbeat_due(HEARTBEAT_INTERVAL_TICKS + 1));
+        assert!(heartbeat_due(HEARTBEAT_INTERVAL_TICKS * 3));
+        assert!(
+            (1_000..=10_000).contains(&HEARTBEAT_INTERVAL_TICKS),
+            "间隔须在 1–10s (单核 1kHz) 量级: 过密自扰动 hardirq, 过疏挂死取证不足"
+        );
     }
 }
 
