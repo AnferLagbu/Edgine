@@ -181,11 +181,17 @@ O(到期数)，而本节消掉的是"线性扫描必须付几次锁"这个独立
 ### 缺页处理（Page Fault）
 
 ```
-层级 3: MmStruct::vmas.lock()  →  查找 VMA
-层级 1: PMM 分配页帧           →  buddy allocator
-层级 3: VMM 映射页表           →  页表锁
-层级 4: Page Cache 插入         →  PAGE_CACHE[hash].lock()
+层级 7: ProcessTable::with_process()  →  读当前任务 Process.mm (A-16 甲; 闭包返回前释放)
+层级 3: MmStruct::vmas.lock()         →  查找 VMA
+层级 1: PMM 分配页帧                  →  buddy allocator
+层级 3: VMM 映射页表                  →  页表锁
+层级 4: Page Cache 插入                →  PAGE_CACHE[hash].lock()
 ```
+
+层级 7 与层级 3 在此**顺序发生而非嵌套**：表锁闭包内只做一次原子读，返回后调用方
+才取 `MmStruct::vmas`。缺页入口只面向 EL0 故障（进入内核时本 CPU 不持任何内核锁），
+故不存在"已持表锁再触发缺页"的自死锁面；内核态 uaccess 故障不走此路（见
+`break_cow_for_kernel_uaccess` 的 per-frame COW 判据，不取当前任务 mm）。
 
 ### 进程创建（Fork）
 

@@ -297,16 +297,17 @@ fn vm_child_inherit(
     tls: u64,
 ) -> Result<(), i64> {
     // 复制父进程属性
-    let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base) =
+    let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base, parent_mm) =
         api::process_with(parent_pid, |p| {
             (
                 p.pwm.load(Ordering::SeqCst),
                 p.sched_policy.load(Ordering::SeqCst),
                 p.rt_priority.load(Ordering::SeqCst),
                 p.tls_base.load(Ordering::Acquire),
+                p.mm.load(Ordering::Acquire),
             )
         })
-        .unwrap_or((0, 0, 0, 0));
+        .unwrap_or((0, 0, 0, 0, core::ptr::null_mut()));
     child.pwm.store(parent_pwm, Ordering::SeqCst);
     child
         .sched_policy
@@ -316,6 +317,9 @@ fn vm_child_inherit(
         .store(parent_rt_priority, Ordering::SeqCst);
     // 未指定 CLONE_SETTLS 时子线程继承父线程的 TLS 基址 (Linux 语义)
     child.tls_base.store(parent_tls_base, Ordering::Release);
+    // CLONE_VM: 子线程与父线程共享同一地址空间描述符 (VMA 查询单一真源,
+    // 指向与 cr3 共享同一地址空间).
+    child.mm.store(parent_mm, Ordering::Release);
 
     // 分配内核栈 (用户 TCB 统一 USER_KSTACK_SIZE, 与 fork 路径和释放口径同源)
     if !child.allocate_user_kernel_stack() {

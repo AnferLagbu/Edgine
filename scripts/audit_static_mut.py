@@ -52,7 +52,6 @@ SAFE_PATTERNS = [
     "KB_READ_SLOT",      # 键盘初始化
     "KALLOC_BUF",        # e1000 驱动初始化
     "KALLOC_OFF",        # e1000 驱动初始化
-    "CURRENT_MM",        # VMA 初始化
     "VIRTIO_BLK_REGISTRY", # VirtIO 注册
     "NET_DEVICE",        # 网络设备注册
     "NET_STACK",         # 网络栈

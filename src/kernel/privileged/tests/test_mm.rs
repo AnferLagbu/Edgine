@@ -321,6 +321,93 @@ fn test_uffd_register_arg_validation() -> TestResult {
     TestResult::Pass
 }
 
+/// A-16 甲: 地址空间查询的单一真源 = 当前任务的 `Process.mm` (非全局槽).
+///
+/// 判别力 (若恢复全局 `CURRENT_MM` 形态):
+/// - 任务 A/B 各挂不同 `MmStruct`, 切换 current 后查询必须随任务切换; 全局槽读
+///   "最后一次写入" ⇒ 切回 A 后仍返回 B 的地址 ⇒ 断言红.
+/// - 任务 C 未挂载 mm ⇒ 必须 `None`; 全局槽仍返回 B 的地址 ⇒ 断言红.
+#[cfg(feature = "host-test")]
+fn test_current_mm_follows_current_task() -> TestResult {
+    TestResult::Skip("A-16: host 无进程表与调度器当前任务, 跳过")
+}
+
+#[cfg(not(feature = "host-test"))]
+fn test_current_mm_follows_current_task() -> TestResult {
+    use crate::privileged::mm::vma::MmStruct;
+    use crate::privileged::mm::{vma_get_current_mm, vma_set_current_mm};
+    use crate::privileged::proc::raw;
+    use crate::privileged::proc::{PROCESS_TABLE, Scheduler};
+
+    /// 临时进程装卸: 分配 PID + 构造进程 + 插入进程表.
+    fn install(name: &str) -> Option<(u32, *mut crate::privileged::proc::Process)> {
+        let pid = PROCESS_TABLE.allocate_pid()?;
+        let ptr = raw::alloc_process(pid, name, None);
+        if PROCESS_TABLE.insert(ptr) {
+            Some((pid, ptr))
+        } else {
+            raw::drop_boxed_process(ptr);
+            PROCESS_TABLE.free_pid(pid);
+            None
+        }
+    }
+
+    let prev_current = Scheduler::current();
+    let a = install("current-mm-a");
+    let b = install("current-mm-b");
+    let c = install("current-mm-c");
+    let (Some((pid_a, ptr_a)), Some((pid_b, ptr_b)), Some((pid_c, ptr_c))) = (a, b, c) else {
+        for (pid, ptr) in [a, b, c].into_iter().flatten() {
+            let _ = PROCESS_TABLE.remove(pid);
+            raw::drop_boxed_process(ptr);
+            PROCESS_TABLE.free_pid(pid);
+        }
+        return TestResult::Fail("install temporary tasks failed");
+    };
+
+    let mm_a = MmStruct::new();
+    let mm_b = MmStruct::new();
+    let ptr_of = |m: &MmStruct| core::ptr::from_ref(m);
+    let current_mm = || vma_get_current_mm().map(core::ptr::from_ref);
+
+    let result = (|| -> TestResult {
+        Scheduler::set_current(pid_a);
+        vma_set_current_mm(ptr_of(&mm_a));
+        check!(
+            current_mm() == Some(ptr_of(&mm_a)),
+            "任务 A 必须读到 A 的 mm"
+        );
+
+        Scheduler::set_current(pid_b);
+        vma_set_current_mm(ptr_of(&mm_b));
+        check!(
+            current_mm() == Some(ptr_of(&mm_b)),
+            "任务 B 必须读到 B 的 mm"
+        );
+
+        // 切回 A 且不再写入: 必须仍是 A 的 mm (全局槽形态此处返回 B)
+        Scheduler::set_current(pid_a);
+        check!(
+            current_mm() == Some(ptr_of(&mm_a)),
+            "切回 A 后必须按任务读回 A 的 mm (不得读最后写入者)"
+        );
+
+        // 未挂载的任务 → None (全局槽形态此处返回 B)
+        Scheduler::set_current(pid_c);
+        check!(current_mm().is_none(), "未挂载 mm 的任务必须读到 None");
+        TestResult::Pass
+    })();
+
+    // 无条件拆除: 恢复调度器当前进程 → 摘表 → 释放描述符
+    Scheduler::set_current(prev_current.unwrap_or(0));
+    for (pid, ptr) in [(pid_a, ptr_a), (pid_b, ptr_b), (pid_c, ptr_c)] {
+        let _ = PROCESS_TABLE.remove(pid);
+        raw::drop_boxed_process(ptr);
+        PROCESS_TABLE.free_pid(pid);
+    }
+    result
+}
+
 /// host-test 无 PMM 初始化且无当前地址空间 → 跳过 (依赖裸机 #PF 与物理页)
 #[cfg(feature = "host-test")]
 fn test_uffd_register_and_fault_flow() -> TestResult {
@@ -329,12 +416,15 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
 
 /// userfaultfd 注册 → 缺页登记 → 用户态提供页 → 重入映射 全流程
 ///
-/// 包装层负责临时安装测试地址空间 (注册/缺页校验依赖 `CURRENT_MM`) 与 fd 回收,
-/// 断言主体在 [`uffd_flow_body`] (单一出口保证 fd 不泄漏).
+/// 包装层负责临时安装测试地址空间与 fd 回收, 断言主体在 [`uffd_flow_body`]
+/// (单一出口保证 fd 不泄漏). A-16 甲后地址空间的挂载点是**当前任务**的
+/// `Process.mm`, 故须安装一个真实当前任务, 而不是写全局槽.
 #[cfg(not(feature = "host-test"))]
 fn test_uffd_register_and_fault_flow() -> TestResult {
     use crate::privileged::mm::vma::{MmStruct, Vma, VmaType};
     use crate::privileged::mm::{uffd_create, uffd_release, vma_set_current_mm};
+    use crate::privileged::proc::raw;
+    use crate::privileged::proc::{PROCESS_TABLE, Scheduler};
 
     const BASE: u64 = 0x40_0000;
 
@@ -354,13 +444,25 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     }
 
     // 临时安装测试地址空间 (测试运行器全程关中断, 无并发切换风险)
-    let saved = crate::privileged::mm::vma_get_current_mm().map(core::ptr::from_ref);
+    let prev_current = Scheduler::current();
+    let Some(pid) = PROCESS_TABLE.allocate_pid() else {
+        return TestResult::Fail("no free PID for uffd flow");
+    };
+    let proc_ptr = raw::alloc_process(pid, "uffd-flow", None);
+    if !PROCESS_TABLE.insert(proc_ptr) {
+        raw::drop_boxed_process(proc_ptr);
+        PROCESS_TABLE.free_pid(pid);
+        return TestResult::Fail("insert uffd task failed");
+    }
+    Scheduler::set_current(pid);
     vma_set_current_mm(core::ptr::from_ref(&mm));
     let result = uffd_flow_body(fd);
-    match saved {
-        Some(p) => vma_set_current_mm(p),
-        None => vma_set_current_mm(core::ptr::null()),
-    }
+    // 无条件拆除: 先摘挂载, 再恢复调度器当前进程, 最后摘表释放描述符.
+    vma_set_current_mm(core::ptr::null());
+    Scheduler::set_current(prev_current.unwrap_or(0));
+    let _ = PROCESS_TABLE.remove(pid);
+    raw::drop_boxed_process(proc_ptr);
+    PROCESS_TABLE.free_pid(pid);
 
     if !uffd_release(fd) {
         return TestResult::Fail("release should succeed");
@@ -1756,6 +1858,9 @@ pub fn register_mm_tests() {
             "lifecycle": test_uffd_instance_lifecycle,
             "arg_validation": test_uffd_register_arg_validation,
             "fault_flow": test_uffd_register_and_fault_flow,
+        },
+        "mm::vma_current": {
+            "follows_task": test_current_mm_follows_current_task,
         },
     }
 }

@@ -1368,29 +1368,45 @@ unsafe impl Send for MmStruct {}
 // SAFETY: 同上, 原子操作与锁保证并发安全.
 unsafe impl Sync for MmStruct {}
 
-static CURRENT_MM: core::sync::atomic::AtomicPtr<MmStruct> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-
-/// 设置当前进程的地址空间指针 (进程切换时由调度器调用).
+/// 设置当前任务的地址空间指针 (ELF 装载完成后由调用方写入; null 表示摘除).
+///
+/// 写入落在**当前任务**的 `Process::mm` 槽 (经 `PROCESS_TABLE` 的一次短临界区),
+/// 不再有跨进程共用的全局槽: 进程切换后读到的天然是新任务的 mm, 无须在
+/// `switch_to` / fork / exec 三处同步一个 per-CPU 镜像.
+///
+/// 无当前任务 (pid 0 idle, 或测试未安装任务) 时静默丢弃写入 —— 与"未挂载"同态.
+/// 本函数只服务已处于任务上下文的装载路径, 调用方无须也不应据写入结果判成败.
 pub fn set_current_mm(mm: *const MmStruct) {
-    // SAFETY: CURRENT_MM 是当前 CPU 的 per-CPU 状态指针，
-    // 仅在进程切换时由调度器写入，调用者保证无并发写入。
-    CURRENT_MM.store(mm.cast_mut(), core::sync::atomic::Ordering::Release);
+    let pid = crate::privileged::proc::process_get_current_pid();
+    if pid == 0 {
+        return;
+    }
+    let ptr = mm.cast_mut();
+    let _ = crate::privileged::proc::PROCESS_TABLE.with_process(pid, |p| {
+        p.mm.store(ptr, Ordering::Release);
+    });
 }
 
-/// 获取当前进程的地址空间引用 (未设置时为 `None`).
+/// 获取当前任务的地址空间引用 (当前任务未挂载 mm 时为 `None`).
+///
+/// 锁序: `PROCESS_TABLE` (层级 7) 在闭包内只做一次原子读, 返回前即释放; 调用方
+/// 随后取 `MmStruct::vmas` (层级 3) 时二者不嵌套. 缺页入口只面向 EL0 故障,
+/// 进入本函数时不持任何内核锁, 故不会与进程表锁重入自锁.
 pub fn get_current_mm() -> Option<&'static MmStruct> {
-    // SAFETY: CURRENT_MM 在 set_current_mm 中设置，
-    // 要么为 null，要么指向有效的 MmStruct。
-    // 返回 &'static 引用是安全的，因为 MmStruct 生命周期
-    // 与进程一致，进程存在期间指针有效。
-    let ptr = CURRENT_MM.load(core::sync::atomic::Ordering::Acquire);
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: ptr 由 set_current_mm 写入，保证为有效 MmStruct 指针
-        Some(unsafe { &*ptr })
+    let pid = crate::privileged::proc::process_get_current_pid();
+    if pid == 0 {
+        return None;
     }
+    let ptr = crate::privileged::proc::PROCESS_TABLE
+        .with_process(pid, |p| p.mm.load(Ordering::Acquire))
+        .unwrap_or_default();
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: ptr 由 `set_current_mm` 写入当前任务槽位, 非空即指向调用方持有的
+    // 有效 `MmStruct`. `MmStruct` 当前无释放路径 (由创建方长期持有), 且调用方
+    // 只在本任务上下文的调用作用域内使用该引用.
+    Some(unsafe { &*ptr })
 }
 
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作

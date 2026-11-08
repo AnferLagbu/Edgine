@@ -7,13 +7,13 @@ use super::types::{
     BlockReason, KERNEL_STACK_SIZE, MAX_PROCESSES, Pid, ProcessContext, ProcessFlags, ProcessId,
     ProcessPriority, ProcessState, USER_KSTACK_SIZE,
 };
-use crate::privileged::mm::{KERNEL_BASE, PAGE_SIZE, USER_ADDR_FLOOR};
+use crate::privileged::mm::{KERNEL_BASE, MmStruct, PAGE_SIZE, USER_ADDR_FLOOR};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::sync::Arc;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 // ============================================================================
 // 进程级 FD 分配策略 (P1-I-01 提取)
@@ -177,6 +177,12 @@ pub struct Process {
     pub context: Mutex<ProcessContext>,
     /// 用户页表根 (x86_64 `CR3` / aarch64 `TTBR0`); 0 表示未分配.
     pub cr3: AtomicU64,
+    /// 进程地址空间描述符指针 ([`MmStruct`]); null 表示尚未挂载.
+    ///
+    /// 缺页与 VMA 系统调用经 `mm::api::vma_get_current_mm` 从**当前任务**读取本字段,
+    /// 不再有跨进程共用的全局槽; fork/clone 按指针继承 (线程与 fork 子进程共享同一
+    /// `MmStruct`, 与页表 COW 克隆分层). `MmStruct` 目前无释放路径, 由创建方长期持有.
+    pub mm: AtomicPtr<MmStruct>,
     /// 内核栈顶高半区虚拟地址; 0 表示未分配.
     pub kernel_stack: AtomicU64,
     /// 内核栈占用页数; 0 表示未分配. 分配时写入, `Process::drop` 据此归还.
@@ -445,6 +451,7 @@ impl Process {
             },
             context: Mutex::new(ProcessContext::new()),
             cr3: AtomicU64::new(0),
+            mm: AtomicPtr::new(core::ptr::null_mut()),
             kernel_stack: AtomicU64::new(0),
             kstack_pages: AtomicU32::new(0),
             user_stack: AtomicU64::new(0),

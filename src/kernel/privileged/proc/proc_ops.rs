@@ -1119,6 +1119,11 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
     {
         child.tls_base.store(tls, Ordering::Release);
     }
+    // 地址空间描述符: fork 子进程按指针继承父进程的 `MmStruct` (VMA 描述符
+    // 在 fork 中不复制, 与页表 COW 克隆分层; 见 `MmStruct::locked_vm` 注).
+    if let Some(mm) = PROCESS_TABLE.with_process(parent_pid, |p| p.mm.load(Ordering::Acquire)) {
+        child.mm.store(mm, Ordering::Release);
+    }
     // K-03: 信号动作表与 FS 上下文按 fork 语义深拷贝 —— fork 出的子进程此后
     // 与父进程各自独立 (CLONE_SIGHAND / CLONE_FS 的共享只在 clone 线程路径).
     let _ = PROCESS_TABLE.with_process(parent_pid, |p| {

@@ -673,11 +673,13 @@ fn kernel_uaccess_cow_candidate(esr: u64, fault_addr: u64) -> bool {
 ///   计数 1 的真·只读页 (如 `PROT_READ` 的 `.text`) 内核写不得把它升成可写 (I2/I4),
 ///   故无标记即拒绝。
 ///
-/// 不用 VMA 作判据的理由 (真机取证): `CURRENT_MM` 只在 `execve` 装载 ELF 时写一次
-/// (`proc::elf` 是唯一调用点), 既非 per-CPU 也不随 fork/调度更新 ⇒ fork 出的子进程、以及
-/// 双核并发时都在读"最后一个 exec 的地址空间"。以它为准会把"页其实合法"误判成"页不属任何
-/// VMA"而拒绝恢复 (2026-11-07 本轮第一版即栽在此: `FAR=0x40A0D0` 连续两次停机)。该口径
-/// 缺陷同样影响 [`handle_user_page_fault`] 的 VMA 优先路, 已单列为预存问题登记, 本批不擅动。
+/// 不用 VMA 作判据的理由: 本支路在**内核态**触发 (EL1 写用户页), 此刻可能正持任意内核锁
+/// ——包括 `PROCESS_TABLE` 本身 (`clone` 在 `with_process` 闭包内写 TID 即会命中)。A-16 甲
+/// (2026-11-08) 后 VMA 查询的单一真源是「当前任务」的 `Process.mm` (经 `PROCESS_TABLE`
+/// 读, 层级 7 且非可重入), 在本支路取 VMA 会自死锁; 且本支路的 COW 证据 (判据 3 的帧标记)
+/// 比 VMA 更精确 —— 帧标记由 fork 置只读的同一时刻登记, 与「当前地址空间是否登记了该
+/// 区间」无关。[`handle_user_page_fault`] 的 VMA 优先路仅面向 EL0 故障 (入口不持内核
+/// 锁), 已改为按当前任务取 `MmStruct`, 原全局 `CURRENT_MM` 口径缺陷随 A-16 甲闭合。
 ///
 /// 页表根取 `vmm::get_current_pml4()` 而非 [`super::read_user_cr3_asm`]: 触发本次翻译的
 /// 就是内核此刻 TTBR0 里那张表 (KPTI 开时是本进程 EL1 视图根, 其下级表与用户表共享 ⇒
