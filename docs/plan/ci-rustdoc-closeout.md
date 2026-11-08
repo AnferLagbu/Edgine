@@ -1,6 +1,6 @@
 # `ci-rustdoc` 文档链接门禁收口
 
-> **定位**：把 P-39 立案的实测事实收成一个可执行工程——本地一键 CI 的 rustdoc 腿在 HEAD 上即红（立案口径「30 error + 19 warning / 19 文件」，两腿都真跑后订正为 x86_64 = 29 unresolved + 16 private + 3 无位置、aarch64 = 28 + 33 + 3，见 §1.2），且该腿不在 `AGENTS.md` §2.3 六门槛内，所以历轮"六门槛全绿"从未覆盖它。本文档是该病灶的唯一推进场所。**R-1 乙 已在第七轮落地**（§4 为施工记录），仍开放的是需要用户新裁定的 R-6 / R-7 与立案未施工的 R-8。
+> **定位**：把 P-39 立案的实测事实收成一个可执行工程——本地一键 CI 的 rustdoc 腿在 HEAD 上即红（立案口径「30 error + 19 warning / 19 文件」，两腿都真跑后订正为 x86_64 = 29 unresolved + 16 private + 3 无位置、aarch64 = 28 + 33 + 3，见 §1.2），且该腿**当时**不在 `AGENTS.md` §2.3 门槛内，所以此前历轮"六门槛全绿"从未覆盖它。本文档是该病灶的唯一推进场所。**R-1 乙 已在第七轮落地**（§4 为施工记录），**R-6 已按用户裁定收口**（rustdoc 列为 §2.3 第 7 条），仍开放的是未裁定的 R-7 与立案未施工的 R-8。
 >
 > **来源**：`docs/plan/net-e2e-tcp-echo-flakiness.md` §6 P-39（本轮按用户裁定「单开」毕业至此，原条目改为指针；该册 R-1 乙 结案后该条转 `[X]`）。
 >
@@ -74,9 +74,9 @@
   - 状态：[X]（预言坐实且**方向相反**：aarch64 的私有链接面比 x86 大得多（33 vs 16 条 warning，21 vs 19 个文件），因 `#[cfg(target_arch = "aarch64")]` 侧的 pub 项只有在 aarch64 腿才被文档化。recipe 亦改造为**两腿都跑完再汇总退出码**（旧形态 x86 红即中断，第二腿永不测得）；负控制实测：注入一处私有链接 + 一处 unresolved 后 `x86_64 rustdoc exit: 101` 与 `aarch64 rustdoc exit: 101` **同时**打出，两腿各自报错清单一致。aarch64 独有的 8 个站点（并集 24 − 交集 16）全部落在 ①② 两类内，无需新的可见性裁定。）
 
 - **R-6 门禁归位（可选，需另行授权）**：rustdoc 要不要进 §2.3。
-  - 描述：rustdoc 现为 `Makefile.ci` 的 `ci` 聚合成员但不在 §2.3 六门槛，导致「`make -f Makefile.ci ci` 失败」与「本轮 §2.3 全绿」两个陈述可同时成立而不矛盾——这是口径漏洞而非代码缺陷。
+  - 描述：rustdoc 原为 `Makefile.ci` 的 `ci` 聚合成员但不在 §2.3 门槛，导致「`make -f Makefile.ci ci` 失败」与「本轮 §2.3 全绿」两个陈述可同时成立而不矛盾——这是口径漏洞而非代码缺陷。
   - 方案：两种收口：把 rustdoc 列为 §2.3 第 7 条（需改 `AGENTS.md`，属文档保护条款，须用户授权），或在 §2.3 明确注明 rustdoc 属本地可选腿。本工程默认后者（改动面小），前者由用户裁定。
-  - 状态：[ ]（**未动**：两个收口形态都要改 `AGENTS.md`，而 §2.2 的一次性订正授权已在 `613b324a` 消耗完；需用户另行授权并裁定形态。本工程其余条目不依赖本条——门禁已在本地 `Makefile.ci` 聚合里 fail-closed。）
+  - 状态：[X]（用户裁定甲形态：列为 §2.3 第 7 条。`AGENTS.md` §2.3 新增第 7 条——`make -f Makefile.ci ci-rustdoc` 双架构全绿，判据面与 workflow policy 行同面（两条 intra-doc link lint，不加压 `invalid_html_tags` / `invalid_rust_codeblocks`）。同批订正 §2.2 存量读数：`audit_*.py` 27 → 28（`scripts/` 24 → 25，新增件为 P-79 的 `audit_vacuous_needle.py`）、full 档存量腿 9 → 10（第 10 条 = `vacuous_needle`，P-79）。回归锁：`ci_entrypoint_unified_test::test_ci_rustdoc_matches_workflow_command` 断言 §2.3 含「7. rustdoc 双架构全绿」与命令行字面量；`test_ci_aggregate_covers_all_gates` 同步门槛措辞。R-7 / R-8 未动。）
 
 - **R-7 无源码位置的三条 warning：判据面是否再加压**：
   - 描述：两腿各有三条不带 `-->` 位置的 warning（`unclosed HTML tag \`u8\`` / `unclosed HTML tag \`dyn\`` / `could not parse code block as Rust code`），来自散文里的裸 `<T>` 写法与未标 `text` 的 ASCII 表格围栏。`ci-lint.yml` 的策略行明确写着"不阻断 rustdoc 内部 HTML tag 自动生成警告 (无源码位置)"，故 R-1 乙 的加压面只含两个 intra-doc link lint。

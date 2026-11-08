@@ -148,7 +148,7 @@ fn test_makefile_ci_pipefail_and_phony_complete() {
 }
 
 #[test]
-fn test_ci_aggregate_covers_six_gates() {
+fn test_ci_aggregate_covers_all_gates() {
     let mk = read(MAKEFILE_CI);
     let line = mk
         .lines()
@@ -160,11 +160,11 @@ fn test_ci_aggregate_covers_six_gates() {
         "ci-test-host",        // §2.3-4 host-tests
         "ci-test-kernel-host", // §2.3-6 内核 host 单测
         "ci-boot",             // §2.3-5 QEMU 集成
-        "ci-rustdoc",          // CI 对齐 (ci-lint.yml rustdoc-check)
+        "ci-rustdoc",          // §2.3-7 rustdoc 双架构
     ] {
         assert!(
             line.split_whitespace().any(|p| p == gate),
-            "ci 聚合缺 {gate} —— 「本地一键绿」不等于 §2.3 六门槛绿"
+            "ci 聚合缺 {gate} —— 「本地一键绿」不等于 §2.3 全部门槛绿"
         );
     }
     // ci-boot 必须同时覆盖两架构 (旧聚合只跑 aarch64).
@@ -1309,6 +1309,16 @@ fn test_ci_rustdoc_matches_workflow_command() {
         assert!(
             mk.contains(target) && wf.contains(target),
             "rustdoc 双架构覆盖缺失 {target}"
+        );
+    }
+
+    // R-6 收口: rustdoc 必须是 §2.3 第 7 条 —— 否则「make ci 失败」与「§2.3 全绿」
+    // 两个陈述仍可同时成立 (口径漏洞而非代码缺陷).
+    let agents = read(AGENTS_MD);
+    for needle in ["7. rustdoc 双架构全绿", "make -f Makefile.ci ci-rustdoc"] {
+        assert!(
+            agents.contains(needle),
+            "AGENTS §2.3 缺 {needle} —— rustdoc 门禁归位 (R-6) 被撤销, 门槛口径重新分叉"
         );
     }
 }

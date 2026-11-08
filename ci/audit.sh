@@ -699,7 +699,7 @@ fi
 # ── 2d. 内核 release 维 compile-only (P-44 测试维 + P-51 feature 维) ──
 # 门槛 6 的判据是 debug 配方 (Makefile 的 test-kernel-host, 不带 --release). release 测试维
 # 自 P-43 起「可编译、可运行、零警告」, 但**此前不由任何门禁编译** —— 于是谁把测试侧 cfg
-# 改回与被测代码掩码不同形, 六门槛照样全绿: 修好的病灶没有回归锁.
+# 改回与被测代码掩码不同形, 全部门槛照样全绿: 修好的病灶没有回归锁.
 # P-51 同族缺口: lockdep 的 cfg 全形如 any(debug_assertions, feature = "lockdep"), 常规
 # release 构建从不点亮它; e1000-real-hw 的真实硬件分支也只在该 feature 下编译.
 # 判据与实现分别见 scripts/check_kernel_test_release_dim.sh 与
