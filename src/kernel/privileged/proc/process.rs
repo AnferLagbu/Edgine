@@ -242,11 +242,27 @@ pub struct Process {
     /// 摘走 (P-17 取证的单一成因窗口, 现场与读数见
     /// `docs/report/net-e2e-offcore-dequeue-window.md`).
     ///
-    /// 生命周期: `schedule()` 拣中 `next` 并改写 `per_cpu.current` **之前**置位; 清位
-    /// 只在 `Scheduler::reap_off_cpu` —— 那里运行在**新任务**上下文, 确证上一次切换已
+    /// 生命周期: `schedule()` 拣中 `next` 并改写 `per_cpu.current` **之前**置位;
+    /// 首个用户进程不经 `schedule()` 上核 (iretq 直入用户态), 由
+    /// `enter_user_process` 在进入前补置 (见其 P-21 注释). 清位只在
+    /// `Scheduler::reap_off_cpu` —— 那里运行在**新任务**上下文, 确证上一次切换已
     /// 完成 (语义同 Linux `finish_task_switch` 的 `prev->on_cpu = 0`). 不得提前清:
     /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
     pub eevdf_on_cpu: AtomicBool,
+    /// 本任务是否**曾经**进入过 EEVDF 可运行记账 (入树 / 被拣上核).
+    ///
+    /// 与 [`Process::eevdf_on_rq`] 不同, 置位后不再清除: 它界定 tick「Ready
+    /// 隐形」恢复的射程 —— 恢复只对"曾在队列系统中的任务"生效. 从未入过队的
+    /// `Ready` 任务是创建方的责任, **不是**丢失: 首个用户进程按
+    /// `enter_user_process` 的契约不入树 (它经 iretq 直入用户态, 入树即成为
+    /// 可被别核偷走的幽灵条目), 由 `schedule()` 的 keep-current 兜底, 首次被
+    /// 抢占时才经 prev 收尾入树 (P-78 实测: 恢复网若不设此门, 启动期会把该
+    /// 进程补投到次核, 两核交叠同一内核栈 ⇒ 三重故障).
+    ///
+    /// 置位点: 入树/拣中的 [`Self::eevdf_on_rq`] 写入处, 以及
+    /// `Scheduler::reap_off_cpu` 确证 prev 已离核处 (补投腿认领失败时由 tick
+    /// 恢复网接手, 不把"上过核但从未入队"的首进程漏在网外).
+    pub eevdf_placed_once: AtomicBool,
 
     /// EEVDF 本轮虚拟截止期 (Q16.16); 0 表示尚未建账.
     pub eevdf_vdeadline: AtomicU64,
@@ -470,6 +486,7 @@ impl Process {
             eevdf_on_rq: AtomicBool::new(false),
             eevdf_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
             eevdf_on_cpu: AtomicBool::new(false),
+            eevdf_placed_once: AtomicBool::new(false),
             eevdf_vdeadline: AtomicU64::new(0),
             eevdf_slice_real: AtomicU64::new(0),
             eevdf_slice_virt: AtomicU64::new(0),

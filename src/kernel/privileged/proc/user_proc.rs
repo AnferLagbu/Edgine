@@ -1092,11 +1092,12 @@ impl UserProcManager {
     ///
     /// 用户进程创建时 `context` 由 `init_kernel_process_fields` 显式清零, 设计上
     /// 只经 `enter_user_asm` 直接 iretq 进用户态, 不经 `process_switch_asm`. 但
-    /// `enter_user_process` 会先把 pid 入 EEVDF 运行队列, 从入队到 `enter_user_asm`
-    /// 之间若被定时器 tick 抢占, `schedule()` 会选中本进程并以 `process_switch_asm`
-    /// 内核分支执行 `mov cr3,0` → #PF → double fault → triple fault.
+    /// `enter_user_process` 只标 `current` / 投送屏障, **不入树**; 此后任何把它
+    /// 拣上核的调度路径都以 `process_switch_asm` 的用户态出口恢复上下文 ——
+    /// `context` 全零即 `mov cr3,0` → #PF → double fault → triple fault.
+    /// 填充它维持 "可运行 ⇒ 上下文有效" 不变式, 与是否入过树无关.
     ///
-    /// 本方法在入队**之前**把上下文填为有效值 (`entry/user_stack/cr3` 取自权威
+    /// 本方法在进入用户态**之前**把上下文填为有效值 (`entry/user_stack/cr3` 取自权威
     /// `Process`, 段选择子与 rflags 复用 [`ProcessContext::set_user_mode`](crate::privileged::proc::types::ProcessContext::set_user_mode), 与
     /// `enter_user_asm` 载入的 0x1B/0x23/0x202 逐一对应), 恢复
     /// "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占 (含跨核 `load_balance` / IPI)

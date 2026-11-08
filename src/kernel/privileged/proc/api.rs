@@ -224,10 +224,23 @@ pub fn enter_user_process(pid: u32) {
     //
     // 仍需先把 ProcessContext 填成有效用户态上下文 (cr3/rip/rsp), 维持
     // "可运行 ⇒ 上下文有效" 不变式, 使此后任意抢占路径均能正确进入用户态.
+    //
+    // P-21 投送屏障也必须在此补置: 首进程不经 `schedule()` 上核, `schedule()` 的
+    // 唯一置位点 (`next_snap`) 看不见它; 若 `on_cpu == false` 且
+    // `rq_cpu == NO_RQ_CPU`, 则 `place_barrier` / `place_locked` 的
+    // `src.is_running` 判据 / `on_current` 源核核查对它**同时盲视** ——
+    // block→switch 窗口内的子进程退出唤醒可把它投到另一核, 两核交叠同一块
+    // 内核栈 (P-78 实测: 次核 #UD 落在 lockdep 调用中, 主核随即停摆于
+    // `LOG_EMIT_LOCK`). 清位仍只归 `reap_off_cpu`: 首次被抢占后, 由其 prev 收尾
+    // 所在核的下一轮 `schedule()` 入口清位并补投.
     if let Some(proc) = USER_PROC_MANAGER.get(pid) {
         // SAFETY: proc 来自 USER_PROC_MANAGER.get(pid) 且尚未卸载, 分配生命周期有效.
         unsafe {
             super::user_proc::UserProcManager::init_first_entry_context(proc);
+            (*proc)
+                .process()
+                .eevdf_on_cpu
+                .store(true, Ordering::Release);
         }
     }
 

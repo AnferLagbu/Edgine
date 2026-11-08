@@ -298,9 +298,9 @@ fn exit_teardown_is_gated_on_last_group_member() {
     assert!(
         has(
             &body,
-            "if last_member && parent_tgid != 0 { Self::unblock(parent_tgid); }"
+            "if last_member && parent_tgid != 0 { Self::wake_child_waiters(parent_tgid); }"
         ),
-        "K-04: 只在线程组整体退出后唤醒父组"
+        "K-04 / P-78: 只在线程组整体退出后唤醒父组 (经助手覆盖组内全部等待线程)"
     );
     assert!(
         has(

@@ -9,7 +9,8 @@
 //!
 //! - functions 层: 0 unsafe; 参数 (pid 范围 / options 标志) 在此校验
 //! - 进程表只读/收割经 privileged `proc::api` (`process_with` /
-//!   `process_remove_and_free` / `scheduler_yield`)
+//!   `process_reap_group`); 阻塞等待走 `scheduler_block` / `scheduler_unblock`,
+//!   由子组退出侧 (`Scheduler::exit` → `wake_child_waiters`) 唤醒
 //! - 用户态缓冲写经 privileged `syscall::api::write_struct_to_user`
 //!   (内部先 `check_user_buf` 校验再写入)
 //!
@@ -21,6 +22,9 @@
 //! - pid < -1: 等待进程组 |pid| 内的任意子进程
 
 use crate::privileged::proc::api;
+use crate::privileged::proc::{
+    BlockReason, scheduler_block, scheduler_unblock, scheduler_yield_ex,
+};
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
@@ -92,10 +96,25 @@ pub fn wait_reap(target_pid: i32, non_blocking: bool, keep_zombie: bool) -> Wait
         if non_blocking {
             return WaitOutcome::Running;
         }
-        // SIMPLIFIED: 阻塞等待用轮询 + scheduler_yield, 无专用等待队列/唤醒；
-        // 影响面: 忙轮询带来额外调度开销, 无法精确唤醒; 何时需扩展: 引入进程级
-        // wait_queue 后改为事件驱动唤醒.
-        crate::privileged::proc::scheduler_yield();
+        // P-78: 真阻塞等待 — 置 Blocked 并撤出可运行集, 由子组退出侧
+        // (`Scheduler::exit` → `wake_child_waiters`) 精确唤醒. 旧实现用
+        // `scheduler_yield` 忙轮询: 等待循环期间本核 IF=0, 收不到 tick,
+        // EEVDF 合格集随 vruntime 冻结而冻结, 被等待的子进程可能永不被选中
+        // (x86_64 满载启动静默挂死的直接机制).
+        scheduler_block(BlockReason::WaitingForChild);
+        // 丢唤醒闭窗: "读退出码 → 置 Blocked" 之间子组可能已完成退出并广播
+        // 唤醒, 彼时本线程仍是 Running, `unblock` 对 Running 不投送, 唤醒被
+        // 丢弃. 故置 Blocked **之后**在本轮内复核一次: 条件已成立就撤销阻塞
+        // 并回到循环顶部收割; 否则才真正让出 CPU.
+        let child_ready = api::process_group_exit_code(child_tgid) >= 0;
+        let child_gone = api::process_with(child_tgid, |p| p.group().tgid()).is_none();
+        if child_ready || child_gone {
+            scheduler_unblock(current_pid);
+            continue;
+        }
+        // 唤醒返回处收口致命信号 (SIGKILL + 组退出 / de_thread): 等待循环不是
+        // 信号投递点, 不在此处退出会让整组永久收不齐.
+        scheduler_yield_ex();
     }
 }
 

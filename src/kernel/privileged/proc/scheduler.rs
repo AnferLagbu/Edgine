@@ -112,7 +112,10 @@ const LOAD_BALANCE_MAX_MOVE: usize = 4;
 /// 队列归属认领的有限重试次数.
 ///
 /// 认领窗口只在"持 rq 锁搬树节点"的微临界区内 (全程关中断), 正常不会重试;
-/// 重试耗尽即放弃本轮搬动 (任务仍留在原队列, 不丢可运行性).
+/// 重试耗尽即放弃本轮搬动. 认领持有方可被**宿主**调度器抢占 (客户机内关中断
+/// 挡不住宿主抢占), 故"放弃本轮"不能等价于"可运行性由对方搬完" ——
+/// `Ready` 且既不在队也不在核上的无主任务由 [`Scheduler::ready_orphan_due`]
+/// 在 tick 扫描里兜底补投 (P-78).
 const RQ_CLAIM_RETRY: usize = 32;
 
 /// PWM 资源的 CPU 带宽配额槽位 — 限制指定 PWM 的 CPU 带宽, 并记录本周期已消耗的运行时间。
@@ -176,6 +179,13 @@ static LAST_KSWAPD_TICK: AtomicU64 = AtomicU64::new(0);
 static LAST_HOTPLUG_TICK: AtomicU64 = AtomicU64::new(0);
 static LAST_BALANCE_TICK: AtomicU64 = AtomicU64::new(0);
 static LAST_REAP_TICK: AtomicU64 = AtomicU64::new(0);
+
+/// 「Ready 隐形」恢复的打印上限 (全站点共享一份预算).
+///
+/// 该恢复正常不应命中; 命中即说明屏障延迟投送与 reap 补投都漏投, 属需要留证的
+/// 协议失效, 但长期持续时逐 tick 打印会把串口写成瓶颈, 故只留前若干行定性.
+static ORPHAN_RECOVERED: AtomicU64 = AtomicU64::new(0);
+const ORPHAN_REPORT_BUDGET: u64 = 8;
 
 /// 调度策略 — 决定任务进入哪条运行队列及其抢占语义。
 ///
@@ -977,6 +987,15 @@ impl Scheduler {
         if gone {
             return PlacementOutcome::FAILED;
         }
+        // P-78: 已被源核拣中 (`pick_eevdf_task` 已把它从树搬进 running 账) 的任务
+        // 不得跨核搬动. 拣中与 `schedule()` 写入 `eevdf_on_cpu`/`current` 之间是
+        // 一个无屏障、无在核判据的窗口: 此时投送屏障看不见它 (on_cpu 还是 false),
+        // 在核核查也看不见它 (current 尚未写入), 而源核已经决定切到它. 把它搬走
+        // 等于源核照旧上核、目的核再从树拣一次 —— 两核交叠同一块进程内核栈.
+        // running 账是"已拣中"的唯一凭证, 跨核搬动一律拒绝 (任务留在源核收尾).
+        if src.as_ref().is_some_and(|rq| rq.is_running(pid)) {
+            return PlacementOutcome::FAILED;
+        }
         // E-05a 三分语义: 已在**任一**可运行队列记账的 Wake 降级为 Requeue ——
         // 重复唤醒是 no-op, 不得再次重置切片预算 (E-01: Wake 只对不在可运行集的
         // 睡眠任务生效). 源核在册也算"已可运行", 否则跨核重复投送会把一次纯搬动
@@ -1049,6 +1068,7 @@ impl Scheduler {
             // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
             p.eevdf_vruntime.store(placed, Ordering::Release);
             p.eevdf_on_rq.store(true, Ordering::Release);
+            p.eevdf_placed_once.store(true, Ordering::Release);
             p.eevdf_vdeadline.store(new_vd, Ordering::Release);
             if is_wake {
                 p.eevdf_wake_ns.store(wake_ns, Ordering::Release);
@@ -1750,12 +1770,20 @@ impl Scheduler {
         }
         let ready_snap = PROCESS_TABLE.with_process(current_pid, |p| {
             let state = p.get_state();
-            (
-                p.set_state_safe(ProcessState::Ready).is_err(),
-                state,
-                p.group().tgid(),
-                p.group().has_exited(),
-            )
+            let owner = p.eevdf_rq_cpu.load(Ordering::Acquire);
+            let this_cpu = crate::privileged::smp::get_current_cpu();
+            // P-78: 跨核搬动已被 `place_locked` 的 running 账判据拒收 —— 若任务
+            // 此刻已 Running 且归属仍在别核 (pick 窗口: 它已拣中, 只是 current
+            // 尚未写入), 状态推进归那个核, 本核再写 Ready 会把正在运行的任务
+            // 打回就绪; 随后它的 `block()` 就是非法的 Ready→Blocked, 阻塞被吞.
+            let foreign_running =
+                state == ProcessState::Running && owner != NO_RQ_CPU && owner != this_cpu;
+            let failed = if foreign_running {
+                false
+            } else {
+                p.set_state_safe(ProcessState::Ready).is_err()
+            };
+            (failed, state, p.group().tgid(), p.group().has_exited())
         });
         if let Some((failed, state, tgid, group_exited)) = ready_snap
             && failed
@@ -1939,6 +1967,12 @@ impl Scheduler {
         // `eevdf_rq` 锁, 在本闭包里取会构成 `with_process` 重入 (同核自死锁).
         let snap = PROCESS_TABLE.with_process(prev, |p| {
             p.eevdf_on_cpu.store(false, Ordering::Release);
+            // 本函数只对确已上过核的 prev 执行 —— 这正是 `eevdf_placed_once` 的
+            // 第二个置位点: 下方补投腿的归属认领只有 32 次有界重试, 持有方被
+            // 宿主抢占时可能耗尽而放弃. 若该任务此前从未入过队 (首个用户进程
+            // 的首次切换), 没有这个标记, tick 恢复网会把它判为"创建方尚未激活"
+            // 而永久漏救 (P-78 的静默挂死同类形态).
+            p.eevdf_placed_once.store(true, Ordering::Release);
             (
                 p.get_state(),
                 p.eevdf_on_rq.load(Ordering::Acquire),
@@ -2042,8 +2076,11 @@ impl Scheduler {
         let per_cpu = per_cpu();
         if let Some(pid) = Self::current() {
             PROCESS_TABLE.with_process(pid, |proc| {
-                let _ = proc.set_state_safe(ProcessState::Blocked);
+                // P-78: 原因先于状态发布. 退出侧等待者扫描 (get_state 为 SeqCst
+                // 读, 状态 store 为 Release) 以"看到 Blocked"为前提再读原因;
+                // 先写原因保证其随状态一并可见, 不出现 Blocked + 旧原因被漏扫.
                 proc.block_reason.store(reason as u32, Ordering::SeqCst);
+                let _ = proc.set_state_safe(ProcessState::Blocked);
             });
             // IC2/IC4: 阻塞即离开可运行集 —— 摘节点 + 撤账. 树上只留可运行
             // 任务, `is_empty()` 与 `pick_eevdf` 的合格集合才与真实可运行集一致.
@@ -2204,6 +2241,37 @@ impl Scheduler {
         u32::try_from(cpus.len()).unwrap_or(u32::MAX)
     }
 
+    /// 唤醒父组内阻塞于 `WaitingForChild` 的线程 (子组整体退出事件).
+    ///
+    /// 退出侧原有唤醒只指向组长 `parent_tgid`, 但 `wait4` 可由组内任一线程
+    /// 调用: 非组长等待者不在唤醒目标内, 会永久睡在队列外. 成员表快照在进程
+    /// 表锁内取 (合法锁序 7→9); 逐 TCB 的状态判定各自独立加锁, `unblock`
+    /// (进程表 → rq) 一律在表锁之外调用, 不得在持锁闭包内嵌套.
+    fn wake_child_waiters(parent_tgid: Pid) {
+        let waiters = PROCESS_TABLE
+            .with_process(parent_tgid, |proc| proc.group().members())
+            .unwrap_or_default();
+        let mut woke_parent = false;
+        for tid in waiters {
+            let waiting = PROCESS_TABLE
+                .with_process(tid, |proc| {
+                    proc.get_state() == ProcessState::Blocked
+                        && proc.block_reason.load(Ordering::SeqCst)
+                            == BlockReason::WaitingForChild as u32
+                })
+                .unwrap_or(false);
+            if waiting {
+                Self::unblock(tid);
+                woke_parent |= tid == parent_tgid;
+            }
+        }
+        // 保留既有语义: 组长若阻塞于其它原因 (如 `FutexWait`), 子组退出仍直接
+        // 唤醒它; 已按等待者唤醒时不重复投送.
+        if !woke_parent {
+            Self::unblock(parent_tgid);
+        }
+    }
+
     /// 当前任务退出: 置 Zombie、处理子进程并切换到下一个任务
     pub fn exit(&self, exit_code: u32) {
         let per_cpu = per_cpu();
@@ -2293,7 +2361,10 @@ impl Scheduler {
                 .unwrap_or(0);
 
             if last_member && parent_tgid != 0 {
-                Self::unblock(parent_tgid);
+                // P-78: 子组整体退出 = 全部 `wait4` 等待条件成立. 唤醒父组内
+                // 所有阻塞于 `WaitingForChild` 的线程 (含非组长 wait4 调用者);
+                // 组长阻塞于其它原因时由助手保持既有直接唤醒.
+                Self::wake_child_waiters(parent_tgid);
             }
 
             if last_member {
@@ -2456,6 +2527,7 @@ impl Scheduler {
         }
 
         Self::tick_sleep_wake(new_tick);
+        Self::tick_recover_orphans();
         Self::tick_reap_zombies(new_tick);
         Self::tick_balance(new_tick);
 
@@ -2645,6 +2717,7 @@ impl Scheduler {
             PROCESS_TABLE.with_process(current_pid, |p| {
                 p.eevdf_vruntime.store(placed, Ordering::Release);
                 p.eevdf_on_rq.store(true, Ordering::Release);
+                p.eevdf_placed_once.store(true, Ordering::Release);
             });
         }
         true
@@ -2683,6 +2756,76 @@ impl Scheduler {
         });
         for &pid in &to_wake[..wake_count] {
             Self::unblock(pid);
+        }
+    }
+
+    /// tick「Ready 隐形」恢复判据: `Normal` 任务已就绪却既不在任何运行队列
+    /// (`eevdf_on_rq == false`) 也不占用任何核 (`eevdf_on_cpu == false`).
+    ///
+    /// 正常路径下该窗口只存在于**投送屏障延迟投送**与**占用者核 reap 补投**之间
+    /// (微秒级). 补投腿与并发唤醒的队列归属认领都可能因持有方被宿主调度器抢占而
+    /// 超时放弃 (客户机内关中断挡不住宿主抢占), 此时延迟投送已按"落地交给 reap"
+    /// 返回, 却再无人投送 —— 任务永久隐形, 两核各自空转. P-78 实测形态:
+    /// pid=5 `Ready` + `rq_cpu=NO_RQ_CPU`, 心跳持续而用户态永久静默.
+    ///
+    /// 判据不看 `eevdf_rq_cpu`: 该字段为 `MIGRATE_PENDING` 时任务正被他人搬定,
+    /// 由认领协议串行化; "不在队且不在核"才是无主的硬读数. 策略必须限 `Normal`:
+    /// idle 任务同为 `Ready` 且永不入队, 但策略是 `SchedPolicy::Idle`.
+    ///
+    /// 射程另以 [`Process::eevdf_placed_once`] 收口: 从未入过队的 `Ready` 任务
+    /// 不是丢失, 而是创建方尚未激活 —— 首个用户进程按 `enter_user_process` 的
+    /// 契约**必须**留在队外 (iretq 直入用户态), fork/内核线程也在 `Ready` 与
+    /// `add_to_run_queue` 之间短暂处于该形态. 若无此门, 启动期就会把首个用户
+    /// 进程补投到次核, 两核交叠同一内核栈 ⇒ 三重故障 (P-78 实测).
+    #[must_use]
+    pub fn ready_orphan_due(process: &Process, current_pid: Pid) -> Option<Pid> {
+        if process.pid.0 == current_pid
+            || process.get_state() != ProcessState::Ready
+            || process.get_sched_policy() != SchedPolicy::Normal
+            || !process.eevdf_placed_once.load(Ordering::Acquire)
+        {
+            return None;
+        }
+        if process.eevdf_on_rq.load(Ordering::Acquire)
+            || process.eevdf_on_cpu.load(Ordering::Acquire)
+        {
+            return None;
+        }
+        Some(process.pid.0)
+    }
+
+    /// tick 的「Ready 隐形」恢复扫描: **一次表锁**取无主就绪快照, 逐个补投进本核
+    /// 运行队列 (单轮上限 = 缓冲长度 8, 余量留待下一 tick).
+    ///
+    /// 按 `Requeue` 语义补投: 任务本就 `Ready`, 不是睡眠唤醒, 不得按 `Wake` 重发
+    /// 睡眠信用与新切片 (E-05a 三分语义). 补投动作留在表锁外 —— 层级 8 → 7 是
+    /// 单向例外, 持表锁再取 rq 锁即反向锁序 (见 `docs/explain/ref-lock-order.md`);
+    /// 认领再次超时则保持原样, 下一 tick 重试.
+    ///
+    /// 这是「`Ready` ⇒ 必在树/核上」不变式的最终兜底腿: 正常路径不应命中 (rq 锁
+    /// 到表锁的收尾窗口只有微秒级, tick 需恰好落在其中), 命中即按预算留证.
+    fn tick_recover_orphans() {
+        let current_pid = Self::current().unwrap_or(0);
+        let mut orphans: [Pid; 8] = [0; 8];
+        let orphan_count = PROCESS_TABLE.scan_into(&mut orphans, |proc| {
+            Self::ready_orphan_due(proc, current_pid)
+        });
+        if orphan_count == 0 {
+            return;
+        }
+        let dst_cpu = crate::privileged::smp::get_current_cpu();
+        for &pid in &orphans[..orphan_count] {
+            let outcome = Self::eevdf_place_on(pid, dst_cpu, PlacementKind::Requeue);
+            if outcome.landed
+                && ORPHAN_RECOVERED.fetch_add(1, Ordering::Relaxed) < ORPHAN_REPORT_BUDGET
+            {
+                crate::klog_info!(
+                    Process,
+                    "[SCHED] recovered ready orphan pid={} cpu={}",
+                    pid,
+                    dst_cpu
+                );
+            }
         }
     }
 
@@ -3051,6 +3194,7 @@ impl Scheduler {
                 // IC1: 落点回写任务自身 vruntime (原样携带, `placed == vr`).
                 p.eevdf_vruntime.store(placed, Ordering::Release);
                 p.eevdf_on_rq.store(true, Ordering::Release);
+                p.eevdf_placed_once.store(true, Ordering::Release);
                 // Migrate 携带 vd: 不重建本轮切片, 截止期与剩余预算随任务同行.
                 p.eevdf_vdeadline.store(vd, Ordering::Release);
             });
