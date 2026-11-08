@@ -8,12 +8,12 @@
 //! - IE1 具名用例: 账目/V/lag/切片全在 Q16.16 单时基上, 参考模型对账通过;
 //! - IE4 具名用例: 连续 tick/schedule 下本核 floor 只增不减;
 //! - 唤醒信用上界 / 稳态 lag 上界 / 唤醒周转次数 / 公平性份额差 均满足基线判据;
-//! - `CfsRunQueue::observation` 守恒自检与计数器语义 (K-07b 批3 内核观测面);
+//! - `EevdfRunQueue::observation` 守恒自检与计数器语义 (K-07b 批3 内核观测面);
 //! - 接线锁: syscall 464 单源 + dispatch 分发 + 用户态触发 + 门禁脚本断言.
 
 use std::path::Path;
 
-use edgine::kernel::privileged::proc::cfs::{CfsObsCounters, CfsRunQueue};
+use edgine::kernel::privileged::proc::eevdf::{EevdfObsCounters, EevdfRunQueue};
 use edgine::kernel::privileged::syscall::types as ktypes;
 use edgine_abi::sched as abi;
 use edgine_host_tests::eevdf_model::{
@@ -270,12 +270,12 @@ fn fairness_spread_within_baseline_criteria() {
     model.audit();
 }
 
-// ── 内核观测面: CfsRunQueue::observation ─────────────────────────────────
+// ── 内核观测面: EevdfRunQueue::observation ─────────────────────────────────
 
 /// 空队列快照: 零账目, 守恒成立, lag 归一为 0.
 #[test]
-fn cfs_observation_empty_queue_is_conserved() {
-    let queue = CfsRunQueue::new();
+fn eevdf_observation_empty_queue_is_conserved() {
+    let queue = EevdfRunQueue::new();
     let snapshot = queue.observation();
     assert!(snapshot.conserve_ok, "空队列必须通过守恒自检");
     assert_eq!(snapshot.total_weight, 0);
@@ -288,8 +288,8 @@ fn cfs_observation_empty_queue_is_conserved() {
 
 /// 入队 → 拣出改变账目分解, 但 `W`/`S`/`V` 与守恒结论始终一致.
 #[test]
-fn cfs_observation_tracks_tree_and_running_ledgers() {
-    let mut queue = CfsRunQueue::new();
+fn eevdf_observation_tracks_tree_and_running_ledgers() {
+    let mut queue = EevdfRunQueue::new();
     let base = 10 * VIRT_ONE;
     let placed_a = queue.enqueue(1, base, 1024, false);
     let placed_b = queue.enqueue(2, base.saturating_add(5 * VIRT_ONE), 1024, false);
@@ -317,8 +317,8 @@ fn cfs_observation_tracks_tree_and_running_ledgers() {
 
 /// 观测计数器: 唤醒 / 切片命中 / 等待时延样本的平均与峰值语义.
 #[test]
-fn cfs_observation_counters_accumulate() {
-    let mut queue = CfsRunQueue::new();
+fn eevdf_observation_counters_accumulate() {
+    let mut queue = EevdfRunQueue::new();
     queue.note_wakeup();
     queue.note_wakeup();
     queue.note_slice_hit();
@@ -328,7 +328,7 @@ fn cfs_observation_counters_accumulate() {
     let counters = queue.obs_counters();
     assert_eq!(
         counters,
-        CfsObsCounters {
+        EevdfObsCounters {
             wakeups: 2,
             slice_hits: 1,
             wait_samples: 2,

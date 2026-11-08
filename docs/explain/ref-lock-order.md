@@ -42,7 +42,7 @@
   PROCESS_TABLE.processes, PROC_SNAPSHOT
 
 层级 8: Scheduler（调度器）
-  cfs_rq（per-CPU 运行队列锁；跨核搬动按 cpu index 升序取两把）
+  eevdf_rq（per-CPU 运行队列锁；跨核搬动按 cpu index 升序取两把）
 
 层级 9: 进程属性
   sigaction_table, rlimit_table, seccomp.filters, namespaces, numa_policy,
@@ -101,7 +101,7 @@ guard 生命周期按 Rust 规则取：`let` 绑定的 guard 存活到块尾（�
 
 序表可以登记**例外**（`exceptions` 数组，`outer` / `inner` 各须是已声明的类）。现存两条：
 
-- `cfs_rq → PROCESS_TABLE.processes`：调度域锁域所有权，见「调度域的锁域所有权」。
+- `eevdf_rq → PROCESS_TABLE.processes`：调度域锁域所有权，见「调度域的锁域所有权」。
 - `LOG_EMIT_LOCK → LOG_SINKS`：最内层发射锁唯一允许的内层，见 `LOG_EMIT_LOCK` 一节。
 
 例外表是机器可读的：新增一条降序路径只能靠改序表放行，不能在脚本里写死文件名。
@@ -150,14 +150,14 @@ boot（SMP AP 上线、NUMA、cgroup/session 初始化）。panic 可能正发�
 ## 调度域的锁域所有权
 
 层级表给的是**跨域**的粗粒度定序，它假设"先取的锁授权后取的锁"。调度域不满足这个假设：
-一个任务的可运行状态由两份数据共同表达——进程控制块里的队列三元组（`cfs_on_rq` /
-`cfs_vruntime` / `cfs_rq_cpu`），以及它所属 CPU 运行队列里的树节点与权重账。两者的**权威
+一个任务的可运行状态由两份数据共同表达——进程控制块里的队列三元组（`eevdf_on_rq` /
+`eevdf_vruntime` / `eevdf_rq_cpu`），以及它所属 CPU 运行队列里的树节点与权重账。两者的**权威
 保护者是归属核的 rq 锁**，不是进程表锁。进程表锁在这里只是取得 `Process` 引用的入场券：
 `PROCESS_TABLE.with_process()` 借用引用、在闭包结束时即释放，它不参与"谁有权变更队列成员
 身份"的裁决。因此本域内的既定取锁方向是
 
 ```
-cfs_rq（层级 8）  →  PROCESS_TABLE（层级 7）
+eevdf_rq（层级 8）  →  PROCESS_TABLE（层级 7）
 ```
 
 这个嵌套看起来像"回头取编号小的锁"，但它不构成层级倒退违规：被保护的不变式（账随任务走、
@@ -166,7 +166,7 @@ cfs_rq（层级 8）  →  PROCESS_TABLE（层级 7）
 AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现运行队列操作），新增调度路径
 必须维持它；需要变更归属时，把 `with_process` 挪进 rq 临界区，而不是相反。
 
-同一份锁域所有权还解释了搬定协议的两个形状约束：归属字段 `cfs_rq_cpu` 的写入必须经认领凭证
+同一份锁域所有权还解释了搬定协议的两个形状约束：归属字段 `eevdf_rq_cpu` 的写入必须经认领凭证
 （`RqClaim`）单一入口，以及任何一次队列成员变更都必须在 rq 临界区内闭合——先认领、再搬账、
 后提交归属，中间不放锁。历史上"摘源 → 放锁 → 投目的"的两段式正是把这个不变式拆成两次上锁，
 留下了任务"既不在树上又已清凭证"的真空窗口（详见 `docs/plan/net-e2e-tcp-echo-flakiness.md`）。
@@ -178,7 +178,7 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 把 `IrqSpinLock` 即自死锁。两个方向相反的搬动者若各按"先源后目"取锁，就会精确构成 AB-BA。
 这条定序与 Linux `double_rq_lock()` 用 `cpu_to_rq(order)` 排序是同一个做法，也允许更省事的等价
 形式：目的核恒先取（`rq_lock(rq, &rf)` 的 `rq_next` 语义）。本工程的实现选择是升序取锁，见
-`Scheduler::cfs_place_on` 与 `Scheduler::load_balance` 的分支。
+`Scheduler::eevdf_place_on` 与 `Scheduler::load_balance` 的分支。
 
 ### 周期扫描的持锁口径
 
@@ -200,7 +200,7 @@ AB-BA。此禁令当前在全内核成立（`with_process` 闭包体内不出现
 取 rq 锁，红在测试而不是只靠 review 拦住。
 
 对上一节的锁域所有权，结论是**没有引入新的取锁方向**：批量读只读 TCB 内的原子量，不参与"谁有权变更队列
-成员身份"的裁决，`cfs_rq → PROCESS_TABLE` 的单向例外既未扩大也未违反。需要再取锁的动作一律排在快照之后
+成员身份"的裁决，`eevdf_rq → PROCESS_TABLE` 的单向例外既未扩大也未违反。需要再取锁的动作一律排在快照之后
 释放表锁的那一刻——唤醒走 `Scheduler::unblock`（层级 8）、僵尸回收的父进程存活查询与
 `group_zombie_exit_code` / `reap_zombie_group`（再次取层级 7）都在锁外的结果集上完成。这正是"锁内收、
 锁外做"的分工：把判据所需的最小读取留在临界区，把可能嵌套任何锁的后续动作全部推出去。
@@ -281,8 +281,8 @@ O(到期数)，而本节消掉的是"线性扫描必须付几次锁"这个独立
 ### 跨核搬动（负载均衡 / 唤醒投送）
 
 ```
-层级 8: per_cpu_for(min).cfs_rq.lock()   →  归属核先取 (cpu index 升序)
-层级 8: per_cpu_for(max).cfs_rq.lock()   →  第二把同层级锁, 定序见上节
+层级 8: per_cpu_for(min).eevdf_rq.lock()   →  归属核先取 (cpu index 升序)
+层级 8: per_cpu_for(max).eevdf_rq.lock()   →  第二把同层级锁, 定序见上节
 层级 7: PROCESS_TABLE.with_process()     →  借引用读快照 / 写 Ready (rq → PT)
 层级 8: 提交归属, 释放两把 rq 锁          →  变更全程不放锁
 ```

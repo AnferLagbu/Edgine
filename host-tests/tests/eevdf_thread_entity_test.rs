@@ -6,7 +6,7 @@
 //!
 //! 本文件锁定:
 //!
-//! - `nice`/`cfs_weight`/`cfs_vruntime`/`eevdf_*` 全部落在 TCB (`Process`),
+//! - `nice`/`eevdf_weight`/`eevdf_vruntime`/`eevdf_*` 全部落在 TCB (`Process`),
 //!   组对象不持有任何调度字段; 调度热路径 (`pick`/`tick`/`wake`) 与退出路径
 //!   都不按 `tgid` 聚合或选人;
 //! - 同组兄弟线程的 EEVDF 状态相互独立: 一方的 tick 推进 / 重权 / 迁移 /
@@ -21,8 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use edgine::kernel::privileged::proc::cfs::{
-    CfsRunQueue, NICE0_WEIGHT, VIRT_ONE, calc_vruntime_delta_virt, nice_to_weight, virtual_deadline,
+use edgine::kernel::privileged::proc::eevdf::{
+    EevdfRunQueue, NICE0_WEIGHT, VIRT_ONE, calc_vruntime_delta_virt, nice_to_weight,
+    virtual_deadline,
 };
 use edgine::kernel::privileged::proc::{Process, ThreadGroup};
 
@@ -88,8 +89,8 @@ fn fn_body(src: &str, sig: &str) -> String {
 fn seed_schedule(proc: &Process, weight: u64, vr: u64, slice_real: u64) -> (u64, u64, u64) {
     let slice_virt = calc_vruntime_delta_virt(weight).saturating_mul(slice_real);
     let vd = virtual_deadline(vr, slice_virt);
-    proc.cfs_weight.store(weight, Ordering::Release);
-    proc.cfs_vruntime.store(vr, Ordering::Release);
+    proc.eevdf_weight.store(weight, Ordering::Release);
+    proc.eevdf_vruntime.store(vr, Ordering::Release);
     proc.eevdf_slice_real.store(slice_real, Ordering::Release);
     proc.eevdf_slice_virt.store(slice_virt, Ordering::Release);
     proc.eevdf_slice_left.store(slice_real, Ordering::Release);
@@ -100,8 +101,8 @@ fn seed_schedule(proc: &Process, weight: u64, vr: u64, slice_real: u64) -> (u64,
 /// 读取 TCB 的 EEVDF 状态快照: `(weight, vr, slice_real, slice_virt, slice_left, vd)`.
 fn snapshot(proc: &Process) -> (u64, u64, u64, u64, u64, u64) {
     (
-        proc.cfs_weight.load(Ordering::Acquire),
-        proc.cfs_vruntime.load(Ordering::Acquire),
+        proc.eevdf_weight.load(Ordering::Acquire),
+        proc.eevdf_vruntime.load(Ordering::Acquire),
         proc.eevdf_slice_real.load(Ordering::Acquire),
         proc.eevdf_slice_virt.load(Ordering::Acquire),
         proc.eevdf_slice_left.load(Ordering::Acquire),
@@ -114,8 +115,8 @@ fn scheduling_state_is_owned_by_the_tcb() {
     let process = code_only(&read_src(PROCESS_SRC));
     for field in [
         "pub nice: AtomicU32,",
-        "pub cfs_vruntime: AtomicU64,",
-        "pub cfs_weight: AtomicU64,",
+        "pub eevdf_vruntime: AtomicU64,",
+        "pub eevdf_weight: AtomicU64,",
         "pub eevdf_vdeadline: AtomicU64,",
         "pub eevdf_slice_real: AtomicU64,",
         "pub eevdf_slice_virt: AtomicU64,",
@@ -130,7 +131,6 @@ fn scheduling_state_is_owned_by_the_tcb() {
 
     let group = code_only(&read_src(THREAD_GROUP_SRC));
     for token in [
-        "cfs_",
         "eevdf_",
         "pub nice",
         "sched_policy",
@@ -148,19 +148,19 @@ fn scheduling_state_is_owned_by_the_tcb() {
 fn selection_and_tick_are_keyed_by_tid_not_tgid() {
     let sched = code_only(&read_src(SCHEDULER_SRC));
 
-    let pick = fn_body(&sched, "fn pick_cfs_task(");
+    let pick = fn_body(&sched, "fn pick_eevdf_task(");
     assert!(
-        has(&pick, "cfs_rq.pick_eevdf("),
-        "E-08: CFS 选路必须走 pick_eevdf"
+        has(&pick, "eevdf_rq.pick_eevdf("),
+        "E-08: EEVDF 选路必须走 pick_eevdf"
     );
     for token in ["tgid", "thread_group", "group()"] {
         assert!(
             !has(&pick, token),
-            "E-08: pick_cfs_task 不得按组身份选人 (出现 {token})"
+            "E-08: pick_eevdf_task 不得按组身份选人 (出现 {token})"
         );
     }
 
-    let tick = fn_body(&sched, "fn tick_current_cfs(");
+    let tick = fn_body(&sched, "fn tick_current_eevdf(");
     assert!(
         has(&tick, "PROCESS_TABLE.with_process(current_pid"),
         "E-08: tick 必须只读写 current 线程自己的 TCB"
@@ -179,7 +179,7 @@ fn selection_and_tick_are_keyed_by_tid_not_tgid() {
         "E-08: 唤醒抢占必须比较目标线程自己的 vd"
     );
     assert!(
-        has(&wake, "p.cfs_vruntime.load"),
+        has(&wake, "p.eevdf_vruntime.load"),
         "E-08: 唤醒抢占必须比较 current 自己的 vr"
     );
     assert!(!has(&wake, "tgid"), "E-08: 唤醒抢占不得以 tgid 判定资格");
@@ -209,7 +209,7 @@ fn exit_path_touches_only_the_exiting_thread() {
         has(&exit, "set_state_safe(ProcessState::Zombie)"),
         "E-08: 退出只把调用线程置 Zombie"
     );
-    for token in ["cfs_rq", "cfs_vruntime", "cfs_weight", "eevdf_"] {
+    for token in ["eevdf_rq", "eevdf_vruntime", "eevdf_weight", "eevdf_"] {
         assert!(
             !has(&exit, token),
             "E-08: 线程退出不得改写任何调度账目 (出现 {token})"
@@ -226,7 +226,7 @@ fn process_level_shortcuts_carry_no_scheduling_state() {
         ("fd 关闭", OPEN_SRC),
     ] {
         let code = code_only(&read_src(path));
-        for token in ["cfs_vruntime", "cfs_weight", "eevdf_"] {
+        for token in ["eevdf_vruntime", "eevdf_weight", "eevdf_"] {
             assert!(
                 !has(&code, token),
                 "E-08: {label} 路径不得读写调度字段 {token}"
@@ -293,7 +293,7 @@ fn run_queue_accounts_sibling_threads_as_separate_entities() {
     let pid_b = 0xE812u32;
     let weight_a = nice_to_weight(-10);
     let weight_b = nice_to_weight(10);
-    let mut rq = CfsRunQueue::new();
+    let mut rq = EevdfRunQueue::new();
 
     let vr_a = rq.enqueue(pid_a, 100 * VIRT_ONE, weight_a, false);
     let vr_b = rq.enqueue(pid_b, 200 * VIRT_ONE, weight_b, false);
@@ -350,8 +350,8 @@ fn migration_carries_only_the_moving_thread() {
     let pid_b = 0xE822u32;
     let weight_a = nice_to_weight(-10);
     let weight_b = nice_to_weight(0);
-    let mut source = CfsRunQueue::new();
-    let mut destination = CfsRunQueue::new();
+    let mut source = EevdfRunQueue::new();
+    let mut destination = EevdfRunQueue::new();
 
     let vr_a = source.enqueue(pid_a, 80 * VIRT_ONE, weight_a, false);
     let vr_b = source.enqueue(pid_b, 120 * VIRT_ONE, weight_b, false);

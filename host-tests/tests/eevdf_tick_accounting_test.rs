@@ -10,14 +10,14 @@
 //!   拣回运行账.
 //! - **源码契约**: tick 热路径的增量必须是 Q16.16 (`calc_vruntime_delta_virt`,
 //!   无 `<< VIRT_SHIFT` 桥), 只做运行账 O(1) 增量; 重调度只登记标记, 实际切换
-//!   留给中断退出路径; 旧 `cfs_should_preempt` / `floor + TARGET_LATENCY` 判据
+//!   留给中断退出路径; 旧 `eevdf_should_preempt` / `floor + TARGET_LATENCY` 判据
 //!   不得回归 (D6①).
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
-use edgine::kernel::privileged::proc::cfs::{
+use edgine::kernel::privileged::proc::eevdf::{
     NICE0_WEIGHT, TARGET_LATENCY_TICKS, VIRT_ONE, calc_vruntime_delta_virt, effective_slice_real,
 };
 use edgine::kernel::privileged::proc::process::{PROCESS_TABLE, Process};
@@ -56,11 +56,11 @@ impl TestProc {
     }
 
     fn vruntime(&self) -> u64 {
-        self.with(|p| p.cfs_vruntime.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_vruntime.load(Ordering::Acquire))
     }
 
     fn sum_exec(&self) -> u64 {
-        self.with(|p| p.cfs_sum_exec_runtime.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_sum_exec_runtime.load(Ordering::Acquire))
     }
 
     fn slice_left(&self) -> u64 {
@@ -68,11 +68,11 @@ impl TestProc {
     }
 
     fn rq_cpu(&self) -> u32 {
-        self.with(|p| p.cfs_rq_cpu.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_rq_cpu.load(Ordering::Acquire))
     }
 
     fn on_rq(&self) -> bool {
-        self.with(|p| p.cfs_on_rq.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_on_rq.load(Ordering::Acquire))
     }
 }
 
@@ -266,11 +266,11 @@ fn fn_body(src: &str, sig: &str) -> String {
 
 /// E-04 记账形状: Q16.16 增量 + 运行账 O(1) + floor 单调 + 到期重建切片.
 #[test]
-fn tick_cfs_helper_keeps_single_time_base() {
+fn tick_eevdf_helper_keeps_single_time_base() {
     let sched = code_only(&read_src(SCHED));
     assert!(
         !has(&sched, "<< VIRT_SHIFT"),
-        "E-04: 调度器不得再有 `<< VIRT_SHIFT` 时基桥 (cfs_vruntime 即 Q16.16)"
+        "E-04: 调度器不得再有 `<< VIRT_SHIFT` 时基桥 (eevdf_vruntime 即 Q16.16)"
     );
 
     let tick = fn_body(&sched, "pub fn tick(cpu_id: usize)");
@@ -287,23 +287,23 @@ fn tick_cfs_helper_keeps_single_time_base() {
         "tick 不得在定时器 ISR 内直接上下文切换"
     );
 
-    let body = fn_body(&sched, "fn tick_current_cfs(");
+    let body = fn_body(&sched, "fn tick_current_eevdf(");
     for needle in [
         "calc_vruntime_delta_virt(weight)",
-        "cfs_rq.advance_running_vruntime(current_pid, vr)",
-        "cfs_rq.advance_floor(vr)",
+        "eevdf_rq.advance_running_vruntime(current_pid, vr)",
+        "eevdf_rq.advance_floor(vr)",
         "p.eevdf_slice_left.store(left",
-        "Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight)",
-        "cfs_rq.enqueue(current_pid, vr, weight, true)",
+        "Self::rebuild_eevdf_round(&eevdf_rq, current_pid, weight)",
+        "eevdf_rq.enqueue(current_pid, vr, weight, true)",
     ] {
         assert!(
             has(&body, needle),
-            "tick_current_cfs 缺少 E-04 记账要素: {needle}"
+            "tick_current_eevdf 缺少 E-04 记账要素: {needle}"
         );
     }
     assert!(
         !has(&body, "need_reschedule"),
-        "tick_current_cfs 只回报切片是否到期, 重调度标记由调用方置位"
+        "tick_current_eevdf 只回报切片是否到期, 重调度标记由调用方置位"
     );
 }
 
@@ -312,7 +312,7 @@ fn tick_cfs_helper_keeps_single_time_base() {
 #[test]
 fn tick_hot_path_writes_only_running_ledger() {
     let sched = code_only(&read_src(SCHED));
-    let body = fn_body(&sched, "fn tick_current_cfs(");
+    let body = fn_body(&sched, "fn tick_current_eevdf(");
     assert!(
         body.matches(".enqueue(").count() == 1,
         "tick 热路径只允许切片到期这一处入树"
@@ -336,12 +336,12 @@ fn tick_hot_path_writes_only_running_ledger() {
     );
 }
 
-/// D6①: 旧抢占判据必须已删除; CFS 分支的重调度只由切片到期驱动.
+/// D6①: 旧抢占判据必须已删除; EEVDF 分支的重调度只由切片到期驱动.
 #[test]
-fn slice_expiry_is_the_only_cfs_reschedule_trigger() {
+fn slice_expiry_is_the_only_eevdf_reschedule_trigger() {
     let sched = code_only(&read_src(SCHED));
     assert!(
-        !has(&sched, "cfs_should_preempt"),
+        !has(&sched, "eevdf_should_preempt"),
         "D6①: 旧 vr 差值抢占判据必须删除, 不得保留兼容阈值"
     );
     assert!(
@@ -352,25 +352,25 @@ fn slice_expiry_is_the_only_cfs_reschedule_trigger() {
     assert!(
         has(
             &body,
-            "else if Self::tick_current_cfs(per_cpu, current_pid)"
+            "else if Self::tick_current_eevdf(per_cpu, current_pid)"
         ),
-        "CFS 分支必须只由 tick_current_cfs 的到期回报触发重调度"
+        "EEVDF 分支必须只由 tick_current_eevdf 的到期回报触发重调度"
     );
-    let cfs_branch = body
-        .split("else if Self::tick_current_cfs")
+    let eevdf_branch = body
+        .split("else if Self::tick_current_eevdf")
         .nth(1)
-        .expect("CFS 分支必须包住 tick_current_cfs 的调用");
+        .expect("EEVDF 分支必须包住 tick_current_eevdf 的调用");
     assert_eq!(
-        cfs_branch.matches("need_reschedule.store(true").count(),
+        eevdf_branch.matches("need_reschedule.store(true").count(),
         1,
-        "CFS 分支内只允许一处重调度请求 (切片到期)"
+        "EEVDF 分支内只允许一处重调度请求 (切片到期)"
     );
 }
 
 /// 负控制: 契约谓词必须能识别被禁形态 (防止源码重构后契约静默失效).
 #[test]
 fn negative_control_predicates() {
-    let old_tick = "let should_yield = vr > cfs_rq.floor() + TARGET_LATENCY_TICKS;";
+    let old_tick = "let should_yield = vr > eevdf_rq.floor() + TARGET_LATENCY_TICKS;";
     assert!(
         has(old_tick, "floor() + TARGET_LATENCY_TICKS"),
         "负控制: 旧让出判据必须能被 floor + TARGET_LATENCY 谓词识别"

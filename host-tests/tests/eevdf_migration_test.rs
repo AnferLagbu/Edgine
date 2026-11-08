@@ -8,15 +8,15 @@
 //!     截止期均不劣于"取最左端"策略.
 //!   - 合格候选移出源核后源核 `V` 不下降 —— 同批剩余候选仍合格.
 //!
-//! 行为维在真实 `CfsRunQueue` 上执行; 策略评估用 E-01 参考模型
+//! 行为维在真实 `EevdfRunQueue` 上执行; 策略评估用 E-01 参考模型
 //! (`host-tests/src/eevdf_model.rs`) 的 `steal_candidates` 对拍.
 //! 生产接线的源码形状由 `smp_rq_migration_test` 的既有契约锁死.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
-use edgine::kernel::privileged::proc::cfs::{
-    CfsRunQueue, QueuedTask, is_eligible as kernel_is_eligible, nice_to_weight,
+use edgine::kernel::privileged::proc::eevdf::{
+    EevdfRunQueue, QueuedTask, is_eligible as kernel_is_eligible, nice_to_weight,
 };
 use edgine_host_tests::eevdf_model::{
     Model, StealPolicy, effective_deadline as model_effective_deadline,
@@ -36,7 +36,7 @@ fn random_nice(state: &mut u64) -> i8 {
 }
 
 /// 从公开账目暴力重算, 逐项对账 (IE2).
-fn reconcile(queue: &CfsRunQueue) {
+fn reconcile(queue: &EevdfRunQueue) {
     let mut tree_pids = BTreeSet::new();
     let mut tree_weight = 0u64;
     let mut tree_sum = 0u128;
@@ -69,8 +69,8 @@ fn reconcile(queue: &CfsRunQueue) {
 /// IE5: 迁移原样携带落点与账目, 源/目的树账变化互为相反数.
 #[test]
 fn migrate_carries_raw_vruntime_and_conserves_ledgers() {
-    let mut src = CfsRunQueue::new();
-    let mut dst = CfsRunQueue::new();
+    let mut src = EevdfRunQueue::new();
+    let mut dst = EevdfRunQueue::new();
     // 目的核 floor 足够高: 所有迁移落点都在 IC1 钳制线之下, 强制暴露"重算落点".
     let floor = 4_000_000u64 << 16;
     dst.advance_floor(floor);

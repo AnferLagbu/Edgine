@@ -13,9 +13,9 @@
 //! - 255 任务边界、全体欠账 + 连续唤醒下的服务推进、随机操作序列对账
 
 use edgine::kernel::privileged::config::{
-    CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY,
+    EEVDF_MIN_GRANULARITY, EEVDF_NICE0_WEIGHT, EEVDF_TARGET_LATENCY,
 };
-use edgine::kernel::privileged::proc::cfs::NICE_TO_WEIGHT as KERNEL_NICE_TO_WEIGHT;
+use edgine::kernel::privileged::proc::eevdf::NICE_TO_WEIGHT as KERNEL_NICE_TO_WEIGHT;
 use edgine_host_tests::eevdf_model::{
     Location, MAX_TASKS, MIN_GRANULARITY, MIN_GRANULARITY_VIRT, Model, NICE_TO_WEIGHT,
     NICE0_WEIGHT, TARGET_LATENCY, TARGET_LATENCY_VIRT, VIRT_ONE, clamp_requested_slice,
@@ -40,9 +40,9 @@ fn frozen_constants_match_kernel_single_source() {
     assert_eq!(VIRT_ONE, 1 << 16);
     assert_eq!(TARGET_LATENCY_VIRT, TARGET_LATENCY << 16);
     assert_eq!(MIN_GRANULARITY_VIRT, MIN_GRANULARITY << 16);
-    assert_eq!(TARGET_LATENCY, CFS_TARGET_LATENCY);
-    assert_eq!(MIN_GRANULARITY, CFS_MIN_GRANULARITY);
-    assert_eq!(NICE0_WEIGHT, CFS_NICE0_WEIGHT);
+    assert_eq!(TARGET_LATENCY, EEVDF_TARGET_LATENCY);
+    assert_eq!(MIN_GRANULARITY, EEVDF_MIN_GRANULARITY);
+    assert_eq!(NICE0_WEIGHT, EEVDF_NICE0_WEIGHT);
     assert_eq!(NICE_TO_WEIGHT, KERNEL_NICE_TO_WEIGHT);
     assert_eq!(NICE_TO_WEIGHT[0], 88_761);
     assert_eq!(NICE_TO_WEIGHT[20], 1_024);

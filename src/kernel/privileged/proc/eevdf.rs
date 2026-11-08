@@ -1,18 +1,18 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API。
-//! CFS (Completely Fair Scheduler) — 调度策略 — privileged 机制实现
+//! EEVDF (Earliest Eligible Virtual Deadline First) — 调度策略 — privileged 机制实现
 //!
 //! ## DECISION-J 归属反转记录 (2026-09-13)
 //!
-//! 策略代码 (权重表 + vruntime 计算 + 时间片计算 + CFS/DL 运行队列) 于
+//! 策略代码 (权重表 + vruntime 计算 + 时间片计算 + EEVDF/DL 运行队列) 于
 //! T1-1 (2026-06-16) 迁至 `functions::proc::sched_policy`, 本文件仅
-//! re-export。按统一判据反转：CfsRunQueue/DlRunQueue 是 privileged scheduler
+//! re-export。按统一判据反转：EevdfRunQueue/DlRunQueue 是 privileged scheduler
 //! 的运行队列机制状态, 权重/vruntime/抢占判定全部操作队列内部字段, 无法
 //! 脱离机制状态独立存在 (同 DECISION-M `sys_pm_dispatch` 判据: 算法本质是
 //! 机制状态操作) — 迁回。依赖闭包仅 privileged。
 //!
-//! functions 侧改 `pub use crate::privileged::proc::cfs::*`
+//! functions 侧改 `pub use crate::privileged::proc::eevdf::*`
 //! 保持 API 兼容 (functions→privileged 合法方向)。
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -21,16 +21,16 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::privileged::proc::Pid;
 
 // ============================================================================
-// CFS Constants
+// EEVDF 常量
 // ============================================================================
 
-// DECISION-O ②: CFS_* 权威归 privileged/config/sched (机制常量), functions 侧
-// 纯 re-export — cfs 依赖收敛单向 (本文件零 functions 引用)
+// DECISION-O ②: EEVDF_* 权威归 privileged/config/sched (机制常量), functions 侧
+// 纯 re-export — eevdf 依赖收敛单向 (本文件零 functions 引用)
 pub use crate::privileged::config::{
-    CFS_DL_MAX_UTILIZATION_PCT as DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
-    CFS_DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, CFS_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,
-    CFS_NICE0_WEIGHT as NICE0_WEIGHT, CFS_TARGET_LATENCY as TARGET_LATENCY_TICKS,
-    CFS_VIRT_ONE as VIRT_ONE, CFS_VIRT_SHIFT as VIRT_SHIFT,
+    DL_MAX_UTILIZATION_PCT, DL_MIN_PERIOD as DL_MIN_PERIOD_TICKS,
+    DL_MIN_RUNTIME as DL_MIN_RUNTIME_TICKS, EEVDF_MIN_GRANULARITY as MIN_GRANULARITY_TICKS,
+    EEVDF_NICE0_WEIGHT as NICE0_WEIGHT, EEVDF_TARGET_LATENCY as TARGET_LATENCY_TICKS,
+    EEVDF_VIRT_ONE as VIRT_ONE, EEVDF_VIRT_SHIFT as VIRT_SHIFT,
 };
 
 /// 负载均衡触发阈值 (权重差)
@@ -46,14 +46,14 @@ pub const MIN_GRANULARITY_VIRT: u64 = MIN_GRANULARITY_TICKS << VIRT_SHIFT;
 // NICE → 权重映射
 // ============================================================================
 
-/// nice 值 (-20..=19) 到 CFS 权重的查表 (索引 = nice + 20)
+/// nice 值 (-20..=19) 到 EEVDF 权重的查表 (索引 = nice + 20)
 pub const NICE_TO_WEIGHT: [u64; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
-/// 将 nice 值 (-20..=19) 映射为其 CFS 调度权重; 越界值收敛到端点。
+/// 将 nice 值 (-20..=19) 映射为其 EEVDF 调度权重; 越界值收敛到端点。
 #[inline]
 #[must_use]
 pub fn nice_to_weight(nice: i8) -> u64 {
@@ -62,7 +62,7 @@ pub fn nice_to_weight(nice: i8) -> u64 {
     NICE_TO_WEIGHT[idx]
 }
 
-/// 将 CFS 权重反查为最接近的 nice 值 (-20..=19)。
+/// 将 EEVDF 权重反查为最接近的 nice 值 (-20..=19)。
 #[inline]
 #[must_use]
 pub fn weight_to_nice(weight: u64) -> i8 {
@@ -138,7 +138,7 @@ impl DeadlineParams {
 }
 
 // ============================================================================
-// CFS Run Queue
+// EEVDF 运行队列
 // ============================================================================
 
 /// 队列内任务的记账副本 (权重 + 落点)。
@@ -160,7 +160,7 @@ pub struct QueuedTask {
 ///
 /// `current` 通常已在队列运行账中 (W/S 已含它), 此时本视图只用于提供最新的
 /// vruntime / 截止期; 若它**不在**任何账目中 (boot 期经 `keep_current` 上核),
-/// [`CfsRunQueue::pick_eevdf`] 会把这份权重临时并入 `W`/`S`。
+/// [`EevdfRunQueue::pick_eevdf`] 会把这份权重临时并入 `W`/`S`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EevdfTaskView {
     /// 任务号。
@@ -189,10 +189,10 @@ pub struct EevdfPick {
 
 /// EEVDF 运行期观测计数器 (K-07b 批3)。
 ///
-/// 全部字段由所属 `cfs_rq` 锁保护: 调度热路径就地自增, 观测快照一次性读取,
+/// 全部字段由所属 `eevdf_rq` 锁保护: 调度热路径就地自增, 观测快照一次性读取,
 /// 快照之外不参与任何调度决策。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CfsObsCounters {
+pub struct EevdfObsCounters {
     /// Wake 语义成功入队的次数 (重复唤醒降级为 Requeue, 不计)。
     pub wakeups: u64,
     /// 切片按预算耗尽 (Expire) 并重投的次数, 即"切片命中"。
@@ -205,7 +205,7 @@ pub struct CfsObsCounters {
     pub wait_ns_max: u64,
 }
 
-impl CfsObsCounters {
+impl EevdfObsCounters {
     /// 平均等待时延 (ns); 无样本时为 0。
     #[must_use]
     pub fn wait_ns_avg(&self) -> u64 {
@@ -219,7 +219,7 @@ impl CfsObsCounters {
 /// 正值表示欠账。`conserve_ok` 是账目守恒的自检结论 —— 缓存 `total_weight`
 /// 与账目一致、树结构即账本、以及 `W * V <= S < W * (V + 1)`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CfsObsSnapshot {
+pub struct EevdfObsSnapshot {
     /// 本核 vruntime 下界 (IC3/IE4)。
     pub floor: u64,
     /// 本核加权平均虚拟时间 `V`。
@@ -239,12 +239,12 @@ pub struct CfsObsSnapshot {
     /// 在账任务的最大 lag (无任务时为 0)。
     pub lag_max: i128,
     /// 运行期计数器副本。
-    pub counters: CfsObsCounters,
+    pub counters: EevdfObsCounters,
     /// 账目守恒自检结论。
     pub conserve_ok: bool,
 }
 
-/// CFS 运行队列 —— 以 (vruntime, pid) 为键的有序树 + 本核 vruntime 时基下界。
+/// EEVDF 运行队列 —— 以 (vruntime, pid) 为键的有序树 + 本核 vruntime 时基下界。
 ///
 /// ## 单时基模型 (DECISION-099)
 ///
@@ -252,8 +252,8 @@ pub struct CfsObsSnapshot {
 /// 三条不变式从构造上封死历史上造成"多秒级进程饿死"的三条背离路径:
 ///
 /// - **IC1 单一时基** —— 任何任务的可比较 vruntime 均落在
-///   `[floor - CFS_MIN_GRANULARITY, +∞)` 内: 入队落点由 [`Self::enqueue`] 钳制,
-///   并由调用方**回写** `Process::cfs_vruntime`。旧实现只钳树键而不回写任务自身
+///   `[floor - EEVDF_MIN_GRANULARITY, +∞)` 内: 入队落点由 [`Self::enqueue`] 钳制,
+///   并由调用方**回写** `Process::eevdf_vruntime`。旧实现只钳树键而不回写任务自身
 ///   vruntime, 使"运行中的任务"与"树上的任务"分属两个时间域, 可无界发散
 ///   (实测 `curr vr=45` 对 `floor=5152`, 抢占差值被饱和成 0 ⇒ 该核永不重调度)。
 /// - **IC2 结构即真相** —— 可运行性判据一律取自 `tree`, **不**并行维护计数
@@ -282,7 +282,7 @@ pub struct CfsObsSnapshot {
 /// IE2 (账目完备) 由三类写路径共同维持: 入队只落树账, 拣出把同一笔账从树移到
 /// 运行账, 出队从两账之一摘除。`enqueue` / `dequeue` 先按 pid 摘除任意既有记账
 /// 再动作, 因此重复调用幂等, 且同一任务不会同时出现在两账里。
-pub struct CfsRunQueue {
+pub struct EevdfRunQueue {
     /// 可运行任务树, 键 = (vruntime, pid) (IC2 唯一真相)。
     ///
     /// 只读视图: 所有写路径必须经本 impl, 否则结构与账目立即背离。
@@ -306,17 +306,17 @@ pub struct CfsRunQueue {
     /// 运行账加权虚拟时间 `Σ w * vr`。
     running_sum_w_vr: u128,
     /// 运行期观测计数器 (K-07b 批3; 由本队列锁保护)。
-    obs: CfsObsCounters,
+    obs: EevdfObsCounters,
 }
 
-impl Default for CfsRunQueue {
+impl Default for EevdfRunQueue {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl CfsRunQueue {
-    /// 构造空的 CFS 运行队列
+impl EevdfRunQueue {
+    /// 构造空的 EEVDF 运行队列
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -329,7 +329,7 @@ impl CfsRunQueue {
             running_ledger: BTreeMap::new(),
             running_weight: 0,
             running_sum_w_vr: 0,
-            obs: CfsObsCounters::default(),
+            obs: EevdfObsCounters::default(),
         }
     }
 
@@ -340,7 +340,7 @@ impl CfsRunQueue {
     }
 
     /// 把下界推进到 `vr` (只增不减)。由调度器 tick 随运行任务的 vruntime 调用
-    /// —— 这是本队列唯一的 floor 写入路径, 也是 CFS 天然的反饥饿机制
+    /// —— 这是本队列唯一的 floor 写入路径, 也是 EEVDF 天然的反饥饿机制
     /// (取代旧 `boost_all_vruntime` 周期折叠)。
     #[inline]
     pub fn advance_floor(&self, vr: u64) {
@@ -457,10 +457,10 @@ impl CfsRunQueue {
     /// 的任意既有记录再重投。于是重复唤醒 / 迁移回源只是移动节点, 天然幂等;
     /// "凭证为 true 但历史记账已漏"的状态也会被这次重投修复。
     ///
-    /// `accounted` 是调用方持有的 `Process::cfs_on_rq` 凭证, 保留在签名里使调用点
+    /// `accounted` 是调用方持有的 `Process::eevdf_on_rq` 凭证, 保留在签名里使调用点
     /// 的语义显式 (真正的陈旧凭证判定在 [`Self::dequeue`])。
     ///
-    /// 调用方**必须**把返回值回写 `Process::cfs_vruntime`, 否则 IC1 不成立。
+    /// 调用方**必须**把返回值回写 `Process::eevdf_vruntime`, 否则 IC1 不成立。
     pub fn enqueue(&mut self, pid: Pid, vruntime: u64, weight: u64, accounted: bool) -> u64 {
         let _ = accounted;
         let _ = self.remove_tree_task(pid);
@@ -483,10 +483,10 @@ impl CfsRunQueue {
     /// IE5 的迁移守恒当场失效。任务的 `vr` 已在源核按同一虚拟时基推进, 原样入驻
     /// 目的核后由 EEVDF 的 lag 自然补偿 —— 这正是对迁移期间少得服务的偿还。
     ///
-    /// 迁移只搬树节点 (`steal_locked` 已排除本核 current 与 `cfs_on_cpu` 在位的
+    /// 迁移只搬树节点 (`steal_locked` 已排除本核 current 与 `eevdf_on_cpu` 在位的
     /// 任务); 幂等性仍以结构真相为准: 先摘除目的核可能残留的任意记录再重投。
     ///
-    /// 调用方**必须**把返回值回写 `Process::cfs_vruntime` (与 [`Self::enqueue`] 同契约)。
+    /// 调用方**必须**把返回值回写 `Process::eevdf_vruntime` (与 [`Self::enqueue`] 同契约)。
     pub fn migrate(&mut self, pid: Pid, vruntime: u64, weight: u64) -> u64 {
         let _ = self.remove_tree_task(pid);
         let _ = self.remove_running_task(pid);
@@ -730,7 +730,7 @@ impl CfsRunQueue {
 
     /// 读取观测计数器副本 (K-07b 批3)。
     #[must_use]
-    pub fn obs_counters(&self) -> CfsObsCounters {
+    pub fn obs_counters(&self) -> EevdfObsCounters {
         self.obs
     }
 
@@ -742,7 +742,7 @@ impl CfsRunQueue {
     /// 3. 树账 / 运行账的权重和与 `Σ w * vr` 与账本重算值相等;
     /// 4. `W * V <= S < W * (V + 1)` (即 `V = floor(S / W)`), `W == 0` 时 `S == 0`。
     #[must_use]
-    pub fn observation(&self) -> CfsObsSnapshot {
+    pub fn observation(&self) -> EevdfObsSnapshot {
         let tree_weight = self.tree_weight;
         let running_weight = self.running_weight;
         let total_weight = tree_weight.saturating_add(running_weight);
@@ -786,7 +786,7 @@ impl CfsRunQueue {
             lhs <= sum_w_vr && sum_w_vr < lhs.saturating_add(u128::from(total_weight))
         };
 
-        CfsObsSnapshot {
+        EevdfObsSnapshot {
             floor: self.floor(),
             avg_vruntime: avg,
             total_weight,
@@ -872,7 +872,7 @@ impl CfsRunQueue {
 
 /// Deadline 运行队列 — 以 (绝对截止期, pid) 为键, 并跟踪总利用率。
 ///
-/// 可运行性判据与 CFS 同款取结构真相 (IC2: 树即真相, 不并行维护计数器)。
+/// 可运行性判据与 EEVDF 同款取结构真相 (IC2: 树即真相, 不并行维护计数器)。
 pub struct DlRunQueue {
     /// 截止期任务树, 键 = (绝对截止期, pid)
     pub tree: BTreeSet<(u64, Pid)>,
@@ -944,7 +944,7 @@ impl DlRunQueue {
 
 /// 单 tick 虚拟时间增量 `Δvr = max(1, (NICE0 << 16) / w)`; `w == 0` 按 NICE0 退化。
 ///
-/// 生产 tick 的唯一增量来源 (E-04 起 `cfs_vruntime` 即 Q16.16, 不再有整数域
+/// 生产 tick 的唯一增量来源 (E-04 起 `eevdf_vruntime` 即 Q16.16, 不再有整数域
 /// 换算桥): nice -20..19 全 40 档的增量严格随权重递减。
 #[inline]
 #[must_use]
@@ -1122,7 +1122,7 @@ pub fn plan_placement(
 // - nice_to_weight / weight_to_nice: NICE 双向转换 (含 -20..19 边界 + clamp)
 // - mlfq_level_to_nice: 层级 → nice
 // - DeadlineParams 校验: is_valid + utilization_pct
-// - CfsRunQueue: enqueue/dequeue + EEVDF 账目/选择
+// - EevdfRunQueue: enqueue/dequeue + EEVDF 账目/选择
 // - EEVDF 纯函数: Q16.16 增量 / 切片 / V / 合格 / vd / Wake 钳制
 
 #[cfg(test)]
@@ -1212,10 +1212,10 @@ mod tests {
         assert_eq!(p.utilization_pct(), 100); // 100%
     }
 
-    /// 6. CfsRunQueue: 入队/拣出/出队 (IC2: 判据一律取自树)
+    /// 6. EevdfRunQueue: 入队/拣出/出队 (IC2: 判据一律取自树)
     #[test]
-    fn test_sched_cfs_basic_ops() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_basic_ops() {
+        let mut q = EevdfRunQueue::new();
         assert!(q.is_empty());
         assert_eq!(q.enqueue(1, 100, 1024, false), 100);
         assert_eq!(q.enqueue(2, 150, 1024, false), 150);
@@ -1246,8 +1246,8 @@ mod tests {
     /// 6b. IC2 回归: 可运行性判据不得与树背离 (旧 `nr_running` 计数器失真是
     /// 本核任务隐形饥饿的直接根因).
     #[test]
-    fn test_sched_cfs_structural_truth_no_counter_drift() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_structural_truth_no_counter_drift() {
+        let mut q = EevdfRunQueue::new();
         // 历史场景: 任务反复 睡眠→唤醒→入队→拣出. 旧模型每循环净漏 +1
         // (nr=108 而 tree=0), is_empty() 因此长期为真 false, 抢占判据失真.
         for i in 0..100u32 {
@@ -1268,8 +1268,8 @@ mod tests {
 
     /// 6c. IC1 回归: 入队幂等 —— 重复唤醒/迁移回源只移动节点, 不重复记账.
     #[test]
-    fn test_sched_cfs_enqueue_is_idempotent() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_enqueue_is_idempotent() {
+        let mut q = EevdfRunQueue::new();
         q.enqueue(7, 100, 1024, false);
         // 已在记账中 (accounted=true) 的重复入队 = 移动.
         q.enqueue(7, 200, 1024, true);
@@ -1281,9 +1281,9 @@ mod tests {
 
     /// 6d. IE5: 迁移原样携带落点, 不做 IC1 钳制; 两核账目变化互为相反数.
     #[test]
-    fn test_sched_cfs_migrate_carries_placement_without_clamp() {
-        let mut src = CfsRunQueue::new();
-        let mut dst = CfsRunQueue::new();
+    fn test_sched_eevdf_migrate_carries_placement_without_clamp() {
+        let mut src = EevdfRunQueue::new();
+        let mut dst = EevdfRunQueue::new();
         let floor = 1000u64 << VIRT_SHIFT;
         let vr = 45u64;
         dst.advance_floor(floor);
@@ -1331,7 +1331,7 @@ mod tests {
     /// 6e. E-05b: 偷取候选只取合格前缀, `V` 含运行账, 但 current 不进候选.
     #[test]
     fn test_sched_eevdf_eligible_pids_uses_full_runnable_set() {
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         q.enqueue(1, 0, 100, false);
         q.enqueue(2, 100, 100, false);
         q.enqueue(3, 200, 100, false);
@@ -1385,11 +1385,11 @@ mod tests {
     /// 8. IC1 + IC3: 落点钳制与下界单调 (Q16.16 时基; S-1 饿死根的直接回归)
     ///
     /// 回归: 旧 `sync_min_vruntime` 把 floor "重设为树最小键" —— 被钳到 floor 的
-    /// 唤醒者反过来推高 floor, 形成棘轮; 而运行任务的 `cfs_vruntime` 从不与
+    /// 唤醒者反过来推高 floor, 形成棘轮; 而运行任务的 `eevdf_vruntime` 从不与
     /// floor 对齐, 两者差值最终被 `saturating_sub` 压成 0 ⇒ 本核永不请求重调度.
     #[test]
-    fn test_sched_cfs_placement_and_monotonic_floor() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_placement_and_monotonic_floor() {
+        let mut q = EevdfRunQueue::new();
         let floor = 1000u64 << VIRT_SHIFT;
         // IC3: floor 只增不减 —— 往低推进必须是 no-op.
         q.advance_floor(floor);
@@ -1410,13 +1410,13 @@ mod tests {
 
     /// 8b. EEVDF 选择必须在同一时基内比较 (旧模型下差值恒 0).
     ///
-    /// 旧判据 `cfs_should_preempt` 的跨域比较已被 D6① 删除; 本用例锁定其替代:
+    /// 旧判据 `eevdf_should_preempt` 的跨域比较已被 D6① 删除; 本用例锁定其替代:
     /// 运行任务与唤醒任务都经 `placement` 收进 floor 邻域后, `pick_eevdf` 用
     /// `vr <= V` 的合格前缀判定谁该上核 —— 运行任务多跑一个最小粒度后不再合格,
     /// 唤醒者必须胜出.
     #[test]
-    fn test_sched_cfs_preempt_uses_shared_time_base() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_preempt_uses_shared_time_base() {
+        let mut q = EevdfRunQueue::new();
         let floor = 5152u64 << VIRT_SHIFT;
         q.advance_floor(floor);
         // 旧模型的致命情形: 运行任务 vr=45 (整数 tick 域), 队列 floor=5152.
@@ -1465,8 +1465,8 @@ mod tests {
     /// 判定. 旧模型下跨域差值被 `saturating_sub` 压成 0 ⇒ 该核永不请求重调度
     /// ⇒ 唤醒者永久饿死 (实测 4~10 s, 跨过宿主 5 s 超时).
     #[test]
-    fn test_sched_cfs_wakeup_bounded_latency_under_tick_loop() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_wakeup_bounded_latency_under_tick_loop() {
+        let mut q = EevdfRunQueue::new();
         let weight = NICE0_WEIGHT;
         let delta = calc_vruntime_delta_virt(weight);
         // 后台 CPU 密集任务入队后立即上核运行 (树中不保留, 但仍在运行账中).
@@ -1532,8 +1532,8 @@ mod tests {
 
     /// 11. integration: 完整调度循环
     #[test]
-    fn test_sched_cfs_full_cycle() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_full_cycle() {
+        let mut q = EevdfRunQueue::new();
         // 加入 4 个进程, 不同 vruntime + weight (均不低于 floor - MIN_GRANULARITY,
         // 不发生入队侧钳制, 以便校验按 vruntime 排序).
         q.enqueue(10, 100, 1024, false);
@@ -1615,8 +1615,8 @@ mod tests {
 
     /// 13. EEVDF 账目: 树账/运行账分解, 结构真相与权重守恒.
     #[test]
-    fn test_sched_cfs_eevdf_ledgers_reconcile() {
-        let mut q = CfsRunQueue::new();
+    fn test_sched_eevdf_eevdf_ledgers_reconcile() {
+        let mut q = EevdfRunQueue::new();
         q.enqueue(1, 100, 1024, false);
         q.enqueue(2, 200, 2048, false);
         assert_eq!(q.tree_weight(), 3072);
@@ -1677,7 +1677,7 @@ mod tests {
     /// 14. EEVDF 选择: 合格前缀 + (vd, pid) 最小, 拣出即入运行账.
     #[test]
     fn test_sched_eevdf_pick_eligible_prefix_and_deadline() {
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         // W = 3072, S = 460800, V = 150; 合格集合 = {1, 3}, pid 2 (vr=200) 不合格.
         q.enqueue(1, 100, 1024, false);
         q.enqueue(2, 200, 1024, false);
@@ -1699,7 +1699,7 @@ mod tests {
         assert_eq!(q.running_weight(), 1024);
 
         // 截止期并列时按 pid 决胜.
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         q.enqueue(4, 100, 1024, false);
         q.enqueue(3, 100, 1024, false);
         let pick = q.pick_eevdf(None, |_| Some(10)).unwrap();
@@ -1710,7 +1710,7 @@ mod tests {
     #[test]
     fn test_sched_eevdf_current_aware_and_fallback() {
         // current 不合格 (lag < 0) 时, 即使 vd 更小也不得参选.
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         q.enqueue(2, 200, 1024, false);
         let current = EevdfTaskView {
             pid: 9,
@@ -1725,7 +1725,7 @@ mod tests {
         assert_eq!(q.running_count(), 0, "current 胜出时不动账目");
 
         // 两者都合格时按 (vd, pid) 比较, 树候选 vd 更小则切换.
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         q.enqueue(2, 100, 1024, false);
         let current = EevdfTaskView {
             pid: 9,
@@ -1741,7 +1741,7 @@ mod tests {
         assert!(q.is_running(2));
 
         // 防御性回退: W = 0 时无合格者, 仍须给出确定选择 (vd 缺省取 vr).
-        let mut q = CfsRunQueue::new();
+        let mut q = EevdfRunQueue::new();
         q.enqueue(7, 42, 0, false);
         let pick = q.pick_eevdf(None, |_| None).unwrap();
         assert_eq!(pick.pid, 7);

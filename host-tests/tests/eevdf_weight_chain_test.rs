@@ -17,7 +17,9 @@ use std::sync::atomic::Ordering;
 use edgine::kernel::functions::proc::priority::{
     apply_nice, getpriority_syscall, setpriority_syscall,
 };
-use edgine::kernel::privileged::proc::cfs::{VIRT_SHIFT, calc_vruntime_delta_virt, nice_to_weight};
+use edgine::kernel::privileged::proc::eevdf::{
+    VIRT_SHIFT, calc_vruntime_delta_virt, nice_to_weight,
+};
 use edgine::kernel::privileged::proc::process::{NO_RQ_CPU, PROCESS_TABLE, Process};
 use edgine::kernel::privileged::proc::{BlockReason, ProcessPriority, Scheduler};
 use edgine::kernel::privileged::syscall::Errno;
@@ -64,15 +66,15 @@ impl TestProc {
     }
 
     fn weight(&self) -> u64 {
-        self.with(|p| p.cfs_weight.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_weight.load(Ordering::Acquire))
     }
 
     fn rq_cpu(&self) -> u32 {
-        self.with(|p| p.cfs_rq_cpu.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_rq_cpu.load(Ordering::Acquire))
     }
 
     fn on_rq(&self) -> bool {
-        self.with(|p| p.cfs_on_rq.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_on_rq.load(Ordering::Acquire))
     }
 
     fn eevdf(&self) -> [u64; 4] {
@@ -243,14 +245,14 @@ fn off_rq_set_nice_leaves_no_eevdf_accounting() {
 fn on_rq_set_nice_reweights_and_rebuilds_slice() {
     let _serial = lock_rq();
     let proc = TestProc::new("e02-on-rq");
-    // 非零 vr 让 `vd` 同时验证 E-04 起 `cfs_vruntime` 即 Q16.16 域 (无换算桥).
+    // 非零 vr 让 `vd` 同时验证 E-04 起 `eevdf_vruntime` 即 Q16.16 域 (无换算桥).
     proc.with_mut(|p| {
-        p.cfs_vruntime
+        p.eevdf_vruntime
             .store(100u64 << VIRT_SHIFT, Ordering::Release);
     });
 
     let _rq = RqGuard::enqueue(proc.pid);
-    assert!(proc.on_rq(), "任务应已进入全局 CFS 运行记账");
+    assert!(proc.on_rq(), "任务应已进入全局 EEVDF 运行记账");
     assert_eq!(proc.rq_cpu(), 0);
 
     assert!(Scheduler::set_nice(proc.pid, -20));
@@ -342,12 +344,12 @@ fn source_set_nice_reweights_inside_rq_lock() {
         "set_nice 必须经等待式认领入口串行化迁移"
     );
     let lock = body
-        .find(".cfs_rq.lock()")
+        .find(".eevdf_rq.lock()")
         .expect("set_nice 在队分支必须持有 rq 锁");
     let tail = &body[lock..];
     assert!(
         tail.find("PROCESS_TABLE").is_some(),
-        "改权重的进程表访问必须在 rq 锁之后 (锁序 cfs_rq -> PROCESS_TABLE)"
+        "改权重的进程表访问必须在 rq 锁之后 (锁序 eevdf_rq -> PROCESS_TABLE)"
     );
     assert!(
         tail.find("rq.reweight(pid, new_weight)").is_some(),
@@ -365,7 +367,7 @@ fn source_set_nice_reweights_inside_rq_lock() {
 
     let rebuild = fn_body(
         &src,
-        "fn rebuild_eevdf_round(rq: &CfsRunQueue, pid: Pid, weight: u64)",
+        "fn rebuild_eevdf_round(rq: &EevdfRunQueue, pid: Pid, weight: u64)",
     );
     for needle in [
         "effective_slice_real(",

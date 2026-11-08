@@ -755,7 +755,7 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
         if proceed {
             let stack_verdict = with_current_stack(|stack| {
                 // 检查 2: 递归获取非递归锁 — 同一物理实例重入才算递归
-                // (不同实例同类 — 如 per-CPU cfs_rq 成对持有 — 是合法的, 不算递归).
+                // (不同实例同类 — 如 per-CPU eevdf_rq 成对持有 — 是合法的, 不算递归).
                 if stack.contains_instance(instance) {
                     return false;
                 }

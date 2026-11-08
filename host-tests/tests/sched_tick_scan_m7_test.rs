@@ -361,7 +361,7 @@ fn tick_sleep_wake_scans_with_one_table_lock() {
     assert!(!body.contains("for pid in"), "睡眠扫描重新出现逐槽循环");
     assert!(
         !snapshot.contains("Self::unblock("),
-        "unblock 被挪进快照闭包内 (持表锁取 cfs_rq 锁 = 反向锁序)"
+        "unblock 被挪进快照闭包内 (持表锁取 eevdf_rq 锁 = 反向锁序)"
     );
     assert!(
         has(&out_of_lock, "Self::unblock(pid)"),

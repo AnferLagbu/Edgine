@@ -34,7 +34,7 @@ privileged 代码的硬约束。I1 内核态 CPU 状态不可被 functions 篡�
 
 ### 5 项 TCB 维护原则
 
-TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub fn 返回 &T/&mut T/UFrame/Frame，不返回裸指针；(2) 机制与策略分离 调度器（上下文切换=机制，EEVDF 选路/权重=策略）/ 帧分配器（页表映射=机制，伙伴系统=策略）/ 网络协议栈（网卡寄存器=机制，TCP 状态机=策略）策略部分应提取到 functions 通过 trait 注入（调度策略因 `CfsRunQueue` 与进程表/调度器共享锁，按 DECISION-J 归属反转留 privileged，不重复提取）；(3) 第三方库的 TCB 影响评估 引入第三方库到 privileged 前，评估 unsafe？代码量？替代方案？；(4) TCB 度量纳入 CI 每次 PR 报告 TCB 占比变化，上升需在 PR 描述说明原因；(5) 逐步提取，不做大爆炸重构 渐进式工作，每次提取一个子系统，确保功能不变 + TCB 占比下降 + 6 安全不变式仍然满足。
+TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub fn 返回 &T/&mut T/UFrame/Frame，不返回裸指针；(2) 机制与策略分离 调度器（上下文切换=机制，EEVDF 选路/权重=策略）/ 帧分配器（页表映射=机制，伙伴系统=策略）/ 网络协议栈（网卡寄存器=机制，TCP 状态机=策略）策略部分应提取到 functions 通过 trait 注入（调度策略因 `EevdfRunQueue` 与进程表/调度器共享锁，按 DECISION-J 归属反转留 privileged，不重复提取）；(3) 第三方库的 TCB 影响评估 引入第三方库到 privileged 前，评估 unsafe？代码量？替代方案？；(4) TCB 度量纳入 CI 每次 PR 报告 TCB 占比变化，上升需在 PR 描述说明原因；(5) 逐步提取，不做大爆炸重构 渐进式工作，每次提取一个子系统，确保功能不变 + TCB 占比下降 + 6 安全不变式仍然满足。
 
 ### 常见子系统归属示例
 

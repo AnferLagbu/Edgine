@@ -135,7 +135,7 @@ unsafe impl Sync for Task {}
 /// 调度器策略 trait。
 ///
 /// functions 层通过此 trait 将任务入队/出队,
-/// 而不直接操作 CFS/RT 的具体实现。
+/// 而不直接操作 EEVDF/RT 的具体实现。
 pub trait Scheduler: Send + Sync {
     /// 将任务加入就绪队列。
     fn enqueue(&self, pid: Pid);
@@ -172,7 +172,7 @@ pub trait Scheduler: Send + Sync {
 // 默认实现: 委托给 proc::scheduler::SCHEDULER 全局单例
 // ============================================================================
 
-/// `Edgine` 默认调度器 (MLFQ + RT + CFS)。
+/// `Edgine` 默认调度器 (MLFQ + RT + EEVDF)。
 ///
 /// 委托给 `proc::scheduler::SCHEDULER`。
 pub struct EdgineScheduler;

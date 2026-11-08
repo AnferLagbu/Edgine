@@ -13,7 +13,7 @@
 //!    「读判据 → 写状态 → 锁外发射」—— 取证不改变默认动作语义.
 //! 4. **终止路径先后**: 两架构的 `redispatch_diag_iret()` 都必须在
 //!    `scheduler_yield()` 之后 (先尝试切离, 未切离才是证据).
-//! 5. **未装点处**: 持运行队列锁的 `place_locked` / `pick_cfs_task` 不得出现
+//! 5. **未装点处**: 持运行队列锁的 `place_locked` / `pick_eevdf_task` 不得出现
 //!    发射调用 (`docs/explain/ref-lock-order.md`: 发射点不持其它全局锁).
 
 use std::fs;
@@ -201,9 +201,9 @@ fn terminate_paths_probe_only_after_the_switch_attempt() {
 fn rq_lock_holders_stay_uninstrumented() {
     let sched = code_only(&read_src(SCHED_SRC));
 
-    // 两处都在持有 cfs_rq 锁期间取进程表快照; 在此打印会违反
+    // 两处都在持有 eevdf_rq 锁期间取进程表快照; 在此打印会违反
     // 「发射点不持其它全局锁」并把串口窗口撑进层级 8 临界区。
-    for sig in ["fn place_locked(", "fn pick_cfs_task("] {
+    for sig in ["fn place_locked(", "fn pick_eevdf_task("] {
         let body = fn_body(&sched, sig);
         assert!(
             !body.contains("redispatch_emit") && !body.contains("redispatch_probe"),

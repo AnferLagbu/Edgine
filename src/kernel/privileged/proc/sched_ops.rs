@@ -81,7 +81,7 @@ pub extern "C" fn scheduler_schedule() -> Pid {
 pub extern "C" fn scheduler_tick() {
     // D6: 定时器中断统一驱动**进程级**调度器 tick.
     //
-    // 线程级 `SCHEDULER_EX` 并行实现已移除 (P-29 route C): 进程级 CFS 记账/抢占判定/
+    // 线程级 `SCHEDULER_EX` 并行实现已移除 (P-29 route C): 进程级 EEVDF 记账/抢占判定/
     // 睡眠唤醒/僵尸回收/周期负载均衡均由本 `Scheduler::tick` per-CPU 路径单点承担,
     // 其中 user/sys 时间记账直接调 `proc_account_tick`.
     Scheduler::tick(crate::privileged::smp::get_current_cpu() as usize);

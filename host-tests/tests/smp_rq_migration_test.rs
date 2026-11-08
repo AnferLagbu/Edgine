@@ -9,7 +9,7 @@
 //! —— 是状态被踩坏, 不是时序抖动。
 //!
 //! 根因是跨核偷取的**归属真空窗口**: 旧 `load_balance` 先持源 rq 锁 `pick_next` +
-//! `dequeue` + 清 `cfs_on_rq`, **放锁**, 再走 `cfs_enqueue_to` 投目的核。窗口里任务
+//! `dequeue` + 清 `eevdf_on_rq`, **放锁**, 再走 `eevdf_enqueue_to` 投目的核。窗口里任务
 //! 既不在源树也不在目的树, 且凭证为 `on_rq=false / state=Ready` —— 任何并发唤醒看
 //! 到的正是"Ready 且不在队"(与 `unblock` 的补投判据同形), 于是把它投进第三个队列;
 //! 窃取者随后又投进目的队列 ⇒ **同一任务同时挂在两棵 rq 树上, 两核同时上核运行它**,
@@ -20,13 +20,13 @@
 //!
 //! # 修复形态 (= 本测试的断言对象)
 //!
-//! 1. **归属显式化**: `Process::cfs_rq_cpu` 记录"可运行记账在哪棵树上"
-//!    (语义同 Linux `task_cpu(p)` 配合 `on_rq`), 与 `cfs_on_rq` 是一对同步更新的凭证。
+//! 1. **归属显式化**: `Process::eevdf_rq_cpu` 记录"可运行记账在哪棵树上"
+//!    (语义同 Linux `task_cpu(p)` 配合 `on_rq`), 与 `eevdf_on_rq` 是一对同步更新的凭证。
 //! 2. **搬动先认领**: 一切归属变更先经 `MIGRATE_PENDING` CAS 认领; 认领**非阻塞**
 //!    (等待者可能正握着认领者需要的 rq 锁, 一等待即 AB-BA)。
-//! 3. **单入口 + 双持锁**: 入队/迁移一律经 `cfs_place_on`, 源与目的的 rq 锁按
+//! 3. **单入口 + 双持锁**: 入队/迁移一律经 `eevdf_place_on`, 源与目的的 rq 锁按
 //!    cpu index **升序**双持, 摘源 + 投目的 + 搬账 + 写回归属在同一段临界区内闭合。
-//! 4. **凭证与归属同清**: 任何把 `cfs_on_rq` 置 false 的路径必须同时把归属写回
+//! 4. **凭证与归属同清**: 任何把 `eevdf_on_rq` 置 false 的路径必须同时把归属写回
 //!    `NO_RQ_CPU`, 否则下一次按陈旧归属撤账会把同一份权重再扣一次。
 //! 5. **tick 体每窗口单名额**: 全局周期副作用 (kswapd / hotplug / reap / balance)
 //!    一律 carry + CAS, 禁用 `is_multiple_of` —— 各核看到同一个派生 tick 时,
@@ -34,18 +34,18 @@
 //!
 //! # 断言方式
 //!
-//! `CfsRunQueue` 是真能独立跑的纯数据结构, 所以账目守恒/候选有序这类**行为**用真
+//! `EevdfRunQueue` 是真能独立跑的纯数据结构, 所以账目守恒/候选有序这类**行为**用真
 //! 对象测; 而"认领非阻塞""双持锁序""归属同清"是**跨函数形状**, 主机侧无法构造双核
 //! 竞态 (无真 SMP 内核上下文), 只能用源码文本契约锁死 (剥注释 + 去空白, 只锁语义
 //! 形状, 不受 rustfmt 换行影响)。文本契约的判别力由 [`test_negative_control_predicates`]
 //! 用合成回退样本反向验证。
 
-use edgine::kernel::privileged::proc::cfs::CfsRunQueue;
+use edgine::kernel::privileged::proc::eevdf::EevdfRunQueue;
 use std::fs;
 use std::sync::atomic::Ordering;
 
 const SCHED: &str = "../src/kernel/privileged/proc/scheduler.rs";
-const CFS: &str = "../src/kernel/privileged/proc/cfs.rs";
+const EEVDF: &str = "../src/kernel/privileged/proc/eevdf.rs";
 const PROCESS: &str = "../src/kernel/privileged/proc/process.rs";
 
 // ============================================================================
@@ -110,12 +110,12 @@ fn fn_body<'a>(code: &'a str, sig: &str) -> Option<&'a str> {
 }
 
 // ============================================================================
-// 行为层: CfsRunQueue 的账目与候选语义 (搬动协议的正确性前提)
+// 行为层: EevdfRunQueue 的账目与候选语义 (搬动协议的正确性前提)
 // ============================================================================
 
 #[test]
 fn test_eligible_pids_is_eligible_prefix_and_bounded() {
-    let mut rq = CfsRunQueue::new();
+    let mut rq = EevdfRunQueue::new();
     // W=400, S=21000 → V=52 ⇒ 合格前缀 = vr <= 52.
     rq.enqueue(7, 30, 100, false);
     rq.enqueue(5, 10, 100, false);
@@ -133,12 +133,12 @@ fn test_eligible_pids_is_eligible_prefix_and_bounded() {
     assert_eq!(&all[..3], &[5, 9, 7], "欠账任务进入了偷取候选");
 
     let mut empty = [0u32; 4];
-    assert_eq!(CfsRunQueue::new().eligible_pids(&mut empty), 0);
+    assert_eq!(EevdfRunQueue::new().eligible_pids(&mut empty), 0);
 }
 
 #[test]
 fn test_cross_rq_transfer_moves_accounting_exactly_once() {
-    let (mut src, mut dst) = (CfsRunQueue::new(), CfsRunQueue::new());
+    let (mut src, mut dst) = (EevdfRunQueue::new(), EevdfRunQueue::new());
     src.enqueue(3, 5, 100, false);
     src.enqueue(4, 6, 50, false);
     assert_eq!(src.total_weight.load(Ordering::Acquire), 150);
@@ -180,9 +180,9 @@ fn test_ownership_field_is_declared_and_sentinel_coded() {
         "缺少归属认领中间态 (无它即无法把\"无人搬动\"表达成互斥)"
     );
     assert!(
-        proc_c.contains("pubcfs_rq_cpu:AtomicU32,")
-            && proc_c.contains("cfs_rq_cpu:AtomicU32::new(super::process::NO_RQ_CPU),"),
-        "Process 未携带 cfs_rq_cpu 归属字段或初值不是 NO_RQ_CPU"
+        proc_c.contains("pubeevdf_rq_cpu:AtomicU32,")
+            && proc_c.contains("eevdf_rq_cpu:AtomicU32::new(super::process::NO_RQ_CPU),"),
+        "Process 未携带 eevdf_rq_cpu 归属字段或初值不是 NO_RQ_CPU"
     );
 }
 
@@ -193,8 +193,8 @@ fn test_credential_clear_always_paires_with_owner_clear() {
     // 写归属字段, 必须经认领凭证 (commit), 否则并发搬动者手里的 `MIGRATE_PENDING`
     // 会被覆写成陈旧值.
     for (sig, why) in [
-        ("fncfs_deactivate(pid:Pid)", "阻塞/不可重排撤账"),
-        ("fnpick_cfs_task()", "拣出但不可调度撤账"),
+        ("fneevdf_deactivate(pid:Pid)", "阻塞/不可重排撤账"),
+        ("fnpick_eevdf_task()", "拣出但不可调度撤账"),
         ("fnsteal_locked(", "偷取时遇不可调度者撤账"),
     ] {
         let body = fn_body(&sched, sig).unwrap_or_else(|| panic!("{sig} 不存在"));
@@ -206,11 +206,11 @@ fn test_credential_clear_always_paires_with_owner_clear() {
 
     // 结构事实 (比"成对出现"更强): 归属字段的直接写入点全文件**只允许一处** ——
     // 凭证内部的 `set_rq_cpu`. E-II-b 回归实证: 手工配对 claim/release 时,
-    // `cfs_deactivate` 的 `NO_RQ_CPU` 早退分支漏一次回滚就把任务永久钉在
+    // `eevdf_deactivate` 的 `NO_RQ_CPU` 早退分支漏一次回滚就把任务永久钉在
     // `MIGRATE_PENDING` —— 实测全内核搬定成功 4 次 / 认领失败 144369 次,
     // 唤醒全部静默丢失, e2e 卡在"子进程一阻塞就再也不上核".
     assert_eq!(
-        sched.matches("cfs_rq_cpu.store(").count(),
+        sched.matches("eevdf_rq_cpu.store(").count(),
         1,
         "归属字段出现第二个直接写入点: PENDING 必须被回滚这条义务重新退化成人工约定"
     );
@@ -235,8 +235,8 @@ fn test_wake_path_never_flips_state_before_placement() {
     let sched = prod_squashed(SCHED);
     let unblock = fn_body(&sched, "pubfnunblock(pid:Pid)").expect("unblock 不存在");
     let at_place = unblock
-        .find("Self::cfs_enqueue_to(")
-        .expect("unblock 的 CFS 路由未经搬定入口");
+        .find("Self::eevdf_enqueue_to(")
+        .expect("unblock 的 EEVDF 路由未经搬定入口");
     // 全由搬定写 Ready 也合法: find 发 None 时无需断言.
     if let Some(at_ready) = unblock.find("set_state_safe(ProcessState::Ready)") {
         assert!(
@@ -255,14 +255,14 @@ fn test_wake_path_never_flips_state_before_placement() {
         place.contains("set_state_safe(ProcessState::Ready)"),
         "搬定成功却不置 Ready: 唤醒语义丢失"
     );
-    // 搬定层不得再卡 policy 准入 (准入归 pick_cfs_task / steal_locked):
-    // `schedule()` 的 RT 降级分支 `_ =>` 会把非 Fifo/Rr 条目投进 CFS, 在搬定层
+    // 搬定层不得再卡 policy 准入 (准入归 pick_eevdf_task / steal_locked):
+    // `schedule()` 的 RT 降级分支 `_ =>` 会把非 Fifo/Rr 条目投进 EEVDF, 在搬定层
     // 卡住即两头皆空 (条目已从 rt_queue 弹出).
     assert!(
         !place.contains("policy!=SchedPolicy::Normal"),
         "搬定层重新卡 policy 准入: RT 降级入队与唤醒投送会静默失效"
     );
-    let pick = fn_body(&sched, "fnpick_cfs_task()").expect("pick_cfs_task 不存在");
+    let pick = fn_body(&sched, "fnpick_eevdf_task()").expect("pick_eevdf_task 不存在");
     assert!(
         pick.contains("p.get_sched_policy()==SchedPolicy::Normal"),
         "policy 准入必须在拣选层 (否则上面那条禁令就只是拆护栏)"
@@ -295,13 +295,13 @@ fn test_membership_change_requires_claim_and_claim_never_blocks() {
         "重试等待必须在 PCB 锁外 (持锁自旋会与认领者互锁)"
     );
 
-    // 一切归属变更都经认领 (搬定主体 = cfs_place_on_inner, 公有入口只做委托).
+    // 一切归属变更都经认领 (搬定主体 = eevdf_place_on_inner, 公有入口只做委托).
     for (sig, needle) in [
         (
-            "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
+            "fneevdf_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
             "Self::claim_rq(pid)",
         ),
-        ("fncfs_deactivate(pid:Pid)", "Self::claim_rq(pid)"),
+        ("fneevdf_deactivate(pid:Pid)", "Self::claim_rq(pid)"),
         ("fnsteal_locked(", "Self::try_claim_rq(pid)"),
     ] {
         let body = fn_body(&sched, sig).unwrap_or_else(|| panic!("{sig} 不存在"));
@@ -322,58 +322,58 @@ fn test_enqueue_is_single_entry_under_ascending_double_lock() {
 
     // 旧形态的两处"绕过归属"的编程面不得复活: 直接对某核 rq 上锁后立刻投节点.
     assert!(
-        !sched.contains("cfs_rq.lock().enqueue("),
+        !sched.contains("eevdf_rq.lock().enqueue("),
         "重新出现\"只持目的锁就入队\": 任务仍挂在别的核时既不去重也不搬账"
     );
     assert!(
-        !sched.contains("cfs_rq.lock().dequeue("),
+        !sched.contains("eevdf_rq.lock().dequeue("),
         "重新出现\"按当前核撤账\": 跨核投送后任务的家不在当前核"
     );
 
-    // 入队唯一入口收口到 cfs_place_on.
+    // 入队唯一入口收口到 eevdf_place_on.
     let enqueue_to = fn_body(
         &sched,
-        "fncfs_enqueue_to(pid:Pid,cpu_id:u32,kind:PlacementKind)",
+        "fneevdf_enqueue_to(pid:Pid,cpu_id:u32,kind:PlacementKind)",
     )
-    .expect("cfs_enqueue_to 不存在");
+    .expect("eevdf_enqueue_to 不存在");
     assert!(
-        enqueue_to.contains("Self::cfs_place_on(pid,cpu_id,kind)"),
-        "cfs_enqueue_to 未委托 cfs_place_on (搬定出现第二条路径)"
+        enqueue_to.contains("Self::eevdf_place_on(pid,cpu_id,kind)"),
+        "eevdf_enqueue_to 未委托 eevdf_place_on (搬定出现第二条路径)"
     );
 
     // 跨核搬动双持锁, 且锁序按 cpu index 升序.
-    // 搬定主体在 `cfs_place_on_inner` (多一个 `owner_landing` 参数, 见 P-21),
-    // 公有入口 `cfs_place_on` 只做一层委托 —— 委托不丢, 否则等于开出第二条入口.
+    // 搬定主体在 `eevdf_place_on_inner` (多一个 `owner_landing` 参数, 见 P-21),
+    // 公有入口 `eevdf_place_on` 只做一层委托 —— 委托不丢, 否则等于开出第二条入口.
     let entry = fn_body(
         &sched,
-        "fncfs_place_on(pid:Pid,dst_cpu:u32,kind:PlacementKind)",
+        "fneevdf_place_on(pid:Pid,dst_cpu:u32,kind:PlacementKind)",
     )
-    .expect("cfs_place_on 不存在");
+    .expect("eevdf_place_on 不存在");
     assert!(
-        entry.contains("Self::cfs_place_on_inner(pid,dst_cpu,false,kind)"),
-        "cfs_place_on 未把 owner_landing 固定为 false 再委托 (屏障可被任意入口绕过)"
+        entry.contains("Self::eevdf_place_on_inner(pid,dst_cpu,false,kind)"),
+        "eevdf_place_on 未把 owner_landing 固定为 false 再委托 (屏障可被任意入口绕过)"
     );
     let place = fn_body(
         &sched,
-        "fncfs_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
+        "fneevdf_place_on_inner(pid:Pid,dst_cpu:u32,owner_landing:bool,kind:PlacementKind",
     )
-    .expect("cfs_place_on_inner 不存在");
+    .expect("eevdf_place_on_inner 不存在");
     assert!(
         place.contains("ifsrc_cpu==NO_RQ_CPU||src_cpu==dst_cpu{")
             && place.contains("}elseifsrc_cpu<dst_cpu{"),
-        "cfs_place_on 未把\"同锁单持 / 异锁升序双持\"分支写全 (嵌套同一把锁即自死锁)"
+        "eevdf_place_on 未把\"同锁单持 / 异锁升序双持\"分支写全 (嵌套同一把锁即自死锁)"
     );
     let lb = fn_body(&sched, "fnload_balance()").expect("load_balance 不存在");
     assert!(
         lb.contains("ifbusiest_cpu<this_cpu{")
-            && lb.contains("per_cpu_for(busiest_cpu).cfs_rq.lock();letmutdst_rq=per_cpu_for(this_cpu).cfs_rq.lock();")
-            && lb.contains("per_cpu_for(this_cpu).cfs_rq.lock();letmutsrc_rq=per_cpu_for(busiest_cpu).cfs_rq.lock();"),
+            && lb.contains("per_cpu_for(busiest_cpu).eevdf_rq.lock();letmutdst_rq=per_cpu_for(this_cpu).eevdf_rq.lock();")
+            && lb.contains("per_cpu_for(this_cpu).eevdf_rq.lock();letmutsrc_rq=per_cpu_for(busiest_cpu).eevdf_rq.lock();"),
         "load_balance 的双持锁序未按 cpu index 升序 (反向取锁的两个搬动者即 AB-BA)"
     );
     // 偷取的账目动作只能在调用方建立的持锁临界区内发生.
     let steal = fn_body(&sched, "fnsteal_locked(").expect("steal_locked 不存在");
     assert!(
-        !steal.contains("cfs_rq.lock()"),
+        !steal.contains("eevdf_rq.lock()"),
         "steal_locked 自行加锁: 锁序前提被绕过"
     );
     assert!(
@@ -435,12 +435,12 @@ fn test_steal_uses_eligible_prefix_and_migrate_entry() {
         "候选未按有效截止期降序 (最不急迫优先) 且同 vd 未按 pid 定序"
     );
 
-    let cfs = prod_squashed(CFS);
+    let eevdf = prod_squashed(EEVDF);
     let migrate = fn_body(
-        &cfs,
+        &eevdf,
         "pubfnmigrate(&mutself,pid:Pid,vruntime:u64,weight:u64)->u64",
     )
-    .expect("CfsRunQueue::migrate 不存在");
+    .expect("EevdfRunQueue::migrate 不存在");
     assert!(
         !migrate.contains("placement("),
         "迁移入口仍做 IC1 落点钳制: 目的核 floor 会凭空改写 S (IE5 失效)"
@@ -527,35 +527,35 @@ fn test_negative_control_predicates() {
     let fixtures: &[Fixture<'_>] = &[
         (
             "旧形态: 只持目的锁入队",
-            "per_cpu_for(cpu_id).cfs_rq.lock().enqueue(pid,vr,weight,accounted);",
-            |c| c.contains("cfs_rq.lock().enqueue("),
+            "per_cpu_for(cpu_id).eevdf_rq.lock().enqueue(pid,vr,weight,accounted);",
+            |c| c.contains("eevdf_rq.lock().enqueue("),
         ),
         (
             "旧形态: 按当前核撤账",
-            "per_cpu().cfs_rq.lock().dequeue(pid,weight,true);",
-            |c| c.contains("cfs_rq.lock().dequeue("),
+            "per_cpu().eevdf_rq.lock().dequeue(pid,weight,true);",
+            |c| c.contains("eevdf_rq.lock().dequeue("),
         ),
         (
             "旧形态: 摘源后放锁再投目的",
-            "{letmutsrc_rq=per_cpu_for(busiest_cpu).cfs_rq.lock();\
+            "{letmutsrc_rq=per_cpu_for(busiest_cpu).eevdf_rq.lock();\
              src_rq.pick_next();src_rq.dequeue(pid,weight,true);\
-             self.cfs_enqueue_to(pid,this_cpu);}",
+             self.eevdf_enqueue_to(pid,this_cpu);}",
             |c| {
                 c.contains("src_rq.pick_next();src_rq.dequeue(pid,weight,true);")
-                    && c.contains("self.cfs_enqueue_to(pid,this_cpu);")
+                    && c.contains("self.eevdf_enqueue_to(pid,this_cpu);")
             },
         ),
         (
             "旧形态: 清凭证不清归属",
-            "PROCESS_TABLE.with_process(pid,|p|{p.cfs_on_rq.store(false,Ordering::Release);});",
+            "PROCESS_TABLE.with_process(pid,|p|{p.eevdf_on_rq.store(false,Ordering::Release);});",
             |c| {
-                c.contains("p.cfs_on_rq.store(false,Ordering::Release);")
+                c.contains("p.eevdf_on_rq.store(false,Ordering::Release);")
                     && !c.contains("claim.commit(NO_RQ_CPU)")
             },
         ),
         (
             "认领后早退不回滚 (PENDING 泄漏)",
-            "fncfs_deactivate(&self,pid:Pid){letsome(mutclaim)=self.claim_rq(pid)else{\
+            "fneevdf_deactivate(&self,pid:Pid){letsome(mutclaim)=self.claim_rq(pid)else{\
              return;};ifclaim.prev_cpu==NO_RQ_CPU{return;}}",
             |c| {
                 // 被禁形态: 凭证既未 commit 也未因函数结束而 Drop 到一个已知的
@@ -567,9 +567,9 @@ fn test_negative_control_predicates() {
         (
             "唤醒前先置 Ready (丢自愈)",
             "pubfnunblock(&self,pid:Pid){if!need_enqueue{returnNone;}\
-             let_set_state_safe(ProcessState::Ready);self.cfs_enqueue_to(pid,cpu);}",
+             let_set_state_safe(ProcessState::Ready);self.eevdf_enqueue_to(pid,cpu);}",
             |c| match (
-                c.find("self.cfs_enqueue_to("),
+                c.find("self.eevdf_enqueue_to("),
                 c.find("set_state_safe(ProcessState::Ready)"),
             ) {
                 (Some(a), Some(b)) => b < a,
@@ -579,14 +579,14 @@ fn test_negative_control_predicates() {
         (
             "认领内等待 (AB-BA)",
             "fntry_claim_rq(&self,pid:Pid)->Option<u32>{\
-             PROCESS_TABLE.with_process(pid,|p|{loop{ifp.cfs_rq_cpu.load(..)!=MIGRATE_PENDING{\
+             PROCESS_TABLE.with_process(pid,|p|{loop{ifp.eevdf_rq_cpu.load(..)!=MIGRATE_PENDING{\
              returnSome(cur);}core::hint::spin_loop();}})}",
             |c| c.contains("loop{") && c.contains("spin_loop()"),
         ),
         (
             "锁序反向 (降序双持)",
-            "letmutdst_rq=per_cpu_for(this_cpu).cfs_rq.lock();\
-             letmutsrc_rq=per_cpu_for(busiest_cpu).cfs_rq.lock();\
+            "letmutdst_rq=per_cpu_for(this_cpu).eevdf_rq.lock();\
+             letmutsrc_rq=per_cpu_for(busiest_cpu).eevdf_rq.lock();\
              ifbusiest_cpu>this_cpu{steal_locked()}",
             |c| c.contains("ifbusiest_cpu>this_cpu{"),
         ),
@@ -609,9 +609,9 @@ fn test_negative_control_predicates() {
     // 反向: 修复形态不得被上述谓词命中.
     let fixed = squash(
         "fntry_claim_rq(&self,pid:Pid)->Option<u32>{\
-         PROCESS_TABLE.with_process(pid,|p|{letcur=p.cfs_rq_cpu.load(Ordering::Acquire);\
+         PROCESS_TABLE.with_process(pid,|p|{letcur=p.eevdf_rq_cpu.load(Ordering::Acquire);\
          ifcur==MIGRATE_PENDING{returnNone;}\
-         p.cfs_rq_cpu.compare_exchange(cur,MIGRATE_PENDING,Ordering::AcqRel,Ordering::Acquire)\
+         p.eevdf_rq_cpu.compare_exchange(cur,MIGRATE_PENDING,Ordering::AcqRel,Ordering::Acquire)\
          .ok().map(|_|cur)}).flatten()}",
     );
     assert!(
@@ -621,10 +621,10 @@ fn test_negative_control_predicates() {
 
     // 生产文件自身必须干净 (谓词对真源码返"无回退"才谈得上有意义).
     let sched = prod_squashed(SCHED);
-    assert!(!sched.contains("cfs_rq.lock().enqueue("));
-    assert!(!sched.contains("cfs_rq.lock().dequeue("));
+    assert!(!sched.contains("eevdf_rq.lock().enqueue("));
+    assert!(!sched.contains("eevdf_rq.lock().dequeue("));
     assert_eq!(
-        sched.matches("cfs_rq_cpu.store(").count(),
+        sched.matches("eevdf_rq_cpu.store(").count(),
         1,
         "真源码已存在多处归属直接写入: 单写入者契约已破"
     );

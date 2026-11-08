@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
 
-use edgine::kernel::privileged::proc::cfs::{TARGET_LATENCY_TICKS, VIRT_ONE};
 use edgine::kernel::privileged::proc::cpu_queue::current_cpu_queue;
+use edgine::kernel::privileged::proc::eevdf::{TARGET_LATENCY_TICKS, VIRT_ONE};
 use edgine::kernel::privileged::proc::process::{PROCESS_TABLE, Process};
 use edgine::kernel::privileged::proc::{BlockReason, ProcessState, Scheduler};
 
@@ -66,7 +66,7 @@ impl TestProc {
     }
 
     fn vruntime(&self) -> u64 {
-        self.with(|p| p.cfs_vruntime.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_vruntime.load(Ordering::Acquire))
     }
 
     fn slice_real(&self) -> u64 {
@@ -86,11 +86,11 @@ impl TestProc {
     }
 
     fn on_rq(&self) -> bool {
-        self.with(|p| p.cfs_on_rq.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_on_rq.load(Ordering::Acquire))
     }
 
     fn rq_cpu(&self) -> u32 {
-        self.with(|p| p.cfs_rq_cpu.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_rq_cpu.load(Ordering::Acquire))
     }
 }
 
@@ -157,7 +157,7 @@ fn wake_clamps_sleep_credit_to_one_slice() {
 
     // C 以 raw=base+50V 入树: 不触发睡眠信用 (负 lag 保留), 但把 V 抬到 base+35V.
     c.with(|p| {
-        p.cfs_vruntime
+        p.eevdf_vruntime
             .store(base + 50 * VIRT_ONE, Ordering::Release);
     });
     Scheduler::add_to_run_queue(c.pid);
@@ -213,7 +213,7 @@ fn wake_with_late_deadline_does_not_request_preemption() {
 
     // 睡眠欠账远高于 V: Wake 不补偿 (placed = raw), vd 落后于 current.
     a.with(|p| {
-        p.cfs_vruntime
+        p.eevdf_vruntime
             .store(base + 500 * VIRT_ONE, Ordering::Release);
     });
     a.set_ready();
@@ -450,8 +450,8 @@ fn placement_kinds_are_wired_at_the_right_entries() {
     );
     let pick = fn_body(&sched, "fn pick_next_task");
     assert!(
-        has(&pick, "Self::cfs_enqueue(rt_pid, PlacementKind::Requeue)"),
-        "E-05a: RT 降级入 CFS 不得被当作唤醒 (重置切片即打断其本轮预算)"
+        has(&pick, "Self::eevdf_enqueue(rt_pid, PlacementKind::Requeue)"),
+        "E-05a: RT 降级入 EEVDF 不得被当作唤醒 (重置切片即打断其本轮预算)"
     );
 
     let place = fn_body(&sched, "fn place_locked");
@@ -483,7 +483,7 @@ fn wake_preemption_gate_uses_post_enqueue_eligibility_and_deadline() {
     );
     assert!(
         has(&body, "SchedPolicy::Normal =>"),
-        "E-05a: 只有普通 CFS current 参与 vd 比较"
+        "E-05a: 只有普通 EEVDF current 参与 vd 比较"
     );
     assert!(
         has(&body, "SchedPolicy::Idle => true"),
@@ -491,20 +491,20 @@ fn wake_preemption_gate_uses_post_enqueue_eligibility_and_deadline() {
     );
     assert!(
         has(&body, "_ => false"),
-        "E-05a: RT / DL current 不因 CFS 唤醒被抢占 (选择顺序本就 DL → RT → CFS)"
+        "E-05a: RT / DL current 不因 EEVDF 唤醒被抢占 (选择顺序本就 DL → RT → EEVDF)"
     );
 }
 
 /// 负控制: 旧形态 (`unblock` 无条件请求重调度 / 旧抢占阈值) 必须能被识别.
 #[test]
 fn negative_control_predicates() {
-    let unconditional = "let outcome = Self::cfs_enqueue_to(pid, cpu, PlacementKind::Wake);\n\
+    let unconditional = "let outcome = Self::eevdf_enqueue_to(pid, cpu, PlacementKind::Wake);\n\
                          crate::privileged::proc::cpu_queue::mark_resched_pending_local();";
     assert!(
         !has(unconditional, "if !outcome.need_resched"),
         "负控制: 缺少门闸的唤醒路径必须能被 `need_resched` 谓词识别"
     );
-    let old_threshold = "let should_yield = vr > cfs_rq.floor() + TARGET_LATENCY_TICKS;";
+    let old_threshold = "let should_yield = vr > eevdf_rq.floor() + TARGET_LATENCY_TICKS;";
     assert!(
         has(old_threshold, "TARGET_LATENCY_TICKS"),
         "负控制: 旧阈值形态必须能被静态谓词识别"

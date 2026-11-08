@@ -599,7 +599,7 @@ pub(crate) mod raw {
     ///
     /// 历史实现直接在 `alloc_zeroed` 内存上逐字段手工初始化, 与 `Process::new`
     /// 构成**平行默认集**: 每当 `Process` 新增字段, 此处必然漏写。已实证的后果是
-    /// 漏写 `cfs_weight` (权重保持 0) ⇒ `calc_vruntime_delta(0)` 异常 ⇒ 该进程
+    /// 漏写 `eevdf_weight` (权重保持 0) ⇒ `calc_vruntime_delta(0)` 异常 ⇒ 该进程
     /// vruntime 暴涨并经 `start_vr = max(vr, min_vr)` 钉死所在核的
     /// `min_vruntime` ⇒ 同核任务永不满足抢占条件 ⇒ 该进程永久饥饿。委托
     /// `Process::new` 后, 此类漂移从根上消除。
@@ -1092,7 +1092,7 @@ impl UserProcManager {
     ///
     /// 用户进程创建时 `context` 由 `init_kernel_process_fields` 显式清零, 设计上
     /// 只经 `enter_user_asm` 直接 iretq 进用户态, 不经 `process_switch_asm`. 但
-    /// `enter_user_process` 会先把 pid 入 CFS 运行队列, 从入队到 `enter_user_asm`
+    /// `enter_user_process` 会先把 pid 入 EEVDF 运行队列, 从入队到 `enter_user_asm`
     /// 之间若被定时器 tick 抢占, `schedule()` 会选中本进程并以 `process_switch_asm`
     /// 内核分支执行 `mov cr3,0` → #PF → double fault → triple fault.
     ///

@@ -34,16 +34,16 @@ unsafe extern "C" {
 /// boot 栈与内核栈顶部 canary 的哨兵值; 被改写即判定栈溢出.
 pub const KERNEL_STACK_CANARY: u64 = 0xDEAD_BEEF_CAFE_BABE;
 
-/// [`Process::cfs_rq_cpu`] 的"不在任何核的运行队列上"哨兵值.
+/// [`Process::eevdf_rq_cpu`] 的"不在任何核的运行队列上"哨兵值.
 ///
-/// 队列归属与 [`Process::cfs_on_rq`] 是一对**必须同步更新**的记账凭证: 二者只在
-/// 持有对应核 `cfs_rq` 锁的临界区内改写 (见 `proc::scheduler::cfs_place_on`).
+/// 队列归属与 [`Process::eevdf_on_rq`] 是一对**必须同步更新**的记账凭证: 二者只在
+/// 持有对应核 `eevdf_rq` 锁的临界区内改写 (见 `proc::scheduler::eevdf_place_on`).
 /// 缺了本字段, 跨核搬运只能"先摘后投"分两段做, 中间窗口里任务既不在源树也不在
 /// 目的树, 任何并发唤醒都会把它重复投进第三个队列 —— 同一任务同时挂在两棵树上
 /// 即两核同时上核运行它, 进程上下文与 socket 状态随即被踩坏.
 pub const NO_RQ_CPU: u32 = u32::MAX;
 
-/// [`Process::cfs_rq_cpu`] 的"归属已被某个搬动者认领"中间态.
+/// [`Process::eevdf_rq_cpu`] 的"归属已被某个搬动者认领"中间态.
 ///
 /// 存本值期间, 该任务的队列归属由认领者独占 (它正持相应 rq 锁搬移树节点与记账),
 /// 其他意图搬动同一任务的人**不得阻塞等待** —— 认领者正在等的 rq 锁可能就在等待者
@@ -214,29 +214,29 @@ pub struct Process {
     /// 实时调度优先级 (仅实时策略使用).
     pub rt_priority: AtomicU32,
 
-    /// CFS nice 值, 取值 `-20..=19`; 以 [`crate::privileged::glue::u32_from_i8`]
+    /// EEVDF nice 值, 取值 `-20..=19`; 以 [`crate::privileged::glue::u32_from_i8`]
     /// 的符号扩展位模式存储 (读写必须与 [`crate::privileged::glue::low_i8_from_u32`] 配对).
     pub nice: AtomicU32,
-    /// CFS 虚拟运行时间; 与运行队列共用同一时基 (不变式 IC1).
-    pub cfs_vruntime: AtomicU64,
-    /// CFS 调度权重, 由 nice 派生.
-    pub cfs_weight: AtomicU64,
+    /// EEVDF 虚拟运行时间; 与运行队列共用同一时基 (不变式 IC1).
+    pub eevdf_vruntime: AtomicU64,
+    /// EEVDF 调度权重, 由 nice 派生.
+    pub eevdf_weight: AtomicU64,
     /// 累计实际运行时间 (供 schedstat 统计).
-    pub cfs_sum_exec_runtime: AtomicU64,
-    /// 可运行记账凭证: true 表示本任务已记入某核 `cfs_rq` (含正上核运行期间).
-    pub cfs_on_rq: AtomicBool,
-    /// 本任务可运行记账所在的核 `cfs_rq` 索引; 不在任何队列上时为 [`NO_RQ_CPU`].
+    pub eevdf_sum_exec_runtime: AtomicU64,
+    /// 可运行记账凭证: true 表示本任务已记入某核 `eevdf_rq` (含正上核运行期间).
+    pub eevdf_on_rq: AtomicBool,
+    /// 本任务可运行记账所在的核 `eevdf_rq` 索引; 不在任何队列上时为 [`NO_RQ_CPU`].
     ///
-    /// 与 `cfs_on_rq` 同生命周期: `cfs_on_rq == true` 时本字段必为合法 CPU 索引,
-    /// 且任务属于 `per_cpu_for(该索引).cfs_rq` 的可运行集 (树上, 或正被该核拣出在
+    /// 与 `eevdf_on_rq` 同生命周期: `eevdf_on_rq == true` 时本字段必为合法 CPU 索引,
+    /// 且任务属于 `per_cpu_for(该索引).eevdf_rq` 的可运行集 (树上, 或正被该核拣出在
     /// 跑 —— 语义同 Linux 的 `task_cpu(p)` 配合 `on_rq`).
-    pub cfs_rq_cpu: AtomicU32,
+    pub eevdf_rq_cpu: AtomicU32,
     /// 投送屏障: 本任务正**占用某个核** (已上核运行, 或其上下文尚未保存完成),
     /// 不得被任何搬动者投进运行队列.
     ///
-    /// 与 [`Process::cfs_on_rq`] 正交, 各自回答一个问题: `cfs_on_rq` = "在不在可运行
+    /// 与 [`Process::eevdf_on_rq`] 正交, 各自回答一个问题: `eevdf_on_rq` = "在不在可运行
     /// 记账里", 本字段 = "占不占着某个核". 两者缺一不可 —— 旧实现只能按归属核索引
-    /// ([`Process::cfs_rq_cpu`]) 查"在核上", 而 `Scheduler::block` 在任务**仍是本核
+    /// ([`Process::eevdf_rq_cpu`]) 查"在核上", 而 `Scheduler::block` 在任务**仍是本核
     /// `current`** 时就把归属清成 [`NO_RQ_CPU`], 于是 `Scheduler::place_locked` 的在核
     /// 判据看不见它, 远核唤醒得以把一个仍在跑的任务投进树, 随后又被同一核的 prev 收尾
     /// 摘走 (P-17 取证的单一成因窗口, 现场与读数见
@@ -246,7 +246,7 @@ pub struct Process {
     /// 只在 `Scheduler::reap_off_cpu` —— 那里运行在**新任务**上下文, 确证上一次切换已
     /// 完成 (语义同 Linux `finish_task_switch` 的 `prev->on_cpu = 0`). 不得提前清:
     /// 上下文未保存完就允许别核投送 = 两个核交叠使用同一块进程内核栈.
-    pub cfs_on_cpu: AtomicBool,
+    pub eevdf_on_cpu: AtomicBool,
 
     /// EEVDF 本轮虚拟截止期 (Q16.16); 0 表示尚未建账.
     pub eevdf_vdeadline: AtomicU64,
@@ -260,7 +260,7 @@ pub struct Process {
     pub eevdf_requested_slice: AtomicU64,
     /// 最近一次 Wake 入队的内核时间戳 (ns); 0 表示无待测唤醒.
     ///
-    /// K-07b 批3 观测面字段: Wake 入队成功后写入, 首次被 `pick_cfs_task` 拣出时
+    /// K-07b 批3 观测面字段: Wake 入队成功后写入, 首次被 `pick_eevdf_task` 拣出时
     /// `swap(0)` 并计入该核的等待时延统计. 不参与任何调度决策.
     pub eevdf_wake_ns: AtomicU64,
 
@@ -464,12 +464,12 @@ impl Process {
             sched_policy: AtomicU32::new(SchedPolicy::Normal as u32),
             rt_priority: AtomicU32::new(0),
             nice: AtomicU32::new(0),
-            cfs_vruntime: AtomicU64::new(0),
-            cfs_weight: AtomicU64::new(super::cfs::NICE0_WEIGHT),
-            cfs_sum_exec_runtime: AtomicU64::new(0),
-            cfs_on_rq: AtomicBool::new(false),
-            cfs_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
-            cfs_on_cpu: AtomicBool::new(false),
+            eevdf_vruntime: AtomicU64::new(0),
+            eevdf_weight: AtomicU64::new(super::eevdf::NICE0_WEIGHT),
+            eevdf_sum_exec_runtime: AtomicU64::new(0),
+            eevdf_on_rq: AtomicBool::new(false),
+            eevdf_rq_cpu: AtomicU32::new(super::process::NO_RQ_CPU),
+            eevdf_on_cpu: AtomicBool::new(false),
             eevdf_vdeadline: AtomicU64::new(0),
             eevdf_slice_real: AtomicU64::new(0),
             eevdf_slice_virt: AtomicU64::new(0),
@@ -783,7 +783,7 @@ impl Process {
         self.priority.store(priority as u32, Ordering::SeqCst);
     }
 
-    /// 读取 CFS nice 值 (`-20..=19`).
+    /// 读取 EEVDF nice 值 (`-20..=19`).
     pub fn get_nice(&self) -> i8 {
         crate::privileged::glue::low_i8_from_u32(self.nice.load(Ordering::Acquire))
     }
@@ -1274,7 +1274,7 @@ impl ProcessTable {
     /// - **不得**回调 `PROCESS_TABLE` / `ProcessTable` 的任何方法 —— `processes`
     ///   是不可重入锁, 持锁闭包内再取即同核自死锁 (K-04 的现场教训);
     /// - **不得**分配 (含 `Vec`/`Arc` 触堆)、**不得**打印 (串口写出会把持锁窗口拉到毫秒级);
-    /// - **不得**获取任何运行队列锁 (层级 8 `cfs_rq` → 层级 7 `PROCESS_TABLE` 是
+    /// - **不得**获取任何运行队列锁 (层级 8 `eevdf_rq` → 层级 7 `PROCESS_TABLE` 是
     ///   单向例外, 见 `docs/explain/ref-lock-order.md`).
     ///
     /// 遍历范围 = 全部**非空**槽位升序 (含 0 号槽; 位图从 PID 2 起分配, 故 0 号槽

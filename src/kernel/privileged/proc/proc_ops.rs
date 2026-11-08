@@ -1058,7 +1058,7 @@ pub extern "C" fn sys_fork() -> Pid {
 }
 
 /// fork: 子进程继承父进程的 rlimit / session / pgid / canary / seccomp /
-/// 域标志 / namespace / cgroup / 调度权重链路 (`nice` / `cfs_weight` /
+/// 域标志 / namespace / cgroup / 调度权重链路 (`nice` / `eevdf_weight` /
 /// `ProcessPriority`).
 ///
 /// `with_process` 返回 `None` 表示父进程已不在进程表, 此时静默跳过对应继承.
@@ -1130,7 +1130,7 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
         child.copy_signal_actions_from(&p.sigaction_table);
         child.copy_fs_context_from(&p.fs_context);
     });
-    // 调度权重链路: POSIX fork 继承父进程 nice / cfs_weight / ProcessPriority.
+    // 调度权重链路: POSIX fork 继承父进程 nice / eevdf_weight / ProcessPriority.
     // nice 与其派生权重成对复制, 避免子进程以默认权重起算拉低父进程份额.
     // 每轮 EEVDF 账目 (vruntime / vd / 切片余额) 与请求切片不继承 —— 子进程
     // 由入队建账重新起算, 请求切片属调用任务自身的单次请求.
@@ -1138,12 +1138,12 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
         (
             p.priority.load(Ordering::Acquire),
             p.nice.load(Ordering::Acquire),
-            p.cfs_weight.load(Ordering::Acquire),
+            p.eevdf_weight.load(Ordering::Acquire),
         )
     }) {
         child.priority.store(priority, Ordering::Release);
         child.nice.store(nice, Ordering::Release);
-        child.cfs_weight.store(weight, Ordering::Release);
+        child.eevdf_weight.store(weight, Ordering::Release);
     }
 }
 
@@ -1151,7 +1151,7 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
 mod tests {
     use super::*;
     use crate::privileged::glue::{low_i8_from_u32, u32_from_i8};
-    use crate::privileged::proc::cfs::nice_to_weight;
+    use crate::privileged::proc::eevdf::nice_to_weight;
     use crate::privileged::proc::types::ProcessPriority;
 
     /// 临时进程装卸: 分配 PID + 构造进程 + 插入进程表.
@@ -1169,7 +1169,7 @@ mod tests {
         PROCESS_TABLE.free_pid(pid);
     }
 
-    /// fork 继承语义: nice / cfs_weight / ProcessPriority 逐字段复制,
+    /// fork 继承语义: nice / eevdf_weight / ProcessPriority 逐字段复制,
     /// 每轮 EEVDF 账目不得随之复制.
     #[test]
     fn test_inherit_parent_state_copies_sched_weight_chain() {
@@ -1182,11 +1182,11 @@ mod tests {
         // 进程槽位, 无其它引用同时写入.
         let parent = raw::process_ref_mut(parent_ptr);
         parent.nice.store(u32_from_i8(nice), Ordering::Release);
-        parent.cfs_weight.store(weight, Ordering::Release);
+        parent.eevdf_weight.store(weight, Ordering::Release);
         parent
             .priority
             .store(ProcessPriority::High as u32, Ordering::Release);
-        parent.cfs_vruntime.store(0x1234, Ordering::Release);
+        parent.eevdf_vruntime.store(0x1234, Ordering::Release);
         parent.eevdf_vdeadline.store(0x5678, Ordering::Release);
 
         // SAFETY: child_ptr 由 raw::alloc_process 分配且尚未释放, 测试内独占该
@@ -1196,9 +1196,9 @@ mod tests {
 
         let inherited_nice = low_i8_from_u32(child.nice.load(Ordering::Acquire));
         assert_eq!(inherited_nice, nice);
-        assert_eq!(child.cfs_weight.load(Ordering::Acquire), weight);
+        assert_eq!(child.eevdf_weight.load(Ordering::Acquire), weight);
         assert_eq!(
-            child.cfs_weight.load(Ordering::Acquire),
+            child.eevdf_weight.load(Ordering::Acquire),
             nice_to_weight(inherited_nice)
         );
         assert_eq!(
@@ -1206,7 +1206,7 @@ mod tests {
             ProcessPriority::High as u32
         );
         // 每轮账目与请求切片从零起算, 不与父进程共享.
-        assert_eq!(child.cfs_vruntime.load(Ordering::Acquire), 0);
+        assert_eq!(child.eevdf_vruntime.load(Ordering::Acquire), 0);
         assert_eq!(child.eevdf_vdeadline.load(Ordering::Acquire), 0);
         assert_eq!(child.eevdf_requested_slice.load(Ordering::Acquire), 0);
 

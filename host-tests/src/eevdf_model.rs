@@ -58,16 +58,16 @@ pub const VIRT_SHIFT: u32 = 16;
 /// 1.0 的定点表示 (`1 << 16`).
 pub const VIRT_ONE: u64 = 1 << VIRT_SHIFT;
 
-/// CFS 目标延迟 (真实 tick), 与 `privileged::config::CFS_TARGET_LATENCY` 同源.
+/// EEVDF 目标延迟 (真实 tick), 与 `privileged::config::EEVDF_TARGET_LATENCY` 同源.
 pub const TARGET_LATENCY: u64 = 60;
 
-/// CFS 最小粒度 (真实 tick), 与 `privileged::config::CFS_MIN_GRANULARITY` 同源.
+/// EEVDF 最小粒度 (真实 tick), 与 `privileged::config::EEVDF_MIN_GRANULARITY` 同源.
 pub const MIN_GRANULARITY: u64 = 8;
 
-/// nice=0 权重, 与 `privileged::config::CFS_NICE0_WEIGHT` 同源.
+/// nice=0 权重, 与 `privileged::config::EEVDF_NICE0_WEIGHT` 同源.
 pub const NICE0_WEIGHT: u64 = 1024;
 
-/// 参考模型的单核可运行任务上限 (与 CFS 队列容量口径一致).
+/// 参考模型的单核可运行任务上限 (与 EEVDF 队列容量口径一致).
 pub const MAX_TASKS: usize = 255;
 
 /// 目标延迟的定点表示.
@@ -78,7 +78,7 @@ pub const MIN_GRANULARITY_VIRT: u64 = MIN_GRANULARITY << VIRT_SHIFT;
 
 /// nice (-20..=19) → 权重查表 (索引 = nice + 20).
 ///
-/// 与 `privileged/proc/cfs.rs` 的 `NICE_TO_WEIGHT` 逐项一致, 由 host 测试锁定;
+/// 与 `privileged/proc/eevdf.rs` 的 `NICE_TO_WEIGHT` 逐项一致, 由 host 测试锁定;
 /// 生产实现仍引用内核单源常量, 本表只作口径参照.
 pub const NICE_TO_WEIGHT: [u64; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
@@ -86,7 +86,7 @@ pub const NICE_TO_WEIGHT: [u64; 40] = [
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
-/// nice 值映射为 CFS 权重; 越界收敛到 `-20`/`19` 端点.
+/// nice 值映射为 EEVDF 权重; 越界收敛到 `-20`/`19` 端点.
 #[must_use]
 pub fn nice_to_weight(nice: i8) -> u64 {
     let index = usize::from(u8::try_from(nice.clamp(-20, 19) + 20).unwrap_or(0));
@@ -191,7 +191,7 @@ pub enum Location {
 pub struct Task {
     /// 进程号 (`PID` = `TID`).
     pub pid: u32,
-    /// CFS 权重 (由 nice 派生).
+    /// EEVDF 权重 (由 nice 派生).
     pub weight: u64,
     /// 虚拟运行时间 (Q16.16), 睡眠期间保留.
     pub vr: u64,
@@ -575,7 +575,7 @@ impl Model {
     /// 跨核偷取候选 (E-05b): 合格前缀窗口内按策略排序, 元素 = `(pid, vr, 有效 vd)`.
     ///
     /// 窗口 = `vr <= V` 的树上任务按 vr 升序取前 `limit` 个 —— 与生产侧
-    /// `CfsRunQueue::eligible_pids` + `LOAD_BALANCE_MAX_MOVE` 同宽; 欠账任务
+    /// `EevdfRunQueue::eligible_pids` + `LOAD_BALANCE_MAX_MOVE` 同宽; 欠账任务
     /// (`lag < 0`) 的额度已用尽, 不在候选内。在跑的 current 不在树内, 天然
     /// 不进候选。
     ///

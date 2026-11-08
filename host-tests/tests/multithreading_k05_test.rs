@@ -602,12 +602,12 @@ fn a7_futex_bucket_uses_pi_blocking_lock() {
         "A-7: futex_requeue 必须走阻塞桶锁"
     );
 
-    // 权重取进程表 cfs_weight, 查不到时按 nice 0 兜底.
+    // 权重取进程表 eevdf_weight, 查不到时按 nice 0 兜底.
     let weight = fn_body(&futex, "fn futex_task_weight(pid: u32) -> u32");
     assert!(
-        has(&weight, "p.cfs_weight.load(Ordering::Acquire)")
+        has(&weight, "p.eevdf_weight.load(Ordering::Acquire)")
             && has(&weight, "FUTEX_DEFAULT_WEIGHT"),
-        "A-7: 桶锁权重必须取自 EEVDF cfs_weight"
+        "A-7: 桶锁权重必须取自 EEVDF eevdf_weight"
     );
 }
 

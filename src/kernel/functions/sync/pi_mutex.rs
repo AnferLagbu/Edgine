@@ -59,7 +59,7 @@ pub type PiMutexResult<T> = Result<T, PiMutexError>;
 ///
 /// # 参数
 /// - `my_pid`: 当前线程 PID
-/// - `my_base_weight`: 当前线程的基础 EEVDF 权重 (`cfs_weight`)
+/// - `my_base_weight`: 当前线程的基础 EEVDF 权重 (`eevdf_weight`)
 ///
 /// # 返回
 /// RAII 守卫, drop 时自动释放

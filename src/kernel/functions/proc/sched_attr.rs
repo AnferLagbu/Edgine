@@ -6,7 +6,7 @@
 //!
 //! - 策略：只接受 `SCHED_OTHER`；其余策略一律返回 `EINVAL`。内核内部的
 //!   `SchedPolicy::{Fifo,Rr,Idle,Deadline}` 没有用户态入口，直接改写策略会
-//!   让任务留在 RT/DL 队列里却按 CFS 语义被挑选，故不提供半截迁移.
+//!   让任务留在 RT/DL 队列里却按 EEVDF 语义被挑选，故不提供半截迁移.
 //! - 修改（`setscheduler` / `setattr`）只允许作用于当前进程，其它进程返回
 //!   `EPERM`；查询（`getscheduler` / `getattr`）不设此限制.
 //! - `sched_setattr` 的 `sched_nice` 经 `Scheduler::set_nice` 生效，

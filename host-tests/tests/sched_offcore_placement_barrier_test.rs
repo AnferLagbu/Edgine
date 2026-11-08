@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! P-21 回归: 离核投送屏障 (`Process::cfs_on_cpu`) 的接线契约.
+//! P-21 回归: 离核投送屏障 (`Process::eevdf_on_cpu`) 的接线契约.
 //!
 //! 缺陷 (取证结论见 `docs/report/net-e2e-offcore-dequeue-window.md`):
 //! 任务 `block()` 后仍是本核 `current` —— 归属已被清成 `NO_RQ_CPU`, 于是别核的
@@ -11,7 +11,7 @@
 //! 两核同时上核运行同一任务 → 同一块进程内核栈被交叠使用 → GPF.
 //!
 //! 修复形态: 显式屏障字段承载"占用某个核"这一语义 (与承载"在可运行记账里"的
-//! `cfs_on_rq` 正交), 屏障期到达的唤醒只做延迟投送 (搬状态不入树), 落地由占用者
+//! `eevdf_on_rq` 正交), 屏障期到达的唤醒只做延迟投送 (搬状态不入树), 落地由占用者
 //! 核接手; 清屏障后与 tick 各有一条补投腿.
 //!
 //! 本测试锁定该形态的**接线契约** (屏障的运行时效果由 QEMU e2e 多轮覆盖;
@@ -23,7 +23,7 @@ use std::fs;
 use std::path::PathBuf;
 
 const PROC: &str = "src/kernel/privileged/proc/process.rs";
-const CFS: &str = "src/kernel/privileged/proc/cfs.rs";
+const EEVDF: &str = "src/kernel/privileged/proc/eevdf.rs";
 const SCHED: &str = "src/kernel/privileged/proc/scheduler.rs";
 
 fn repo_root() -> PathBuf {
@@ -116,18 +116,18 @@ fn fn_body(src: &str, sig: &str) -> String {
 fn barrier_field_is_declared_orthogonal_to_accounting() {
     let proc_src = code_only(&read_src(PROC));
     assert!(
-        has(&proc_src, "pub cfs_on_cpu: AtomicBool"),
+        has(&proc_src, "pub eevdf_on_cpu: AtomicBool"),
         "P-21: 投送屏障必须是显式字段 —— 旧模型把'在核上'与'在记账里'挤进 \
-         `cfs_on_rq`/`cfs_rq_cpu` 两个语义, 正是离核窗口不可见的根因"
+         `eevdf_on_rq`/`eevdf_rq_cpu` 两个语义, 正是离核窗口不可见的根因"
     );
     assert!(
-        has(&proc_src, "cfs_on_rq: AtomicBool"),
+        has(&proc_src, "eevdf_on_rq: AtomicBool"),
         "P-21: 记账凭证必须独立存在, 屏障不得靠复用它实现"
     );
     // 新建任务不占用任何核 —— 初值必须为 false, 否则该任务永不可被投送.
     let new_body = code_only(&fn_body(&read_src(PROC), "pub fn new"));
     assert!(
-        has(&new_body, "cfs_on_cpu: AtomicBool::new(false)"),
+        has(&new_body, "eevdf_on_cpu: AtomicBool::new(false)"),
         "P-21: Process::new 必须把屏障初始化为未占用"
     );
 }
@@ -138,20 +138,20 @@ fn barrier_is_set_at_dispatch_before_current_store() {
     let sched = code_only(&read_src(SCHED));
     let schedule_body = code_only(&fn_body(&sched, "pub fn schedule"));
     assert_eq!(
-        occurrences(&schedule_body, "cfs_on_cpu.store(true"),
+        occurrences(&schedule_body, "eevdf_on_cpu.store(true"),
         1,
         "P-21: 屏障必须只有 `schedule()` 一个置位点 —— 多点置位等于多点漏置位"
     );
     // 负控制: `schedule()` 之外不得有第二处置位点 (整文件计数 = 函数体计数).
     assert_eq!(
-        occurrences(&sched, "cfs_on_cpu.store(true"),
-        occurrences(&schedule_body, "cfs_on_cpu.store(true"),
+        occurrences(&sched, "eevdf_on_cpu.store(true"),
+        occurrences(&schedule_body, "eevdf_on_cpu.store(true"),
         "P-21: `schedule()` 之外不得有第二处置位点"
     );
     assert!(
         before(
             &schedule_body,
-            "cfs_on_cpu.store(true",
+            "eevdf_on_cpu.store(true",
             "per_cpu.current.store(next",
         ),
         "P-21: 屏障必须早于 `current` 写入 —— 从写入 current 起到真正切走之间, \
@@ -168,7 +168,7 @@ fn barrier_is_set_at_dispatch_before_current_store() {
     assert!(
         before(
             &schedule_body,
-            "cfs_on_cpu.store(true",
+            "eevdf_on_cpu.store(true",
             "Self::context_switch_tail("
         ),
         "P-21: 屏障晚于上下文切换即形同虚设"
@@ -180,21 +180,21 @@ fn barrier_is_set_at_dispatch_before_current_store() {
 fn barrier_is_cleared_only_in_reap_off_cpu() {
     let sched = code_only(&read_src(SCHED));
     assert_eq!(
-        occurrences(&sched, "cfs_on_cpu.store(false"),
+        occurrences(&sched, "eevdf_on_cpu.store(false"),
         1,
         "P-21: 清位必须集中在 `reap_off_cpu` 一处 —— 提前清位等于允许别核在上下文\
          未保存完时把它投进树, 两核即交叠同一块进程内核栈"
     );
     let reap = code_only(&fn_body(&sched, "fn reap_off_cpu"));
     assert!(
-        has(&reap, "cfs_on_cpu.store(false"),
+        has(&reap, "eevdf_on_cpu.store(false"),
         "P-21: 清位点必须就是 `reap_off_cpu` (它运行在新任务上下文, 是'prev 已离开 \
          CPU'被确证的唯一时刻)"
     );
     // 负控制: `block()` 不得清屏障 —— 阻塞时任务仍是本核 current.
     let block = code_only(&fn_body(&sched, "pub fn block"));
     assert!(
-        !block.contains("cfs_on_cpu"),
+        !block.contains("eevdf_on_cpu"),
         "P-21: `block()` 清屏障即把保护窗口整个抹掉 (prev 收尾与唤醒方在此重逢)"
     );
 }
@@ -205,8 +205,8 @@ fn placement_delivers_state_but_not_tree_under_barrier() {
     let sched = code_only(&read_src(SCHED));
     let place = code_only(&fn_body(&sched, "fn place_locked"));
     assert!(
-        has(&place, "p.cfs_on_cpu.load(Ordering::Acquire)"),
-        "P-21: 快照必须读屏障 —— 只读 `cfs_rq_cpu` 的在核判据对 `NO_RQ_CPU` 的离核\
+        has(&place, "p.eevdf_on_cpu.load(Ordering::Acquire)"),
+        "P-21: 快照必须读屏障 —— 只读 `eevdf_rq_cpu` 的在核判据对 `NO_RQ_CPU` 的离核\
          任务失明 (实测的单一成因窗口)"
     );
     assert!(
@@ -233,12 +233,12 @@ fn placement_delivers_state_but_not_tree_under_barrier() {
 /// P-26 回归: 屏障延迟投送必须原子 —— 复查 `on_cpu` 与置 `Ready` 在同一临界区.
 ///
 /// 缺陷 (取证见 `docs/report/net-e2e-tcp-echo-flakiness.md` P-26): `place_locked` 上方
-/// 快照读 `cfs_on_cpu` 与延迟支的 `set_state(Ready)` 分属两次 `PROCESS_TABLE` 加锁,
+/// 快照读 `eevdf_on_cpu` 与延迟支的 `set_state(Ready)` 分属两次 `PROCESS_TABLE` 加锁,
 /// 占用者核的 `reap_off_cpu` 可夹在两者之间清屏障 + 读到仍是 `Blocked` 而放弃补投腿,
 /// 本支随后才翻 `Ready` ⇒ prev 收尾腿与 reap 补投腿同时落空, init 永久停在
 /// "Ready 且不在任何树上" (`rq_cpu=NO_RQ_CPU`; x86_64 双核 e2e ~6% 就绪超时挂死).
 ///
-/// 契约: 延迟支必须在持锁期内**重新读取** `cfs_on_cpu` 再据此翻 `Ready` —— 承接决策
+/// 契约: 延迟支必须在持锁期内**重新读取** `eevdf_on_cpu` 再据此翻 `Ready` —— 承接决策
 /// 不能只依赖快照的陈旧屏障值; 屏障若已在快照后被清除, 延迟支必须 fall-through 到
 /// 完整搬定路径亲自入树, 而不是回报"已承接"后无人接手.
 #[test]
@@ -248,15 +248,15 @@ fn barrier_defer_rechecks_on_cpu_atomically() {
     let barrier_seg = code_only(&fn_body(&sched, "fn place_barrier"));
     // 延迟支必须重新读取屏障 (不能只用快照的 on_cpu) —— 复查即 TOCTOU 的闭合点.
     assert!(
-        has(&barrier_seg, "cfs_on_cpu.load(Ordering::Acquire)"),
-        "P-26: 屏障延迟支必须在临界区内复查 cfs_on_cpu —— 靠快照的陈旧 on_cpu 判延迟, \
+        has(&barrier_seg, "eevdf_on_cpu.load(Ordering::Acquire)"),
+        "P-26: 屏障延迟支必须在临界区内复查 eevdf_on_cpu —— 靠快照的陈旧 on_cpu 判延迟, \
          会让 reap_off_cpu 夹在快照与置 Ready 之间清屏障, 两条腿同时落空"
     );
     // 复查必须先于置 Ready (同一 with_process 闭包: 先 load 屏障再条件翻 Ready).
     assert!(
         before(
             &barrier_seg,
-            "cfs_on_cpu.load",
+            "eevdf_on_cpu.load",
             "set_state_safe(ProcessState::Ready",
         ),
         "P-26: 延迟投送必须在复查到屏障在位后才翻 Ready —— 顺序倒置即回到 TOCTOU"
@@ -274,7 +274,7 @@ fn steal_refuses_barred_candidate_without_unaccounting() {
     let sched = code_only(&read_src(SCHED));
     let steal = code_only(&fn_body(&sched, "fn steal_locked"));
     assert!(
-        has(&steal, "p.cfs_on_cpu.load(Ordering::Acquire)"),
+        has(&steal, "p.eevdf_on_cpu.load(Ordering::Acquire)"),
         "P-21: 偷取候选同样要过屏障判据"
     );
     assert!(
@@ -300,7 +300,7 @@ fn prev_landing_goes_through_the_single_placement_entry() {
     );
     let requeue = code_only(&fn_body(&sched, "fn requeue_prev"));
     assert_eq!(
-        occurrences(&requeue, "cfs_place_on_inner("),
+        occurrences(&requeue, "eevdf_place_on_inner("),
         1,
         "P-21: prev 落地必须走搬定入口 (认领凭证 + 锁序 + 去重 + 落点回写不在之外另起炉灶)"
     );
@@ -312,20 +312,20 @@ fn prev_landing_goes_through_the_single_placement_entry() {
     );
     assert!(
         has(
-            &fn_body(&sched, "fn cfs_place_on"),
-            "Self::cfs_place_on_inner(pid, dst_cpu, false, kind)"
+            &fn_body(&sched, "fn eevdf_place_on"),
+            "Self::eevdf_place_on_inner(pid, dst_cpu, false, kind)"
         ),
         "P-21: 公有入口必须把 `owner_landing` 固定为 false"
     );
     // 负控制: 旧的裸 `requeue` 与"只持本核锁就投节点"的编程面都不得复活.
     assert!(
-        !has(&sched, ".requeue(") && !has(&sched, "cfs_rq.lock().enqueue("),
+        !has(&sched, ".requeue(") && !has(&sched, "eevdf_rq.lock().enqueue("),
         "P-21: 裸 insert / 绕过认领的入队会重新打开双树与漏记账窗口"
     );
-    let cfs = code_only(&read_src(CFS));
+    let eevdf = code_only(&read_src(EEVDF));
     assert!(
-        !has(&cfs, "fn requeue"),
-        "P-21: `CfsRunQueue::requeue` 必须由类型 API 层面移除 (§5 F9: 不留死代码)"
+        !has(&eevdf, "fn requeue"),
+        "P-21: `EevdfRunQueue::requeue` 必须由类型 API 层面移除 (§5 F9: 不留死代码)"
     );
 }
 
@@ -335,7 +335,7 @@ fn reap_redelivers_ready_task_left_off_tree() {
     let sched = code_only(&read_src(SCHED));
     let reap = code_only(&fn_body(&sched, "fn reap_off_cpu"));
     assert!(
-        before(&reap, "cfs_on_cpu.store(false", "cfs_place_on(prev"),
+        before(&reap, "eevdf_on_cpu.store(false", "eevdf_place_on(prev"),
         "P-21: 补投必须在清屏障之后 —— 屏障未清时 `place_locked` 只会再次延迟投送, \
          任务永远落不了地"
     );
@@ -345,12 +345,12 @@ fn reap_redelivers_ready_task_left_off_tree() {
     );
     assert!(
         has(&reap, "SchedPolicy::Normal"),
-        "P-21: 补投只针对 CFS —— RT/DL 的 `cfs_on_rq` 恒为 false, 不加策略限定会把\
-         实时任务投进 CFS 树"
+        "P-21: 补投只针对 EEVDF —— RT/DL 的 `eevdf_on_rq` 恒为 false, 不加策略限定会把\
+         实时任务投进 EEVDF 树"
     );
     assert!(
         has(&reap, "per_cpu.idle.load"),
-        "P-21: idle 任务不属任何运行队列, 补投必须排除它 (否则本核 CFS 会被 idle \
+        "P-21: idle 任务不属任何运行队列, 补投必须排除它 (否则本核 EEVDF 会被 idle \
          占据最小键位而饥饿)"
     );
 }
@@ -367,7 +367,7 @@ fn tick_scan_still_selects_only_blocked_tasks() {
     let sched = code_only(&read_src(SCHED));
     let tick = code_only(&fn_body(&sched, "pub fn tick"));
     assert!(
-        !has(&tick, "cfs_on_rq") && !has(&tick, "cfs_on_cpu"),
+        !has(&tick, "eevdf_on_rq") && !has(&tick, "eevdf_on_cpu"),
         "P-21: tick 的电平重扫不得拿 `Ready 且不在队` 当选题判据 —— 该形状与\n         '刚创建还未装配上下文的进程' 不可区分 (扇中将切到全零上下文 => 三重故障)"
     );
     assert!(

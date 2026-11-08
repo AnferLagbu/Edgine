@@ -27,7 +27,7 @@
 //! │   ├── link/      链接脚本
 //! │   ├── mem_alloc/ 全局分配器 (P-71: 原名 alloc/, 避免与 `extern crate alloc` 同名)
 //! │   ├── sync/      同步原语 TCB (11 子模块: spinlock/mutex/rwlock/rcu/atomic/seqlock/types/arch/once_lock/once_cell/irq_spinlock)
-//! │   ├── proc/      进程管理 TCB (types/process/session/elf/api/scheduler/cfs/cpu_queue/oomd/user_proc)
+//! │   ├── proc/      进程管理 TCB (types/process/session/elf/api/scheduler/eevdf/cpu_queue/oomd/user_proc)
 //! │   ├── sched/     调度器特质
 //! │   ├── syscall/   系统调用底层
 //! │   ├── timer/     时钟底层

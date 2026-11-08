@@ -20,7 +20,7 @@
 //! 4. **自旋改调度阻塞等待**: `lock()` 在状态锁内入队并置 Blocked
 //!    (`BlockReason::PiMutexWait`), 释放状态锁后 `process_block_finish` 切换;
 //!    移交由释放方 `Scheduler::unblock` 投送, 不再依赖等待者轮询.
-//! 5. **捐赠接入 EEVDF 权重链**: 等待者按 `cfs_weight` 参与 max 计算, 持有者
+//! 5. **捐赠接入 EEVDF 权重链**: 等待者按 `eevdf_weight` 参与 max 计算, 持有者
 //!    权重经 `Scheduler::set_nice` 落地, 释放/降级时恢复基础权重.
 //!
 //! ## 安全契约
@@ -42,7 +42,7 @@
 //!
 //! - 不做 A→B→C 跨锁链式捐赠 (v2.2 的 chain 字段已删除): 单层捐赠足以覆盖
 //!   futex 桶锁这类短临界区; 出现跨锁等待链时再引入链式传播.
-//! - 等待者权重取入队时的 `cfs_weight` 快照, `nice` 变化需调用方显式
+//! - 等待者权重取入队时的 `eevdf_weight` 快照, `nice` 变化需调用方显式
 //!   `update_waiter_priority` 刷新 (与 v2.1 调用方约束一致).
 //! - 权重经 `weight_to_nice` 取最近 nice 桶落地, 非桶值会被取整.
 //! - 重调度请求只投本核 (`set_need_reschedule`), 不跨核 IPI.
@@ -320,7 +320,7 @@ struct AppliedBoost {
 struct PiMutexState {
     locked: bool,
     holder: u32,
-    /// 持有者基础权重 (调用方传入的 `cfs_weight`).
+    /// 持有者基础权重 (调用方传入的 `eevdf_weight`).
     holder_base_weight: u32,
     /// 当前有效权重 = `max(holder_base, 全部等待者权重)`.
     effective_weight: u32,
@@ -454,7 +454,7 @@ pub enum PiMutexProtocol {
 /// 优先级继承互斥锁
 ///
 /// 权重口径: `lock` / `try_lock` / `update_waiter_priority` 接收的是 EEVDF
-/// `cfs_weight` (nice 0 = 1024), 不是 legacy priority 等级.
+/// `eevdf_weight` (nice 0 = 1024), 不是 legacy priority 等级.
 #[repr(C)]
 pub struct PiMutex<T: ?Sized> {
     /// 全部可变状态 (单临界区)
@@ -591,7 +591,7 @@ impl<T: ?Sized> PiMutex<T> {
     ///
     /// # 参数
     /// - `my_pid`: 当前线程 PID
-    /// - `my_base_weight`: 当前线程的基础 EEVDF 权重 (`cfs_weight`)
+    /// - `my_base_weight`: 当前线程的基础 EEVDF 权重 (`eevdf_weight`)
     ///
     /// # 行为
     /// 1. 尝试立即获取 (含接收定向移交)
@@ -894,7 +894,7 @@ impl<T: ?Sized> PiMutex<T> {
         self.state.lock().holder
     }
 
-    /// 查询当前有效权重 (EEVDF `cfs_weight` 口径)
+    /// 查询当前有效权重 (EEVDF `eevdf_weight` 口径)
     #[must_use]
     pub fn effective_priority(&self) -> u32 {
         self.state.lock().effective_weight
@@ -936,7 +936,7 @@ fn set_task_weight(pid: u32, weight: u32) {
     if pid == PID_NONE || weight == 0 {
         return;
     }
-    let nice = crate::privileged::proc::cfs::weight_to_nice(u64::from(weight));
+    let nice = crate::privileged::proc::eevdf::weight_to_nice(u64::from(weight));
     if crate::privileged::proc::scheduler::Scheduler::set_nice(pid, nice) {
         crate::privileged::proc::scheduler::Scheduler::set_need_reschedule();
     }

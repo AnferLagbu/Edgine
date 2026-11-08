@@ -247,7 +247,7 @@ const FUTEX_DEFAULT_WEIGHT: u32 = 1024;
 /// (与 `PiMutex` 的等待者权重快照口径一致).
 fn futex_task_weight(pid: u32) -> u32 {
     crate::privileged::proc::PROCESS_TABLE
-        .with_process(pid, |p| p.cfs_weight.load(Ordering::Acquire))
+        .with_process(pid, |p| p.eevdf_weight.load(Ordering::Acquire))
         .and_then(|weight| u32::try_from(weight).ok())
         .unwrap_or(FUTEX_DEFAULT_WEIGHT)
 }

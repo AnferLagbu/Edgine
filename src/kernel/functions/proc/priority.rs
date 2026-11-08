@@ -6,7 +6,7 @@
 //! - getpriority_syscall: getpriority() 系统调用策略 (返回真实 nice)
 //! - setpriority_syscall: setpriority() 系统调用策略 (nice 与权重同步)
 //!
-//! nice 的权威值是 `Process::nice` 与其派生 `Process::cfs_weight`;
+//! nice 的权威值是 `Process::nice` 与其派生 `Process::eevdf_weight`;
 //! `ProcessPriority` 只作粗粒度兼容字段, 每次写 nice 时同步维护.
 //!
 //! ## 框内核边界

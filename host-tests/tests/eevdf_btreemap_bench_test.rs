@@ -1,11 +1,11 @@
-//! I-34: CFS `BTreeMap` 性能基准 + 延后决策
+//! I-34: EEVDF `BTreeMap` 性能基准 + 延后决策
 //!
 //! 验证 maintenance-2026-06-11.md 中 I-34 验收:
-//!   "CFS enqueue/dequeue 零堆分配"
+//!   "EEVDF enqueue/dequeue 零堆分配"
 //!   "性能测试: 1000 进程上下文切换延迟 < 10μs"
 //!
 //! 决策: I-34 标记 "延后" 写明了"实现 intrusive RB tree". 在没有证据表明
-//! `BTreeMap` 是性能瓶颈前, 不应贸然重写 CFS 数据结构. 本测试作为基准,
+//! `BTreeMap` 是性能瓶颈前, 不应贸然重写 EEVDF 数据结构. 本测试作为基准,
 //! 后续若 perf 数据显示 hot path 慢, 再回到此基准做对比.
 
 use std::collections::BTreeMap;
@@ -13,7 +13,7 @@ use std::time::Instant;
 
 /// 单次 `enqueue+pick_next` 操作的延迟 (纳秒)
 #[test]
-fn bench_cfs_btreemap_1000_tasks_latency() {
+fn bench_eevdf_btreemap_1000_tasks_latency() {
     let n = 1000usize;
     let mut tree: BTreeMap<(u64, u32), u32> = BTreeMap::new();
 
@@ -32,7 +32,7 @@ fn bench_cfs_btreemap_1000_tasks_latency() {
     let start = Instant::now();
     for _ in 0..n {
         let next = tree.iter().next().map(|(k, _)| *k);
-        // 模拟 dequeue (实际 CFS 会在 pick 后 dequeue)
+        // 模拟 dequeue (实际 EEVDF 会在 pick 后 dequeue)
         if let Some(k) = next {
             tree.remove(&k);
         }
@@ -52,27 +52,27 @@ fn bench_cfs_btreemap_1000_tasks_latency() {
     );
 }
 
-/// 验证有序 `BTree` 容器是当前 CFS 数据结构 (防止误改)
+/// 验证有序 `BTree` 容器是当前 EEVDF 数据结构 (防止误改)
 #[test]
-fn test_cfs_uses_btreemap_for_vrunqueue() {
-    // 静态契约: privileged/proc/cfs.rs 必须仍以 (vruntime, pid) 为键的有序树
-    // (DECISION-J 2026-09-13: sched_policy 反转迁回 privileged/proc/cfs.rs)
+fn test_eevdf_uses_btreemap_for_vrunqueue() {
+    // 静态契约: privileged/proc/eevdf.rs 必须仍以 (vruntime, pid) 为键的有序树
+    // (DECISION-J 2026-09-13: sched_policy 反转迁回 privileged/proc/eevdf.rs)
     // P-64 第十六批: 值类型为 `()` 触发 clippy `zero_sized_map_values`, 按
     // 「改码服从 lint」改 `BTreeMap<(u64, Pid), ()>` → `BTreeSet<(u64, Pid)>`
     // (键集合语义等价, 迭代次序与 first()/last() 不变).
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("src/kernel/privileged/proc/cfs.rs");
-    let src = std::fs::read_to_string(&path).expect("无法读取 privileged/proc/cfs.rs");
+        .join("src/kernel/privileged/proc/eevdf.rs");
+    let src = std::fs::read_to_string(&path).expect("无法读取 privileged/proc/eevdf.rs");
 
     assert!(
         src.contains("BTreeSet<(u64, Pid)>"),
-        "CFS 应使用 BTreeSet<(u64, Pid)> 作为 vruntime 树 (I-34 当前实现)"
+        "EEVDF 应使用 BTreeSet<(u64, Pid)> 作为 vruntime 树 (I-34 当前实现)"
     );
     assert!(
         src.contains("tree: BTreeSet<"),
-        "CfsRunQueue.tree 字段应为 BTreeSet 类型 (I-34 当前实现)"
+        "EevdfRunQueue.tree 字段应为 BTreeSet 类型 (I-34 当前实现)"
     );
 }
 

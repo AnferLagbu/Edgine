@@ -21,7 +21,7 @@ use edgine::kernel::functions::proc::sched_attr::{
 };
 use edgine::kernel::functions::syscall::FunctionsSyscallDispatch;
 use edgine::kernel::functions::syscall::types as ktypes;
-use edgine::kernel::privileged::proc::cfs::nice_to_weight;
+use edgine::kernel::privileged::proc::eevdf::nice_to_weight;
 use edgine::kernel::privileged::proc::process::{PROCESS_TABLE, Process};
 use edgine::kernel::privileged::proc::{BlockReason, SchedPolicy, Scheduler};
 use edgine::kernel::privileged::syscall::{Errno, SyscallDispatch};
@@ -65,7 +65,7 @@ impl TestProc {
     }
 
     fn weight(&self) -> u64 {
-        self.with(|p| p.cfs_weight.load(Ordering::Acquire))
+        self.with(|p| p.eevdf_weight.load(Ordering::Acquire))
     }
 
     fn requested(&self) -> u64 {
@@ -346,7 +346,7 @@ fn setattr_applies_nice_and_clamps_requested_slice() {
     let _serial = lock_rq();
     let proc = TestProc::new("e06-setattr-rq");
     let vr = 100u64 << VIRT_SHIFT;
-    proc.with_mut(|p| p.cfs_vruntime.store(vr, Ordering::Release));
+    proc.with_mut(|p| p.eevdf_vruntime.store(vr, Ordering::Release));
     let _rq = RqGuard::enqueue(proc.pid);
 
     let mut attr = Box::new(valid_attr());

@@ -97,7 +97,7 @@ INTERNAL_PATTERNS = [
     r'privileged::mm::arch',
     # proc 内部 — api/signal/rlimit/fd_alloc/seccomp/namespace/cgroup/elf/madvise_mlock/cpu_queue/session/thread/scheduler/scheduler_ex/process/canary/posix_timer/user_proc 已 re-export
     r'privileged::proc::oomd',
-    r'privileged::proc::cfs',
+    r'privileged::proc::eevdf',
     # syscall 内部 — types/epoll/api 已 re-export
     r'privileged::syscall::futex',
     r'privileged::syscall::eventfd',
@@ -146,7 +146,7 @@ INTERNAL_PATTERNS = [
 CROSS_LAYER_ALLOWED = {
     ('functions/mm/numa.rs', 'privileged::mm::numa'),
     ('functions/proc/oomd.rs', 'privileged::proc::oomd'),
-    ('functions/proc/sched_policy.rs', 'privileged::proc::cfs'),
+    ('functions/proc/sched_policy.rs', 'privileged::proc::eevdf'),
 }
 
 

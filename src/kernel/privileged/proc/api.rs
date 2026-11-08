@@ -216,7 +216,7 @@ pub fn enter_user_process(pid: u32) {
     });
 
     // 关键: **不得**在此将首进程 `SCHEDULER.add` 入队. 该进程随即经
-    // `user_proc_enter_by_pid` 的 iretq 直入用户态并物理运行; 若同时留在 CFS 树中,
+    // `user_proc_enter_by_pid` 的 iretq 直入用户态并物理运行; 若同时留在 EEVDF 树中,
     // 即成为"已运行 + 仍在 rq"的幽灵条目 —— 其它核的 `load_balance` 会偷走该条目
     // 并二次派发, 导致同一进程的唯一内核栈被两核并发使用 (栈互踩 ⇒ 野跳崩溃).
     // 首进程的运行由 `schedule()` 的 `keep_current` 兜底保住, 待其首次被抢占时再经

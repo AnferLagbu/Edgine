@@ -3,17 +3,17 @@
 //!
 //! 口径来源: `docs/plan/eevdf-scheduler.md` E-03 与 E-01 冻结的
 //! `host-tests/src/eevdf_model.rs`. 本文件只测队列**行为**与参考模型的一致性;
-//! 生产接线的源码形状由 `cfs_single_time_base_test.rs` /
+//! 生产接线的源码形状由 `eevdf_single_time_base_test.rs` /
 //! `smp_rq_migration_test.rs` 的既有契约覆盖.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::Ordering;
 
 use edgine::kernel::privileged::config::{
-    CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, CFS_VIRT_ONE,
+    EEVDF_MIN_GRANULARITY, EEVDF_NICE0_WEIGHT, EEVDF_TARGET_LATENCY, EEVDF_VIRT_ONE,
 };
-use edgine::kernel::privileged::proc::cfs::{
-    CfsRunQueue, EevdfTaskView, MIN_GRANULARITY_VIRT, QueuedTask, TARGET_LATENCY_VIRT, VIRT_ONE,
+use edgine::kernel::privileged::proc::eevdf::{
+    EevdfRunQueue, EevdfTaskView, MIN_GRANULARITY_VIRT, QueuedTask, TARGET_LATENCY_VIRT, VIRT_ONE,
     calc_vruntime_delta_virt, clamp_requested_slice, default_slice_real, effective_slice_real,
     is_eligible, nice_to_weight, slice_virt_of, virtual_deadline, wake_vruntime,
     weighted_avg_vruntime,
@@ -44,7 +44,7 @@ fn random_nice(state: &mut u64) -> i8 {
 }
 
 /// 从公开账目暴力重算, 逐项对账 (IE2: 每个在账任务恰计一次).
-fn reconcile(queue: &CfsRunQueue) {
+fn reconcile(queue: &EevdfRunQueue) {
     let mut tree_pids = BTreeSet::new();
     let mut tree_weight = 0u64;
     let mut tree_sum = 0u128;
@@ -96,13 +96,13 @@ fn reconcile(queue: &CfsRunQueue) {
 #[test]
 fn pure_functions_match_frozen_reference_model() {
     assert_eq!(VIRT_ONE, MODEL_VIRT_ONE);
-    assert_eq!(VIRT_ONE, CFS_VIRT_ONE);
+    assert_eq!(VIRT_ONE, EEVDF_VIRT_ONE);
     assert_eq!(VIRT_ONE, 1 << 16);
     assert_eq!(TARGET_LATENCY_VIRT, MODEL_TARGET_LATENCY_VIRT);
     assert_eq!(MIN_GRANULARITY_VIRT, MODEL_MIN_GRANULARITY_VIRT);
-    assert_eq!(TARGET_LATENCY, CFS_TARGET_LATENCY);
-    assert_eq!(MIN_GRANULARITY, CFS_MIN_GRANULARITY);
-    assert_eq!(NICE0_WEIGHT, CFS_NICE0_WEIGHT);
+    assert_eq!(TARGET_LATENCY, EEVDF_TARGET_LATENCY);
+    assert_eq!(MIN_GRANULARITY, EEVDF_MIN_GRANULARITY);
+    assert_eq!(NICE0_WEIGHT, EEVDF_NICE0_WEIGHT);
 
     let mut state = 0xdead_beef_cafe_1234u64;
     for nice in -20..=19 {
@@ -172,7 +172,7 @@ fn pure_functions_match_frozen_reference_model() {
 /// 随机操作序列下账目必须与暴力重算逐项一致 (权重守恒 / 无重复节点 / 两账互斥).
 #[test]
 fn queue_ledgers_match_bruteforce_under_random_operations() {
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     let mut state = 0x5eed_1234_abcd_9876u64;
     for _ in 0..2000 {
         let pid = u32::try_from(lcg_next(&mut state) % 24).expect("pid 必在 u32 内");
@@ -204,9 +204,9 @@ fn queue_ledgers_match_bruteforce_under_random_operations() {
     }
 }
 
-fn build_model_case(state: &mut u64, tasks: u32) -> (Model, CfsRunQueue, BTreeMap<u32, u64>) {
+fn build_model_case(state: &mut u64, tasks: u32) -> (Model, EevdfRunQueue, BTreeMap<u32, u64>) {
     let mut model = Model::new();
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     let mut deadlines = BTreeMap::new();
     for index in 0..tasks {
         let pid = index + 1;
@@ -245,10 +245,10 @@ fn selection_matches_reference_model_without_current() {
 fn build_current_case(
     state: &mut u64,
     tasks: u32,
-) -> (Model, CfsRunQueue, BTreeMap<u32, u64>, EevdfTaskView) {
+) -> (Model, EevdfRunQueue, BTreeMap<u32, u64>, EevdfTaskView) {
     const CURRENT_PID: u32 = 100;
     let mut model = Model::new();
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     let mut deadlines = BTreeMap::new();
 
     let raw_vr = lcg_next(state) % 10_000;
@@ -306,8 +306,8 @@ fn selection_matches_reference_model_with_current() {
 /// 跨核迁移: 源撤账 + 目的记账, `W`/`S` 两核之和守恒且落点不变 (IE5).
 #[test]
 fn migration_conserves_weight_and_weighted_vruntime() {
-    let mut source = CfsRunQueue::new();
-    let mut destination = CfsRunQueue::new();
+    let mut source = EevdfRunQueue::new();
+    let mut destination = EevdfRunQueue::new();
     let mut state = 0xabcd_1234_5678_9ef0u64;
     let mut moved = Vec::new();
     for index in 0..32u32 {
@@ -351,7 +351,7 @@ fn migration_conserves_weight_and_weighted_vruntime() {
 /// 255 任务边界: 树 -> 运行账的移动不改变 W/S, 全部撤账后归零.
 #[test]
 fn max_tasks_boundary_preserves_ledgers() {
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     let count = u32::try_from(MAX_TASKS).expect("MAX_TASKS 必在 u32 内");
     let mut expected_weight = 0u64;
     for index in 0..count {
@@ -390,7 +390,7 @@ fn max_tasks_boundary_preserves_ledgers() {
 /// 陈旧凭证不得让派生权重漂移: 扣减量取结构记账, 重复出队幂等.
 #[test]
 fn stale_credentials_cannot_drift_derived_weight() {
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     queue.enqueue(5, 100, 1024, false);
     queue.enqueue(5, 200, 2048, true);
     assert_eq!(queue.runnable_weight(), 2048, "重复入队不得叠加权重");
@@ -413,7 +413,10 @@ fn process_new_has_unbuilt_eevdf_state() {
     assert_eq!(process.eevdf_slice_virt.load(Ordering::Acquire), 0);
     assert_eq!(process.eevdf_slice_left.load(Ordering::Acquire), 0);
     assert_eq!(process.eevdf_requested_slice.load(Ordering::Acquire), 0);
-    assert_eq!(process.cfs_weight.load(Ordering::Acquire), CFS_NICE0_WEIGHT);
-    assert_eq!(process.cfs_vruntime.load(Ordering::Acquire), 0);
-    assert!(!process.cfs_on_rq.load(Ordering::Acquire));
+    assert_eq!(
+        process.eevdf_weight.load(Ordering::Acquire),
+        EEVDF_NICE0_WEIGHT
+    );
+    assert_eq!(process.eevdf_vruntime.load(Ordering::Acquire), 0);
+    assert!(!process.eevdf_on_rq.load(Ordering::Acquire));
 }

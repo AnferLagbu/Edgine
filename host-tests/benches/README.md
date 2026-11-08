@@ -17,7 +17,7 @@
 | attribution_classify | freg   | functions/freg/attribution 分类      |
 | recovery_decide      | freg   | functions/freg/recovery_policy 决策  |
 | bitmap_scan          | pmm    | 物理页分配 (Bitmap)                  |
-| eevdf_pick_requeue   | sched  | privileged/proc CfsRunQueue 选择路径 (E-07) |
+| eevdf_pick_requeue   | sched  | privileged/proc EevdfRunQueue 选择路径 (E-07) |
 | socket_wait_queue    | net    | net 等待队列唤醒与移除                |
 | virtio_blk_io        | storage| virtio 块设备队列操作                |
 | bpf_verifier_dispatch| ebpf   | eBPF 验证器 trait 派发               |

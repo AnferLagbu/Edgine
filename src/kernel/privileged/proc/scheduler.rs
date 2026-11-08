@@ -1,6 +1,6 @@
 //! # Framekernel 调度器
 //!
-//! ## 调度策略 (I-35: MLFQ 与 CFS 二选一)
+//! ## 调度策略 (I-35: MLFQ 与 EEVDF 二选一)
 //!
 //! Framekernel 采用三类调度器并存的分层架构, **没有冗余**:
 //!
@@ -8,18 +8,18 @@
 //! |------|-------------|------|----------|
 //! | DL   | `Deadline`  | Earliest-Deadline-First (EDF) + CBS | `SCHED_DEADLINE` 实时 |
 //! | RT   | `Fifo`/`Rr` | 固定优先级 FIFO + 时间片 RR       | `SCHED_FIFO/RR` 实时 |
-//! | CFS  | `Normal`    | vruntime 红黑树 (Linux CFS 风格)  | `SCHED_NORMAL` 普通进程 |
+//! | EEVDF  | `Normal`    | vruntime 红黑树 (Linux EEVDF 风格)  | `SCHED_NORMAL` 普通进程 |
 //!
 //! **MLFQ 已退役**: 历史上 MLFQ 的多级反馈队列 (level 0..3 + 时间片 `[10,20,40,80]` ms)
-//! 已完全被 CFS 取代 (注释中保留 "preserved from MLFQ" 仅为历史可追溯性).
-//! `add_to_run_queue` 路径已重定向到 `cfs_enqueue`; `boost_priority` 死代码已删除.
-//! CFS 的反饥饿不靠周期性 boost, 而靠 `CfsRunQueue` 的**单调 vruntime 下界**
+//! 已完全被 EEVDF 取代 (注释中保留 "preserved from MLFQ" 仅为历史可追溯性).
+//! `add_to_run_queue` 路径已重定向到 `eevdf_enqueue`; `boost_priority` 死代码已删除.
+//! EEVDF 的反饥饿不靠周期性 boost, 而靠 `EevdfRunQueue` 的**单调 vruntime 下界**
 //! 随时基运行任务推进 (DECISION-099; 旧 `boost_all_vruntime` 因折叠相对次序
 //! 且与任务自身 vruntime 分域, 已删除).
 //!
 //! ## 调度决策链
 //!
-//! `schedule()` 严格按 DL → RT → CFS 顺序回退, 每个层级内部找不到可运行任务时
+//! `schedule()` 严格按 DL → RT → EEVDF 顺序回退, 每个层级内部找不到可运行任务时
 //! 立即降级到下一层级, 与 Linux `pick_next_task` 行为一致.
 
 #![deny(missing_docs)]
@@ -29,9 +29,9 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
-use super::cfs::{
-    CfsObsSnapshot, CfsRunQueue, DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfTaskView,
-    LOAD_BALANCE_THRESHOLD, PlacementKind, PlacementLedger, PlacementPlan,
+use super::eevdf::{
+    DL_MAX_UTILIZATION_PCT, DeadlineParams, DlRunQueue, EevdfObsSnapshot, EevdfRunQueue,
+    EevdfTaskView, LOAD_BALANCE_THRESHOLD, PlacementKind, PlacementLedger, PlacementPlan,
     calc_vruntime_delta_virt, clamp_requested_slice, effective_slice_real, is_eligible,
     nice_to_weight, plan_placement, slice_virt_of, virtual_deadline,
 };
@@ -115,7 +115,7 @@ const LOAD_BALANCE_MAX_MOVE: usize = 4;
 /// 重试耗尽即放弃本轮搬动 (任务仍留在原队列, 不丢可运行性).
 const RQ_CLAIM_RETRY: usize = 32;
 
-/// PWM 资源的 CFS 带宽配额槽位 — 限制指定 PWM 的 CPU 带宽, 并记录本周期已消耗的运行时间。
+/// PWM 资源的 CPU 带宽配额槽位 — 限制指定 PWM 的 CPU 带宽, 并记录本周期已消耗的运行时间。
 ///
 /// `max_runtime` 与 `period` 构成带宽约束: 每 `period` 内任务最多运行
 /// `max_runtime`; `consumed`/`next_reset` 用于跨 tick 累计与周期重置。
@@ -179,11 +179,11 @@ static LAST_REAP_TICK: AtomicU64 = AtomicU64::new(0);
 
 /// 调度策略 — 决定任务进入哪条运行队列及其抢占语义。
 ///
-/// `Normal` 为 CFS 公平调度; `Fifo`/`Rr` 为实时策略 (先进先出 / 时间片轮转);
+/// `Normal` 为 EEVDF 公平调度; `Fifo`/`Rr` 为实时策略 (先进先出 / 时间片轮转);
 /// `Idle` 仅在本核无其它可运行任务时执行; `Deadline` 为截止时间调度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedPolicy {
-    /// CFS 公平调度 (`SCHED_NORMAL`)
+    /// EEVDF 公平调度 (`SCHED_NORMAL`)
     Normal = 0,
     /// 实时先进先出 (`SCHED_FIFO`)
     Fifo = 1,
@@ -223,12 +223,12 @@ pub struct RtTaskInfo {
 
 struct PerCpuSched {
     rt_queue: Mutex<VecDeque<RtTaskInfo>>,
-    cfs_rq: Mutex<CfsRunQueue>,
+    eevdf_rq: Mutex<EevdfRunQueue>,
     dl_rq: Mutex<DlRunQueue>,
     current: AtomicU32,
     /// 本 CPU 的 idle 任务 pid (0 = 尚未创建).
     ///
-    /// idle 任务不进入任何运行队列 (CFS/RT/DL), 仅作为 `schedule()` 在
+    /// idle 任务不进入任何运行队列 (EEVDF/RT/DL), 仅作为 `schedule()` 在
     /// 本地无候选任务时的最后兜底, 使调度器在运行期永不为 `None`.
     idle: AtomicU32,
     /// 本 CPU 最近一次被切走的任务 pid (0 = 无).
@@ -249,12 +249,12 @@ struct PerCpuSched {
     fifo_watchdog: AtomicU64,
 }
 
-// 所有字段 (Mutex<VecDeque<Pid>>, Mutex<CfsRunQueue>, Mutex<DlRunQueue>, Atomic*) 自动实现 Send + Sync.
+// 所有字段 (Mutex<VecDeque<Pid>>, Mutex<EevdfRunQueue>, Mutex<DlRunQueue>, Atomic*) 自动实现 Send + Sync.
 
 /// BSP 的 per-CPU 调度状态 (静态实例).
 ///
 /// BSP 的调度状态在启动期即需可用; 用 `OnceLock` 惰性构造 —— 因 `PerCpuSched`
-/// 含 CFS/DL 运行队列 (其 `new()` 非 `const`), 无法直接静态零初始化.
+/// 含 EEVDF/DL 运行队列 (其 `new()` 非 `const`), 无法直接静态零初始化.
 static SCHED_BSP: OnceLock<PerCpuSched> = OnceLock::new();
 
 /// AP 的 per-CPU 调度状态表 (按 `cpu_index` 索引, 槽位 0 保留给 BSP).
@@ -270,7 +270,7 @@ static PER_CPU_SCHED: [AtomicPtr<PerCpuSched>; crate::privileged::config::MAX_CP
 fn new_per_cpu_sched() -> PerCpuSched {
     PerCpuSched {
         rt_queue: Mutex::new(VecDeque::new()),
-        cfs_rq: Mutex::named("cfs_rq", CfsRunQueue::new()),
+        eevdf_rq: Mutex::named("eevdf_rq", EevdfRunQueue::new()),
         dl_rq: Mutex::new(DlRunQueue::new()),
         current: AtomicU32::new(0),
         idle: AtomicU32::new(0),
@@ -403,9 +403,9 @@ pub extern "C" fn idle_entry() -> ! {
 /// 队列归属认领凭证 (RAII) —— 跨核迁移协议的**唯一**认领形态.
 ///
 /// 它存在不是为优雅, 而是为必需: 手工配对 `claim` / `release` 时, 任何一条早退
-/// 分支忘记回滚都会把 `Process::cfs_rq_cpu` 永久留在 `MIGRATE_PENDING` —— 该 pid
+/// 分支忘记回滚都会把 `Process::eevdf_rq_cpu` 永久留在 `MIGRATE_PENDING` —— 该 pid
 /// 之后所有认领必然失败, 既入不了队也撤不了账, 变成"永远唤不醒"的隐形态.
-/// E-II-b 回归实测: `cfs_deactivate` 的 `NO_RQ_CPU` 早退分支漏一次回滚, 就把全内核
+/// E-II-b 回归实测: `eevdf_deactivate` 的 `NO_RQ_CPU` 早退分支漏一次回滚, 就把全内核
 /// 搬定成功率打到 4/144373. 未 `commit` 即在 Drop 时把归属写回认领前的值,
 /// 使这类泄漏在结构上不可表达.
 struct RqClaim {
@@ -593,8 +593,8 @@ impl Scheduler {
     /// idle 任务特征:
     /// - 无父进程 (`parent = None`), 内核态 (`set_kernel(true)`);
     /// - 调度策略 `SchedPolicy::Idle` + 最空闲优先级 `ProcessPriority::Idle`,
-    ///   因此**不会**被 `pick_cfs_task` / `pick_deadline_task` / RT 队列选中;
-    /// - **不进入任何运行队列** (CFS/RT/DL), 只作为 `schedule()` 的兜底;
+    ///   因此**不会**被 `pick_eevdf_task` / `pick_deadline_task` / RT 队列选中;
+    /// - **不进入任何运行队列** (EEVDF/RT/DL), 只作为 `schedule()` 的兜底;
     /// - 拥有独立内核栈 + 预置 context, 首次被调度时直接从 `idle_entry` 开始执行.
     ///
     /// 返回 `None` 表示创建失败 (进程表或内核栈分配失败); 此时该 CPU 的 `idle`
@@ -615,7 +615,7 @@ impl Scheduler {
             proc.set_priority(ProcessPriority::Idle);
             proc.set_kernel(true);
             // Created → Ready 是状态机允许的转换; idle 由 schedule() 兜底选中,
-            // 无需 (也不应) 进入 CFS/RT/DL 运行队列.
+            // 无需 (也不应) 进入 EEVDF/RT/DL 运行队列.
             let _ = proc.set_state_safe(ProcessState::Ready);
             let _ = proc.allocate_kernel_stack();
             stack_top = proc.kernel_stack.load(Ordering::SeqCst);
@@ -654,15 +654,15 @@ impl Scheduler {
         Some(idle_pid)
     }
 
-    /// 把任务加入 CFS 运行队列 (语义等价 `cfs_enqueue`, 按 Wake 处理)
+    /// 把任务加入 EEVDF 运行队列 (语义等价 `eevdf_enqueue`, 按 Wake 处理)
     pub fn add(pid: Pid) {
-        Self::cfs_enqueue(pid, PlacementKind::Wake);
+        Self::eevdf_enqueue(pid, PlacementKind::Wake);
     }
 
-    /// 设置 nice 值并同步 CFS 权重与 EEVDF 切片账目.
+    /// 设置 nice 值并同步 EEVDF 权重与 EEVDF 切片账目.
     ///
     /// 任务在可运行记账中 (树或运行账) 时, 在同一 rq 锁内按新权重修正
-    /// `CfsRunQueue` 账目, 并以新权重重建本轮切片 (`slice_real` / `slice_virt` /
+    /// `EevdfRunQueue` 账目, 并以新权重重建本轮切片 (`slice_real` / `slice_virt` /
     /// `slice_left`) 与虚拟截止期 (`vd`); 队列归属保持不变.
     ///
     /// 权重变更按**重建本轮账目**处理: `slice_left` 重置为新 `slice_real`,
@@ -687,7 +687,7 @@ impl Scheduler {
                 .is_some();
         }
 
-        let mut rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        let mut rq = per_cpu_for(src_cpu).eevdf_rq.lock();
         if PROCESS_TABLE
             .with_process(pid, |proc| {
                 Self::store_nice(proc, clamped, new_weight);
@@ -730,10 +730,10 @@ impl Scheduler {
                 .is_some();
         }
 
-        let rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        let rq = per_cpu_for(src_cpu).eevdf_rq.lock();
         let Some(weight) = PROCESS_TABLE.with_process(pid, |proc| {
             proc.eevdf_requested_slice.store(stored, Ordering::Release);
-            proc.cfs_weight.load(Ordering::Acquire)
+            proc.eevdf_weight.load(Ordering::Acquire)
         }) else {
             return false;
         };
@@ -750,16 +750,16 @@ impl Scheduler {
             crate::privileged::glue::u32_from_i8(nice),
             Ordering::Release,
         );
-        proc.cfs_weight.store(weight, Ordering::Release);
+        proc.eevdf_weight.store(weight, Ordering::Release);
     }
 
     /// 以 `weight` 重建 `pid` 的本轮 EEVDF 账目 (调用方必须持有其所属 rq 锁).
     ///
-    /// E-04 起 `cfs_vruntime` 即 Q16.16 域, 与 `vd` / 切片同单位 (无换算桥).
-    fn rebuild_eevdf_round(rq: &CfsRunQueue, pid: Pid, weight: u64) {
+    /// E-04 起 `eevdf_vruntime` 即 Q16.16 域, 与 `vd` / 切片同单位 (无换算桥).
+    fn rebuild_eevdf_round(rq: &EevdfRunQueue, pid: Pid, weight: u64) {
         let Some((vr, requested_raw)) = PROCESS_TABLE.with_process(pid, |proc| {
             (
-                proc.cfs_vruntime.load(Ordering::Acquire),
+                proc.eevdf_vruntime.load(Ordering::Acquire),
                 proc.eevdf_requested_slice.load(Ordering::Acquire),
             )
         }) else {
@@ -785,24 +785,24 @@ impl Scheduler {
         });
     }
 
-    /// 将进程入队**当前核**的 CFS 运行队列.
+    /// 将进程入队**当前核**的 EEVDF 运行队列.
     ///
     /// 返回 `landed == false` = 本次搬定未发生 (任务不存在 / 已终 / 认领耗尽).
     /// `landed == true` 有两种含义: 已投进本核树, 或该任务正被投送屏障 (P-21) 挡住
     /// —— 后者只做了延迟投送 (搬状态不入树), 落地由占用者核接手.
     /// 调用方**必须**据此决定后续动作 —— 尤其不得先把任务置 `Ready` 再入队,
-    /// 否则失败即造成"Ready 但不在任何树上"的永久隐形 (见 [`Self::cfs_place_on`]).
-    fn cfs_enqueue(pid: Pid, kind: PlacementKind) -> PlacementOutcome {
-        Self::cfs_enqueue_to(pid, crate::privileged::smp::get_current_cpu(), kind)
+    /// 否则失败即造成"Ready 但不在任何树上"的永久隐形 (见 [`Self::eevdf_place_on`]).
+    fn eevdf_enqueue(pid: Pid, kind: PlacementKind) -> PlacementOutcome {
+        Self::eevdf_enqueue_to(pid, crate::privileged::smp::get_current_cpu(), kind)
     }
 
-    /// 将进程入队**指定核**的 CFS 运行队列.
+    /// 将进程入队**指定核**的 EEVDF 运行队列.
     ///
-    /// 与 [`Self::cfs_enqueue`] 的区别: 本函数可投送到目标核, 供跨核投送
-    /// (fork / 唤醒) 使用。归属搬定一律经 [`Self::cfs_place_on`] —— 它保证任务
+    /// 与 [`Self::eevdf_enqueue`] 的区别: 本函数可投送到目标核, 供跨核投送
+    /// (fork / 唤醒) 使用。归属搬定一律经 [`Self::eevdf_place_on`] —— 它保证任务
     /// **只在一棵树上** (旧写法只持目的锁, 遇到任务仍挂在别的核时既不去重也不搬账).
-    fn cfs_enqueue_to(pid: Pid, cpu_id: u32, kind: PlacementKind) -> PlacementOutcome {
-        Self::cfs_place_on(pid, cpu_id, kind)
+    fn eevdf_enqueue_to(pid: Pid, cpu_id: u32, kind: PlacementKind) -> PlacementOutcome {
+        Self::eevdf_place_on(pid, cpu_id, kind)
     }
 
     // ========================================================================
@@ -815,7 +815,7 @@ impl Scheduler {
     /// 否则又制造一处会泄漏的 `MIGRATE_PENDING`.
     fn set_rq_cpu(pid: Pid, cpu_id: u32) {
         let _ = PROCESS_TABLE.with_process(pid, |p| {
-            p.cfs_rq_cpu.store(cpu_id, Ordering::Release);
+            p.eevdf_rq_cpu.store(cpu_id, Ordering::Release);
         });
     }
 
@@ -827,11 +827,11 @@ impl Scheduler {
     fn try_claim_rq(pid: Pid) -> Option<RqClaim> {
         PROCESS_TABLE
             .with_process(pid, |p| {
-                let cur = p.cfs_rq_cpu.load(Ordering::Acquire);
+                let cur = p.eevdf_rq_cpu.load(Ordering::Acquire);
                 if cur == MIGRATE_PENDING {
                     return None;
                 }
-                p.cfs_rq_cpu
+                p.eevdf_rq_cpu
                     .compare_exchange(cur, MIGRATE_PENDING, Ordering::AcqRel, Ordering::Acquire)
                     .ok()
                     .map(|_| cur)
@@ -875,7 +875,7 @@ impl Scheduler {
     /// 队列归属搬定的**唯一入口**: 把 `pid` 放进 `dst_cpu` 的可运行记账.
     ///
     /// 旧形态是"摘源 → **放锁** → 投目的"两段式: 中间窗口里任务既不在源树也不在
-    /// 目的树, 而 `cfs_on_rq` 已被清掉, 于是任何并发唤醒都看得到"Ready 且不在队"
+    /// 目的树, 而 `eevdf_on_rq` 已被清掉, 于是任何并发唤醒都看得到"Ready 且不在队"
     /// 并把它投进第三个队列 —— 同一任务同时挂在两棵树上, 两核同时上核运行它,
     /// 进程上下文与 socket 状态随即被踩坏 (E-II-b 后每核收 tick, 该窗口第一次被
     /// 实测打中: x86_64 e2e 由 6/6 退化为 1/6, 特征为纯 RX 侧全灭).
@@ -883,11 +883,11 @@ impl Scheduler {
     /// P-21 投送屏障使本入口对"正占用某个核"的任务只做**延迟投送** (搬状态不入树,
     /// 仍返回 `true`), 落地由占用者核的 prev 收尾 / `reap_off_cpu` 补投两条腿接手
     /// —— 故 `true` 不等于"已在树上", 调用方不得据此再动该任务的记账.
-    fn cfs_place_on(pid: Pid, dst_cpu: u32, kind: PlacementKind) -> PlacementOutcome {
-        Self::cfs_place_on_inner(pid, dst_cpu, false, kind)
+    fn eevdf_place_on(pid: Pid, dst_cpu: u32, kind: PlacementKind) -> PlacementOutcome {
+        Self::eevdf_place_on_inner(pid, dst_cpu, false, kind)
     }
 
-    /// [`Self::cfs_place_on`] 的内部形态, 多一个**调用者身份**参数.
+    /// [`Self::eevdf_place_on`] 的内部形态, 多一个**调用者身份**参数.
     ///
     /// `owner_landing`: 调用者是否就是投送屏障的**占用者本核** —— 只有
     /// `schedule()` 的 prev 收尾传 `true` (语义同 Linux `put_prev_task`: 被切走者
@@ -896,7 +896,7 @@ impl Scheduler {
     /// 而设的 (本核把 prev 投回**自己**的树, 不构成两核交叠).
     /// 若这里也拒收, prev 的可运行性会被藏到下一次切换 (`reap_off_cpu`) 为止,
     /// 本核的抢占判据在这段区间里看不见它.
-    fn cfs_place_on_inner(
+    fn eevdf_place_on_inner(
         pid: Pid,
         dst_cpu: u32,
         owner_landing: bool,
@@ -908,13 +908,13 @@ impl Scheduler {
         let src_cpu = claim.prev_cpu;
         // 源与目的同一把锁 (或本就无归属) 时只锁目的 —— 嵌套同一把 IrqSpinLock 即自死锁.
         if src_cpu == NO_RQ_CPU || src_cpu == dst_cpu {
-            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
+            let mut dst_rq = per_cpu_for(dst_cpu).eevdf_rq.lock();
             Self::place_locked(&mut claim, dst_cpu, &mut dst_rq, None, owner_landing, kind)
         } else if src_cpu < dst_cpu {
             // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
             // 反向取锁的两个搬动者会 AB-BA.
-            let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
-            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
+            let mut src_rq = per_cpu_for(src_cpu).eevdf_rq.lock();
+            let mut dst_rq = per_cpu_for(dst_cpu).eevdf_rq.lock();
             Self::place_locked(
                 &mut claim,
                 dst_cpu,
@@ -924,8 +924,8 @@ impl Scheduler {
                 kind,
             )
         } else {
-            let mut dst_rq = per_cpu_for(dst_cpu).cfs_rq.lock();
-            let mut src_rq = per_cpu_for(src_cpu).cfs_rq.lock();
+            let mut dst_rq = per_cpu_for(dst_cpu).eevdf_rq.lock();
+            let mut src_rq = per_cpu_for(src_cpu).eevdf_rq.lock();
             Self::place_locked(
                 &mut claim,
                 dst_cpu,
@@ -937,7 +937,7 @@ impl Scheduler {
         }
     }
 
-    /// [`Self::cfs_place_on_inner`] 的持锁主体.
+    /// [`Self::eevdf_place_on_inner`] 的持锁主体.
     ///
     /// 前提: `claim` 已握在 caller 手上 (归属已认领), 且 `src`/`dst` 两把 rq 锁在手
     /// (同核时 `src` 为 `None`). 成功路径 `commit` 新归属; 任何失败路径直接 return —
@@ -945,26 +945,26 @@ impl Scheduler {
     fn place_locked(
         claim: &mut RqClaim,
         dst_cpu: u32,
-        dst: &mut CfsRunQueue,
-        src: Option<&mut CfsRunQueue>,
+        dst: &mut EevdfRunQueue,
+        src: Option<&mut EevdfRunQueue>,
         owner_landing: bool,
         kind: PlacementKind,
     ) -> PlacementOutcome {
         let pid = claim.pid;
         let src_cpu = claim.prev_cpu;
-        // 锁序 `cfs_rq -> PROCESS_TABLE` (与本文件其余调度路径一致).
+        // 锁序 `eevdf_rq -> PROCESS_TABLE` (与本文件其余调度路径一致).
         //
         // 快照里没有 `policy`: 可调度性 (policy == Normal) 的准入判据属于
-        // `pick_cfs_task` / `steal_locked`, 搬定层只管"任务在一棵树上 + 账随任务走".
+        // `pick_eevdf_task` / `steal_locked`, 搬定层只管"任务在一棵树上 + 账随任务走".
         // 在两层各卡一次 policy 会令 RT 降级入队 (见 `schedule()` 的 `_ =>` 分支)
         // 与唤醒投送静默失效.
         let snap = PROCESS_TABLE.with_process(pid, |p| {
             (
                 p.get_state(),
-                p.cfs_vruntime.load(Ordering::Acquire),
-                p.cfs_weight.load(Ordering::Acquire),
-                p.cfs_on_rq.load(Ordering::Acquire),
-                p.cfs_on_cpu.load(Ordering::Acquire),
+                p.eevdf_vruntime.load(Ordering::Acquire),
+                p.eevdf_weight.load(Ordering::Acquire),
+                p.eevdf_on_rq.load(Ordering::Acquire),
+                p.eevdf_on_cpu.load(Ordering::Acquire),
                 p.eevdf_slice_left.load(Ordering::Acquire),
                 p.eevdf_vdeadline.load(Ordering::Acquire),
                 p.eevdf_requested_slice.load(Ordering::Acquire),
@@ -1047,8 +1047,8 @@ impl Scheduler {
             let _ = p.set_state_safe(ProcessState::Ready);
             // IC1: 落点必须回写任务自身 vruntime —— 只钳树键而不回写正是旧模型
             // "运行任务 vr 与队列 floor 分属两域" 的起点 (S-1 饥饿根).
-            p.cfs_vruntime.store(placed, Ordering::Release);
-            p.cfs_on_rq.store(true, Ordering::Release);
+            p.eevdf_vruntime.store(placed, Ordering::Release);
+            p.eevdf_on_rq.store(true, Ordering::Release);
             p.eevdf_vdeadline.store(new_vd, Ordering::Release);
             if is_wake {
                 p.eevdf_wake_ns.store(wake_ns, Ordering::Release);
@@ -1069,7 +1069,7 @@ impl Scheduler {
         }
     }
 
-    /// P-21 投送屏障闸门: `Process::cfs_on_cpu` 在位 ⇒ 该任务正占用某个核 (其
+    /// P-21 投送屏障闸门: `Process::eevdf_on_cpu` 在位 ⇒ 该任务正占用某个核 (其
     /// 上下文可能尚未保存完), 不得进树 —— 进树即"树上与核上各一份", 被别核拣走
     /// 就是两个核交叠使用同一块进程内核栈.
     ///
@@ -1077,7 +1077,7 @@ impl Scheduler {
     /// (屏障已清除, 或本核 prev 收尾在给自己投送), 调用方继续完整搬定.
     ///
     /// `owner_landing` 是唯一例外: 占用者本核的 prev 收尾正是屏障的解除者, 它入
-    /// 自己的树不构成两核交叠 (见 [`Self::cfs_place_on_inner`]).
+    /// 自己的树不构成两核交叠 (见 [`Self::eevdf_place_on_inner`]).
     fn place_barrier(
         pid: Pid,
         on_cpu: bool,
@@ -1100,7 +1100,7 @@ impl Scheduler {
         // - 屏障已在本快照之后被清除 => 补投腿已放弃, 本调用点必须亲自入树, 落到
         //   下方完整搬定路径, 不再依赖任何补投腿.
         let still_on_cpu = PROCESS_TABLE.with_process(pid, |p| {
-            if p.cfs_on_cpu.load(Ordering::Acquire) {
+            if p.eevdf_on_cpu.load(Ordering::Acquire) {
                 let s = p.get_state();
                 if s == ProcessState::Blocked || s == ProcessState::Frozen {
                     let _ = p.set_state_safe(ProcessState::Ready);
@@ -1109,7 +1109,7 @@ impl Scheduler {
                 // 补投按 `Requeue` 语义执行, 若此处不写, 旧的睡眠信用会被原样
                 // 搬进树 (绕过 IE3); 分两次加锁则会在中间留出"已 Ready 但
                 // 归属仍被本调用认领着"的窗口, 补投腿的认领会失败.
-                p.cfs_vruntime.store(plan.vruntime, Ordering::Release);
+                p.eevdf_vruntime.store(plan.vruntime, Ordering::Release);
                 if let Some((slice_real, slice_virt)) = plan.slice {
                     p.eevdf_slice_real.store(slice_real, Ordering::Release);
                     p.eevdf_slice_virt.store(slice_virt, Ordering::Release);
@@ -1151,16 +1151,16 @@ impl Scheduler {
 
     /// 唤醒抢占判据 (E-05a, E-01 冻结口径).
     ///
-    /// 仅当目的核当前任务是普通 CFS 任务时比较
+    /// 仅当目的核当前任务是普通 EEVDF 任务时比较
     /// `eligible(woken) && vd_woken < vd_current`; 目的核无 current / 当前任务
-    /// 已不可运行时直接请求重调度; 当前任务是 RT / DL 时不因 CFS 唤醒抢占
-    /// (选择顺序本就 DL → RT → CFS)。
+    /// 已不可运行时直接请求重调度; 当前任务是 RT / DL 时不因 EEVDF 唤醒抢占
+    /// (选择顺序本就 DL → RT → EEVDF)。
     fn wake_preempts(
         dst_cpu: u32,
         pid: Pid,
         vruntime: u64,
         vdeadline: u64,
-        rq: &CfsRunQueue,
+        rq: &EevdfRunQueue,
     ) -> bool {
         let current = per_cpu_for(dst_cpu).current.load(Ordering::SeqCst);
         if current == 0 {
@@ -1173,7 +1173,7 @@ impl Scheduler {
             (
                 p.get_state(),
                 p.get_sched_policy(),
-                p.cfs_vruntime.load(Ordering::Acquire),
+                p.eevdf_vruntime.load(Ordering::Acquire),
                 p.eevdf_vdeadline.load(Ordering::Acquire),
             )
         });
@@ -1197,17 +1197,17 @@ impl Scheduler {
         }
     }
 
-    /// 让 `pid` 离开 CFS 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出但不可调度).
+    /// 让 `pid` 离开 EEVDF 可运行记账 (阻塞 / 被切走且不可重排 / 被拣出但不可调度).
     ///
-    /// 幂等: 以 `Process::cfs_on_rq` 为记账凭证, 重复调用不二次扣减权重 ——
+    /// 幂等: 以 `Process::eevdf_on_rq` 为记账凭证, 重复调用不二次扣减权重 ——
     /// [`Self::block`] 与 `schedule()` 的 "prev 不可重排" 分支覆盖同一任务时
     /// 正是这种重复调用. 旧模型缺这一步, 使 `total_weight` 随阻塞/退出单调
     /// 虚增, 连均衡判定也随之失真.
     ///
-    /// 归属核取自 `cfs_rq_cpu` 而非"当前核": 任务被跨核投送后, 它的账在目的核队列上,
+    /// 归属核取自 `eevdf_rq_cpu` 而非"当前核": 任务被跨核投送后, 它的账在目的核队列上,
     /// 而 `block()` 运行在它正在跑的核上 —— 两者今天恒等 (不搬在跑的任务), 但只有
     /// 按归属核撤账才能把"账随任务走"钉成不变式.
-    fn cfs_deactivate(pid: Pid) {
+    fn eevdf_deactivate(pid: Pid) {
         let Some(mut claim) = Self::claim_rq(pid) else {
             return;
         };
@@ -1215,23 +1215,23 @@ impl Scheduler {
             // 本就不在任何队列: 只清记账凭证, 不取锁;
             // 归属由凭证 Drop 原样回滚成 `NO_RQ_CPU` —— 这里正是旧写法漏回滚的位置.
             let _ = PROCESS_TABLE.with_process(pid, |p| {
-                p.cfs_on_rq.store(false, Ordering::Release);
+                p.eevdf_on_rq.store(false, Ordering::Release);
             });
             return;
         }
         let src_cpu = claim.prev_cpu;
-        let mut rq = per_cpu_for(src_cpu).cfs_rq.lock();
+        let mut rq = per_cpu_for(src_cpu).eevdf_rq.lock();
         let (weight, on_rq) = PROCESS_TABLE
             .with_process(pid, |p| {
                 (
-                    p.cfs_weight.load(Ordering::Acquire),
-                    p.cfs_on_rq.load(Ordering::Acquire),
+                    p.eevdf_weight.load(Ordering::Acquire),
+                    p.eevdf_on_rq.load(Ordering::Acquire),
                 )
             })
             .unwrap_or((0, false));
         rq.dequeue(pid, weight, on_rq);
         PROCESS_TABLE.with_process(pid, |p| {
-            p.cfs_on_rq.store(false, Ordering::Release);
+            p.eevdf_on_rq.store(false, Ordering::Release);
         });
         claim.commit(NO_RQ_CPU);
     }
@@ -1321,7 +1321,7 @@ impl Scheduler {
         }
     }
 
-    /// 本核 current 的 EEVDF 选择视图 (仅 CFS 可运行任务参与选择).
+    /// 本核 current 的 EEVDF 选择视图 (仅 EEVDF 可运行任务参与选择).
     ///
     /// 返回 `None` 的三种情形:
     /// - 无 current / current 是本核 idle / 策略非 `Normal`;
@@ -1329,10 +1329,10 @@ impl Scheduler {
     /// - current 已在树账中 —— 切片到期重投后 (Requeue) 由树侧把它收进运行账,
     ///   若同时作为 `current` 候选会令 `pick_eevdf` 认定 "current 胜出" 而不动
     ///   树账, 同一任务将同时占据树节点与核上位置.
-    fn eevdf_current_view(cfs_rq: &CfsRunQueue) -> Option<EevdfTaskView> {
+    fn eevdf_current_view(eevdf_rq: &EevdfRunQueue) -> Option<EevdfTaskView> {
         let per_cpu = per_cpu();
         let pid = per_cpu.current.load(Ordering::SeqCst);
-        if pid == 0 || per_cpu.idle.load(Ordering::SeqCst) == pid || cfs_rq.is_on_tree(pid) {
+        if pid == 0 || per_cpu.idle.load(Ordering::SeqCst) == pid || eevdf_rq.is_on_tree(pid) {
             return None;
         }
         PROCESS_TABLE
@@ -1343,11 +1343,11 @@ impl Scheduler {
                 {
                     return None;
                 }
-                let weight = p.cfs_weight.load(Ordering::Acquire);
+                let weight = p.eevdf_weight.load(Ordering::Acquire);
                 if weight == 0 {
                     return None;
                 }
-                let vruntime = p.cfs_vruntime.load(Ordering::Acquire);
+                let vruntime = p.eevdf_vruntime.load(Ordering::Acquire);
                 let vdeadline = p.eevdf_vdeadline.load(Ordering::Acquire);
                 // 未建账 / 陈旧 vd (0 或早于 vr) 按 vd = vr 参与选择.
                 let vdeadline = if vdeadline >= vruntime {
@@ -1366,40 +1366,40 @@ impl Scheduler {
     }
 
     /// 树内任务的虚拟截止期; 未建账 (0) 或早于 `vr` 的陈旧值返回 `None`,
-    /// 由 [`CfsRunQueue::pick_eevdf`] 按 `vd = vruntime` 兜底.
+    /// 由 [`EevdfRunQueue::pick_eevdf`] 按 `vd = vruntime` 兜底.
     fn eevdf_vdeadline(pid: Pid) -> Option<u64> {
         PROCESS_TABLE
             .with_process(pid, |p| {
-                let vruntime = p.cfs_vruntime.load(Ordering::Acquire);
+                let vruntime = p.eevdf_vruntime.load(Ordering::Acquire);
                 let vdeadline = p.eevdf_vdeadline.load(Ordering::Acquire);
                 (vdeadline >= vruntime && vdeadline != 0).then_some(vdeadline)
             })
             .flatten()
     }
 
-    /// 选取一个 CFS 任务 (EEVDF: 合格前缀 + 最小 `(vd, pid)`).
-    fn pick_cfs_task() -> Option<Pid> {
+    /// 选取一个 EEVDF 任务 (EEVDF: 合格前缀 + 最小 `(vd, pid)`).
+    fn pick_eevdf_task() -> Option<Pid> {
         let per_cpu = per_cpu();
-        let mut cfs_rq = per_cpu.cfs_rq.lock();
+        let mut eevdf_rq = per_cpu.eevdf_rq.lock();
         // 循环拣选, 直到取到可调度者 (或无可选者).
         //
         // 不能"拣一个不可调度节点就 return None" —— 若合格集合里恰好只有
         // 不可调度节点, 每次调度都会在此早返回, 树上其余可调度任务永远选不
-        // 出来 (本核 CFS 永久饥饿).
+        // 出来 (本核 EEVDF 永久饥饿).
         //
         // 不可调度节点一律**撤账摘除** (旧实现是暂存后原样放回): 树是 IC2 的
         // 唯一真相, 留在树上的不可调度节点会长期占据候选位, 既挡住其余任务,
         // 又让 `is_empty()` 与真实可运行集背离. 被摘除者后续由 `unblock`
         // 重新投送 (唤醒语义), 故不丢任务.
         loop {
-            let current = Self::eevdf_current_view(&cfs_rq);
-            let pick = cfs_rq.pick_eevdf(current, Self::eevdf_vdeadline)?;
+            let current = Self::eevdf_current_view(&eevdf_rq);
+            let pick = eevdf_rq.pick_eevdf(current, Self::eevdf_vdeadline)?;
             if !pick.from_tree {
                 // current 胜出: 账目未动, 直接回报.
                 return Some(pick.pid);
             }
             let pid = pick.pid;
-            // 锁序 cfs_rq -> PROCESS_TABLE (本函数既有语义): 一次加锁取回
+            // 锁序 eevdf_rq -> PROCESS_TABLE (本函数既有语义): 一次加锁取回
             // 可调度性与撤账所需的权重/记账凭证.
             let (schedulable, weight, on_rq, wake_ns) = PROCESS_TABLE
                 .with_process(pid, |p| {
@@ -1408,8 +1408,8 @@ impl Scheduler {
                         state != ProcessState::Blocked
                             && state != ProcessState::Zombie
                             && p.get_sched_policy() == SchedPolicy::Normal,
-                        p.cfs_weight.load(Ordering::Acquire),
-                        p.cfs_on_rq.load(Ordering::Acquire),
+                        p.eevdf_weight.load(Ordering::Acquire),
+                        p.eevdf_on_rq.load(Ordering::Acquire),
                         // K-07b 批3: 取走待测唤醒时间戳 (无待测样本时为 0).
                         p.eevdf_wake_ns.swap(0, Ordering::AcqRel),
                     )
@@ -1419,21 +1419,21 @@ impl Scheduler {
                 // 观测面: Wake→首次上核 的等待时延 (仅诊断, 不影响选择).
                 if wake_ns != 0 {
                     let now = crate::privileged::timer::tick::get_uptime_ns();
-                    cfs_rq.note_wait(now.saturating_sub(wake_ns));
+                    eevdf_rq.note_wait(now.saturating_sub(wake_ns));
                 }
-                // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`cfs_on_rq` 保持
+                // IC1: 被拣者随即上核运行, 仍在可运行记账中 (`eevdf_on_rq` 保持
                 // true, 语义同 Linux on_rq) —— 其 vruntime 由 tick 推进并同步
                 // 队列 floor, 切走时经幂等 `enqueue` 原位放回.
                 return Some(pid);
             }
-            cfs_rq.dequeue(pid, weight, on_rq);
+            eevdf_rq.dequeue(pid, weight, on_rq);
             if on_rq {
                 // 不可调度节点: 已离树 (`pick_eevdf` 摘除), 此处只需撤账 + 归属归零.
                 // 归属必须经认领凭证写: 直接写会与并发搬动者抢同一字段 (它可能正持
                 // `MIGRATE_PENDING`), 且让"归属只有一个写入者"重新退化成约定.
                 if let Some(mut claim) = Self::try_claim_rq(pid) {
                     let _ = PROCESS_TABLE.with_process(pid, |p| {
-                        p.cfs_on_rq.store(false, Ordering::Release);
+                        p.eevdf_on_rq.store(false, Ordering::Release);
                     });
                     claim.commit(NO_RQ_CPU);
                 }
@@ -1443,7 +1443,7 @@ impl Scheduler {
         }
     }
 
-    /// 调度决策入口: 按 DL → RT → CFS 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
+    /// 调度决策入口: 按 DL → RT → EEVDF 顺序选下一个任务并完成上下文切换; 无候选时返回 `None`
     pub fn schedule() -> Option<Pid> {
         let saved_flags = crate::arch!(interrupt_disable()) as u64;
 
@@ -1498,7 +1498,7 @@ impl Scheduler {
         let next_snap = PROCESS_TABLE.with_process(next, |proc| {
             let state = proc.get_state();
             let _ = proc.set_state_safe(ProcessState::Running);
-            proc.cfs_on_cpu.store(true, Ordering::Release);
+            proc.eevdf_on_cpu.store(true, Ordering::Release);
             (
                 proc.kernel_stack.load(Ordering::SeqCst),
                 state,
@@ -1532,14 +1532,14 @@ impl Scheduler {
 
         // 重新入队上一个任务 —— 仅当 prev 确实可被重新调度时才入队.
         //
-        // 两个排除条件 (缺一即导致该 CPU 的 CFS 永久饥饿):
+        // 两个排除条件 (缺一即导致该 CPU 的 EEVDF 永久饥饿):
         // - prev 是本 CPU 的 idle 任务: idle 不属任何运行队列, 入队后
-        //   `pick_cfs_task` 会选中它, 但因其策略为 `SchedPolicy::Idle` (!= Normal)
-        //   而返回 None (见 pick_cfs_task 中"不可调度节点"分支), CFS 树上的普通
+        //   `pick_eevdf_task` 会选中它, 但因其策略为 `SchedPolicy::Idle` (!= Normal)
+        //   而返回 None (见 pick_eevdf_task 中"不可调度节点"分支), EEVDF 树上的普通
         //   任务再也无法被选中;
         // - prev 已不在 Running/Ready (如 `exit()` 之后的 Zombie, 或阻塞中的
-        //   Blocked): 同样会被 `pick_cfs_task` 判为不可调度而返回 None; 且把
-        //   Blocked/Zombie 任务塞回 CFS 树/置回 Ready 与阻塞、退出语义冲突.
+        //   Blocked): 同样会被 `pick_eevdf_task` 判为不可调度而返回 None; 且把
+        //   Blocked/Zombie 任务塞回 EEVDF 树/置回 Ready 与阻塞、退出语义冲突.
         let prev_state_code = Self::prev_state_code(current_pid);
         let prev_requeue = if prev_ptr.is_some() {
             per_cpu.idle.load(Ordering::SeqCst) != current_pid
@@ -1551,10 +1551,10 @@ impl Scheduler {
         if prev_requeue {
             Self::requeue_prev(per_cpu, current_pid);
         } else if prev_ptr.is_some() && (prev_state_code == 3 || prev_state_code == 4) {
-            // prev 切走且不可重排 (Blocked / Zombie): 离开 CFS 可运行集 —— 撤账.
+            // prev 切走且不可重排 (Blocked / Zombie): 离开 EEVDF 可运行集 —— 撤账.
             // 幂等: `block()` 已撤账者其 on_rq 凭证已为 false, 此处不二次扣减;
             // 旧模型缺这一步, 使 total_weight 随退出单调虚增, 均衡判定随之失真.
-            Self::cfs_deactivate(current_pid);
+            Self::eevdf_deactivate(current_pid);
         }
 
         Some(Self::context_switch_tail(
@@ -1566,7 +1566,7 @@ impl Scheduler {
         ))
     }
 
-    /// 按 DL → RT → CFS → 负载均衡 → idle 兜底 的顺序选出下一个任务.
+    /// 按 DL → RT → EEVDF → 负载均衡 → idle 兜底 的顺序选出下一个任务.
     fn pick_next_task(per_cpu: &'static PerCpuSched, current_pid: Pid) -> Option<Pid> {
         let mut next_pid = Self::pick_deadline_task();
 
@@ -1611,7 +1611,7 @@ impl Scheduler {
                     _ => {
                         // RT 队列里降级出的任务早已在可运行记账中: 按 Requeue 重投,
                         // 不得把它当唤醒重发睡眠信用 / 重置切片.
-                        Self::cfs_enqueue(rt_pid, PlacementKind::Requeue);
+                        Self::eevdf_enqueue(rt_pid, PlacementKind::Requeue);
                         per_cpu.rt_running.store(false, Ordering::SeqCst);
                         break;
                     }
@@ -1623,15 +1623,15 @@ impl Scheduler {
             }
         }
 
-        // 3. CFS (EEVDF: 合格前缀 + 最小 `(vd, pid)`) —— 取代 MLFQ 用于 SCHED_NORMAL
+        // 3. EEVDF (EEVDF: 合格前缀 + 最小 `(vd, pid)`) —— 取代 MLFQ 用于 SCHED_NORMAL
         if next_pid.is_none() {
-            next_pid = Self::pick_cfs_task();
+            next_pid = Self::pick_eevdf_task();
         }
 
         // 4. 本地无候选时进行负载均衡
         if next_pid.is_none() && crate::privileged::smp::is_enabled() {
             Self::load_balance();
-            next_pid = Self::pick_cfs_task();
+            next_pid = Self::pick_eevdf_task();
         }
 
         // 5. 每 CPU idle 任务兜底 —— 保证 schedule() 在运行期永不为 None
@@ -1643,8 +1643,8 @@ impl Scheduler {
             let idle_pid = per_cpu.idle.load(Ordering::SeqCst);
             // 优先保持 current: 运行队列中无其它候选, 但本核 current 仍是可运行的
             // 非 idle 任务 (Running/Ready) 时, 切到 idle 会白白让出 CPU 并令 current
-            // 经 `prev_requeue` 重新入队 —— 对"从未入过 CFS 队列"的任务 (如 boot 的
-            // init) 而言不入树 / 不计 `total_weight`, 之后 `pick_cfs_task` / `has_runnable`
+            // 经 `prev_requeue` 重新入队 —— 对"从未入过 EEVDF 队列"的任务 (如 boot 的
+            // init) 而言不入树 / 不计 `total_weight`, 之后 `pick_eevdf_task` / `has_runnable`
             // 均判空, 该任务永久饥饿 (boot 流程被丢弃, 双核同闲挂死).
             // 仅当 current 已不可运行 (Created/Blocked/Zombie) 或本核就是 idle 时,
             // 才回退到 idle 等待中断.
@@ -1741,7 +1741,7 @@ impl Scheduler {
             //
             // 返回 false = 归属没抢到 (有人正搬它): 不重试也不强行落账 —— 保持
             // `Ready 且不在队`, 由本核下一次切换入口清屏障时 (`reap_off_cpu`) 补投.
-            let _ = Self::cfs_place_on_inner(
+            let _ = Self::eevdf_place_on_inner(
                 current_pid,
                 crate::privileged::smp::get_current_cpu(),
                 true,
@@ -1922,26 +1922,26 @@ impl Scheduler {
     /// 仅对"退出中"(`exiting`) 的 prev 释放自引用; 普通被抢占任务仍可运行 (可能
     /// 迁移到其它核), 绝不能在此误减其引用计数.
     ///
-    /// 同时这里是 [`Process::cfs_on_cpu`] 投送屏障的**唯一清位点** (语义同 Linux
+    /// 同时这里是 [`Process::eevdf_on_cpu`] 投送屏障的**唯一清位点** (语义同 Linux
     /// `finish_task_switch` 的 `prev->on_cpu = 0`): 只有在本函数被执行时, "prev 已
     /// 离开 CPU" 才是**被确证**的事实 —— 提前清位等于允许别核在上下文未保存完时
     /// 把它投进树, 两个核即交叠使用同一块进程内核栈.
     ///
     /// 清位后紧接一次补投: 屏障期只搬了状态而未入树的 `Ready` 任务 (投送屏障的
     /// 延迟投送支, 或 prev 收尾认领失败) 在此落地; 若 prev 收尾已就地入树, 其
-    /// `cfs_on_rq` 为 true, 本支自然跳过.
+    /// `eevdf_on_rq` 为 true, 本支自然跳过.
     fn reap_off_cpu(per_cpu: &PerCpuSched) {
         let prev = per_cpu.prev.swap(0, Ordering::SeqCst);
         if prev == 0 {
             return;
         }
-        // 锁序 PROCESS_TABLE 单独加锁 (不持 rq 锁): 补投走 `cfs_place_on`, 它自己取
-        // `cfs_rq` 锁, 在本闭包里取会构成 `with_process` 重入 (同核自死锁).
+        // 锁序 PROCESS_TABLE 单独加锁 (不持 rq 锁): 补投走 `eevdf_place_on`, 它自己取
+        // `eevdf_rq` 锁, 在本闭包里取会构成 `with_process` 重入 (同核自死锁).
         let snap = PROCESS_TABLE.with_process(prev, |p| {
-            p.cfs_on_cpu.store(false, Ordering::Release);
+            p.eevdf_on_cpu.store(false, Ordering::Release);
             (
                 p.get_state(),
-                p.cfs_on_rq.load(Ordering::Acquire),
+                p.eevdf_on_rq.load(Ordering::Acquire),
                 p.get_sched_policy(),
                 p.exiting.swap(false, Ordering::AcqRel),
             )
@@ -1952,14 +1952,14 @@ impl Scheduler {
         if was_exiting {
             PROCESS_TABLE.dec_ref_and_maybe_free(prev);
         }
-        // 补投: 只针对 CFS 可运行集 (RT/DL 的 `cfs_on_rq` 恒为 false, 不据此判据);
+        // 补投: 只针对 EEVDF 可运行集 (RT/DL 的 `eevdf_on_rq` 恒为 false, 不据此判据);
         // idle 任务不属任何运行队列 (见 `schedule()` 的 prev 排除条件), 同样跳过.
         if state == ProcessState::Ready
             && !on_rq
             && policy == SchedPolicy::Normal
             && per_cpu.idle.load(Ordering::SeqCst) != prev
         {
-            Self::cfs_place_on(
+            Self::eevdf_place_on(
                 prev,
                 crate::privileged::smp::get_current_cpu(),
                 PlacementKind::Requeue,
@@ -2047,7 +2047,7 @@ impl Scheduler {
             });
             // IC2/IC4: 阻塞即离开可运行集 —— 摘节点 + 撤账. 树上只留可运行
             // 任务, `is_empty()` 与 `pick_eevdf` 的合格集合才与真实可运行集一致.
-            Self::cfs_deactivate(pid);
+            Self::eevdf_deactivate(pid);
             per_cpu.need_reschedule.store(true, Ordering::SeqCst);
         }
     }
@@ -2062,14 +2062,14 @@ impl Scheduler {
             // Running (已在核上) / Created (尚未启动) / Zombie / Terminated
             // 一律不投送.
             //
-            // 本闭包**不改状态** —— 置 Ready 是搬定成功后的结果 (CFS 路由由
+            // 本闭包**不改状态** —— 置 Ready 是搬定成功后的结果 (EEVDF 路由由
             // `place_locked` 写, RT/DL 路由在各自分支里写). 提前置 Ready 会直接
             // 打断唤醒面的电平重扫自愈: `poll_network` / 睡眠扫描以
             // `state == Blocked` 为选集条件, 一旦搬定失败, 该任务既不在树上
             // 也不再会被重扫拾起 —— 一次可恢复的丢唤醒就变成永久隐形.
             let need_enqueue = match state {
                 ProcessState::Blocked | ProcessState::Frozen => true,
-                ProcessState::Ready => !proc.cfs_on_rq.load(Ordering::Acquire),
+                ProcessState::Ready => !proc.eevdf_on_rq.load(Ordering::Acquire),
                 _ => false,
             };
             let policy = proc.get_sched_policy();
@@ -2110,7 +2110,7 @@ impl Scheduler {
                 //
                 // 失败 ⇒ 保持原状态直接返回: 不动唤醒不变式 (本核无新可运行任务,
                 // 不需要重调度), 且下一轮电平重扫/超时重投会再次尝试.
-                let outcome = Self::cfs_enqueue_to(
+                let outcome = Self::eevdf_enqueue_to(
                     pid,
                     crate::privileged::smp::get_current_cpu(),
                     PlacementKind::Wake,
@@ -2168,7 +2168,7 @@ impl Scheduler {
         }
 
         // 唤醒不变式: 置任务可运行后, 必须叫醒持有其运行队列的 CPU — 本函数把任务
-        // 入到**本核** cfs/rq, 故置本核 pending-resched 与 `block` 对称. 否则若本核
+        // 入到**本核** eevdf/rq, 故置本核 pending-resched 与 `block` 对称. 否则若本核
         // 正处于 idle (BSP `idle_entry` 为 `sti; hlt`, 不像 AP idle 每轮调
         // `schedule()`), 新入队任务将永不被拾取 → 丢失唤醒 (P6a 实测: hrtimer 唤醒
         // 被投到 idle 核后, 睡眠进程永不恢复). 中断上下文下只置标志, 由 IRQ 退出
@@ -2178,8 +2178,8 @@ impl Scheduler {
 
     /// 导出调度运行期观测快照 (K-07b 批3) —— 逐核串口输出账目、`lag` 与计数器.
     ///
-    /// 返回实际上报的在线 CPU 数. 每核先在 `cfs_rq` 锁内取账目快照 (锁内不触碰
-    /// 进程表: 合法锁序只有 `cfs_rq -> PROCESS_TABLE`); 线程组汇总随后以进程表
+    /// 返回实际上报的在线 CPU 数. 每核先在 `eevdf_rq` 锁内取账目快照 (锁内不触碰
+    /// 进程表: 合法锁序只有 `eevdf_rq -> PROCESS_TABLE`); 线程组汇总随后以进程表
     /// 只读扫描完成, 其 `lag` 以对应 CPU 的 `V` 快照为基准 (诊断用途, 不要求
     /// 跨核同一时刻的原子视图). procfs 当前未接 VFS, 用户态读不到, 故观测面
     /// 走串口; 该入口只读账目与计数器, 不改任何调度状态.
@@ -2365,27 +2365,27 @@ impl Scheduler {
 
     /// 把任务投入运行队列 (优先空闲核, 跨核时发重调度 IPI)
     pub fn add_to_run_queue(pid: Pid) {
-        // I-35: 重定向到 cfs_enqueue. 历史 MLFQ queues[0] 路径曾导致新进程
-        // 永远不会被 pick_cfs_task 选中 (调度器只读 cfs_rq, 不读 queues[]).
+        // I-35: 重定向到 eevdf_enqueue. 历史 MLFQ queues[0] 路径曾导致新进程
+        // 永远不会被 pick_eevdf_task 选中 (调度器只读 eevdf_rq, 不读 queues[]).
         // 现在 add / add_to_run_queue 等价, 都走 vruntime 红黑树.
         //
         // APS-03: 多核下把任务投送到**空闲核** (而非恒留当前核), 并在跨核时向
         // 目标核发重调度 IPI 唤醒其 idle 调度循环; 单核 / 无空闲核时退化为本核
-        // 入队, 与既有一致 (E11: 目标核 CFS 成为入队对象 + IPI + AP 有调度身份 +
+        // 入队, 与既有一致 (E11: 目标核 EEVDF 成为入队对象 + IPI + AP 有调度身份 +
         // AP 被唤醒 四者齐备, 任务才会真正落到 AP 上).
         let this_cpu = crate::privileged::smp::get_current_cpu();
         let target = Self::find_idle_cpu(pid, this_cpu);
         // 搬定结果不在这里分支: 新子进程尚未入过队, 失败只可能是"它已被别的路径
         // 放上了某个队列" (幂等) 或任务已终 —— 两种情形下目标核仍需一次重调度提名,
         // 多发一个 IPI 无代价, 少了 IPI 则会拖到下一轮 tick.
-        Self::cfs_enqueue_to(pid, target, PlacementKind::Wake);
+        Self::eevdf_enqueue_to(pid, target, PlacementKind::Wake);
         if target != this_cpu {
             // 有界诊断 (仅前若干次): 供 `-smp 2` 验证观测跨核投送.
             static MIGRATE_LOG: AtomicU64 = AtomicU64::new(0);
             if MIGRATE_LOG.fetch_add(1, Ordering::Relaxed) < 8 {
                 crate::klog_info!(Kernel, "[SMP] migrate pid={} -> cpu={}", pid, target);
             }
-            // 锁外发送 IPI: resched_cpu 内部锁 cpu_queue, 与 cfs_rq 锁无嵌套.
+            // 锁外发送 IPI: resched_cpu 内部锁 cpu_queue, 与 eevdf_rq 锁无嵌套.
             crate::privileged::proc::cpu_queue::resched_cpu(target);
         }
     }
@@ -2407,7 +2407,7 @@ impl Scheduler {
         self.initialized.load(Ordering::SeqCst)
     }
 
-    /// 本核是否存在可运行任务 (DL/RT/CFS 任一非空)
+    /// 本核是否存在可运行任务 (DL/RT/EEVDF 任一非空)
     #[must_use]
     pub fn has_runnable() -> bool {
         let per_cpu = per_cpu();
@@ -2417,7 +2417,7 @@ impl Scheduler {
         if !per_cpu.rt_queue.lock().is_empty() {
             return true;
         }
-        if !per_cpu.cfs_rq.lock().is_empty() {
+        if !per_cpu.eevdf_rq.lock().is_empty() {
             return true;
         }
         false
@@ -2461,7 +2461,7 @@ impl Scheduler {
 
         // 本核 current 为 idle 且存在可运行任务 ⇒ 必须重调度.
         //
-        // idle 不在任何运行队列中, 上面基于 vruntime 的 CFS 抢占判据对它无意义:
+        // idle 不在任何运行队列中, 上面基于 vruntime 的 EEVDF 抢占判据对它无意义:
         // 当任务在 `schedule()` 末尾被重新入队 (`prev_requeue`) 而本核已切到 idle 时,
         // 只有本判据能把它重新拉回运行 (否则该核永久停在 idle, 见 ISSUE-RT-004).
         if current_pid != 0
@@ -2514,7 +2514,7 @@ impl Scheduler {
         }
     }
 
-    /// tick 的当前任务记账: RT FIFO 看门狗、DL 补充与 CFS 抢占判定.
+    /// tick 的当前任务记账: RT FIFO 看门狗、DL 补充与 EEVDF 抢占判定.
     fn tick_current_task(per_cpu: &'static PerCpuSched, current_pid: Pid) {
         // RT FIFO watchdog
         let is_rt = per_cpu.rt_running.load(Ordering::SeqCst);
@@ -2573,12 +2573,12 @@ impl Scheduler {
                     );
                 }
             }
-        } else if Self::tick_current_cfs(per_cpu, current_pid) {
+        } else if Self::tick_current_eevdf(per_cpu, current_pid) {
             per_cpu.need_reschedule.store(true, Ordering::SeqCst);
         }
     }
 
-    /// tick 的 CFS 记账: 推进运行任务 vruntime、维护运行账增量、推进 floor,
+    /// tick 的 EEVDF 记账: 推进运行任务 vruntime、维护运行账增量、推进 floor,
     /// 并按 EEVDF 切片预算判定本轮是否到期。
     ///
     /// 返回 `true` = 本轮切片到期, 调用方须请求重调度 (运行账在册的任务已按
@@ -2588,20 +2588,20 @@ impl Scheduler {
     ///
     /// 切片状态三分: `slice_left == 0` 为 `Build` (首次上核 / 未建账任务, 建立
     /// 本轮切片), `left > 0` 为 `Advance`, 归零为 `Expire` (重建切片与 `vd` 后
-    /// 重投入树, 由 [`CfsRunQueue::pick_eevdf`] 与其余可运行任务重新比较).
-    fn tick_current_cfs(per_cpu: &'static PerCpuSched, current_pid: Pid) -> bool {
-        let mut cfs_rq = per_cpu.cfs_rq.lock();
-        // 锁序 `cfs_rq -> PROCESS_TABLE`; 单次加锁取回本轮记账所需字段.
+    /// 重投入树, 由 [`EevdfRunQueue::pick_eevdf`] 与其余可运行任务重新比较).
+    fn tick_current_eevdf(per_cpu: &'static PerCpuSched, current_pid: Pid) -> bool {
+        let mut eevdf_rq = per_cpu.eevdf_rq.lock();
+        // 锁序 `eevdf_rq -> PROCESS_TABLE`; 单次加锁取回本轮记账所需字段.
         let Some((vr, weight, slice_left)) = PROCESS_TABLE.with_process(current_pid, |p| {
-            let weight = p.cfs_weight.load(Ordering::Acquire);
+            let weight = p.eevdf_weight.load(Ordering::Acquire);
             // IC1 兜底: 经 `keep_current` 回退上核的任务 (如 boot 期 init)
             // 可能从未在队列落过点, 其 vr 与 floor 不同域 —— 先对齐再累加.
-            let base = cfs_rq.placement(p.cfs_vruntime.load(Ordering::Acquire));
+            let base = eevdf_rq.placement(p.eevdf_vruntime.load(Ordering::Acquire));
             let vr = base.saturating_add(calc_vruntime_delta_virt(weight));
-            p.cfs_vruntime.store(vr, Ordering::Release);
-            let sum = p.cfs_sum_exec_runtime.load(Ordering::Acquire);
+            p.eevdf_vruntime.store(vr, Ordering::Release);
+            let sum = p.eevdf_sum_exec_runtime.load(Ordering::Acquire);
             // L2 修复: 使用 saturating_add 防止 sum_exec_runtime 溢出
-            p.cfs_sum_exec_runtime
+            p.eevdf_sum_exec_runtime
                 .store(sum.saturating_add(1), Ordering::Release);
             (vr, weight, p.eevdf_slice_left.load(Ordering::Acquire))
         }) else {
@@ -2611,15 +2611,15 @@ impl Scheduler {
         // 运行账 O(1) 增量: 只改本任务的 `w * vr`, `W` 不变 —— tick 热路径
         // 不写树账. 未入账的 keep-current 任务 (boot / 未投送的 Ready) 无此
         // 账目, 其权重在 `pick_eevdf` / `rebuild_eevdf_round` 的 W_inc 里补.
-        let _ = cfs_rq.advance_running_vruntime(current_pid, vr);
+        let _ = eevdf_rq.advance_running_vruntime(current_pid, vr);
         // IC3: 运行任务的时基推进队列下界 —— 这是本调度器唯一的反饥饿机制
         // (旧的周期性整树折叠 boost 会抹掉相对次序, 且与任务自身 vruntime
         // 分域, 已删除).
-        cfs_rq.advance_floor(vr);
+        eevdf_rq.advance_floor(vr);
 
         if slice_left == 0 {
             // Build: 本任务尚未建账, 只建立本轮切片, 不请求抢占.
-            Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight);
+            Self::rebuild_eevdf_round(&eevdf_rq, current_pid, weight);
             return false;
         }
         let left = slice_left - 1;
@@ -2636,15 +2636,15 @@ impl Scheduler {
         // `rq_cpu=NO_RQ_CPU` 的树节点, 被偷取时即双重记账.
         //
         // K-07b 批3 观测面: 本核切片命中计数 (任务完整跑完预算才到期).
-        cfs_rq.note_slice_hit();
-        Self::rebuild_eevdf_round(&cfs_rq, current_pid, weight);
+        eevdf_rq.note_slice_hit();
+        Self::rebuild_eevdf_round(&eevdf_rq, current_pid, weight);
         let accounted =
-            cfs_rq.running_task(current_pid).is_some() || cfs_rq.is_on_tree(current_pid);
+            eevdf_rq.running_task(current_pid).is_some() || eevdf_rq.is_on_tree(current_pid);
         if accounted {
-            let placed = cfs_rq.enqueue(current_pid, vr, weight, true);
+            let placed = eevdf_rq.enqueue(current_pid, vr, weight, true);
             PROCESS_TABLE.with_process(current_pid, |p| {
-                p.cfs_vruntime.store(placed, Ordering::Release);
-                p.cfs_on_rq.store(true, Ordering::Release);
+                p.eevdf_vruntime.store(placed, Ordering::Release);
+                p.eevdf_on_rq.store(true, Ordering::Release);
             });
         }
         true
@@ -2671,7 +2671,7 @@ impl Scheduler {
     /// tick 的睡眠唤醒扫描: **一次表锁**取到期快照, 到期的 `Sleeping` 任务批量唤醒
     /// (单轮上限 = `to_wake` 缓冲长度 8).
     ///
-    /// 唤醒动作 (`Self::unblock` → `cfs_rq` 锁) 必须留在锁外: 层级 8 → 层级 7 是
+    /// 唤醒动作 (`Self::unblock` → `eevdf_rq` 锁) 必须留在锁外: 层级 8 → 层级 7 是
     /// 单向例外, 持表锁再取 rq 锁即反向锁序 (见 `docs/explain/ref-lock-order.md`).
     fn tick_sleep_wake(current_ticks: u64) {
         // 本核当前任务只读一次: tick 全程关中断, 切换发生在出口, 旧逐槽循环每槽重读
@@ -2829,7 +2829,7 @@ impl Scheduler {
                 continue;
             }
             let sched = per_cpu_for(cpu);
-            let load = sched.cfs_rq.lock().total_weight.load(Ordering::Acquire);
+            let load = sched.eevdf_rq.lock().total_weight.load(Ordering::Acquire);
             if load < best_load {
                 best_load = load;
                 best_cpu = cpu;
@@ -2840,7 +2840,7 @@ impl Scheduler {
 
     /// 在 allowed cpuset 内为 `pid` 挑选一个**空闲核**作为投送目标.
     ///
-    /// 判据: 该核已建立调度身份 (`current == idle != 0`) 且 CFS 无待运行任务;
+    /// 判据: 该核已建立调度身份 (`current == idle != 0`) 且 EEVDF 无待运行任务;
     /// 命中即返回该核. 单核或找不到空闲核时返回 `hint` (通常为当前核), 保证
     /// 退化路径仍可在当前核调度.
     ///
@@ -2858,7 +2858,7 @@ impl Scheduler {
             let sched = per_cpu_for(cpu);
             let cur = sched.current.load(Ordering::SeqCst);
             let idle = sched.idle.load(Ordering::SeqCst);
-            if cur != 0 && cur == idle && sched.cfs_rq.lock().is_empty() {
+            if cur != 0 && cur == idle && sched.eevdf_rq.lock().is_empty() {
                 return cpu;
             }
         }
@@ -2868,7 +2868,7 @@ impl Scheduler {
     fn total_runnable_for(cpu_id: u32) -> usize {
         let sched = per_cpu_for(cpu_id);
         // IC2: 可运行数一律取自结构 (树长度), 不读并行计数器.
-        let mut count = sched.cfs_rq.lock().len();
+        let mut count = sched.eevdf_rq.lock().len();
         count += sched.dl_rq.lock().len();
         count += sched.rt_queue.lock().len();
         // 统计运行中的任务
@@ -2888,7 +2888,7 @@ impl Scheduler {
         let this_cpu = crate::privileged::smp::get_current_cpu();
         let local_weight = {
             let sched = per_cpu_for(this_cpu);
-            sched.cfs_rq.lock().total_weight.load(Ordering::Acquire)
+            sched.eevdf_rq.lock().total_weight.load(Ordering::Acquire)
         };
 
         let mut max_weight: u64 = 0;
@@ -2900,7 +2900,7 @@ impl Scheduler {
             }
             let w = {
                 let sched = per_cpu_for(cpu);
-                sched.cfs_rq.lock().total_weight.load(Ordering::Acquire)
+                sched.eevdf_rq.lock().total_weight.load(Ordering::Acquire)
             };
             if w > max_weight {
                 max_weight = w;
@@ -2915,16 +2915,16 @@ impl Scheduler {
 
         // 偷取全程**同时持有源/目的两把 rq 锁** —— 分两段 (摘源后放锁再投目的) 会留下
         // "既不在源树也不在目的树" 的归属真空窗口, 并发唤醒正是在那里把同一任务投进
-        // 第三棵树 (见 [`Self::cfs_place_on`] 的同源说明).
+        // 第三棵树 (见 [`Self::eevdf_place_on`] 的同源说明).
         // 双持锁序: cpu index **升序** (同层级内定序, 见 docs/explain/ref-lock-order.md);
         // 两个方向相反的搬动者各持一把再抢对方那把, 即 AB-BA 死锁.
         let moved = if busiest_cpu < this_cpu {
-            let mut src_rq = per_cpu_for(busiest_cpu).cfs_rq.lock();
-            let mut dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
+            let mut src_rq = per_cpu_for(busiest_cpu).eevdf_rq.lock();
+            let mut dst_rq = per_cpu_for(this_cpu).eevdf_rq.lock();
             Self::steal_locked(busiest_cpu, this_cpu, &mut src_rq, &mut dst_rq)
         } else {
-            let mut dst_rq = per_cpu_for(this_cpu).cfs_rq.lock();
-            let mut src_rq = per_cpu_for(busiest_cpu).cfs_rq.lock();
+            let mut dst_rq = per_cpu_for(this_cpu).eevdf_rq.lock();
+            let mut src_rq = per_cpu_for(busiest_cpu).eevdf_rq.lock();
             Self::steal_locked(busiest_cpu, this_cpu, &mut src_rq, &mut dst_rq)
         };
 
@@ -2939,7 +2939,7 @@ impl Scheduler {
 
     /// 偷取候选批次 (E-05b): 合格前缀窗口内按**有效截止期降序**排列 `(deadline, pid)`。
     ///
-    /// 候选窗口 = [`CfsRunQueue::eligible_pids`] 给出的合格前缀, 宽度与本轮搬动
+    /// 候选窗口 = [`EevdfRunQueue::eligible_pids`] 给出的合格前缀, 宽度与本轮搬动
     /// 上限 [`LOAD_BALANCE_MAX_MOVE`] 相同: 只有 `lag >= 0` 的树上任务才允许迁走
     /// —— 欠账任务 (`lag < 0`) 的额度已用尽, 偷到别核等于替它逃避本轮约束。
     ///
@@ -2948,8 +2948,8 @@ impl Scheduler {
     /// 升序定序, 保证候选次序可复现。
     ///
     /// 只由持源/目的双锁的 [`Self::steal_locked`] 调用; 读进程表仍在 rq 锁之后
-    /// (锁序 `cfs_rq -> PROCESS_TABLE`)。
-    fn rank_steal_candidates(src: &CfsRunQueue, out: &mut [(u64, Pid)]) -> usize {
+    /// (锁序 `eevdf_rq -> PROCESS_TABLE`)。
+    fn rank_steal_candidates(src: &EevdfRunQueue, out: &mut [(u64, Pid)]) -> usize {
         let limit = out.len().min(LOAD_BALANCE_MAX_MOVE);
         let mut pids = [0; LOAD_BALANCE_MAX_MOVE];
         let n = src.eligible_pids(&mut pids[..limit]);
@@ -2957,7 +2957,7 @@ impl Scheduler {
         for &pid in &pids[..n] {
             let Some((vr, vd)) = PROCESS_TABLE.with_process(pid, |p| {
                 (
-                    p.cfs_vruntime.load(Ordering::Acquire),
+                    p.eevdf_vruntime.load(Ordering::Acquire),
                     p.eevdf_vdeadline.load(Ordering::Acquire),
                 )
             }) else {
@@ -2978,12 +2978,12 @@ impl Scheduler {
     /// (IE5: 两核 `tree_weight`/`tree_sum_w_vr` 变化互为相反数)。
     ///
     /// 只由 [`Self::load_balance`] 按升序双持锁后调用 (锁序前提不在此处重建).
-    /// 锁序 `cfs_rq -> PROCESS_TABLE` 与本文件其余调度路径一致.
+    /// 锁序 `eevdf_rq -> PROCESS_TABLE` 与本文件其余调度路径一致.
     fn steal_locked(
         src_cpu: u32,
         dst_cpu: u32,
-        src: &mut CfsRunQueue,
-        dst: &mut CfsRunQueue,
+        src: &mut EevdfRunQueue,
+        dst: &mut EevdfRunQueue,
     ) -> usize {
         let mut ranked: [(u64, Pid); LOAD_BALANCE_MAX_MOVE] = [(0, 0); LOAD_BALANCE_MAX_MOVE];
         let n = Self::rank_steal_candidates(src, &mut ranked);
@@ -3007,10 +3007,10 @@ impl Scheduler {
                     (
                         p.get_state(),
                         p.get_sched_policy(),
-                        p.cfs_vruntime.load(Ordering::Acquire),
-                        p.cfs_weight.load(Ordering::Acquire),
-                        p.cfs_on_rq.load(Ordering::Acquire),
-                        p.cfs_on_cpu.load(Ordering::Acquire),
+                        p.eevdf_vruntime.load(Ordering::Acquire),
+                        p.eevdf_weight.load(Ordering::Acquire),
+                        p.eevdf_on_rq.load(Ordering::Acquire),
+                        p.eevdf_on_cpu.load(Ordering::Acquire),
                         p.eevdf_vdeadline.load(Ordering::Acquire),
                     )
                 })
@@ -3034,10 +3034,10 @@ impl Scheduler {
                 && state != ProcessState::Terminated
                 && policy == SchedPolicy::Normal;
             if !schedulable {
-                // 与 `pick_cfs_task` 同口径: 不可调度者撤账摘除, 不留树上占位 (IC2).
+                // 与 `pick_eevdf_task` 同口径: 不可调度者撤账摘除, 不留树上占位 (IC2).
                 src.dequeue(pid, weight, on_rq);
                 let _ = PROCESS_TABLE.with_process(pid, |p| {
-                    p.cfs_on_rq.store(false, Ordering::Release);
+                    p.eevdf_on_rq.store(false, Ordering::Release);
                 });
                 claim.commit(NO_RQ_CPU);
                 continue;
@@ -3049,8 +3049,8 @@ impl Scheduler {
             let placed = dst.migrate(pid, vr, weight);
             PROCESS_TABLE.with_process(pid, |p| {
                 // IC1: 落点回写任务自身 vruntime (原样携带, `placed == vr`).
-                p.cfs_vruntime.store(placed, Ordering::Release);
-                p.cfs_on_rq.store(true, Ordering::Release);
+                p.eevdf_vruntime.store(placed, Ordering::Release);
+                p.eevdf_on_rq.store(true, Ordering::Release);
                 // Migrate 携带 vd: 不重建本轮切片, 截止期与剩余预算随任务同行.
                 p.eevdf_vdeadline.store(vd, Ordering::Release);
             });
@@ -3135,9 +3135,9 @@ impl Scheduler {
 
 /// 逐 CPU 采集 EEVDF 观测快照并串口输出每核一行 (K-07b 批3).
 ///
-/// `cfs_rq` 锁只在取快照与调用 `observation()` 期间持有; 输出与入表均在锁外.
-fn snapshot_cpu_observations() -> Vec<(u32, CfsObsSnapshot)> {
-    let mut cpus: Vec<(u32, CfsObsSnapshot)> = Vec::new();
+/// `eevdf_rq` 锁只在取快照与调用 `observation()` 期间持有; 输出与入表均在锁外.
+fn snapshot_cpu_observations() -> Vec<(u32, EevdfObsSnapshot)> {
+    let mut cpus: Vec<(u32, EevdfObsSnapshot)> = Vec::new();
     for index in 0..crate::privileged::config::MAX_CPUS {
         let Ok(cpu) = u32::try_from(index) else {
             break;
@@ -3145,7 +3145,7 @@ fn snapshot_cpu_observations() -> Vec<(u32, CfsObsSnapshot)> {
         if !crate::privileged::smp::is_cpu_online(cpu) {
             continue;
         }
-        let obs = per_cpu_for(cpu).cfs_rq.lock().observation();
+        let obs = per_cpu_for(cpu).eevdf_rq.lock().observation();
         crate::klog_info!(
             Process,
             "[SCHED] SNAP cpu={} V={} floor={} W={} tree_w={} run_w={} tree_n={} run_n={} lag_min={} lag_max={} wakeups={} slice_hits={} wait_n={} wait_avg_ns={} wait_max_ns={} conserve={}",
@@ -3175,7 +3175,7 @@ fn snapshot_cpu_observations() -> Vec<(u32, CfsObsSnapshot)> {
 ///
 /// 返回 `(tgid, members, runnable, lag_min, lag_max)`; 无样本时以 `i128`
 /// 极值作哨兵, 由打印侧归一为 0. `lag` 基准为成员所在 CPU 的 `V` 快照.
-fn snapshot_tg_lags(cpus: &[(u32, CfsObsSnapshot)]) -> Vec<(Pid, u32, u32, i128, i128)> {
+fn snapshot_tg_lags(cpus: &[(u32, EevdfObsSnapshot)]) -> Vec<(Pid, u32, u32, i128, i128)> {
     let mut groups: Vec<(Pid, u32, u32, i128, i128)> = Vec::new();
     for index in 1..crate::privileged::config::MAX_PROCESSES {
         let Ok(pid) = u32::try_from(index) else {
@@ -3189,9 +3189,9 @@ fn snapshot_tg_lags(cpus: &[(u32, CfsObsSnapshot)]) -> Vec<(Pid, u32, u32, i128,
                     ProcessState::Zombie | ProcessState::Terminated
                 ),
                 p.get_sched_policy() == SchedPolicy::Normal,
-                p.cfs_on_rq.load(Ordering::Acquire),
-                p.cfs_rq_cpu.load(Ordering::Acquire),
-                p.cfs_vruntime.load(Ordering::Acquire),
+                p.eevdf_on_rq.load(Ordering::Acquire),
+                p.eevdf_rq_cpu.load(Ordering::Acquire),
+                p.eevdf_vruntime.load(Ordering::Acquire),
             )
         }) else {
             continue;

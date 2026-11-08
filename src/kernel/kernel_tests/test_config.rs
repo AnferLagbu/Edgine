@@ -15,14 +15,14 @@ use crate::privileged::config::{
     get_config_summary, print_config_table,
 };
 use crate::privileged::tests::{assert_eq_test, check};
-// DECISION-O ②: CFS_* 权威归 privileged/config/sched (机制常量), functions 侧
+// DECISION-O ②: EEVDF_* 权威归 privileged/config/sched (机制常量), functions 侧
 // 纯 re-export; ConfigError/validate_* 为 functions 策略项, tests 经 functions
 // 公共 API 访问 (§7.3 允许 privileged/tests 访问 functions)
 use crate::functions::config::validate::{
     validate_cross_module_consistency, validate_memory_config,
 };
 use crate::functions::config::{
-    CFS_BOOST_INTERVAL, CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, ConfigError,
+    ConfigError, EEVDF_MIN_GRANULARITY, EEVDF_NICE0_WEIGHT, EEVDF_TARGET_LATENCY,
 };
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
@@ -89,11 +89,10 @@ fn test_sched_quantum_ordering() -> TestResult {
         "level 0 quantum > level 3 quantum"
     );
     check!(
-        CFS_TARGET_LATENCY >= CFS_MIN_GRANULARITY,
-        "CFS target >= min granularity"
+        EEVDF_TARGET_LATENCY >= EEVDF_MIN_GRANULARITY,
+        "EEVDF target >= min granularity"
     );
-    check!(CFS_NICE0_WEIGHT > 0, "NICE0_WEIGHT > 0");
-    check!(CFS_BOOST_INTERVAL > 0, "CFS_BOOST_INTERVAL > 0");
+    check!(EEVDF_NICE0_WEIGHT > 0, "NICE0_WEIGHT > 0");
     check!(SCHED_BOOST_INTERVAL > 0, "SCHED_BOOST_INTERVAL > 0");
     check!(SCHED_RT_WATCHDOG_TICKS > 0, "RT watchdog > 0");
     TestResult::Pass

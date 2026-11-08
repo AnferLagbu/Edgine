@@ -34,10 +34,10 @@ use crate::privileged::sync::OnceLock;
 pub const CGROUP_MAX_DEPTH: usize = 2;
 /// 单个 cgroup 可挂载的进程数上限.
 pub const CGROUP_MAX_PROCS: u32 = 4096;
-/// CFS 调度周期的默认值 (微秒, 即 1 秒).
-pub const CPU_CFS_PERIOD_DEFAULT_US: u64 = 1_000_000;
-/// CFS 配额的"不限额"哨兵值.
-pub const CPU_CFS_QUOTA_MAX: u64 = u64::MAX;
+/// CPU 带宽调度周期的默认值 (微秒, 即 1 秒).
+pub const CPU_PERIOD_DEFAULT_US: u64 = 1_000_000;
+/// CPU 带宽配额的"不限额"哨兵值.
+pub const CPU_QUOTA_MAX: u64 = u64::MAX;
 /// 内存上限的"不限额"哨兵值.
 pub const MEMORY_LIMIT_MAX: u64 = u64::MAX;
 /// PID 数量上限的"不限额"哨兵值.
@@ -57,13 +57,13 @@ fn alloc_cgroup_id() -> u64 {
 // CPU 控制器
 // ============================================================================
 
-/// CPU 控制器 — 按 CFS 配额与周期限制 CPU 带宽, 并统计运行时长与节流次数。
+/// CPU 控制器 — 按配额与周期限制 CPU 带宽, 并统计运行时长与节流次数。
 #[derive(Debug)]
 pub struct CpuController {
     /// 每个周期允许消耗的 CPU 时间 (微秒).
-    pub cfs_quota_us: AtomicU64,
-    /// CFS 统计周期 (微秒).
-    pub cfs_period_us: AtomicU64,
+    pub quota_us: AtomicU64,
+    /// 带宽统计周期 (微秒).
+    pub period_us: AtomicU64,
     /// 当前周期已消耗的 CPU 时间 (微秒).
     pub runtime_used: AtomicU64,
     /// 因超配额被节流的累计次数.
@@ -83,8 +83,8 @@ impl CpuController {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            cfs_quota_us: AtomicU64::new(CPU_CFS_QUOTA_MAX),
-            cfs_period_us: AtomicU64::new(CPU_CFS_PERIOD_DEFAULT_US),
+            quota_us: AtomicU64::new(CPU_QUOTA_MAX),
+            period_us: AtomicU64::new(CPU_PERIOD_DEFAULT_US),
             runtime_used: AtomicU64::new(0),
             nr_throttled: AtomicU64::new(0),
             throttled_time: AtomicU64::new(0),
@@ -93,8 +93,8 @@ impl CpuController {
 
     /// 记入 `delta_us` 并判断本周期是否仍在配额内; 不限额时恒为 `true`.
     pub fn check_budget(&self, delta_us: u64) -> bool {
-        let quota = self.cfs_quota_us.load(Ordering::Acquire);
-        if quota == CPU_CFS_QUOTA_MAX {
+        let quota = self.quota_us.load(Ordering::Acquire);
+        if quota == CPU_QUOTA_MAX {
             return true;
         }
         let used = self.runtime_used.fetch_add(delta_us, Ordering::AcqRel);
@@ -103,8 +103,8 @@ impl CpuController {
 
     /// 开启新周期: 清零已用时间, 超出配额的部分计入节流统计.
     pub fn period_reset(&self) {
-        let quota = self.cfs_quota_us.load(Ordering::Acquire);
-        if quota != CPU_CFS_QUOTA_MAX {
+        let quota = self.quota_us.load(Ordering::Acquire);
+        if quota != CPU_QUOTA_MAX {
             let prev = self.runtime_used.swap(0, Ordering::AcqRel);
             if prev > quota {
                 self.nr_throttled.fetch_add(1, Ordering::Relaxed);
@@ -116,13 +116,13 @@ impl CpuController {
 
     /// 设置每周期可用的 CPU 时间配额 (微秒).
     pub fn set_quota(&self, quota_us: u64) {
-        self.cfs_quota_us.store(quota_us, Ordering::Release);
+        self.quota_us.store(quota_us, Ordering::Release);
     }
 
-    /// 设置 CFS 统计周期; 传入 0 时忽略.
+    /// 设置带宽统计周期; 传入 0 时忽略.
     pub fn set_period(&self, period_us: u64) {
         if period_us > 0 {
-            self.cfs_period_us.store(period_us, Ordering::Release);
+            self.period_us.store(period_us, Ordering::Release);
         }
     }
 }
@@ -696,7 +696,7 @@ pub fn sys_cgroup_attach(cg_id: u64, pid: u64) -> i64 {
 
 /// 设置指定 cgroup 的资源上限。
 ///
-/// `controller`: 0=CFS 配额, 1=CFS 周期, 2=内存, 3=PID 上限。
+/// `controller`: 0=CPU 配额, 1=CPU 周期, 2=内存, 3=PID 上限。
 /// 成功返回 0, 初始化未完成或控制器非法时返回负错误码。
 #[must_use]
 pub fn sys_cgroup_set_limit(cg_id: u64, controller: u64, value: u64) -> i64 {

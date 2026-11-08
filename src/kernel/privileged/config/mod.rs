@@ -6,7 +6,7 @@
 //!
 //! 1. **集中定义全内核容量/规模常量** — 消除分散与重复
 //! 2. **集中定义内存布局常量** — `PAGE_SIZE`、栈/堆尺寸、用户态地址空间
-//! 3. **集中定义调度常量** — CFS/调度级别量子、提升间隔
+//! 3. **集中定义调度常量** — EEVDF/调度级别量子、提升间隔
 //! 4. **集中定义 slab 配置** — 大小/对象尺寸
 //! 5. **启动自检** — 验证常量自洽性、内存布局合法性、中断控制器可用性
 //! 6. **跨模块一致性校验** — 防止下游模块因重复定义产生 OOB
@@ -87,8 +87,8 @@ pub use memory::{
     aslr_mmap_base, aslr_pie_base, aslr_random_offset, aslr_stack_top,
 };
 pub use sched::{
-    CFS_BOOST_INTERVAL, CFS_DL_MAX_UTILIZATION_PCT, CFS_DL_MIN_PERIOD, CFS_DL_MIN_RUNTIME,
-    CFS_MIN_GRANULARITY, CFS_NICE0_WEIGHT, CFS_TARGET_LATENCY, CFS_VIRT_ONE, CFS_VIRT_SHIFT,
+    DL_MAX_UTILIZATION_PCT, DL_MIN_PERIOD, DL_MIN_RUNTIME, EEVDF_MIN_GRANULARITY,
+    EEVDF_NICE0_WEIGHT, EEVDF_TARGET_LATENCY, EEVDF_VIRT_ONE, EEVDF_VIRT_SHIFT,
     SCHED_BOOST_INTERVAL, SCHED_LEVEL_0_QUANTUM, SCHED_LEVEL_1_QUANTUM, SCHED_LEVEL_2_QUANTUM,
     SCHED_LEVEL_3_QUANTUM, SCHED_RT_WATCHDOG_TICKS,
 };

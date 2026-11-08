@@ -52,7 +52,7 @@
     { "level": 6, "name": "SWAP", "anchor": "symbol", "doc_token": "SWAP.lock" },
     { "level": 7, "name": "PROCESS_TABLE.processes", "anchor": "lockdep" },
     { "level": 7, "name": "PROC_SNAPSHOT", "anchor": "symbol" },
-    { "level": 8, "name": "cfs_rq", "anchor": "lockdep", "note": "per-CPU 运行队列锁; 跨核搬动按 cpu index 升序取两把" },
+    { "level": 8, "name": "eevdf_rq", "anchor": "lockdep", "note": "per-CPU 运行队列锁; 跨核搬动按 cpu index 升序取两把" },
     { "level": 9, "name": "sigaction_table", "anchor": "symbol" },
     { "level": 9, "name": "rlimit_table", "anchor": "symbol" },
     { "level": 9, "name": "seccomp.filters", "anchor": "symbol" },
@@ -96,7 +96,7 @@
   ],
   "exceptions": [
     {
-      "outer": "cfs_rq",
+      "outer": "eevdf_rq",
       "inner": "PROCESS_TABLE.processes",
       "reason": "调度域锁域所有权: 队列成员身份的权威保护者是 rq 锁, 进程表锁只是取得 Process 引用的入场券, 被保护不变式由 rq 侧单方面确立"
     },
@@ -108,8 +108,8 @@
   ],
   "notes": [
     "层级 5 (COW) 无锁条目: 原 COW_REFS 计数表已删除, 帧持有计数收敛进层级 1 的 PMM 计数面.",
-    "调度域成文例外: 变更队列成员身份时取锁方向为 cfs_rq(层级 8) → PROCESS_TABLE.processes(层级 7), 被保护不变式由 rq 名单方面确立; 严禁在持进程表锁的临界区内取任何 rq 锁. 该例外与「双 rq 按 cpu index 升序」的定序由文档持有, 例外本体的放行由顶层 exceptions 数组承载 (A-3b 静态倒序检测据此豁免).",
-    "周期扫描持锁口径 (M7 / A-15 丙): 持表锁遍历的形态在内核里只有一处 —— ProcessTable::for_each 与 ProcessTable::scan_into 共用私有取锁点 walk_locked; scan_into 的谓词四律 (只读原子字段 / 不回调 PROCESS_TABLE / 不分配不打印 / 不取运行队列锁) 写在该 API 的文档注释上, 由 host-tests/tests/sched_tick_scan_m7_test.rs 钉形状与措辞; 唤醒 (层级 8 unblock) 与僵尸回收的再取锁动作一律排在快照之后、表锁释放之后完成, 故本口径不新增任何取锁方向, 层级递增判定仍只有 cfs_rq(8) → PROCESS_TABLE(7) 一条单向例外 (LOG_EMIT_LOCK → LOG_SINKS 属最内层锁的内层豁免, 不参与层级递增).",
+    "调度域成文例外: 变更队列成员身份时取锁方向为 eevdf_rq(层级 8) → PROCESS_TABLE.processes(层级 7), 被保护不变式由 rq 名单方面确立; 严禁在持进程表锁的临界区内取任何 rq 锁. 该例外与「双 rq 按 cpu index 升序」的定序由文档持有, 例外本体的放行由顶层 exceptions 数组承载 (A-3b 静态倒序检测据此豁免).",
+    "周期扫描持锁口径 (M7 / A-15 丙): 持表锁遍历的形态在内核里只有一处 —— ProcessTable::for_each 与 ProcessTable::scan_into 共用私有取锁点 walk_locked; scan_into 的谓词四律 (只读原子字段 / 不回调 PROCESS_TABLE / 不分配不打印 / 不取运行队列锁) 写在该 API 的文档注释上, 由 host-tests/tests/sched_tick_scan_m7_test.rs 钉形状与措辞; 唤醒 (层级 8 unblock) 与僵尸回收的再取锁动作一律排在快照之后、表锁释放之后完成, 故本口径不新增任何取锁方向, 层级递增判定仍只有 eevdf_rq(8) → PROCESS_TABLE(7) 一条单向例外 (LOG_EMIT_LOCK → LOG_SINKS 属最内层锁的内层豁免, 不参与层级递增).",
     "本表 anchor 二选一: lockdep = 名称须与 src/kernel 里 ::named / ::named_lazy 的类名字面量双向一致; symbol = 名称的各段标识符须能在 src/kernel 定位 (存在性判据, 非类型判据).",
     "全仓另有 242 处未具名锁构造点 (lockdep 侧一律记作 (unnamed)), 本批不纳入序表 (2026-11-05 裁定); 具名化与 MAX_LOCK_CLASSES = 64 上限的张力由「容量对账」判据执法: 序表 lockdep 条目数或代码具名类数到达 limits.rs 里的上限即门禁判红 (上限单源, 脚本不抄数), 运行时满表丢弃则由 lockdep 的粘滞失效读数 class_table_dropped 记账并被启动读数行与门禁硬零断言消费.",
     "MAX_HELD_LOCKS = 8 与序表层级数 (15) 的差只作读数不作判据: 深链超出持栈覆盖面时门禁摘要报出该事实, 真正的溢出由运行时粘滞读数 held_stack_overflowed 执法; 抬高上限会牵动 boot BSS 定长数组尺寸, 属另轮裁定."

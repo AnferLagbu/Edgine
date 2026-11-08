@@ -76,7 +76,7 @@ use edgine::kernel::functions::sgeg::policy::{
 use edgine::kernel::privileged::driver::virtio::queue::{VQ_DESC_F_NEXT, VQ_DESC_F_WRITE};
 use edgine::kernel::privileged::iomem::IoMem;
 use edgine::kernel::privileged::mm::pmm::{PhysicalMemoryManager, VecMetaStore};
-use edgine::kernel::privileged::proc::cfs::{CfsRunQueue, VIRT_ONE, nice_to_weight};
+use edgine::kernel::privileged::proc::eevdf::{EevdfRunQueue, VIRT_ONE, nice_to_weight};
 
 // ====== C 类: 内核真实实现直引 (G-07 遗留项: egfs / egdf / epoll 策略面) ======
 //
@@ -1328,8 +1328,8 @@ fn eevdf_bench_weight(pid: u32) -> u64 {
 
 /// 内核真实队列的稳态选择成本: 每次迭代计一次 `pick_eevdf` + `Requeue` 重投.
 ///
-/// 与 `tests/cfs_btreemap_bench_test.rs` 的手工 `BTreeMap` 基准不同, 本 bench
-/// 覆盖生产 `CfsRunQueue` 的账目维护 (树账/运行账)、合格前缀筛选与
+/// 与 `tests/eevdf_btreemap_bench_test.rs` 的手工 `BTreeMap` 基准不同, 本 bench
+/// 覆盖生产 `EevdfRunQueue` 的账目维护 (树账/运行账)、合格前缀筛选与
 /// `(vd, pid)` 选择, 作为 E-07 的性能回归锚点.
 ///
 /// # Panics
@@ -1337,7 +1337,7 @@ fn eevdf_bench_weight(pid: u32) -> u64 {
 /// 仅当内部常量索引越界或队列意外为空时 panic (构建期常量保证不会发生).
 #[must_use]
 pub fn eevdf_pick_requeue_bench(iters: u64) -> u128 {
-    let mut queue = CfsRunQueue::new();
+    let mut queue = EevdfRunQueue::new();
     let weights: Vec<u64> = (0..EEVDF_BENCH_TASKS)
         .map(|index| eevdf_bench_weight(index + 1))
         .collect();

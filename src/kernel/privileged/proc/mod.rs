@@ -17,8 +17,8 @@
 //! ├── session.rs        会话/进程组/凭证
 //! ├── elf.rs            ELF 二进制解析 (TCB 原始)
 //! ├── api.rs            C ↔ Rust 桥接 (兼容层)
-//! ├── scheduler.rs      主调度器 (CFS + 实时 + 批处理, per-CPU)
-//! ├── cfs.rs            CFS 公平调度算法
+//! ├── scheduler.rs      主调度器 (EEVDF + 实时 + 批处理, per-CPU)
+//! ├── eevdf.rs            EEVDF 公平调度算法
 //! ├── cpu_queue.rs      每 CPU 运行队列
 //! ├── oomd.rs           OOM killer
 //! ├── switch.asm        上下文切换汇编
@@ -39,12 +39,12 @@
 
 pub mod api;
 pub mod canary;
-pub mod cfs;
 pub mod cgroup;
 pub mod coredump_trait;
 pub mod cpu_queue;
 /// SGEG 域级行为门控 (`DomainFlags`) 机制 + 状态读写
 pub mod domain;
+pub mod eevdf;
 pub mod elf;
 /// D2: cgroup 资源控制器
 /// TD-02: 全局统一 FD 分配器与基址规划
