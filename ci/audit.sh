@@ -700,8 +700,9 @@ fi
 # 门槛 6 的判据是 debug 配方 (Makefile 的 test-kernel-host, 不带 --release). release 测试维
 # 自 P-43 起「可编译、可运行、零警告」, 但**此前不由任何门禁编译** —— 于是谁把测试侧 cfg
 # 改回与被测代码掩码不同形, 全部门槛照样全绿: 修好的病灶没有回归锁.
-# P-51 同族缺口: lockdep 的 cfg 全形如 any(debug_assertions, feature = "lockdep"), 常规
-# release 构建从不点亮它; e1000-real-hw 的真实硬件分支也只在该 feature 下编译.
+# P-51 同族缺口: lockdep 的 cfg 全形如 any(debug_assertions, feature = "lockdep") ——
+# A-1 (2026-11-08 全量常开) 起默认 release 构建即点亮它, 该 feature 维因此与默认构建同形
+# (保留作转发链断链的显式复跑); e1000-real-hw 的真实硬件分支仍只在该 feature 下编译.
 # 判据与实现分别见 scripts/check_kernel_test_release_dim.sh 与
 # scripts/check_kernel_feature_release_dims.sh 顶部 (两条: 编译退出码 0 + 本 crate 零告警;
 # 只编译不跑用例 ⇒ 不产出覆盖读数, 不得读成覆盖达成).
@@ -962,6 +963,9 @@ if [ "$MODE" = "full" ]; then
         # 载体链 (cpio → ramfs → VFS 读 /init → ELF 装载) 在默认门禁里一行都不执行.
         # 与 P-62 甲 同形: 真构建 (KERNEL_FEATURES=initramfs) + 真启动 + 断言里程碑,
         # 脚本尾部自行复原默认构建, 故排在本步骤最后, 不污染后续腿的镜像口径.
+        # 载体腿以 KERNEL_NO_DEFAULT=1 构建: A-1 常开 lockdep 后 x86_64 载体镜像
+        # 末尾 0x413000 越过 K-08 的 USER_CODE_BASE=0x400000; 载体是诊断 feature、
+        # 非出货形态, 出货默认镜像的 lockdep 由上面默认启动腿与下方探针独立覆盖.
         # 依赖 python3 (verify_image_arch.py), 与上一子腿同样已在 QEMU 可用分支内.
         CPIO_EVIDENCE="$EVIDENCE_DIR/audit_initramfs_boot.log"
         set +e
@@ -978,15 +982,15 @@ if [ "$MODE" = "full" ]; then
         fi
 
         # #125 (P-62 甲 第五项 feature 腿): lockdep 构建面探针 (scripts/lockdep_feature_probe.sh).
-        # lockdep 是默认关闭的诊断 feature, 且不在启动日志 capabilities 行里 (该行只有
-        # smp/preempt/kaslr/kpti/freg) —— 起一趟证不了它真编进了镜像, 故判据取构建面
-        # 字符串双向: lockdep 构建含 "circular dependency" 恰 1 段、默认构建 0 段
-        # (用户 2026-11-05 裁定 ⑤). 正向钉「feature 真编进去」, 反向钉「该串确实由
-        # feature 门控」—— 只判正向时, 串哪天与 lockdep 脱钩 (被无条件文本覆盖或 A-1
-        # 选常开) 读数仍是 1, 腿照样绿.
+        # lockdep 不在启动日志 capabilities 行里 (该行只有 smp/preempt/kaslr/kpti/freg),
+        # 起一趟证不了它真编进了镜像, 故判据取构建面字符串两侧: lockdep 构建与默认构建
+        # 各含 "circular dependency" 恰 1 段. A-1 (2026-11-08 裁定甲「全量常开」) 起
+        # lockdep 在默认 features 里 ⇒ 默认侧期望由 0 重指为 1 (同批裁定的附带后果):
+        # 正向钉「显式 feature 请求不丢不重」, 默认侧钉「常开真落地」. A-1 之前的反向
+        # 判据「该串由 feature 门控」随常开退役 —— 出货面已无默认关闭构建, 该性质只能
+        # 在 `--no-default-features` 上观测, 不在本腿射程内 (边界见 §8.1 A-1 行).
         # 排在本步骤最后: 本腿同样切 KERNEL_FEATURES (双架构各一次 feature 构建 + 一次
         # 默认重建), 跑完自行复原默认镜像, 不把 feature 产物留给后续腿.
-        # 附带后果: 若 A-1 选「lockdep 常开」, 反向判据失效, 本腿须重指 (需再裁).
         LOCKDEP_EVIDENCE="$EVIDENCE_DIR/audit_lockdep_probe.log"
         set +e
         LOCKDEP_OUT=$("$PROJECT_ROOT/scripts/lockdep_feature_probe.sh" all 2>&1)
@@ -996,7 +1000,7 @@ if [ "$MODE" = "full" ]; then
         printf '%s\n' "$LOCKDEP_OUT" | tail -6
         printf '   全量输出: %s\n' "$LOCKDEP_EVIDENCE"
         if [ "$LOCKDEP_RC" -eq 0 ]; then
-            ok "lockdep 构建面探针: 双架构正/负双向符合 (P-62 #125)"
+            ok "lockdep 构建面探针: 双架构正向/默认两侧符合 (P-62 #125)"
         else
             err "lockdep 构建面探针失败 (exit=$LOCKDEP_RC, 全量输出见 $LOCKDEP_EVIDENCE)"
         fi

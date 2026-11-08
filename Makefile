@@ -81,9 +81,19 @@ CFLAGS = $(CFLAGS_BASE) \
 BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc"]' --config 'unstable.build-std-features=["compiler-builtins-mem"]'
 
 # 内核 cargo 构建的附加 feature 注入钩子 (默认空 → 常规构建零改变).
-# 用途: 诊断专用 boot (如 P-29 `KERNEL_FEATURES=lockdep` 点亮 lockdep),
-# 避免为一次性取证改动构建主链路. 空值时 `--features` 不出现 (make if 展开).
+# 用途: feature 维构建与诊断专用 boot (P-62 的 `smp` / `preempt` / `kaslr` / `freg`
+# 各自真构建、`dns-selftest` 等), 避免为一次性取证改动构建主链路. `lockdep` 自
+# A-1 (2026-11-08) 起在默认 features 里, 不再需要经本钩子点亮.
+# 空值时 `--features` 不出现 (make if 展开).
 KERNEL_FEATURES ?=
+
+# 内核 cargo 构建的默认 features 关闭钩子 (默认空 → 常规构建零改变).
+# 唯一使用点: initramfs 载体腿 (`scripts/initramfs_boot_test.sh`). A-1 让 lockdep
+# 进默认 features 后, x86_64 `initramfs` 镜像末尾达 0x413000, 越过 K-08 的
+# `USER_CODE_BASE=0x400000` (恒等窗口将覆盖用户映射区) ⇒ 启动期 fail-closed.
+# 载体是诊断 feature、非出货形态, 故该腿以 `--no-default-features --features initramfs`
+# 构建 (实测末尾 0x3EA000); 出货默认镜像仍 lockdep 常开. 取值须为 1 才生效.
+KERNEL_NO_DEFAULT ?=
 
 # P-62 甲: feature 值切换必须使 RUST_LIB 失效. RUST_LIB 规则只以源文件为前置,
 # 特征切换不改任何源文件 mtime ⇒ 曾经静默复用上一次的库与镜像 (实测: 默认构建
@@ -101,12 +111,17 @@ KERNEL_FEATURES ?=
 # 不同则重写 (mtime 变新 ⇒ 库与镜像失效). 谁先读 Makefile 不再决定要不要重编.
 KERNEL_FEATURES_STAMP := $(ARCH_BUILD_DIR)/.kernel_features
 
+# 戳记内容 = features 值 + 默认 features 关闭标记. `KERNEL_NO_DEFAULT` 为空时与纯
+# features 值逐字相同 (存量调用与既有契约测试不受影响); 置 1 时多一个 `|no-default`
+# 后缀, 使「同 features、不同默认面」的两次构建互不命中对方制品.
+KERNEL_STAMP_CONTENT := $(KERNEL_FEATURES)$(if $(filter 1,$(KERNEL_NO_DEFAULT)),|no-default)
+
 # 戳记规则: 内容 == 当前 KERNEL_FEATURES 则保持文件不动 (mtime 不变 ⇒ 下游增量);
 # 不同 (含文件不存在) 则重写 ⇒ mtime 变新 ⇒ $(RUST_LIB) 与 kernel.bin 失效重编.
 # FORCE 保证每次都做这次内容比较, 比较本身开销 = 一次 cmp.
 $(KERNEL_FEATURES_STAMP): FORCE
 	@mkdir -p $(ARCH_BUILD_DIR)
-	@printf '%s' '$(KERNEL_FEATURES)' | cmp -s - $@ || printf '%s' '$(KERNEL_FEATURES)' > $@
+	@printf '%s' '$(KERNEL_STAMP_CONTENT)' | cmp -s - $@ || printf '%s' '$(KERNEL_STAMP_CONTENT)' > $@
 
 # 显式默认目标: 上一条戳记规则是本文件里最先出现的规则, 不钉这一行则 `make` (无
 # 参数) 的默认目标变成戳记本身 —— 只写戳记不构建镜像, 外部脚本的裸 `make` 会静默
@@ -319,14 +334,14 @@ $(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
 # 恒挂前置, 由戳记规则自己做内容比较 —— 值不变则不重写, 增量行为与改造前一致.
 $(RUST_LIB): $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(KERNEL_FEATURES_STAMP)
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(filter 1,$(KERNEL_NO_DEFAULT)),--no-default-features) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 else
 # x86_64: 用 Cargo 构建 Rust 用户程序 + 内核
 # include_bytes! 编译时需要 init.bin 存在，确保用户程序先构建
 
 $(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find src/kernel -name '*.rs' 2>/dev/null) $(KERNEL_FEATURES_STAMP)
 	@echo "Building Rust kernel module..."
-	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
+	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(filter 1,$(KERNEL_NO_DEFAULT)),--no-default-features) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif
 
 # initramfs 载体归档 (K-07b): 两架构共用一条规则, 归档名按本架构目录落盘, 与内核
@@ -569,7 +584,7 @@ test-kernel-host:
 
 # 内核单元测试 release 维检查 (P-44): 只编译 + 本 crate 零告警两条判据, 判据与实现在
 # scripts/check_kernel_test_release_dim.sh 顶部. **门槛 6 的判据仍是上面的 debug 配方** ——
-# 本目标不产出用例读数 (release 维比 debug 维少 11 例, lockdep 在该维为 0), 只拦
+# 本目标不产出用例读数 (release 维的用例集合与 debug 维不同), 只拦
 # 「测试侧 cfg 与被测代码掩码不同形」一类回归 (P-43 病灶).
 # 已接入 ci/audit.sh full 步骤 2d; 本目标供单独复跑.
 test-kernel-host-release-compile:
@@ -582,6 +597,7 @@ test-kernel-host-release-compile:
 
 # 内核 feature 构建维 (P-51): lockdep 与 e1000-real-hw 两条 release + feature 组合的
 # compile-only 检查, 判据与实现在 scripts/check_kernel_feature_release_dims.sh 顶部.
+# lockdep 自 A-1 (2026-11-08) 常开起与默认构建同形, 该维保留作转发链断链的显式复跑.
 # 只证明「该组合可编译且本 crate 零告警」, 不产出运行/覆盖读数 (e1000-real-hw 无真硬件
 # 不可运行). 已接入 ci/audit.sh full 步骤 2d; 本目标供单独复跑.
 test-kernel-feature-release-compile:

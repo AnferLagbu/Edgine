@@ -1,10 +1,10 @@
 #!/bin/bash
 # 内核 feature 构建维 release compile-only 检查 (P-51)
 #
-# 背景: src/kernel 声明 30 个 feature, 六门槛只点亮 kernel_test / host-test.
+# 背景: src/kernel 声明 30 个 feature, 门禁只点亮 kernel_test / host-test 与运行维子集.
 #   - lockdep 的 76 处 cfg 全部形如 any(debug_assertions, feature = "lockdep"),
-#     纯 feature = "lockdep" 零处; 常规 release 构建不带任何 feature ⇒ Cargo.toml 特意
-#     保留的「release + lockdep」组合从不构建.
+#     纯 feature = "lockdep" 零处. A-1 (2026-11-08 全量常开) 起 lockdep 在默认 features
+#     里 ⇒ 本维的 lockdep 腿与默认 release 构建同形, 保留作转发链断链的显式复跑.
 #   - e1000-real-hw 有两套真实 cfg 分支 (read_mac_address), 默认构建只编译
 #     not(e1000-real-hw) 侧.
 # 本脚本把这两条组合装成回归锁: 谁让这些分支腐化, 门禁转红.

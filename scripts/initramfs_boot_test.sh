@@ -25,6 +25,13 @@
 # 跑完复原默认构建: 本脚本切换过 KERNEL_FEATURES, 若不复原, 后续门禁会跑在
 # 带 feature 的镜像上 (与 §2.3 默认构建口径不符). 复原放在判定之后, 失败也已复原.
 #
+# 构建面取 `--no-default-features --features initramfs` (KERNEL_NO_DEFAULT=1):
+# A-1 (2026-11-08 裁定甲) 把 lockdep 放进默认 features 后, x86_64 载体镜像末尾
+# 达 0x413000, 越过 K-08 的 USER_CODE_BASE=0x400000 (kview 恒等窗口将覆盖用户
+# 映射区) ⇒ 启动期 fail-closed 停机. 载体是诊断 feature、非出货形态, 故本腿
+# 显式关闭默认 features (实测末尾 0x3EA000, 五条判据全绿); 出货默认镜像仍
+# lockdep 常开, 由 P-62 构建面探针与默认启动腿独立覆盖.
+#
 # 用法:
 #   ./scripts/initramfs_boot_test.sh [x86_64|aarch64|all]   # 默认 all
 # 环境变量:
@@ -180,8 +187,12 @@ boot_and_check() {
 FAILED=0
 for arch in $ARCH_LIST; do
     echo "================================================================"
-    info "[$arch] KERNEL_FEATURES=initramfs 构建..."
-    if ! make ARCH="$arch" KERNEL_FEATURES=initramfs all >"$LOG_DIR/initramfs_build_${arch}.log" 2>&1; then
+    info "[$arch] KERNEL_FEATURES=initramfs KERNEL_NO_DEFAULT=1 构建..."
+    # KERNEL_NO_DEFAULT=1: A-1 常开 lockdep 后, x86_64 载体镜像末尾 0x413000 越过
+    # K-08 的 USER_CODE_BASE=0x400000 (恒等窗口覆盖用户映射). 载体是诊断 feature、
+    # 非出货形态, 故本腿显式关闭默认 features (实测末尾 0x3EA000); 出货默认镜像
+    # 仍 lockdep 常开, 由 P-62 构建面探针与默认启动腿独立覆盖.
+    if ! make ARCH="$arch" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all >"$LOG_DIR/initramfs_build_${arch}.log" 2>&1; then
         err "[$arch] 带 feature 构建失败 (日志: $LOG_DIR/initramfs_build_${arch}.log)"
         FAILED=$((FAILED + 1))
         continue

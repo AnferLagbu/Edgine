@@ -2,20 +2,20 @@
 // P-62 #125 回归锁: lockdep 构建面探针腿的**接线**契约.
 //
 // 背景:
-//   lockdep 是默认关闭的诊断 feature, 且不在启动日志 capabilities 行里, 所以它的
-//   运行维判据取构建面字符串双向探针 (`KERNEL_FEATURES=lockdep` 构建含
-//   "circular dependency" 恰 1 段 / 默认构建 0 段), 由
+//   lockdep 自 A-1 (2026-11-08 裁定甲「全量常开」) 起在默认 features 里, 且不在启动
+//   日志 capabilities 行里, 所以它的判据取构建面字符串两侧探针
+//   (`KERNEL_FEATURES=lockdep` 构建与默认构建都含 "circular dependency" 恰 1 段), 由
 //   `scripts/lockdep_feature_probe.sh` 在 full 档真构建真计数.
 //
 //   本文件**不**重复真构建 (那太贵且已由门禁承担), 只钉五处接线: 探针串与源码同源、
-//   双向判据都在、两架构产物都在射程、audit 真调用且失败即 err、feature 转发链在位.
-//   任一处被改坏后, 那条腿会静默空转或缩面 —— full 档读数照样绿.
+//   两侧判据都在、两架构产物都在射程、audit 真调用且失败即 err、feature 转发链与
+//   默认 features 在位. 任一处被改坏后, 那条腿会静默空转或缩面 —— full 档读数照样绿.
 //
 // 验收:
 //   1. 探针串取自 lockdep.rs 的检测文案, 脚本默认值与它逐字一致 (改名即 fail,
 //      防止判据与被测对象漂移).
-//   2. 正向期望 1 / 反向期望 0 各自参与比较, 且反向比较发生在"复原默认构建"之后
-//      (否则读到的是 feature 镜像, 反向恒绿是假的).
+//   2. 正向期望 1 / 默认侧期望 1 (A-1 常开使默认侧由 0 重指为 1) 各自参与比较,
+//      且默认侧比较发生在"复原默认构建"之后 (否则读到的是 feature 镜像).
 //   3. 两架构各自的**真启动产物**都在射程内 (x86_64 `kernel.flat` /
 //      aarch64 `kernel-aarch64.img`, 二者名称不同形).
 //   4. `ci/audit.sh` 的 full 档步骤 4 真调用本脚本, 失败走 `err` (该脚本里 err 即
@@ -60,7 +60,7 @@ fn test_probe_marker_is_derived_from_lockdep_source() {
     );
 }
 
-/// 2. 双向都判: 正向期望 1、反向期望 0, 且反向比较在复原默认构建之后.
+/// 2. 两侧都判: 正向期望 1、默认侧期望 1 (A-1 常开), 且默认侧比较在复原默认构建之后.
 #[test]
 fn test_probe_judges_both_directions() {
     let script = read(PROBE_SCRIPT);
@@ -69,8 +69,8 @@ fn test_probe_judges_both_directions() {
         "正向期望段数必须是 1 (恰一段, 不是「>=1」)"
     );
     assert!(
-        script.contains("EXPECT_OFF=\"${LOCKDEP_PROBE_OFF:-0}\""),
-        "反向期望段数必须是 0 (默认构建不含探针串)"
+        script.contains("EXPECT_OFF=\"${LOCKDEP_PROBE_OFF:-1}\""),
+        "默认侧期望段数必须是 1 (A-1 常开后默认构建即检测构建)"
     );
     assert!(
         script.contains("\"$on\" = \"$EXPECT_ON\""),
@@ -78,9 +78,9 @@ fn test_probe_judges_both_directions() {
     );
     assert!(
         script.contains("\"$off\" = \"$EXPECT_OFF\""),
-        "反向读数必须与期望比较并判红 —— 只判正向时探针串与 feature 脱钩不会红"
+        "默认侧读数必须与期望比较并判红 —— 只判正向时默认常开是否真落地无人判定"
     );
-    // 反向必须在"复原默认构建"之后取数, 否则读的还是 feature 镜像.
+    // 默认侧必须在"复原默认构建"之后取数, 否则读的还是 feature 镜像.
     assert_before(
         &script,
         "make ARCH=\"$arch\" all >",
@@ -142,7 +142,7 @@ fn test_audit_full_invokes_probe_leg_with_err_on_fail() {
     );
 }
 
-/// 5. lockdep feature 两级转发在位 (本腿判定的对象本身).
+/// 5. lockdep feature 两级转发与默认常开在位 (本腿判定的对象本身).
 #[test]
 fn test_lockdep_feature_forwarding_chain_present() {
     let kernel = read(KERNEL_MANIFEST);
@@ -150,6 +150,11 @@ fn test_lockdep_feature_forwarding_chain_present() {
         kernel.contains("lockdep = [\"kernel-privileged/lockdep\"]"),
         "kernel 清单必须把 lockdep 转发给 privileged (P-71: 未转发的 feature 在子 \
          crate 恒关闭, cfg 分支静默消失 —— 正是本腿要抓的断链形态)"
+    );
+    assert!(
+        kernel.contains("default = [\"lockdep\"]"),
+        "A-1 (2026-11-08 裁定甲「全量常开」): lockdep 必须在默认 features 里 —— \
+         默认侧探针期望 1 与该常开形态互为前提"
     );
     let privileged = read(PRIVILEGED_MANIFEST);
     assert!(

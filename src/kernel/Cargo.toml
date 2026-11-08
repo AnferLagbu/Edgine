@@ -53,14 +53,16 @@ kernel-functions = { path = "functions" }
 # 声明一并移除 —— 内核同步原语统一由 privileged::sync (自研 IrqSpinLock/SpinLock) 提供.
 
 [features]
-default = []
+# A-1 (2026-11-08 裁定甲「全量常开」): lockdep 进默认 features ⇒ 出货的 release 构建
+# 默认开启锁序检测; `--no-default-features` 是唯一关闭形态. 裁定依据 (M7 后
+# median(r_i)=1.0247 ≤ 1.10 合格线) 见 docs/plan/multithreading-project.md §8 A-1.
+default = ["lockdep"]
 # P-71: 两个子 crate 用到的 feature 必须逐项转发 (privileged / functions 各一组);
 # 未转发的 feature 在子 crate 里恒为关闭, 会让其 cfg 分支静默消失.
 # e1000 真实硬件 EEPROM 读取路径 (关闭时走 QEMU 仿真兼容路径) — 使用点在 functions.
 e1000-real-hw = ["kernel-functions/e1000-real-hw"]
 # S2 DNS 接线 (docs/plan/archive/net-feature-alignment.md): 实机验证钩子 —— boot 完成后发一次
-# 真实 DNS 查询并 printk 结果 (仿 lockdep 诊断 feature 先例,
-# 经 KERNEL_FEATURES= 点亮, 日常构建不含).
+# 真实 DNS 查询并 printk 结果 (诊断 feature 形态, 经 KERNEL_FEATURES= 点亮, 日常构建不含).
 dns-selftest = ["kernel-privileged/dns-selftest"]
 # host-test: 剥离裸机专属顶层约束 (no_std/no_main/alloc_error_handler/panic_handler),
 # 供 host-tests 经 edgine 壳引用 functions 真实源码.
@@ -72,8 +74,9 @@ net = ["kernel-privileged/net"]
 alloc = ["kernel-privileged/alloc"]
 async = ["kernel-functions/async"]
 debug_mutex = ["kernel-privileged/debug_mutex"]
-# lockdep: 独立点亮锁依赖检测体系 (AB-BA / IRQ 取睡眠锁 / 递归 / 释放未持有),
-# 使 release boot 镜像也能在其余仍为 release 的前提下单独启用锁序取证.
+# lockdep: 锁依赖检测体系 (AB-BA / IRQ 取睡眠锁 / 递归 / 释放未持有) 的 cfg 开关,
+# 由上面的 default 点亮 (A-1). 显式声明保留给 `--no-default-features --features lockdep`
+# 的定向复跑与 P-62 探针腿的 `KERNEL_FEATURES=lockdep` 构建.
 # 详见 docs/plan/multithreading-project.md A-1..A-4 与 P-29 根因诊断.
 lockdep = ["kernel-privileged/lockdep"]
 # initramfs: 从 other/build/x86_64/user/initramfs.cpio 加载根文件系统 (产物按架构分目录)

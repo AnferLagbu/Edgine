@@ -261,7 +261,9 @@ O(到期数)，而本节消掉的是"线性扫描必须付几次锁"这个独立
 ## Lockdep 集成
 
 Lockdep（`privileged/sync/lockdep.rs`）在 `debug_assertions` 或 `feature = "lockdep"` 启用时，
-跟踪每个锁的获取/释放，构建锁序图，检测：
+跟踪每个锁的获取/释放，构建锁序图，检测以下问题（`lockdep` 自 A-1（2026-11-08 裁定甲「全量
+常开」）起在默认 features 里，出货的 release 构建默认开启检测，`--no-default-features` 是
+唯一关闭形态）：
 
 - **AB-BA 死锁**：线程 A 持锁 L1 再获取 L2，线程 B 持锁 L2 再获取 L1
 - **中断上下文睡眠**：在硬中断中获取 Mutex
@@ -292,14 +294,16 @@ Lockdep 类由构造点自动注册，无需手动维护锁类 ID：`SpinLock::n
 `[LOCKDEP] coverage classes=… violations=… detected=… acquire_ops=… new_edges=… class_table_dropped=…
 held_stack_overflowed=…`，取值同样走 `functions::sync::lockdep` 安全代理。`scripts/qemu_boot_test.sh`
 双架构分支各消费一次，判据是**四项硬零**（`detected=false` / `violations=0` / 两个粘滞失效读数为 0），
-非零或读数行缺失即 `RESULT=1` 且不受 `FAIL_OK` 放宽。`classes=` 与两个记账计数不参与判定：门控关闭的
-默认 release 构建里 `classes` 恒为 0、`debug_assertions` 或 `KERNEL_FEATURES=lockdep` 构建里大于 0，
-同一硬零判据要在两种形态下同形。接线形状由 `host-tests/tests/lockdep_coverage_boot_line_test.rs` 锁住。
+非零或读数行缺失即 `RESULT=1` 且不受 `FAIL_OK` 放宽。`classes=` 与两个记账计数不参与判定：出货的
+默认 release 构建（A-1 常开，含 lockdep）与 `debug_assertions` 构建里 `classes` 大于 0，仅
+`--no-default-features` 的 release 构建恒为 0，同一硬零判据要在两种形态下同形。接线形状由
+`host-tests/tests/lockdep_coverage_boot_line_test.rs` 锁住。
 
 门控关闭的收益只在「调用点不编译」这一层，**体积不省**：lockdep 模块本体仍参与编译（内部只有
 per-CPU 持栈与依赖图段被同一掩码 cfg 掉），而内核链接是 `--whole-archive` 且 `LDFLAGS` 无
-`--gc-sections`，归档目标文件全量入镜像——默认 release 归档里 `lockdep::acquire` 仍是 `T` 导出
-符号。实测读数与后续处置见 `docs/plan/multithreading-project.md` 的 A-1 详情。
+`--gc-sections`，归档目标文件全量入镜像——A-1 常开后该形态只由 `--no-default-features` 构建取得，
+其归档里 `lockdep::acquire` 仍是 `T` 导出符号。实测读数与后续处置见
+`docs/plan/multithreading-project.md` 的 A-1 详情。
 
 ## 参考
 

@@ -46,12 +46,12 @@
 //!
 //! ## 性能
 //!
-//! - 门控关闭 (`release` 且未开 `lockdep` feature): 五把同步原语的调用点整体
-//!   不编译, 运行时零检查开销. 但**体积不省**: 模块本体仍参与编译 (内部只有
-//!   per-CPU 持栈与依赖图段被同一掩码 cfg 掉), 且链接为 `--whole-archive` 且
-//!   无 `--gc-sections`, 归档目标文件全量入镜像 —— `nm` 在默认 release 归档
-//!   (`strings` 探针确认未含 lockdep 特性) 里看得到 `lockdep::acquire` 的 `T`
-//!   符号. 故关闭门控只省下调用, 不省下镜像占用
+//! - 门控关闭 (`--no-default-features` 的 `release` 构建; A-1 起出货构建默认开启):
+//!   五把同步原语的调用点整体不编译, 运行时零检查开销. 但**体积不省**: 模块本体仍
+//!   参与编译 (内部只有 per-CPU 持栈与依赖图段被同一掩码 cfg 掉), 且链接为
+//!   `--whole-archive` 且无 `--gc-sections`, 归档目标文件全量入镜像 —— `nm` 在门控
+//!   关闭的 release 归档里看得到 `lockdep::acquire` 的 `T` 符号. 故关闭门控只省下
+//!   调用, 不省下镜像占用
 //! - 门控开启: 每次有名锁获取只进入 **一次** `LOCK_DEP_MAP` 全局临界区,
 //!   记账路径 **零堆分配** (持有栈快照用定长栈数组), 依赖图 BFS 只在
 //!   **首次观察到新边** 时执行 (已知边直接跳过)
@@ -207,7 +207,7 @@ pub struct LockdepStats {
     /// (本构建的 `register_class` 调用点仍可命中, 与门控无关)
     pub class_table_dropped: u64,
     /// 持有栈满 (`MAX_HELD_LOCKS`) 的次数 —— 每次溢出, 该锁自本次获取起不再被跟踪
-    /// (仅门控激活的构建可能非零: 默认构建不维护持有栈, 也就没有可丢失的覆盖)
+    /// (仅门控激活的构建可能非零: 门控关闭的构建不维护持有栈, 也就没有可丢失的覆盖)
     pub held_stack_overflowed: u64,
 }
 
@@ -814,7 +814,7 @@ pub fn acquire(class_id: LockClassId, instance: usize, irq_context: bool) -> boo
 /// 栈中没有该实例即「释放未持有的锁」, 计入 `num_violations()`.
 /// 门控关闭的构建里本函数只消费参数, 不进 `LOCK_DEP_MAP`.
 pub fn release(class_id: LockClassId, instance: usize) {
-    // 默认 boot (两门皆关): 不持有锁栈, 仅消费参数避免 unused.
+    // 门控关闭的 boot (两门皆关): 不持有锁栈, 仅消费参数避免 unused.
     #[cfg(not(any(debug_assertions, feature = "lockdep")))]
     let _ = (class_id, instance);
 

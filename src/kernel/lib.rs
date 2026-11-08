@@ -1022,9 +1022,9 @@ fn boot_syscall_and_launch() {
 /// 就说明本轮启动路径要么真触发了锁序违规、要么检测面有损 (满表丢注册 / 持栈溢出), 而这两者
 /// 过去都只是内核里无人读取的字段. 消费方 = `scripts/qemu_boot_test.sh` 的双架构断言.
 ///
-/// 门控关闭的默认 release 构建里 `classes=0` 且读数全零, 该行仍证明「读数在位且为零」;
-/// `debug_assertions` 或 `KERNEL_FEATURES=lockdep` 构建里 `classes>0`, 同一硬零判据覆盖真正
-/// 的检测期.
+/// 出货的默认 release 构建 (A-1 全量常开, 含 lockdep) 与 `debug_assertions` 构建里
+/// `classes>0`, 同一硬零判据覆盖真正的检测期; 仅 `--no-default-features` 的 release 构建
+/// 门控关闭, `classes=0` 且读数全零, 该行仍证明「读数在位且为零」.
 ///
 /// 取值走 `functions::sync::lockdep` 安全代理 (docs/explain/ref-lock-order.md 记的即该路径) ——
 /// 读数本身是纯策略侧的观测, 不必让启动编排直接握 privileged 内部接口.

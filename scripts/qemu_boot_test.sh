@@ -255,8 +255,9 @@ feature_caps_boot() {
 #
 # 判据 = 读数行在位 + 四项硬零: `detected=false` / `violations=0` /
 # `class_table_dropped=0` / `held_stack_overflowed=0`. `classes=` 与两个记账计数
-# (`acquire_ops` / `new_edges`) 不参与判定: 默认 release 构建门控关闭时 classes 恒为 0,
-# `debug_assertions` / `KERNEL_FEATURES=lockdep` 构建下 > 0, 两种形态共用同一硬零判据.
+# (`acquire_ops` / `new_edges`) 不参与判定: 出货的默认 release 构建 (A-1 全量常开,
+# 含 lockdep) 与 `debug_assertions` 构建下 classes > 0, 仅 `--no-default-features`
+# 的 release 构建门控关闭时恒为 0 —— 两种形态共用同一硬零判据.
 # 非零即「本轮 lockdep 有结论或有损」, 不受 FAIL_OK 放宽 (与 P-62 能力行同档).
 # 参数: $1=架构  $2=日志文件; 返回: 0 = 在位且四项硬零.
 # ---------------------------------------------------------------------------

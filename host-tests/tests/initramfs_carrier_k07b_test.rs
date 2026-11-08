@@ -411,10 +411,12 @@ fn test_initramfs_feature_is_off_by_default() {
             .lines()
             .find(|l| l.trim_start().starts_with("default ="))
             .unwrap_or_else(|| panic!("{name} 缺 default 行"));
-        assert_eq!(
-            default_line.split('=').nth(1).unwrap().trim(),
-            "[]",
-            "{name} 的 default 必须为空: 内嵌 init.bin 才是出货路径"
+        // A-1 (2026-11-08 裁定甲): kernel 的 default 已含 lockdep, 故判据收窄到本测试
+        // 的真实意图 (initramfs 不在默认 features 里), 不再要求整行恒为 [].
+        let defaults = default_line.split('=').nth(1).unwrap().trim();
+        assert!(
+            !defaults.contains("initramfs"),
+            "{name} 的 default 不得点亮 initramfs: 内嵌 init.bin 才是出货路径 (实得 {defaults})"
         );
     }
 }
@@ -431,8 +433,9 @@ fn test_carrier_boot_script_asserts_milestones() {
     );
     assert_contains(
         &sh,
-        "make ARCH=\"$arch\" KERNEL_FEATURES=initramfs all",
-        "必须真构建带 feature 的镜像",
+        "make ARCH=\"$arch\" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all",
+        "必须真构建带 feature 的镜像; A-1 常开 lockdep 后还须显式关默认 features —— \
+         否则 x86_64 镜像末尾越过 K-08 的 USER_CODE_BASE (启动期 fail-closed)",
     );
     assert_contains(
         &sh,

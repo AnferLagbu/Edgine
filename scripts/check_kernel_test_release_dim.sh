@@ -17,8 +17,8 @@
 # (/home/.../.cargo/registry/...). 若将来改成从仓根用 --manifest-path 调用, 本 crate 的
 # 诊断会变成绝对路径 ⇒ 该判据静默失效, 届时要同步改这里的模式.
 #
-# 只编译不执行 ⇒ 不产出 release 覆盖读数. release 维比 debug 维少 11 例 (10 条 lockdep
-# + 1 条 spinlock), lockdep 在该维用例数为 0, 不得读成覆盖已达成 (口径见
+# 只编译不执行 ⇒ 不产出 release 覆盖读数. release 维的用例集合与 debug 维不同
+# (A-1 常开后 lockdep 用例也随 feature 进入该维), 不得读成覆盖已达成 (口径见
 # docs/plan/net-e2e-tcp-echo-flakiness.md §6 P-43 / P-44).
 #
 # cwd 必须为 src/kernel: 该目录 .cargo/config.toml 固化 target-dir (other/target) 与

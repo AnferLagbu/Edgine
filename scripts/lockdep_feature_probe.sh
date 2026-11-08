@@ -2,37 +2,34 @@
 # ============================================================================
 # lockdep 构建面探针 (P-62 甲 feature 运行维第五项, #125)
 #
-# 用途: 证明 `KERNEL_FEATURES=lockdep` 真把锁依赖检测体系编进了**本架构**镜像.
-#       lockdep 是诊断 feature, 默认构建不含, 故「它到底编没编进去」此前只有
-#       A-1 相对性能读数的间接证据 —— 转发链 (kernel/Cargo.toml → privileged)
-#       任一环断掉, 镜像照样出货, 门禁照样绿.
+# 用途: 证明本架构**出货镜像**里真有锁依赖检测体系, 且 `KERNEL_FEATURES=lockdep`
+#       显式请求不改变这一事实. A-1 (2026-11-08 裁定甲「全量常开」) 起 `lockdep`
+#       在默认 features 里 —— 默认构建即检测构建, 判据的默认侧期望随之由 0 重指为 1
+#       (该重指是同批裁定的附带后果, 见 docs/plan/multithreading-project.md §8.1 A-1).
 #
-# 判据 (用户 2026-11-05 裁定 ⑤, 双向都判, 单向不判):
+# 判据 (用户 2026-11-05 裁定 ⑤ 的双侧形态, 默认侧期望经 A-1 重指):
 #   lockdep 构建: strings -a <本架构镜像> | grep -ac "circular dependency" == 1
-#   默认构建:     同命令 == 0
-# 两侧各司一职, 缺任一侧都留假绿通道: 正向钉「feature 真编进了本架构镜像」;
-# 反向钉「该串确实由 feature 门控」—— 若探针串哪天不再与 lockdep 绑定 (被无条件
-# 文本覆盖、或 A-1 选常开使默认构建也带上它), 只判正向时读数仍是 1, 腿照样绿.
+#   默认构建:     同命令 == 1
+# 两侧各司一职: 正向钉「显式 feature 请求不会把检测体系编丢或编重」; 默认侧钉
+# 「常开真落地」—— 转发链 (kernel/Cargo.toml → privileged) 任一环断掉, 默认镜像
+# 就不再含检测体系, 本腿红.
 #
-# 取 lockdep 的 AB-BA 文案作探针: 该串只在 lockdep.rs 的检测分支里出现, 关闭
-# feature 时整段不进镜像 (实测双架构 default = 0 / lockdep = 1).
+# A-1 之前的反向判据 (「该串确实由 feature 门控」: 默认构建 == 0) 随常开退役 ——
+# 出货面已没有「默认关闭」的构建, 该性质只能在 `--no-default-features` 构建上观测,
+# 不在本腿射程内 (边界见 §8.1 A-1 行). 探针串仍只在 lockdep.rs 的检测分支里出现.
 #
 # 为什么不是启动维: 启动日志 capabilities 行不含 lockdep 位 (只有
-# smp/preempt/kaslr/kpti/freg), 起一趟只能证「还能启动」, 证不了 feature 真在
-# 镜像里; 且 aarch64 的 lockdep 镜像实测进用户态后零输出 (#108 乙 采集轮),
-# 作运行凭据会稳定红.
-#
-# 附带后果: 「默认构建 strings == 0」自此是门禁判据 —— 若 A-1 选「lockdep 常开」,
-# 反向判据即失效, 本腿须重指 (属判据变更, 需再裁; 已登记 §8.1 A-1/A-2 行).
+# smp/preempt/kaslr/kpti/freg), 起一趟只能证「还能启动」, 证不了检测体系真在
+# 镜像里.
 #
 # 用法:
 #   ./scripts/lockdep_feature_probe.sh [x86_64|aarch64|all]   # 默认 all
 # 环境变量:
 #   LOCKDEP_PROBE_MARKER  探针字符串 (默认 "circular dependency")
 #   LOCKDEP_PROBE_ON      lockdep 构建期望段数 (默认 1)
-#   LOCKDEP_PROBE_OFF     默认构建期望段数 (默认 0)
+#   LOCKDEP_PROBE_OFF     默认构建期望段数 (默认 1, A-1 常开后)
 #
-# 退出码: 0 = 双向判据全部符合, 1 = 任一项不符或构建/自检失败
+# 退出码: 0 = 双侧判据全部符合, 1 = 任一项不符或构建/自检失败
 # ============================================================================
 
 set -uo pipefail
@@ -43,7 +40,7 @@ cd "$PROJECT_ROOT"
 ARCH="${1:-all}"
 MARKER="${LOCKDEP_PROBE_MARKER:-circular dependency}"
 EXPECT_ON="${LOCKDEP_PROBE_ON:-1}"
-EXPECT_OFF="${LOCKDEP_PROBE_OFF:-0}"
+EXPECT_OFF="${LOCKDEP_PROBE_OFF:-1}"
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
@@ -118,7 +115,7 @@ for arch in $ARCH_LIST; do
 done
 
 echo "================================================================"
-info "反向腿: 复原默认构建 (KERNEL_FEATURES 空, 探针串期望 $EXPECT_OFF 段)"
+info "默认侧腿: 复原默认构建 (KERNEL_FEATURES 空, 探针串期望 $EXPECT_OFF 段)"
 for arch in $ARCH_LIST; do
     log="$LOG_DIR/lockdep_probe_restore_${arch}.log"
     info "[$arch] 复原默认构建 (全量输出: $log)..."
@@ -135,7 +132,7 @@ for arch in $ARCH_LIST; do
     fi
     off="$(count_marker "$image")"
     if [ "$off" = "$EXPECT_OFF" ]; then
-        ok "[$arch] 默认构建不含探针段 ($off/$EXPECT_OFF) — 已复原默认镜像"
+        ok "[$arch] 默认构建含探针段 ($off/$EXPECT_OFF) — 已复原默认镜像"
     else
         err "[$arch] 默认构建探针段数不符 — 期望 $EXPECT_OFF, 实测 $off ($image)"
         FAILED=$((FAILED + 1))
@@ -147,5 +144,5 @@ if [ "$FAILED" -ne 0 ]; then
     err "lockdep 构建面探针失败: $FAILED 项 (P-62 #125)"
     exit 1
 fi
-ok "lockdep 构建面探针全部通过: 双架构正/负双向符合 (P-62 #125)"
+ok "lockdep 构建面探针全部通过: 双架构正向/默认两侧符合 (P-62 #125)"
 exit 0
