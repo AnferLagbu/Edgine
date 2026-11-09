@@ -1463,7 +1463,7 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### 阶段 6 验证记录（全量验证 + 阶段 3 回归修复，实施：AI）
 
-阶段 6 按 §3 验收六项 + §9 门槛七项全量核验，产出验证报告 `docs/report/framekernel-paradigm-validation.md`（自由描述风格，冻结当时事实）。
+阶段 6 按 §3 验收六项 + §9 门槛七项全量核验，产出验证报告 `docs/report/framekernel-paradigm-validation.md`（自由描述风格，正文只读，修订规则见 `AGENTS.md` §6）。
 
 - **§9 七门槛**：达标 6 项——双架构 0w0e（`./ci/build.sh all` Passed 5 / Failed 0）；clippy pedantic 三维（`-D warnings`）0；核心审计全过；host-tests 全过 + `make test-kernel-host` **941 passed / 0 failed**；QEMU（`./scripts/qemu_boot_test.sh x86_64` 1/1 + `ci/audit.sh full` 7/7 双架构 2/2）；生产反向依赖 0 文件/0 行。未达标 1 项：TCB 占比 56.7% > 30%（`audit_tcb_ratio.py` Status EXCEEDED）。
 - **§3 验收六项**：达标 4 项（项 2 反向依赖 = 0 / 项 3 functions 权威 / 项 5 functions 0 unsafe / 项 6 §2.3 门槛）；未达标 2 项（项 1 TCB < 30%、项 4 privileged `.rs` 300 个 vs §6.6 规划 200）。
