@@ -364,6 +364,11 @@ impl PortStatus {
 // 安全代理
 // ============================================================================
 
+/// 控制器复位/停止与端口复位的墙钟预算
+const XHCI_RESET_TIMEOUT_MS: u64 = 1_000;
+/// 上述等待的迭代回退上限 (时基未建立时使用)
+const XHCI_RESET_TIMEOUT_ROUNDS: u32 = 100_000;
+
 /// xHCI 主机控制器的安全代理 (functions 层)。
 ///
 /// 内部封装 `IoMem` 指向 xHCI MMIO 区域, 暴露 Capability/Operational/Port 寄存器的安全访问。
@@ -562,11 +567,11 @@ impl XhciController {
         let val = self.usb_cmd();
         self.set_usb_cmd(val | USBCMD_HC_RESET);
         // 等待 USBSTS.HC_RESET_COMPLETE 置位
-        let mut timeout = 100_000u32;
-        while self.usb_sts() & USBSTS_HC_RESET_COMPLETE == 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(
+            XHCI_RESET_TIMEOUT_MS,
+            XHCI_RESET_TIMEOUT_ROUNDS,
+            || self.usb_sts() & USBSTS_HC_RESET_COMPLETE != 0,
+        );
         // 应答
         self.ack_usb_sts(USBSTS_HC_RESET_COMPLETE);
     }
@@ -582,11 +587,11 @@ impl XhciController {
         let val = self.usb_cmd();
         self.set_usb_cmd(val & !USBCMD_RUN_STOP);
         // 等待 USBSTS.HC_HALTED 置位
-        let mut timeout = 100_000u32;
-        while self.usb_sts() & USBSTS_HC_HALTED == 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(
+            XHCI_RESET_TIMEOUT_MS,
+            XHCI_RESET_TIMEOUT_ROUNDS,
+            || self.usb_sts() & USBSTS_HC_HALTED != 0,
+        );
     }
 
     /// 启用全局中断 (`USBCMD.INTR_ENABLE`)
@@ -654,11 +659,11 @@ impl XhciController {
         let val = self.portsc(port);
         self.set_portsc(port, val | PORTSC_PR);
         // 等待 PR 清零
-        let mut timeout = 100_000u32;
-        while self.portsc(port) & PORTSC_PR != 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(
+            XHCI_RESET_TIMEOUT_MS,
+            XHCI_RESET_TIMEOUT_ROUNDS,
+            || self.portsc(port) & PORTSC_PR == 0,
+        );
     }
 
     /// 应答端口变化 (写 PORTSC 的 CSC|PEC|RC 等 RW1CS 位)。

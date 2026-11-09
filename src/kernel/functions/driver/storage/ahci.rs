@@ -55,6 +55,38 @@ use crate::slog_warn;
 pub struct AhciError;
 
 // ============================================================================
+// 等待预算 (墙钟)
+// ============================================================================
+
+/// 链路建立 (COMRESET 后 `PxSSTS.DET==3`) 的墙钟预算 (毫秒)
+const AHCI_LINK_TIMEOUT_MS: u64 = 5_000;
+
+/// 设备检出的等待窗口 (毫秒; COMRESET 释放后 `PxSSTS.DET` 离开 0)
+///
+/// SATA 协议要求设备在 COMRESET 释放后 10 ms 内回应; 空端口在此窗口后
+/// 立即判缺位, 不进入链路预算 —— 否则每个空端口各烧满 [`AHCI_LINK_TIMEOUT_MS`],
+/// 6 空端口会把启动拖慢 25 s (线程压测单次 25 s 超时实测被此拖死).
+const AHCI_LINK_PRESENCE_TIMEOUT_MS: u64 = 100;
+
+/// 端口引擎状态位 (`PxCMD.FR` / `CR` / `PxCI` 空闲) 的墙钟预算 (毫秒)
+const AHCI_ENGINE_TIMEOUT_MS: u64 = 1_000;
+
+/// 命令完成的墙钟预算 (毫秒; 与 Linux `ATA_TMOUT_INTERNAL_QUICK` 同量级)
+const AHCI_COMMAND_TIMEOUT_MS: u64 = 5_000;
+
+/// HBA 全局复位 (`GHC.HR` 自清) 的墙钟预算 (毫秒)
+const AHCI_HBA_RESET_TIMEOUT_MS: u64 = 1_000;
+
+/// COMRESET 保持时长 (毫秒; 真实硬件 PHY 时序要求 >1ms)
+const AHCI_COMRESET_HOLD_MS: u64 = 2;
+
+/// 迭代上限 (时基不可用时的回退; 与原实现同值)
+const AHCI_POLL_ITERS: u32 = 1_000_000;
+
+/// 命令完成轮询迭代上限 (时基不可用时的回退; 与原实现同值)
+const AHCI_COMMAND_POLL_ITERS: u32 = 5_000_000;
+
+// ============================================================================
 // HBA 寄存器偏移
 // ============================================================================
 
@@ -259,6 +291,12 @@ impl SataStatus {
             device_detection: (val & 0x0F) as u8,
             interface_speed: ((val >> 4) & 0x0F) as u8,
         }
+    }
+
+    /// 设备是否在位 (DET 处于 1..=3 的检出态; 0 = 无设备, 4 = 离线)
+    #[must_use]
+    pub fn is_present(self) -> bool {
+        matches!(self.device_detection, 1..=3)
     }
 
     /// 设备是否已建立通信 (PxSSTS.DET == 3)
@@ -493,26 +531,29 @@ impl AhciPort {
         // DET=1: 发出 COMRESET 并保持 (真实硬件 PHY 时序要求 >1ms)
         let sctl = self.port_read32(hba, PX_SCTL);
         self.port_write32(hba, PX_SCTL, (sctl & !PX_SCTL_DET) | PX_SCTL_DET_COMRESET);
-        let mut hold = 1_000_000u32;
-        while hold > 0 {
-            hold -= 1;
-            core::hint::spin_loop();
-        }
+        crate::privileged::timer::busy_wait_ms(AHCI_COMRESET_HOLD_MS);
 
         // DET=0: 释放 COMRESET, 设备开始链路建立
         let sctl = self.port_read32(hba, PX_SCTL);
         self.port_write32(hba, PX_SCTL, sctl & !PX_SCTL_DET);
 
+        // 先等设备被检出: 空端口在协议窗口后立即判缺位, 不烧满链路预算
+        // (Linux 对空端口同样即时打 "SATA link down" 后继续枚举).
+        let present = crate::privileged::timer::poll_until_ms(
+            AHCI_LINK_PRESENCE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || SataStatus::from_register(self.port_read32(hba, PX_SSTS)).is_present(),
+        );
+        if !present {
+            return;
+        }
+
         // 轮询 PxSSTS.DET==3 (设备在位 + 通信建立); 超时按设备缺位
         // 处理, 由调用方 detect_device 最终判定
-        let mut timeout = 1_000_000u32;
-        while timeout > 0 {
-            if SataStatus::from_register(self.port_read32(hba, PX_SSTS)).is_connected() {
-                break;
-            }
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ =
+            crate::privileged::timer::poll_until_ms(AHCI_LINK_TIMEOUT_MS, AHCI_POLL_ITERS, || {
+                SataStatus::from_register(self.port_read32(hba, PX_SSTS)).is_connected()
+            });
     }
 
     /// 使能 FIS 接收 (PxCMD.FRE) 并等待设备签名锁存
@@ -530,23 +571,24 @@ impl AhciPort {
         let cmd = self.port_cmd(hba);
         self.set_port_cmd(hba, cmd | PX_CMD_FRE);
 
-        // 等待 FR 置位
-        let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PX_CMD_FR == 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
-        if timeout == 0 {
+        // 等待 FR 置位 (墙钟 1 s)
+        let fr_ready = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_cmd(hba) & PX_CMD_FR != 0,
+        );
+        if !fr_ready {
             slog_warn!(Driver, "端口 {} FRE 超时", self.port_num);
             return false;
         }
 
-        // 等待设备签名锁存 (D2H FIS 到达; QEMU 同步锁存, 真实硬件轮询)
-        let mut sig_wait = 1_000_000u32;
-        while self.port_signature(hba) == 0xFFFF_FFFF && sig_wait > 0 {
-            sig_wait -= 1;
-            core::hint::spin_loop();
-        }
+        // 等待设备签名锁存 (D2H FIS 到达; QEMU 同步锁存, 真实硬件轮询).
+        // 签名未到达不判失败 (调用方 detect_device 自行判定), 仅等待有界时间.
+        let _ = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_signature(hba) != 0xFFFF_FFFF,
+        );
         true
     }
 
@@ -608,13 +650,13 @@ impl AhciPort {
         let cmd = self.port_cmd(hba);
         self.set_port_cmd(hba, cmd | PX_CMD_FRE);
 
-        // 等待 FR 置位
-        let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PX_CMD_FR == 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
-        if timeout == 0 {
+        // 等待 FR 置位 (墙钟 1 s)
+        let fr_ready = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_cmd(hba) & PX_CMD_FR != 0,
+        );
+        if !fr_ready {
             slog_warn!(Driver, "端口 {} FRE 超时", self.port_num);
             return false;
         }
@@ -623,13 +665,13 @@ impl AhciPort {
         let cmd = self.port_cmd(hba);
         self.set_port_cmd(hba, cmd | PX_CMD_ST);
 
-        // 等待 CR 置位
-        timeout = 1_000_000;
-        while self.port_cmd(hba) & PX_CMD_CR == 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
-        if timeout == 0 {
+        // 等待 CR 置位 (墙钟 1 s)
+        let cr_ready = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_cmd(hba) & PX_CMD_CR != 0,
+        );
+        if !cr_ready {
             slog_warn!(Driver, "端口 {} CR 超时", self.port_num);
             return false;
         }
@@ -647,20 +689,20 @@ impl AhciPort {
         // 停止命令处理 (ST=0)
         let cmd = self.port_cmd(hba);
         self.set_port_cmd(hba, cmd & !PX_CMD_ST);
-        let mut timeout = 1_000_000u64;
-        while self.port_cmd(hba) & PX_CMD_CR != 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_cmd(hba) & PX_CMD_CR == 0,
+        );
 
         // 停止 FIS 接收 (FRE=0)
         let cmd = self.port_cmd(hba);
         self.set_port_cmd(hba, cmd & !PX_CMD_FRE);
-        timeout = 1_000_000;
-        while self.port_cmd(hba) & PX_CMD_FR != 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(
+            AHCI_ENGINE_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || self.port_cmd(hba) & PX_CMD_FR == 0,
+        );
 
         self.port_initialized = false;
     }
@@ -707,14 +749,13 @@ impl AhciPort {
             dma.cmd_table_phys,
         );
 
-        // 3. 等待端口空闲
-        let mut timeout = 1_000_000u64;
-        while self.port_is_busy(hba) || self.port_has_drq(hba) {
-            timeout -= 1;
-            if timeout == 0 {
-                return Err(AhciError);
-            }
-            core::hint::spin_loop();
+        // 3. 等待端口空闲 (墙钟 5 s)
+        if !crate::privileged::timer::poll_until_ms(
+            AHCI_COMMAND_TIMEOUT_MS,
+            AHCI_POLL_ITERS,
+            || !self.port_is_busy(hba) && !self.port_has_drq(hba),
+        ) {
+            return Err(AhciError);
         }
 
         // 4. 清零中断状态
@@ -726,17 +767,13 @@ impl AhciPort {
 
         // 6. 等待完成 (错误完成 TFES 同样视为完成信号, 否则越界/中止类
         //    失败只置 TFES 不置 DHRS, 会白烧满超时 — 首次带盘冒烟实证)
-        timeout = 5_000_000;
-        while timeout > 0 {
-            let is = self.interrupt_status(hba);
-            if is & (PX_IS_DHRS | PX_IS_DPS | PX_IS_PCS | PX_IS_TFE) != 0 {
-                break;
-            }
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let completed = crate::privileged::timer::poll_until_ms(
+            AHCI_COMMAND_TIMEOUT_MS,
+            AHCI_COMMAND_POLL_ITERS,
+            || self.interrupt_status(hba) & (PX_IS_DHRS | PX_IS_DPS | PX_IS_PCS | PX_IS_TFE) != 0,
+        );
 
-        if timeout == 0 {
+        if !completed {
             self.clear_port_error_status(hba);
             return Err(AhciError);
         }
@@ -988,15 +1025,13 @@ impl AhciHba {
         self.set_ghc(val & !GHC_IE);
     }
 
-    /// 软重置 HBA (GHC.HR = 1)
+    /// 软重置 HBA (GHC.HR = 1; 墙钟 1 s 等待自清)
     pub fn reset(&self) {
         let val = self.ghc();
         self.set_ghc(val | GHC_HR);
-        let mut timeout = 100_000u32;
-        while self.ghc() & GHC_HR != 0 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        let _ = crate::privileged::timer::poll_until_ms(AHCI_HBA_RESET_TIMEOUT_MS, 100_000, || {
+            self.ghc() & GHC_HR == 0
+        });
     }
 
     /// 列出已实现的端口索引
@@ -1428,6 +1463,23 @@ mod tests {
 
         let ssts_disconnected = SataStatus::from_register(0x0000_0000);
         assert!(!ssts_disconnected.is_connected());
+    }
+
+    #[test]
+    fn test_sata_status_presence() {
+        // DET=0 (无设备) 与 DET=4 (离线) 非在位: comreset 的检出窗口据此
+        // 让空端口立即退出, 不烧满链路预算.
+        assert!(!SataStatus::from_register(0x0000_0000).is_present());
+        assert!(!SataStatus::from_register(0x0000_0004).is_present());
+
+        // DET=1 (已检出未建链) 与 DET=3 (已建链) 都是在位态.
+        let detecting = SataStatus::from_register(0x0000_0001);
+        assert!(detecting.is_present());
+        assert!(!detecting.is_connected());
+
+        let connected = SataStatus::from_register(0x0000_0313);
+        assert!(connected.is_present());
+        assert!(connected.is_connected());
     }
 
     #[test]

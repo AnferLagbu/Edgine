@@ -132,6 +132,18 @@ pub const SQ_SIZE_BYTES: u32 = 64 * 64;
 pub const CQ_SIZE_BYTES: u32 = 64 * 16;
 
 // ============================================================================
+// 等待预算 (墙钟)
+// ============================================================================
+
+/// 控制器状态迁移 (CC.EN ↔ CSTS.RDY / SHST) 的墙钟预算 (毫秒).
+///
+/// `NVMe` 规范要求控制器在 5 s 内完成 enable/disable 迁移.
+const NVME_CTRL_TIMEOUT_MS: u64 = 5_000;
+
+/// 控制器状态轮询的迭代上限 (时基不可用时的回退; 与原实现同值).
+const NVME_CTRL_POLL_ITERS: u32 = 1_000_000;
+
+// ============================================================================
 // Identify CNS
 // ============================================================================
 
@@ -579,24 +591,18 @@ impl NvmeController {
         self.status().ready
     }
 
-    /// 等待控制器就绪
-    pub fn wait_ready(&self, timeout: u32) -> bool {
-        let mut t = timeout;
-        while !self.is_ready() && t > 0 {
-            t -= 1;
-            core::hint::spin_loop();
-        }
-        self.is_ready()
+    /// 等待控制器就绪 (墙钟 5 s; 时基不可用时回退 1M 次迭代)
+    pub fn wait_ready(&self) -> bool {
+        crate::privileged::timer::poll_until_ms(NVME_CTRL_TIMEOUT_MS, NVME_CTRL_POLL_ITERS, || {
+            self.is_ready()
+        })
     }
 
-    /// 等待控制器禁用
-    pub fn wait_disabled(&self, timeout: u32) -> bool {
-        let mut t = timeout;
-        while self.is_ready() && t > 0 {
-            t -= 1;
-            core::hint::spin_loop();
-        }
-        !self.is_ready()
+    /// 等待控制器禁用 (墙钟 5 s; 时基不可用时回退 1M 次迭代)
+    pub fn wait_disabled(&self) -> bool {
+        crate::privileged::timer::poll_until_ms(NVME_CTRL_TIMEOUT_MS, NVME_CTRL_POLL_ITERS, || {
+            !self.is_ready()
+        })
     }
 
     // ── Admin 队列配置 ──
@@ -723,7 +729,7 @@ impl NvmeController {
     /// 禁用控制器并等待就绪清除
     fn disable_and_wait(&self) -> bool {
         self.disable();
-        self.wait_disabled(1_000_000)
+        self.wait_disabled()
     }
 
     /// 初始化控制器 (MMIO + 队列配置)
@@ -768,8 +774,8 @@ impl NvmeController {
             CC_EN | CC_CSS_NVM | (0u32 << CC_MPS_SHIFT) | CC_AMS_RR | CC_IOCQES_VAL | CC_IOSQES_VAL,
         );
 
-        // 等待控制器就绪
-        if !self.wait_ready(1_000_000) {
+        // 等待控制器就绪 (墙钟 5 s)
+        if !self.wait_ready() {
             slog_warn!(Driver, "控制器启用超时");
             return false;
         }
@@ -929,12 +935,12 @@ impl NvmeController {
         let shn: u32 = 1 << 14; // Normal shutdown
         self.set_cc((cc & !0x3C000) | shn);
 
-        // 等待关机完成 (CSTS.SHST = 2)
-        let mut timeout = 1_000_000u64;
-        while self.status().shutdown != 2 && timeout > 0 {
-            timeout -= 1;
-            core::hint::spin_loop();
-        }
+        // 等待关机完成 (CSTS.SHST = 2; 墙钟 5 s)
+        let _ = crate::privileged::timer::poll_until_ms(
+            NVME_CTRL_TIMEOUT_MS,
+            NVME_CTRL_POLL_ITERS,
+            || self.status().shutdown == 2,
+        );
 
         self.initialized = false;
     }

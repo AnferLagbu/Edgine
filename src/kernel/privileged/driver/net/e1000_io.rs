@@ -126,8 +126,11 @@ pub(crate) const E1000_RAH0: u32 = 0x5404;
 pub(crate) const E1000_RAH_AV: u32 = 1 << 31;
 
 // 超时常量
-/// 复位/链路轮询的迭代上限 (100000 次, QEMU 与真机实测足够).
+/// 复位/链路/EEPROM 轮询的迭代上限 (时基不可用时的回退; 墙钟预算由各调用点给出).
 pub const E1000_TIMEOUT: u32 = 100_000;
+
+/// EEPROM 读就绪等待预算 (毫秒).
+const E1000_EEPROM_TIMEOUT_MS: u64 = 10;
 
 // ============================================================================
 // 安全的 E1000 MMIO 访问器
@@ -188,18 +191,17 @@ impl E1000Io {
 
     /// 通过 EERD 寄存器读取 EEPROM 字.
     ///
-    /// 轮询 EERD.DONE 位, 带超时保护.
+    /// 轮询 EERD.DONE 位, 墙钟 10 ms 超时 (时基不可用时回退 `E1000_TIMEOUT` 次).
     #[must_use]
     pub fn eeprom_read(&self, addr: u8) -> u16 {
         self.write32(E1000_EERD, (u32::from(addr) << 2) | E1000_EERD_START);
-        let mut timeout: u32 = 0;
-        while timeout < E1000_TIMEOUT {
+        let done =
+            crate::privileged::timer::poll_until_ms(E1000_EEPROM_TIMEOUT_MS, E1000_TIMEOUT, || {
+                self.read32(E1000_EERD) & E1000_EERD_DONE != 0
+            });
+        if done {
             let val = self.read32(E1000_EERD);
-            if val & E1000_EERD_DONE != 0 {
-                return ((val >> 16) & 0xFFFF) as u16;
-            }
-            timeout += 1;
-            core::hint::spin_loop();
+            return ((val >> 16) & 0xFFFF) as u16;
         }
         0xFFFF
     }

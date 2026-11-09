@@ -99,8 +99,11 @@ pub const WORDS_PER_SECTOR: usize = 256;
 /// 最大支持设备数量 (2通道 × 2驱动器)
 pub const MAX_ATA_DEVICES: usize = 4;
 
-/// 轮询超时值 (循环次数)
+/// 轮询超时的迭代上限 (时基不可用时的回退; 墙钟预算见 `ATA_TIMEOUT_MS`)
 const ATA_TIMEOUT: u32 = 100_000;
+
+/// 轮询超时的墙钟预算 (毫秒)
+const ATA_TIMEOUT_MS: u64 = 1_000;
 
 // ============================================================================
 // 设备状态结构体
@@ -147,26 +150,26 @@ fn read_alt_status(ctrl: &IoPort) -> u8 {
     ctrl.read_u8(ATA_CTRL_ALT_STATUS)
 }
 
-/// 等待 BSY 位清除
+/// 等待 BSY 位清除 (墙钟 1 s 超时; 每轮保留 400ns 规范延时)
 fn wait_bsy(io: &IoPort, ctrl: &IoPort) -> Result<(), AtaError> {
-    let mut timeout = ATA_TIMEOUT;
+    let mut deadline = crate::privileged::timer::Deadline::after_ms(ATA_TIMEOUT_MS, ATA_TIMEOUT);
 
-    while timeout > 0 {
+    loop {
         if io.read_u8(ATA_STATUS) & ATA_STATUS_BSY == 0 {
             return Ok(());
         }
+        if deadline.expired() {
+            return Err(AtaError);
+        }
         ata_delay(ctrl);
-        timeout -= 1;
     }
-
-    Err(AtaError)
 }
 
-/// 等待 DRQ 置位且 BSY 清除
+/// 等待 DRQ 置位且 BSY 清除 (墙钟 1 s 超时; 每轮保留 400ns 规范延时)
 fn wait_drq(io: &IoPort, ctrl: &IoPort) -> Result<(), AtaError> {
-    let mut timeout = ATA_TIMEOUT;
+    let mut deadline = crate::privileged::timer::Deadline::after_ms(ATA_TIMEOUT_MS, ATA_TIMEOUT);
 
-    while timeout > 0 {
+    loop {
         let status = io.read_u8(ATA_STATUS);
 
         if status & ATA_STATUS_DF != 0 {
@@ -181,11 +184,11 @@ fn wait_drq(io: &IoPort, ctrl: &IoPort) -> Result<(), AtaError> {
         if status & (ATA_STATUS_DRQ | ATA_STATUS_BSY) == ATA_STATUS_DRQ {
             return Ok(());
         }
+        if deadline.expired() {
+            return Err(AtaError);
+        }
         ata_delay(ctrl);
-        timeout -= 1;
     }
-
-    Err(AtaError)
 }
 
 /// 选择驱动器 (Master/Slave)
@@ -281,13 +284,10 @@ fn probe_channel(io: &IoPort, ctrl: &IoPort, channel: u8) -> (bool, [AtaDevice; 
     ata_delay(ctrl);
     ctrl.write_u8(ATA_CTRL_ALT_STATUS, 0x00);
 
-    // ATA 规范 9.2: 轮询替代状态等待 BSY 清除 (400ns minimum)
-    for _ in 0..1000 {
-        if read_alt_status(ctrl) & ATA_STATUS_BSY == 0 {
-            break;
-        }
-        core::hint::spin_loop();
-    }
+    // ATA 规范 9.2: 轮询替代状态等待 BSY 清除 (400ns minimum; 墙钟 10 ms 上限)
+    let _ = crate::privileged::timer::poll_until_ms(10, 1_000, || {
+        read_alt_status(ctrl) & ATA_STATUS_BSY == 0
+    });
 
     // 写入签名值回读检测通道是否存在
     io.write_u8(ATA_SECTOR_COUNT, 0x55);

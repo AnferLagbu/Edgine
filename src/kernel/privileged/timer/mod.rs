@@ -92,6 +92,9 @@ pub mod clockevent;
 /// TSC 频率校准 (PIT-based 高精度测量)
 pub mod calibration;
 
+/// 有界等待原语 (墙钟截止期 / 时基未建立时回退迭代上限)
+pub mod wait;
+
 /// 高精度定时器框架 (纳秒级回调)
 pub mod hrtimer;
 
@@ -155,6 +158,11 @@ pub use calibration::{
     is_calibrated, nanoseconds_to_tsc, tsc_to_microseconds, tsc_to_milliseconds,
     tsc_to_nanoseconds,
 };
+
+// --- 有界等待 (墙钟截止期) ---
+
+/// 使用 `wait` 模块的截止期轮询原语
+pub use wait::{Deadline, poll_until_ms, poll_until_ns};
 
 // --- HrTimer 高精度定时器 ---
 

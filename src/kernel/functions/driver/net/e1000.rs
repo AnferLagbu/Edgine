@@ -58,8 +58,17 @@ mod e1000_impl {
     /// 单帧最大长度 (> 标准 MTU + 以太网头, 与 RX 缓冲区同量级).
     const E1000_MAX_FRAME: usize = 2048;
 
-    /// 链路就绪轮询上限 (等待 PHY 自动协商完成).
+    /// 链路就绪轮询的迭代上限 (时基不可用时的回退; 墙钟预算见 `E1000_LINK_TIMEOUT_MS`).
     const E1000_LINK_POLL: u32 = 500_000;
+
+    /// 复位自清等待预算 (毫秒).
+    const E1000_RESET_TIMEOUT_MS: u64 = 100;
+
+    /// 链路就绪等待预算 (毫秒).
+    const E1000_LINK_TIMEOUT_MS: u64 = 1_000;
+
+    /// TX 描述符回收等待预算 (毫秒).
+    const E1000_TX_TIMEOUT_MS: u64 = 100;
 
     /// 默认 Inter-Packet Gap (IEEE 802.3 全双工推荐值).
     const E1000_IPG_DEFAULT: u32 = 0x0060_200A;
@@ -103,18 +112,15 @@ mod e1000_impl {
             let ctrl = self.io.ctrl();
             self.io.set_ctrl(ctrl | E1000_CTRL_RST);
 
-            // 全局复位位 (CTRL.RST) 通常自清; 有界轮询等待其归零. 若超时未清
-            // (部分实现需软件显式清位), 记警告并继续 (对齐 Linux e1000_reset_hw
+            // 全局复位位 (CTRL.RST) 通常自清; 有界轮询等待其归零 (墙钟 100 ms).
+            // 若超时未清 (部分实现需软件显式清位), 记警告并继续 (对齐 Linux e1000_reset_hw
             // 的容错处理); 下方写 CTRL 时已用 `& !E1000_CTRL_RST` 主动清除该位.
-            let mut reset_wait = 0u32;
-            while reset_wait < E1000_TIMEOUT {
-                if self.io.ctrl() & E1000_CTRL_RST == 0 {
-                    break;
-                }
-                reset_wait += 1;
-                core::hint::spin_loop();
-            }
-            if self.io.ctrl() & E1000_CTRL_RST != 0 {
+            let reset_cleared = crate::privileged::timer::poll_until_ms(
+                E1000_RESET_TIMEOUT_MS,
+                E1000_TIMEOUT,
+                || self.io.ctrl() & E1000_CTRL_RST == 0,
+            );
+            if !reset_cleared {
                 crate::slog_warn!(Driver, "e1000: CTRL.RST 未在超时内自清, 主动清位并继续");
             }
 
@@ -130,15 +136,14 @@ mod e1000_impl {
                 | E1000_CTRL_FD;
             self.io.set_ctrl(new_ctrl);
 
-            let mut link_wait = 0u32;
-            while link_wait < E1000_LINK_POLL {
-                if self.io.link_is_up() {
-                    let (speed, duplex) = self.io.link_status();
-                    crate::slog_info!(Driver, "e1000: 链路就绪 speed={} duplex={}", speed, duplex);
-                    return;
-                }
-                link_wait += 1;
-                core::hint::spin_loop();
+            if crate::privileged::timer::poll_until_ms(
+                E1000_LINK_TIMEOUT_MS,
+                E1000_LINK_POLL,
+                || self.io.link_is_up(),
+            ) {
+                let (speed, duplex) = self.io.link_status();
+                crate::slog_info!(Driver, "e1000: 链路就绪 speed={} duplex={}", speed, duplex);
+                return;
             }
             crate::slog_warn!(Driver, "e1000: 链路未就绪, 继续初始化");
         }
@@ -220,14 +225,11 @@ mod e1000_impl {
                 return Err(DriverError::NotInitialized);
             };
 
-            // 等待当前 tail 描述符完成 (硬件置 DD), 描述符环满则超时.
-            let mut waited = 0u32;
-            while !tx_ring.is_done(tx_ring.tail()) {
-                if waited >= E1000_TIMEOUT {
-                    return Err(DriverError::Timeout);
-                }
-                waited += 1;
-                core::hint::spin_loop();
+            // 等待当前 tail 描述符完成 (硬件置 DD), 描述符环满则超时 (墙钟 100 ms).
+            if !crate::privileged::timer::poll_until_ms(E1000_TX_TIMEOUT_MS, E1000_TIMEOUT, || {
+                tx_ring.is_done(tx_ring.tail())
+            }) {
+                return Err(DriverError::Timeout);
             }
 
             tx_ring.prepare_from_slice(&data[..total_len]);

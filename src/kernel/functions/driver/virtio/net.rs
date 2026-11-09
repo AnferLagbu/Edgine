@@ -53,6 +53,11 @@ pub const RX_QUEUE_INDEX: u16 = 0;
 /// TX virtqueue 索引
 pub const TX_QUEUE_INDEX: u16 = 1;
 
+/// TX 完成等待的墙钟预算
+const VIRTIO_NET_TX_TIMEOUT_MS: u64 = 1_000;
+/// TX 完成等待的迭代回退上限 (时基未建立时使用)
+const VIRTIO_NET_TX_TIMEOUT_ROUNDS: u32 = 100_000;
+
 // ── Feature bits ──
 
 /// `VIRTIO_NET_F_CSUM`: 设备处理校验和
@@ -539,20 +544,17 @@ impl VirtioNetDriver {
         self.device.notify_queue(TX_QUEUE_INDEX);
 
         // 轮询等待 TX 完成
-        let mut waited = 0u32;
-        loop {
-            if let Some((_id, _len)) = self.tx_vq.pop_used() {
-                self.tx_vq.reclaim_desc(desc_idx);
-                return Ok(());
-            }
-            if waited > 100_000 {
-                self.tx_vq.reclaim_desc(desc_idx);
-                slog_warn!(Driver, "virtio-net: TX 超时");
-                return Err(VirtioNetError);
-            }
-            waited += 1;
-            core::hint::spin_loop();
+        let completed = crate::privileged::timer::poll_until_ms(
+            VIRTIO_NET_TX_TIMEOUT_MS,
+            VIRTIO_NET_TX_TIMEOUT_ROUNDS,
+            || self.tx_vq.pop_used().is_some(),
+        );
+        self.tx_vq.reclaim_desc(desc_idx);
+        if !completed {
+            slog_warn!(Driver, "virtio-net: TX 超时");
+            return Err(VirtioNetError);
         }
+        Ok(())
     }
 
     /// 尝试接收一个网络包.

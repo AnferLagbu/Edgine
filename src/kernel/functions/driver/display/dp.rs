@@ -162,11 +162,13 @@ const AUX_STA_REPLY_ERR_SHIFT: u8 = 2;
 /// AUX STA 寄存器 bit 2-3 = reply error mask
 const AUX_STA_REPLY_ERR_MASK: u8 = 0x0C;
 
-/// AUX 事务超时 (与 hdmi/ddc.rs `DDC_TRANSACTION_TIMEOUT_ITERS` 对齐).
+/// AUX 事务的墙钟预算 (毫秒).
 ///
-/// 完整 AUX 事务典型 < 1 ms (请求→响应 1 Mbps AUX 速率);
-/// `50_000` `spin_loops` ≈ 1-2 ms, 适配大多数 AUX 控制器.
-const AUX_TRANSACTION_TIMEOUT_ITERS: usize = 50_000;
+/// 完整 AUX 事务典型 < 1 ms (请求→响应 1 Mbps AUX 速率); 5 ms 适配大多数
+/// AUX 控制器, 且远大于真实硬件的最坏响应时间.
+const AUX_TRANSACTION_TIMEOUT_MS: u64 = 5;
+/// AUX 事务轮询的轮数上限 (时基不可用时的回退; 每轮 `AUX_DELAY_ITERS` 次自旋).
+const AUX_TRANSACTION_TIMEOUT_ROUNDS: u32 = 1_000;
 /// AUX 单步延时 (近似 1 µs).
 const AUX_DELAY_ITERS: usize = 50;
 
@@ -718,12 +720,12 @@ impl DpController {
 
         let _ = length;
 
-        // 4. 轮询 STA 寄存器等待 reply_ready
-        let mut elapsed_iters: usize = 0;
+        // 4. 轮询 STA 寄存器等待 reply_ready (墙钟 5 ms)
+        let mut deadline = crate::privileged::timer::Deadline::after_ms(
+            AUX_TRANSACTION_TIMEOUT_MS,
+            AUX_TRANSACTION_TIMEOUT_ROUNDS,
+        );
         loop {
-            if elapsed_iters > AUX_TRANSACTION_TIMEOUT_ITERS {
-                return Err(DpError::Timeout);
-            }
             let sta = io.read8(AUX_STA_REG_OFFSET);
             if (sta & AUX_STA_REPLY_READY_BIT) != 0 {
                 // 检查 reply error 码
@@ -735,10 +737,12 @@ impl DpController {
                 }
                 break;
             }
+            if deadline.expired() {
+                return Err(DpError::Timeout);
+            }
             for _ in 0..AUX_DELAY_ITERS {
                 core::hint::spin_loop();
             }
-            elapsed_iters += AUX_DELAY_ITERS;
         }
 
         // 5. 从 DAT0..DAT3 读取 16 字节响应, 取前 length 字节
@@ -839,12 +843,12 @@ impl DpController {
         let cmd_val: u8 = AUX_CMD_START_BIT | ((AuxCommand::Write as u8) << AUX_CMD_COMMAND_SHIFT);
         io.write8(AUX_CMD_REG_OFFSET, cmd_val);
 
-        // 5. 轮询 STA 寄存器等待 reply_ready
-        let mut elapsed_iters: usize = 0;
+        // 5. 轮询 STA 寄存器等待 reply_ready (墙钟 5 ms)
+        let mut deadline = crate::privileged::timer::Deadline::after_ms(
+            AUX_TRANSACTION_TIMEOUT_MS,
+            AUX_TRANSACTION_TIMEOUT_ROUNDS,
+        );
         loop {
-            if elapsed_iters > AUX_TRANSACTION_TIMEOUT_ITERS {
-                return Err(DpError::Timeout);
-            }
             let sta = io.read8(AUX_STA_REG_OFFSET);
             if (sta & AUX_STA_REPLY_READY_BIT) != 0 {
                 let reply_err = (sta & AUX_STA_REPLY_ERR_MASK) >> AUX_STA_REPLY_ERR_SHIFT;
@@ -855,31 +859,35 @@ impl DpController {
                 }
                 break;
             }
+            if deadline.expired() {
+                return Err(DpError::Timeout);
+            }
             for _ in 0..AUX_DELAY_ITERS {
                 core::hint::spin_loop();
             }
-            elapsed_iters += AUX_DELAY_ITERS;
         }
 
         // length 参数语义: 真实硬件的 `length` 由数据填充字节数隐式决定.
         Ok(())
     }
 
-    /// 等待 AUX 控制器进入空闲状态 (busy == 0).
+    /// 等待 AUX 控制器进入空闲状态 (busy == 0; 墙钟 5 ms).
     fn aux_wait_not_busy(io: &DpIo) -> Result<(), DpError> {
-        let mut elapsed_iters: usize = 0;
+        let mut deadline = crate::privileged::timer::Deadline::after_ms(
+            AUX_TRANSACTION_TIMEOUT_MS,
+            AUX_TRANSACTION_TIMEOUT_ROUNDS,
+        );
         loop {
-            if elapsed_iters > AUX_TRANSACTION_TIMEOUT_ITERS {
-                return Err(DpError::Timeout);
-            }
             let sta = io.read8(AUX_STA_REG_OFFSET);
             if (sta & AUX_STA_BUSY_BIT) == 0 {
                 return Ok(());
             }
+            if deadline.expired() {
+                return Err(DpError::Timeout);
+            }
             for _ in 0..AUX_DELAY_ITERS {
                 core::hint::spin_loop();
             }
-            elapsed_iters += AUX_DELAY_ITERS;
         }
     }
 
@@ -1073,17 +1081,19 @@ impl DpController {
     /// 读取 DPCD 0x0206 寄存器, bit 0 = `LANE_ALIGN_STATUS_UPDATED`.
     /// 该位在所有活动 lane 完成 inter-lane deskew 后置 1.
     ///
-    /// 超时时间 ~10 ms (与 VESA DP 1.4 推荐训练超时一致).
+    /// 超时时间 10 ms (与 VESA DP 1.4 推荐训练超时一致).
     fn poll_lane_align_status(io: &DpIo) -> Result<(), DpError> {
-        const MAX_TRAINING_ITERS: usize = 5_000;
-        let mut elapsed_iters: usize = 0;
-        // 单次迭代 ~50 spin_loops ≈ 1-2 µs, 10 ms = ~5_000 iters
+        /// 训练轮询的墙钟预算 (毫秒)
+        const LANE_ALIGN_TIMEOUT_MS: u64 = 10;
+        /// 训练轮询的轮数上限 (时基不可用时的回退; 每轮 50 次自旋)
+        const LANE_ALIGN_TIMEOUT_ROUNDS: u32 = 100;
+
+        let mut deadline = crate::privileged::timer::Deadline::after_ms(
+            LANE_ALIGN_TIMEOUT_MS,
+            LANE_ALIGN_TIMEOUT_ROUNDS,
+        );
 
         loop {
-            if elapsed_iters > MAX_TRAINING_ITERS {
-                return Err(DpError::Timeout);
-            }
-
             // 读取 LANE_ALIGN_STATUS_UPDATED 寄存器
             let status = Self::aux_read_via_mmio(io, aux_address::LANE_ALIGN_STATUS_UPDATED, 1)?;
             let align = status[0];
@@ -1093,10 +1103,12 @@ impl DpController {
                 return Ok(());
             }
 
+            if deadline.expired() {
+                return Err(DpError::Timeout);
+            }
             for _ in 0..50 {
                 core::hint::spin_loop();
             }
-            elapsed_iters += 50;
         }
     }
 

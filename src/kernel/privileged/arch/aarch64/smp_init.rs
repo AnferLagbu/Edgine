@@ -18,10 +18,11 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 /// 次核私有内核栈大小 (16 KiB)。
 const AP_STACK_SIZE: usize = 16 * 1024;
 
-/// BSP 等待单次 `done` 握手的自旋上界 (轮次)。
+/// BSP 等待单次 `done` 握手的墙钟预算。
 ///
-/// SIMPLIFIED: 以固定轮次忙等替代定时器超时; 影响面: 超时阈值随 CPU 主频浮动,
-///   过短可能误判慢速 AP 离线; 何时需扩展: 引入基于 `CNTPCT_EL0` 的定时超时。
+/// 时基未建立 (无硬件计数器) 时回退为固定轮次上限。
+const DONE_TIMEOUT_MS: u64 = 5_000;
+/// 上述等待的迭代回退上限 (沿用原固定轮次)。
 const DONE_TIMEOUT_LOOPS: u32 = 100_000_000;
 
 /// 次核启动信息槽布局 (与 `boot/aarch64/start.S` 的 `ap_entry_asm` 字节偏移一一对应)。
@@ -203,10 +204,11 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
 
     let before = crate::privileged::smp::get_cpu_count();
 
-    // 有界自旋等待 AP 置 done; 读用 volatile, 随后 Acquire 屏障配对 AP 的 Release.
-    let mut spin: u32 = 0;
+    // 有界等待 AP 置 done; 读用 volatile, 随后 Acquire 屏障配对 AP 的 Release.
+    let mut deadline =
+        crate::privileged::timer::Deadline::after_ms(DONE_TIMEOUT_MS, DONE_TIMEOUT_LOOPS);
     while unsafe { core::ptr::read_volatile(&raw const (*slot).done) } == 0 {
-        if spin >= DONE_TIMEOUT_LOOPS {
+        if deadline.expired() {
             let el = unsafe { core::ptr::read_volatile(&raw const (*slot).el) };
             crate::klog_err!(
                 Kernel,
@@ -217,7 +219,6 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
             return Err(());
         }
         core::hint::spin_loop();
-        spin += 1;
     }
     core::sync::atomic::fence(Ordering::Acquire);
 

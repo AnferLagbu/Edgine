@@ -719,9 +719,9 @@ fn nvme_msix03_selftest(ci: usize) {
         return;
     };
 
-    // IF 窗口内等待 ISR 处理计数变化 (hlt 让出流水线, MSI-X 投递唤醒)
+    // IF 窗口内等待 ISR 处理计数变化 (hlt 让出流水线, MSI-X 投递唤醒; 墙钟 5 s)
     let handled = nvme_with_interrupts_enabled(|| {
-        let mut timeout = 5_000_000u64;
+        let mut deadline = crate::privileged::timer::Deadline::after_ms(5_000, 5_000_000);
         loop {
             let now = {
                 NVME_CONTROLLERS
@@ -732,8 +732,7 @@ fn nvme_msix03_selftest(ci: usize) {
             if now != before {
                 return true;
             }
-            timeout -= 1;
-            if timeout == 0 {
+            if deadline.expired() {
                 return false;
             }
             crate::privileged::cpu::arch::halt();

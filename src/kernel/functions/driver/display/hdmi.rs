@@ -40,8 +40,17 @@ const PCLK_DIV_REG_OFFSET: usize = 0x064;
 const PCLK_LOCK_REG_OFFSET: usize = 0x066;
 /// PLL 锁定 bit
 const PCLK_LOCK_BIT: u8 = 0x01;
-/// PLL 锁定轮询超时 (`500_000` iters ≈ 10 ms)
-const PLL_LOCK_TIMEOUT_ITERS: usize = 500_000;
+/// PLL 锁定轮询的墙钟预算 (毫秒)
+///
+/// 每次轮询之间保留 50 次自旋的硬件沉降时间; 时基不可用时回退为
+/// `PLL_LOCK_TIMEOUT_ROUNDS` 轮 (旧行为: 每轮 50 spins).
+const PLL_LOCK_TIMEOUT_MS: u64 = 100;
+
+/// PLL 锁定轮询的轮数上限 (时基不可用时的回退)
+const PLL_LOCK_TIMEOUT_ROUNDS: u32 = 10_000;
+
+/// 单轮轮询间的自旋沉降次数
+const PLL_POLL_SPINS: u32 = 50;
 
 // ============================================================================
 // 同步极性 + TMDS 寄存器偏移
@@ -932,20 +941,25 @@ impl HdmiController {
             iomem.write_u8(self.pclk_div_reg_offset, div);
         }
 
-        // 第 1.5 步: 等待 PLL 锁定
+        // 第 1.5 步: 等待 PLL 锁定 (墙钟 100 ms)
         if let Some(iomem) = &self.iomem {
-            let mut elapsed: usize = 0;
+            let mut deadline = crate::privileged::timer::Deadline::after_ms(
+                PLL_LOCK_TIMEOUT_MS,
+                PLL_LOCK_TIMEOUT_ROUNDS,
+            );
             let mut locked = false;
-            while elapsed < PLL_LOCK_TIMEOUT_ITERS {
+            loop {
                 let status = iomem.read_u8(PCLK_LOCK_REG_OFFSET);
                 if status & PCLK_LOCK_BIT != 0 {
                     locked = true;
                     break;
                 }
-                for _ in 0..50 {
+                if deadline.expired() {
+                    break;
+                }
+                for _ in 0..PLL_POLL_SPINS {
                     core::hint::spin_loop();
                 }
-                elapsed += 50;
             }
             if !locked {
                 return Err(HdmiError::PllLockTimeout);

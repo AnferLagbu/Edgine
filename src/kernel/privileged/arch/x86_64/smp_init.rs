@@ -21,8 +21,14 @@ const AP_STACK_SIZE: usize = 65536;
 const INIT_WAIT_US: u32 = 10000;
 const SIPI_DELAY_US: u32 = 200;
 const READY_POLL_US: u32 = 100;
-const READY_TIMEOUT_LOOPS: usize = 1000;
-const AP_ENTRY_TIMEOUT_LOOPS: usize = 500;
+/// AP 就绪等待的墙钟预算 (1000 × 100 µs)
+const READY_TIMEOUT_MS: u64 = 100;
+/// AP 就绪等待的迭代回退上限 (时基未建立时使用)
+const READY_TIMEOUT_LOOPS: u32 = 1000;
+/// AP 入口完成等待的墙钟预算 (500 × 100 µs)
+const AP_ENTRY_TIMEOUT_MS: u64 = 50;
+/// AP 入口完成等待的迭代回退上限 (时基未建立时使用)
+const AP_ENTRY_TIMEOUT_LOOPS: u32 = 500;
 
 /// AP 启动握手结构体大小 (字节).
 ///
@@ -264,28 +270,35 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
         // 等待 AP 就绪 (最多 100ms), volatile 读取跨 CPU 写入.
         // ready/done 偏移由 Rust 端 offset_of! 计算, 与 trampoline.asm SINFO_* 符号互校
         // (DECISION-050: 单一来源, 避免 magic 偏移扩散).
-        let mut timeout = READY_TIMEOUT_LOOPS;
         let ready_ptr: *const u32 =
             (TRAMPOLINE_BASE + AP_INFO_OFFSET + READY_OFFSET as u64) as *const u32;
-        while timeout > 0 {
-            if core::ptr::read_volatile(ready_ptr) != 0 {
+        let mut ready = false;
+        let mut ready_deadline =
+            crate::privileged::timer::Deadline::after_ms(READY_TIMEOUT_MS, READY_TIMEOUT_LOOPS);
+        while !ready {
+            ready = core::ptr::read_volatile(ready_ptr) != 0;
+            if ready {
+                break;
+            }
+            if ready_deadline.expired() {
                 break;
             }
             timer_udelay(READY_POLL_US);
-            timeout -= 1;
         }
 
-        if timeout > 0 {
+        if ready {
             // AP 已就绪，等待 ap_entry 完成 per-CPU GDT+TSS 初始化
             let done_ptr: *const u32 =
                 (TRAMPOLINE_BASE + AP_INFO_OFFSET + DONE_OFFSET as u64) as *const u32;
-            let mut wait = AP_ENTRY_TIMEOUT_LOOPS;
-            while wait > 0 {
-                if core::ptr::read_volatile(done_ptr) != 0 {
+            let mut entry_deadline = crate::privileged::timer::Deadline::after_ms(
+                AP_ENTRY_TIMEOUT_MS,
+                AP_ENTRY_TIMEOUT_LOOPS,
+            );
+            while core::ptr::read_volatile(done_ptr) == 0 {
+                if entry_deadline.expired() {
                     break;
                 }
                 timer_udelay(READY_POLL_US);
-                wait -= 1;
             }
         }
 

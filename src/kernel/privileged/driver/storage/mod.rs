@@ -152,6 +152,11 @@ const AHCI_CMD_HDR_SIZE: usize = core::mem::size_of::<ahci::AhciCommandHeader>()
 /// AHCI 命令表大小
 const AHCI_CMD_TBL_SIZE: usize = core::mem::size_of::<ahci::AhciCommandTable>();
 
+/// `NVMe` 命令完成等待的墙钟预算 (毫秒; 与 Linux admin 命令超时同量级)
+const NVME_CMD_TIMEOUT_MS: u64 = 5_000;
+/// `NVMe` 命令完成轮询的迭代上限 (时基不可用时的回退; 与原实现同值)
+const NVME_CMD_POLL_ITERS: u32 = 5_000_000;
+
 /// 分配 `NVMe` Admin 队列 (SQ + CQ DMA 内存)
 ///
 /// 返回 `((sq_virt, sq_phys), (cq_virt, cq_phys))` — 虚拟地址供 CPU 侧队列
@@ -294,9 +299,10 @@ pub fn nvme_submit_admin_cmd(args: NvmeCmdSubmit<'_>) -> Result<u16, KernelError
         let db_offset = NVME_DB_BASE;
         iomem.write_u32(db_offset, new_tail);
 
-        // 等待 CQ 完成
+        // 等待 CQ 完成 (墙钟 5 s)
         let cq = cq_ptr as *const nvme::NvmeCompletion;
-        let mut timeout = 5_000_000u64;
+        let mut deadline =
+            crate::privileged::timer::Deadline::after_ms(NVME_CMD_TIMEOUT_MS, NVME_CMD_POLL_ITERS);
         loop {
             let entry = core::ptr::read_volatile(cq.add(*cq_head as usize));
             if (entry.status & 0x01) == *phase {
@@ -319,8 +325,7 @@ pub fn nvme_submit_admin_cmd(args: NvmeCmdSubmit<'_>) -> Result<u16, KernelError
                 );
                 return Err(KernelError::Io);
             }
-            timeout -= 1;
-            if timeout == 0 {
+            if deadline.expired() {
                 crate::klog_warn!(
                     Driver,
                     "nvme_submit_admin_cmd: timeout cid={cid} cq_head={cq_head} phase={}",
@@ -367,9 +372,10 @@ pub fn nvme_submit_io_cmd(
         // I/O SQ doorbell
         iomem.write_u32(io_queue_db_offset, new_tail);
 
-        // 等待 CQ 完成
+        // 等待 CQ 完成 (墙钟 5 s)
         let cq = cq_ptr as *const nvme::NvmeCompletion;
-        let mut timeout = 5_000_000u64;
+        let mut deadline =
+            crate::privileged::timer::Deadline::after_ms(NVME_CMD_TIMEOUT_MS, NVME_CMD_POLL_ITERS);
         loop {
             let entry = core::ptr::read_volatile(cq.add(*cq_head as usize));
             if (entry.status & 0x01) == *phase {
@@ -387,8 +393,7 @@ pub fn nvme_submit_io_cmd(
                 }
                 return Err(KernelError::Io);
             }
-            timeout -= 1;
-            if timeout == 0 {
+            if deadline.expired() {
                 return Err(KernelError::Io);
             }
             core::hint::spin_loop();

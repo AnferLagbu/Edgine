@@ -49,6 +49,11 @@ pub(crate) const KB_LED_CAPS_LOCK: u8 = 0x04;
 /// 缓冲区大小
 const KEYBOARD_BUFFER_SIZE: usize = 128;
 
+/// PS/2 控制器缓冲区等待的墙钟预算
+const PS2_IO_TIMEOUT_MS: u64 = 100;
+/// PS/2 缓冲区等待的迭代回退上限 (时基未建立时使用; 沿用原输出等待上限)
+const PS2_IO_TIMEOUT_ROUNDS: u32 = 100_000;
+
 // ============================================================================
 // Scancode 转换表
 // ============================================================================
@@ -342,25 +347,21 @@ pub struct KeyboardDriver {
 // ============================================================================
 
 /// 等待输入缓冲区为空
+///
+/// 超时后按尽力而为继续写入: 控制器若仍挂起, 随后的 ACK 读取会以有界超时
+/// 失败, 由上层返回 `HardwareError` (不会静默成功).
 fn wait_input_buffer_empty(cmd_port: &IoPort) {
-    while cmd_port.read_u8(0) & PS2_STATUS_INPUT_FULL != 0 {
-        core::hint::spin_loop();
-    }
+    let _ =
+        crate::privileged::timer::poll_until_ms(PS2_IO_TIMEOUT_MS, PS2_IO_TIMEOUT_ROUNDS, || {
+            cmd_port.read_u8(0) & PS2_STATUS_INPUT_FULL == 0
+        });
 }
 
 /// 等待输出缓冲区满
 fn wait_output_buffer_full(cmd_port: &IoPort) -> bool {
-    let mut timeout: u32 = 100_000;
-
-    while timeout > 0 {
-        if cmd_port.read_u8(0) & PS2_STATUS_OUTPUT_FULL != 0 {
-            return true;
-        }
-        timeout -= 1;
-        core::hint::spin_loop();
-    }
-
-    false
+    crate::privileged::timer::poll_until_ms(PS2_IO_TIMEOUT_MS, PS2_IO_TIMEOUT_ROUNDS, || {
+        cmd_port.read_u8(0) & PS2_STATUS_OUTPUT_FULL != 0
+    })
 }
 
 /// 向 PS/2 控制器发送命令

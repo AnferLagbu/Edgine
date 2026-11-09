@@ -40,6 +40,11 @@ pub struct VirtioBlkError;
 /// 块设备扇区大小 (字节)
 pub const BLK_SECTOR_SIZE: usize = 512;
 
+/// 请求完成等待的墙钟预算
+const VIRTIO_BLK_TIMEOUT_MS: u64 = 5_000;
+/// 请求完成等待的迭代回退上限 (时基未建立时使用)
+const VIRTIO_BLK_TIMEOUT_ROUNDS: u32 = 5_000_000;
+
 // ── Feature bits ──
 
 /// `VIRTIO_BLK_F_SIZE_MAX`: 驱动可指定最大缓冲区大小
@@ -544,24 +549,32 @@ impl VirtioBlkDriver {
         self.device.notify_queue(0);
 
         // ── 等待完成 (轮询 used ring) ──
-        loop {
-            if let Some((_id, _len)) = self.vq.pop_used() {
-                let status = dma.read_byte(req_size + data_size);
-
-                self.vq.reclaim_desc(desc_status);
-                self.vq.reclaim_desc(desc_data);
-                self.vq.reclaim_desc(desc_req);
-
-                if status != VIRTIO_BLK_S_OK {
-                    if status == VIRTIO_BLK_S_IOERR {
-                        slog_warn!(Driver, "virtio-blk: I/O 错误");
-                    }
-                    return Err(VirtioBlkError);
-                }
-                return Ok(());
-            }
-            core::hint::spin_loop();
+        let completed = crate::privileged::timer::poll_until_ms(
+            VIRTIO_BLK_TIMEOUT_MS,
+            VIRTIO_BLK_TIMEOUT_ROUNDS,
+            || self.vq.pop_used().is_some(),
+        );
+        if !completed {
+            self.vq.reclaim_desc(desc_status);
+            self.vq.reclaim_desc(desc_data);
+            self.vq.reclaim_desc(desc_req);
+            slog_warn!(Driver, "virtio-blk: 请求超时");
+            return Err(VirtioBlkError);
         }
+
+        let status = dma.read_byte(req_size + data_size);
+
+        self.vq.reclaim_desc(desc_status);
+        self.vq.reclaim_desc(desc_data);
+        self.vq.reclaim_desc(desc_req);
+
+        if status != VIRTIO_BLK_S_OK {
+            if status == VIRTIO_BLK_S_IOERR {
+                slog_warn!(Driver, "virtio-blk: I/O 错误");
+            }
+            return Err(VirtioBlkError);
+        }
+        Ok(())
     }
 }
 
