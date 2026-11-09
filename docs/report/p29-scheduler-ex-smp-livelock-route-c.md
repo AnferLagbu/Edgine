@@ -1,6 +1,6 @@
 # P-29：Mode X 真冻结根因坐实与 SchedulerEx 并行实现移除（route C）
 
-> 定位：本文是 P-29 工程的结果快照——记录 `net-e2e-tcp-echo-flakiness` Mode X「关中断自旋死锁」的**真根因**如何在前序 PROCESS_TABLE/NET_STATE 判读被否证后收敛到「全局单例无锁 `SCHEDULER_EX` 被每核 tick 并发驱动 → `boost_all` livelock」，以及据此做出的结构性修复（route C：彻底移除并行调度器实现）与其 1000-boot soak 验效。发布即冻结，作为后续工程（含新立 P-30）的输入依据。
+> 定位：本文是 P-29 工程的结果快照——记录 `net-e2e-tcp-echo-flakiness` Mode X「关中断自旋死锁」的**真根因**如何在前序 PROCESS_TABLE/NET_STATE 判读被否证后收敛到「全局单例无锁 `SCHEDULER_EX` 被每核 tick 并发驱动 → `boost_all` livelock」，以及据此做出的结构性修复（route C：彻底移除并行调度器实现）与其 1000-boot soak 验效。正文只读（修订规则见 `AGENTS.md` §6），作为后续工程（含新立 P-30）的输入依据。
 >
 > 关联：`docs/report/p28-mode-x-freeze-verdict.md`（判型产物，本文上游）、`docs/report/p27-e2e-flake-forensic-report.md`（取证产物）、`docs/plan/net-e2e-tcp-echo-flakiness.md`（P-29 台账闭合 + P-30 登记）。
 

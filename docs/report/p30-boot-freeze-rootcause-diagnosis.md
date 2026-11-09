@@ -2,7 +2,7 @@
 
 > 本报告是一次排查工作区的结果快照。P-29 route C 移除并行调度器后，1000-boot soak 里 `boost_all` livelock 签名零复发，只剩 **1/1000 的 `delta=0` 整机冻结**（boot284 现场指向 freg `RECOVERY_MANAGER` × `cfs_rq` 跨核自旋）。这条残留单立为 **P-30**。经过多轮插桩取证，最终结论是一个**负结果**：该冻结在**生产（非 lockdep）构建**里不复现；此前追到的"四核死自旋 convoy"主要是 **lockdep 观察者效应**叠加 **KPTI tick 读数伪影**。排查途中确实坐实并根治了**两条真实的锁误用**（与冻结判据无关，但都是潜伏缺陷）。报告给出完整证据链、被证伪的假设、根治形状、验收数据，以及若干登记为遗留的独立项。
 >
-> 报告冻结当时事实，作为后续 plan 与修复工程的输入。工程条目与决策见 [progress-active-tasks.md](../plan/progress-active-tasks.md) 的 P-30 行。所有结论均附源码位置或命令证据。
+> 报告正文只读（修订规则见 `AGENTS.md` §6），作为后续 plan 与修复工程的输入。工程条目与决策见 [progress-active-tasks.md](../plan/progress-active-tasks.md) 的 P-30 行。所有结论均附源码位置或命令证据。
 
 ## 一、判据：怎么才算"冻结"
 

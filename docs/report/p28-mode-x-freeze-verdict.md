@@ -2,7 +2,7 @@
 
 > 本报告是 P-28 取证工程的结果快照：对 P-27 遗留的 Mode X「整系统同一瞬间静默」形态（x86_64 端到端 TCP 回启 ~1.5% 就绪超时）做三假说判型。P-27 的 log+pcap 双观测面只能证明"全局冻结"这一现象，无法区分成因。本轮改用 **QEMU HMP monitor 现场快照**（零内核插桩），隔真实墙钟二次读 tick 计数 + 抓两核 RIP/HLT + 锁区/栈回溯符号化，把成因判到 **假说③（关中断自旋死锁）**，并把自旋点定位到 **`ProcessTable::with_process` 获取进程表锁** 的调用上下文。
 >
-> 报告冻结当时事实，作为后续制定 P-29 锁序修复 plan 的输入依据。工程条目见 [net-e2e-tcp-echo-flakiness.md](../plan/net-e2e-tcp-echo-flakiness.md) 的 P-27 / P-28 段，前序取证见 [p27-e2e-flake-forensic-report.md](p27-e2e-flake-forensic-report.md)。所有结论附现场样本或源码位置。
+> 报告正文只读（修订规则见 `AGENTS.md` §6），作为后续制定 P-29 锁序修复 plan 的输入依据。工程条目见 [net-e2e-tcp-echo-flakiness.md](../plan/net-e2e-tcp-echo-flakiness.md) 的 P-27 / P-28 段，前序取证见 [p27-e2e-flake-forensic-report.md](p27-e2e-flake-forensic-report.md)。所有结论附现场样本或源码位置。
 
 ## 一、三假说与判型判据
 

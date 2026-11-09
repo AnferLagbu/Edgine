@@ -2,7 +2,7 @@
 
 > 本报告是一次排查工作区的结果快照：`scripts/qemu_boot_test.sh` 的 x86_64 端到端 TCP 回显阶段长期存在非确定性失败（宿主 `recv` 5s 超时、guest `accept` 计数缺失）。根因最终落在 **CFS 调度器的时基模型**，不在网络路径。报告给出完整证据链、四条被证伪的假设、修复前后的门禁数据，以及验收过程中一段险些把根因归错的**构建产物跨架构污染**插曲。
 >
-> 报告冻结当时事实，作为后续制定 plan 与启动修复工程的输入依据。所有结论均附源码位置或命令证据。工程条目与决策见 [net-e2e-tcp-echo-flakiness.md](../plan/net-e2e-tcp-echo-flakiness.md) 与 DECISION-098 / DECISION-099。
+> 报告正文只读（修订规则见 `AGENTS.md` §6），作为后续制定 plan 与启动修复工程的输入依据。所有结论均附源码位置或命令证据。工程条目与决策见 [net-e2e-tcp-echo-flakiness.md](../plan/net-e2e-tcp-echo-flakiness.md) 与 DECISION-098 / DECISION-099。
 
 ## 一、现象与判据
 
