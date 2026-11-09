@@ -81,12 +81,12 @@
 - **R-7 无源码位置的三条 warning：判据面是否再加压**：
   - 描述：两腿各有三条不带 `-->` 位置的 warning（`unclosed HTML tag \`u8\`` / `unclosed HTML tag \`dyn\`` / `could not parse code block as Rust code`），来自散文里的裸 `<T>` 写法与未标 `text` 的 ASCII 表格围栏。`ci-lint.yml` 的策略行明确写着"不阻断 rustdoc 内部 HTML tag 自动生成警告 (无源码位置)"，故 R-1 乙 的加压面只含两个 intra-doc link lint。
   - 方案：三条的**病灶本轮已全部消除**（`privileged/mm/pmm.rs` 的 `Vec<u8>` 随 ② 批反引号化、`functions/net/smoltcp_impl.rs:29` 的 `Box<dyn Device>` 反引号化、`privileged/timer/sleep.rs:11` 的围栏补 `text`），两腿现在 **0 error 0 warning**（唯一残留是 cargo 的 future-incompat 报告，属依赖侧非本 crate）。于是出现新的裁定空间：既然已无噪声，是否把 `-D rustdoc::invalid_html_tags -D rustdoc::invalid_rust_codeblocks` 一并纳入阻断面（此后任何裸 `<T>` 散文即红）。代价是这两条 lint 无源码位置，红的时候定位成本高（本轮定位靠逐类反推），且 vendored smoltcp 的 `///` 注释里也有裸 `Vec<u8>` 写法（`functions/net/smoltcp/src/iface/fragmentation.rs:47`），加压后若触发即与"smoltcp 锁定不可改"冲突（§1 表）。
-  - 状态：[ ]（**须用户裁定**：加压 / 维持现状（判据面止于两个 intra-doc link lint，policy 行照旧）。甲＝维持现判据面，R-7 就此结案（三条已清零，无待修项）；乙＝加压到四条 lint，须先实测 vendored 侧是否红，红了只能开工程册另议。本工程默认把选择权交出，不自行加压。）
+  - 状态：[X]（**用户裁定甲・维持现状结案**：判据面止于 `broken-intra-doc-links` + `private-intra-doc-links` 两条，不加压 `invalid_html_tags` / `invalid_rust_codeblocks`。三条无位置 warning 的病灶已全部清零；加压会波及锁定不可改的 vendored smoltcp（`functions/net/smoltcp/src/iface/fragmentation.rs:47` 的裸 `Vec<u8>` 写法），且两条新 lint 无源码位置、红了定位成本高 ⇒ 维持现判据面，R-7 结案。）
 
 - **R-8 文档围栏自身的三处断点（工程外发现，按 §11.5 登记不施工）**：
   - 描述：为定位 R-7 的三条无位置 warning 而全量扫 doc 围栏时，另见三处**不影响任何门禁、但会让 rustdoc 渲染出错**的预存断点：`functions/klog.rs:169` 的 ` ```json ` 围栏未闭合、`privileged/sync/spinlock.rs:230` 的 ` ```rust,ignore ` 围栏未闭合（238 行的重复标题被吞进代码块，且 237 行行首多一个反引号）、`functions/net/unix.rs:1049` 行尾落单反引号。三者都在 HEAD 上就存在，与本轮 69 行改动无交集。
   - 方案：三处都是单行改写（补闭合围栏 / 去掉多余反引号），零 API 影响；但既无门禁覆盖，属"顺手改"范畴 ⇒ 按 §11.2 报告不处置，等用户授权或并入下一轮。
-  - 状态：[ ]（立案，零施工。）
+  - 状态：[X]（**用户裁定甲・授权现在修复**：三处中两处仍存，均已按单行最小改写修复——`functions/klog.rs` 的 `json` 围栏补闭合、`privileged/sync/spinlock.rs` 的 `rust,ignore` 围栏补闭合并删除被吞进代码块的重复标题行。第三处 `functions/net/unix.rs` 的行尾落单反引号在立案后已被 P-64 clippy 批（commit `dc66c3ff`）顺带消除，当前树复扫无奇数反引号行。纯文档注释改动，零 API / 行为影响。）
 
 ## 3. 验收判据
 

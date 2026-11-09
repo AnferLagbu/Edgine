@@ -172,6 +172,7 @@ pub fn render_text(buf: &mut [u8]) -> usize {
 ///
 /// ```json
 /// {"format_version":"1","count":2,"sinks":["serial","net"]}
+/// ```
 pub fn render_json(buf: &mut [u8]) -> usize {
     let mut pos = 0usize;
     let mut names = [core::str::from_utf8(b"").unwrap_or(""); privileged_klog::MAX_LOG_SINKS];

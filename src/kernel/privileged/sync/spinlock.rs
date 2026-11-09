@@ -238,7 +238,7 @@ impl SpinLock {
     ///     let guard = lock.lock(&data);
     ///     println!("Protected: {}", *guard);
     /// } // ← 自动 unlock
-    /// 获取锁并返回守卫 (RAII)
+    /// ```
     pub fn lock<'a, T>(&'a mut self, data: &'a core::cell::UnsafeCell<T>) -> SpinLockGuard<'a, T>
     where
         T: Sized,
