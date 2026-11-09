@@ -178,17 +178,17 @@ report_mode_boundary() {
     fi
 }
 
-# ── 0. TCB 安全边界门禁 (M2 里程碑硬约束) ────────────────────
-# 服务层 (functions/) 不允许任何 unsafe 代码。这是框内核架构的核心契约。
-# check_tcb.sh 是 fail-fast 门禁: 一旦发现立即 exit 1, 整个 audit 终止。
-# 历史教训: 2026-06-03 审计发现 check_tcb.sh 正则有 bug (变长 lookbehind),
-# 导致 functions/ 出现 8 处 unsafe 仍报 PASS。已修复, 见 tools/check_tcb.sh 顶部注释。
-step "0/6 TCB 安全边界门禁 (functions/ 零 unsafe)"
+# ── 0. F1 预检: functions/ 零 unsafe ────────────────────────────
+# 服务层 (functions/) 不允许任何 unsafe 代码, 这是框内核架构的核心契约.
+# check_tcb.sh 现只做秒级预检, 早于构建与 0.5k 审计腿; 权威判定在编译期
+# src/kernel/functions/mod.rs 的 #![deny(unsafe_code)] 与步骤 0.5k 的
+# scripts/audit_functions_boundary.py. TCB 占比度量不在此处, 见步骤 0.5b.
+step "0/6 F1 预检 (functions/ 零 unsafe)"
 if [ -x "$PROJECT_ROOT/tools/check_tcb.sh" ]; then
     if "$PROJECT_ROOT/tools/check_tcb.sh"; then
-        ok "TCB 边界: functions/ 零 unsafe, privileged/ 收敛"
+        ok "F1 预检通过: functions/ 零 unsafe"
     else
-        err "TCB 边界被破坏! 见上方 FAIL 输出"
+        err "F1 预检失败! functions/ 出现 unsafe, 见上方 FAIL 输出"
     fi
 else
     err "tools/check_tcb.sh 不存在或不可执行"

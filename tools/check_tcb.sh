@@ -1,98 +1,79 @@
 #!/bin/bash
-# tools/check_tcb.sh — Edgine TCB 统计
+# tools/check_tcb.sh — functions/ 零 unsafe 的快速预检 (F1)
 #
-# Phase 0 产物: 自动化 unsafe 分布检查
+# 历史名保留: 本脚本原名 "TCB 统计" (Phase 0.5 产物), 曾输出 privileged/functions
+# 行数与 TCB 占比. TCB 度量职责现已由 scripts/audit_tcb_ratio.py 独占; 本脚本只剩
+# 一件事: 在双架构构建 / clippy / 审计腿之前 (秒级) 判定 functions/ 是否出现 unsafe.
+# 沿用旧文件名是因为仓内引用点 18 处 (ci/audit.sh / scripts/requirements.sh / docs),
+# 改名收益小于同步成本.
+#
+# 权威判定 (本脚本是快速预检, 不是权威):
+#   - 编译期: src/kernel/functions/mod.rs 的 #![deny(unsafe_code)]
+#   - 审计期: scripts/audit_functions_boundary.py (F1+F2, ci/audit.sh 步骤 0.5k)
+# 近似之处: 只做行级词法过滤 (状态机跳过 // 行注释与 /* */ 块注释), 不解析字符串
+# 字面量; 字符串里出现 unsafe 会误报, 但真实 unsafe 代码不会漏报.
+#
 # 用法: ./tools/check_tcb.sh
+# 退出码: 0 = functions/ 无 unsafe; 1 = 发现 unsafe 或扫描范围异常
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo "=== Edgine TCB Inventory ==="
-echo ""
+FUNC_DIR="src/kernel/functions"
 
-# 统计 privileged 中 unsafe
-FW_UNSAFE=$(grep -rn "unsafe " src/kernel/privileged/ 2>/dev/null | wc -l || echo 0)
-FW_LINES=$(find src/kernel/privileged -name "*.rs" -exec cat {} \; 2>/dev/null | wc -l || echo 0)
-
-# 统计 functions 中 unsafe (期望为 0)
-# 匹配实际的 unsafe 代码块 / 函数 / impl, 排除注释行。
-# 修复历史: 之前用 `(?<!//.*)\bunsafe\s*[\{fn]` 含变长 lookbehind,
-# PCRE2 直接拒匹配 (length of lookbehind assertion is not limited),
-# 导致 functions 不论有什么 unsafe 都报告 0。
-#
-# 过滤策略: 仅丢弃行首是 `//`(行注释) / `*`/`/*` (块注释延续) 的行。
-# 错误地把 `unsafe impl<T: Send>` 误判为注释是上次 bug, 这里改用更稳的判定。
-#
-# Vendored 第三方库豁免: smoltcp 0.13.1 vendored 在 functions/net/smoltcp/,
-# 上游承诺 100% safe Rust, 但实际包含 26 处 unsafe (phy/sys/raw_socket 等),
-# 路径与 functions/ 重叠. 检查时使用 --exclude-dir 跳过 vendored 目录.
-# 与 scripts/audit_functions_boundary.py 的 VENDORED_EXCLUDE 保持一致.
-SV_UNSAFE=0
-SV_LINES=0
-if [ -d "src/kernel/functions" ]; then
-    SV_UNSAFE=$(grep -rPn '\bunsafe\b' src/kernel/functions/ \
-        --include='*.rs' \
-        --exclude-dir='smoltcp' 2>/dev/null \
-        | awk -F: '{
-            # 跳过行注释和块注释
-            code=$0; sub(/^[^:]+:[^:]+:/, "", code);
-            if (code ~ /^[[:space:]]*\/\//) next;
-            if (code ~ /^[[:space:]]*\*/) next;
-            # 跳过字符串字面量内的 unsafe (极少, 简单起见不处理)
-            print
-        }' \
-        | wc -l || echo 0)
-    SV_LINES=$(find src/kernel/functions -name "*.rs" \
-        -not -path "*/smoltcp/*" -exec cat {} \; 2>/dev/null | wc -l || echo 0)
+if [ ! -d "$FUNC_DIR" ]; then
+    echo -e "${RED}FAIL${NC}: 找不到 $FUNC_DIR (脚本不在仓库根?)"
+    exit 1
 fi
 
-# 内核总行数 (排除 smoltcp vendored)
-TOTAL_LINES=$(find src/kernel -name "*.rs" -not -path "*/smoltcp/*" -exec cat {} \; 2>/dev/null | wc -l)
+# 扫描面: 仅 .rs; 排除 vendored smoltcp 与构建产物目录 (target/), 后者避免
+# src/kernel/other/target/ 一类产物进入统计. 与 scripts/audit_functions_boundary.py
+# 的 VENDORED_EXCLUDE 保持一致.
+SV_FILES=$(find "$FUNC_DIR" -name '*.rs' \
+    -not -path "*/smoltcp/*" -not -path "*/target/*" | wc -l)
 
-echo "privileged unsafe 行数:  $FW_UNSAFE"
-echo "privileged 总行数:      $FW_LINES"
-echo "functions unsafe 行数:   $SV_UNSAFE  (MUST BE 0)"
-echo "functions 总行数:        $SV_LINES"
-echo "---"
-if [ "$TOTAL_LINES" -gt 0 ]; then
-    PCT=$(awk "BEGIN {printf \"%.1f\", ($FW_LINES/$TOTAL_LINES)*100}")
-    echo "内核总行数 (-smoltcp):  $TOTAL_LINES"
-    echo "TCB 占比 (fw/total):    ${PCT}%"
-else
-    echo "内核总行数 (-smoltcp):  (empty)"
-fi
-echo ""
-
-# 检查 functions 中无 unsafe
-if [ -d "src/kernel/functions" ]; then
-    if [ "$SV_UNSAFE" -gt 0 ]; then
-        echo -e "${RED}FAIL${NC}: functions/ 中发现 unsafe 块:"
-        grep -rPn '\bunsafe\b' src/kernel/functions/ \
-            --include='*.rs' \
-            --exclude-dir='smoltcp' 2>/dev/null \
-            | awk -F: '{ code=$0; sub(/^[^:]+:[^:]+:/, "", code); if (code !~ /^[[:space:]]*(\/\/|\*)/) print }'
-        exit 1
-    else
-        echo -e "${GREEN}PASS${NC}: functions/ 无 unsafe"
-    fi
+# 扫描范围为 0 视为失效, 不能静默 PASS.
+if [ "$SV_FILES" -eq 0 ]; then
+    echo -e "${RED}FAIL${NC}: $FUNC_DIR 下未扫描到任何 .rs (扫描范围为空)"
+    exit 1
 fi
 
-# 检查 TCB 占比
-if [ "$TOTAL_LINES" -gt 0 ] && [ "$FW_LINES" -gt "$((TOTAL_LINES * 20 / 100))" ]; then
-    echo -e "${YELLOW}WARN${NC}: TCB 超过 20%: ${PCT}%"
-else
-    echo -e "${GREEN}PASS${NC}: TCB < 20%: ${PCT}% (或 privileged 尚未迁移)"
+# 状态机: 跳过 // 行注释与跨行 /* */ 块注释后匹配 unsafe (词边界, 不匹配 unsafe_code).
+# SIMPLIFIED: 不处理字符串字面量与原始字符串; 影响 = 字符串含 "unsafe" 时误报;
+# 权威判定以编译期 deny 与 audit_functions_boundary.py 为准.
+SV_HITS=$(find "$FUNC_DIR" -name '*.rs' \
+    -not -path "*/smoltcp/*" -not -path "*/target/*" -print0 \
+    | xargs -0 awk '
+    FNR == 1 { in_block = 0 }
+    {
+        code = ""
+        i = 1
+        while (i <= length($0)) {
+            two = substr($0, i, 2)
+            if (in_block) {
+                if (two == "*/") { in_block = 0; i += 2 } else { i++ }
+            } else if (two == "/*") {
+                in_block = 1; i += 2
+            } else if (two == "//") {
+                break
+            } else {
+                code = code substr($0, i, 1); i++
+            }
+        }
+        if (code ~ /(^|[^[:alnum:]_])unsafe([^[:alnum:]_]|$)/)
+            printf "%s:%d:%s\n", FILENAME, FNR, $0
+    }')
+
+if [ -n "$SV_HITS" ]; then
+    echo -e "${RED}FAIL${NC}: functions/ 中发现 unsafe 代码:"
+    echo "$SV_HITS"
+    echo "修复依据: src/kernel/functions/mod.rs 的 #![deny(unsafe_code)] (编译期权威)"
+    echo "          scripts/audit_functions_boundary.py (F1+F2 权威审计, ci/audit.sh 步骤 0.5k)"
+    exit 1
 fi
 
-echo ""
-echo "=== Unsafe Top 10 (全内核) ==="
-{
-    grep -rln "unsafe " src/kernel/ 2>/dev/null
-} | {
-    xargs -I {} sh -c 'count=$(grep -c "unsafe " "{}" 2>/dev/null || echo 0); echo "$count {}"' 2>/dev/null || true
-} | sort -rn | head -10 || true
+echo -e "${GREEN}PASS${NC}: functions/ 无 unsafe (${SV_FILES} files scanned)"

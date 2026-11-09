@@ -52,7 +52,9 @@ TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub
 
 ### TCB 演进路径
 
-渐进式 TCB 缩减。步骤 1 度量当前 TCB 占比（audit_tcb_ratio.py）→ 步骤 2 识别可提取策略（D-01~D-06/B-01~B-05/T-01~T-05 评估）→ 步骤 3 评估提取可行性（策略 vs 机制分离，0 unsafe 边界）→ 步骤 4 提取 + 验证（双架构 0w0e + 核心审计全绿（`bash ci/audit.sh full`，清单见 AGENTS §2.2）+ host-tests）→ 步骤 5 重复直到 TCB 占比 < 30%。
+渐进式 TCB 缩减。步骤 1 度量当前 TCB 占比（audit_tcb_ratio.py）→ 步骤 2 识别可提取策略（D-01~D-06/B-01~B-05/T-01~T-05 评估）→ 步骤 3 评估提取可行性（策略 vs 机制分离，0 unsafe 边界）→ 步骤 4 提取 + 验证（双架构 0w0e + 核心审计全绿（`bash ci/audit.sh full`，清单见 AGENTS §2.2）+ host-tests）→ 步骤 5 重复直到 TCB 占比 < 64%。
+
+现行基线为 64%（2026-11 起）。历史 30% 基线照搬自 Asterinas，本项目实现方式不同，已于 2026-10-26 裁定不再追求 30% 目标（依据：`docs/plan/framekernel-paradigm-enforcement.md`）。
 
 ## 注意事项
 

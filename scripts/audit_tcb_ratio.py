@@ -5,7 +5,7 @@ E10: TCB 度量自动化脚本
 统计 privileged/ 和 functions/ 的代码量, 计算 TCB 占比,
 输出结构化报告. 用于 CI 中监控 TCB 膨胀.
 
-退出码: 0 = 通过 (TCB < 30%), 1 = 超标
+退出码: 0 = 通过 (TCB < 64%), 1 = 超标
 """
 
 import os
@@ -19,7 +19,7 @@ PRIVILEGED = BASE / 'src' / 'kernel' / 'privileged'
 FUNCTIONS = BASE / 'src' / 'kernel' / 'functions'
 TARGET_DIR = BASE / 'other' / 'target' / 'audit'
 
-TCB_TARGET_RATIO = 30.0  # 目标: TCB 占比 < 30%
+TCB_TARGET_RATIO = 64.0  # 目标: TCB 占比 < 64%
 
 
 def _should_exclude(rs: Path) -> bool:
@@ -128,11 +128,9 @@ def module_breakdown(directory: Path) -> dict:
 
 def main():
     # B01-12: --soft/--enforce 切换.
-    # 当前 TCB 实际 58.1%, 远超 30% 软目标. CI 需避免 hard fail (会阻塞所有 PR),
-    # 采用过渡设计:
+    # CI 需避免 hard fail (会阻塞所有 PR), 采用过渡设计:
     # - 默认 (无 flag / --soft): 仅警告, exit 0
-    # - --enforce: 严格阈值, TCB >= 30% exit 1
-    # 未来 TCB < 30% 后, CI job 切换 --enforce.
+    # - --enforce: 严格阈值, TCB >= 64% exit 1
     import argparse
     parser = argparse.ArgumentParser(description='Edgine TCB 度量')
     parser.add_argument('--soft', action='store_true', default=True,
