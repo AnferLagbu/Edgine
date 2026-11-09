@@ -275,3 +275,13 @@ CI 只对 5 条运行/构建腿做真构建：`smp`、`preempt`、`kaslr`、`fre
 **工作区状态带来的不确定性**
 
 - 工作区有 10 个已跟踪文件处于 modified（由并行的其他 AI 维护），本报告基于当前内容；HEAD 一旦推进，3.1–3.5 的行数与提交数会变化。
+
+## 修订记录
+
+- **日期**：2026-11-09；**授权来源**：用户授权。
+- **§3.6、§4.2、§8 建议 2 的漂移归因**：原文把 `check_doc_paths.py` 报的 3 条 `docs/design/freg-design.md` 路径漂移记为仓库欠债；现况是 `git show HEAD:docs/design/freg-design.md` 中不存在 `privileged/freg/state.rs`（2 处）与 `privileged/freg/slot.rs` 三处引用（grep rc=1），它们只存在于并行会话未提交的工作区版本（第 905/914/922 行），属施工半成品，不是 HEAD 欠债，"修正 freg-design.md 3 条引用"也不再是待修项。
+- **§3.6、§4.2 的脚本扫描面**：`tools/check_doc_paths.py:26-34` 的 `SCOPED_PATHS` 仅含 `docs/explain`、`docs/design` 与 `AGENTS.md`/`README.md`/`README.en.md`/`docs/README.md` 四份根文档，`docs/report/` 不在扫描面，报告目录不受该脚本校验。
+- **§3.2、§4.5、§7.4 的 TCB 阈值**：原文记 30%（脚本/`AGENTS.md:63`/`guide-dev.md:55`）、20%（`check_tcb.sh`）、64%（"仓库内无活跃落点"），并称脚本 docstring 仍写 58.1%；现况是 `10b3a962` 已把 `TCB_TARGET_RATIO` 与 docstring 统一为 64%（58.1% 硬编码删除），`AGENTS.md:63` 与 `docs/explain/guide-dev.md:55,57` 同步为 64%，64% 已是活跃生效基线，§4.5"活跃文档/代码中没有任何 64% 落点"与 §7.4 三值表及其结论均失效。
+- **§4.5、§7.4、§8 建议 3 对 `tools/check_tcb.sh` 的描述**：原文称其为 TCB 占比工具、含 `:86-89` 的 20% 第二套软阈值；现况是 `10b3a962` 已整段删除 20% 与占比统计，脚本只做 `functions/` 零 unsafe 的 F1 预检（发现即 exit 1），§8 建议 3"统一 TCB 阈值单源"已随该提交落地。
+- **§3.3、§7.1 的豁免数**：原文"另有 362 条豁免"现为 **365**（`scripts/audit_unwired_pub_fn.py` 当前输出的 `└─ 豁免: 365`），435 条 INFO 未变。
+- **范围声明**：本文其余结论与数据未变；本节不修改任何既有正文。
