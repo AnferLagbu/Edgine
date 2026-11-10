@@ -106,7 +106,7 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
 - **方案（用户裁定四项）**：
   1. **实现路径 = 方案 A + 源码整数化**：切换 aarch64 内核构建 target 三元组为 `aarch64-unknown-none-softfloat`，并在 `global_asm!` 内加 `.arch_extension fp` / `.arch_extension simd`（E5）；同时把内核自有 `f64`/`f32` 改整数运算。
   2. **审计 = 一并新增反汇编白名单审计脚本**：对 aarch64 内核产物反汇编扫描 FP/SIMD，白名单 = `context_switch_asm` 的 32 条 `stp/ldp q*` + 4 条 `mrs/msr fpcr,fpsr`，判据「白名单外 FP/SIMD 计数 = 0」，挂入 `ci/audit.sh`。
-  3. **整数化范围 = 10 个内核源文件**（比率族 7 + 简单格式化 3）；**Wu 定点重写暂缓**并登记为后继项（见 FP-08）。
+  3. **整数化范围 = 10 个内核源文件**（比率族 7 + 简单格式化 3）；**Wu 定点重写暂缓**并登记为后继项（见 FP-08；2026-11-10 用户裁定提前实施，已随 FP-08 收口）。
   4. **比率类公共 API 统一千分比 `u64`（0..1000）**。
 - **状态**：[X]
 - **详情（裁定 3 的理由）**：`privileged/driver/display/framebuffer.rs::draw_line_aa` 是 11 个候选文件中**唯一**的"真实浮点算法"（Wu 抗锯齿，f32），其余均为比率或格式化（整数化后可用 host-test 精确核对）。其整数化（f32→定点）会改变像素输出（±1 alpha 级），而调用方只有 `display/self_test.rs`、**不在 QEMU 启动路径** ⇒ **无任何测试可验证**；同时 flag 已保证其 FP 计数 = 0 ⇒ **收益为零、风险非零**。按 AGENTS §12.3（简约为默认）/ §12.4（成功标准必须可验证），剥离为后继项。
@@ -178,11 +178,16 @@ core v0.0.0 (.../library/core), sha2 v0.11.0
   - 详情（aarch64 运行期专项判据）：最终 `build/kernel.bin`（331202 条指令）反汇编 = 白名单外 FP/SIMD **0**，白名单内 `stp/ldp q` **32** + `fpcr/fpsr` **4**，与预期值一致 ⇒ KPTI-18b 的"EL1 零 FP/SIMD"在产物层可复核。
   - 详情（跑序依赖与途中发现的预存工具问题，均未在本轮改动）：① `make test-unit` 首次失败于 build.rs 的「构建产物缺失 `build/user/init.bin`」—— 原因是 `make ARCH=<另一架构>` 的 arch 戳记（`build/log/.arch`）不匹配时会强制 clean 并删除 `build/kernel.{bin,flat,map}`，而 `.bin` 未被同步重建；按序 `make ARCH=x86_64 user` 后通过。② 同源现象：`kernel.flat` 被该 clean 删除后，`./scripts/qemu_boot_test.sh` 在**戳记已匹配**时不触发重建，直接输出「kernel.flat 缺失, 跳过测试」并计为失败（本次 x86_64 侧 1/2）—— 需先 `./ci/build.sh x86_64` 补产物。二者均属预存工具链行为（arch 戳记 clean × 跳过逻辑），本轮未改，登记备查。
 
-- **FP-08. Wu 抗锯齿定点重写（后继项，登记不实施）**
-  - 描述：`privileged/driver/display/framebuffer.rs::draw_line_aa` 的 f32 是内核自有源码中最后的真实浮点算法。
-  - 方案：f32 → 定点（Q16）重写，含 `fpart`/`rfpart`/`gradient`/alpha 计算的定点化。
-  - 状态：[]（后继项，本轮不实施）
-  - 详情：**本轮不实施**，理由见 DECISION-079 裁定 3。登记触发条件：当显示子系统接入 QEMU/真实硬件并具备像素级回归测试手段时再实施（届时可校验 ±1 alpha 差异）。
+- **FP-08. Wu 抗锯齿定点重写**
+  - 描述：Wu 抗锯齿直线算法中的 f32 是内核自有源码中最后的真实浮点算法。算法已按 `framekernel-paradigm-enforcement.md` §6.3 下沉 `functions` 层，实际位置为 `src/kernel/functions/driver/display/framebuffer_ops.rs`（本条目原写 `privileged/driver/display/framebuffer.rs::draw_line_aa` 为下沉前路径）。
+  - 方案：f32 → 定点重写，含 `fpart`/`rfpart`/`gradient`/alpha 计算的定点化。
+  - 状态：[X]（**2026-11-10 用户裁定：提前实施**，覆盖原「显示子系统接入 QEMU/真机并具备像素级回归后再做」的触发条件；验收以定点实现与 f32 参考实现的逐像素 ±1 alpha 对照为准。**2026-11-10 施工收口**。）
+  - 详情（定标选择，相对原方案 Q16 的订正）：实测定点分母定为 **Q32.32（i64）** 而非 Q16 —— Wu 内部像素按列以 `gradient` 做**增量累加**，Q16 的每步截断误差在数百列上即可累积到 >1 alpha（直接违反 ±1 验收），Q32 下 4096 列的累积误差仍 < 1e-6 像素，与 f32 参考的差异只剩 f32 自身的舍入。Q32×Q32 乘积会溢出 i64，`q32_alpha` 内**仅乘积**走 i128，比例本身回到 i64 量级；像素下标与 alpha 仍经既有 `functions::intcast` 助手收敛到窄类型（`low_i32_from_i64` / `u8_from_i32` 取低位，逐位复现原 `as` 行为）。
+  - 详情（语义保持）：`q32_trunc`/`q32_fpart` 一律**向零截断**，逐值对应原 f32 的 `as i32` 与 `fpart`（负小数域同号）；端点 `xend = trunc(x + 0.5)` 与 `xgap = fpart/rfpart(x + 0.5)` 按坐标符号分档（正坐标 0.5、负坐标 -0.5）；内部第二行仍取 `trunc(intery + 1.0)` 以保持与原实现的负小数边界一致。
+  - 详情（验收测试）：`framebuffer_ops::tests` 内保留改造前的 f32 算法副本作为**测试专用参考实现**（`reference_draw_line_aa`，普通 `as` 转型、无任何 lint 抑制属性；仅限非负且在画布内的坐标域），两路各渲染进 `MockCanvas` 后逐像素比对。新增两测：`draw_line_aa_fixed_point_matches_f32_reference`（64×64，九条线覆盖 45°/水平/垂直/平缓/陡峭/反向/单点，线型选取保证内部列的真值不在整数的舍入边界上，避免行归属翻转）+ `draw_line_aa_long_line_keeps_alpha_within_one`（256×256 长线，验证增量累加不漂移）。判据 = 每像素通道 `abs_diff <= 1`。`Color::blend` 在纯白前景 + 黑色画布下通道值恰等于 alpha，故通道比对等价于 alpha 比对。
+  - 详情（负控制）：`q32_alpha` 的 `* 255` 改 `* 250`（同一文件备份为 `/tmp/fb_ops.rs.bak`，sha256 `ca2e9ec5…`）⇒ 两测同时 FAILED（`13 passed; 2 failed`）；`cp` 复原后 sha256 逐字节一致。
+  - 详情（门槛读数）：`cargo test --workspace --features host-test --lib framebuffer_ops` = 15 passed / 0 failed（含新增两测）；`cargo fmt --check` 0 漂移；`./ci/build.sh all` = `Passed: 6 Failed: 0`；FP-06 复审计 = 白名单外 FP/SIMD **0**，白名单内 `stp/ldp q 32/32` + `fpcr/fpsr 4/4`（342495 条指令）—— Q32 定点的 i128 除法未引入任何 FP/SIMD。
+  - 详情（原登记理由存档）：DECISION-079 裁定 3 曾因「显示子系统不在启动路径、无测试可验证」暂缓本项；2026-11-10 用户裁定提前实施，验收手段以 f32 参考实现对照替代原「像素级回归」，前提因此成立。
 
 ## 验证门槛
 

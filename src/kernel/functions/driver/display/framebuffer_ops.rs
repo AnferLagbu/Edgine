@@ -295,14 +295,34 @@ fn blend_pixel_impl(canvas: &mut dyn PixelCanvas, x: u32, y: u32, color: Color) 
     }
 }
 
-/// 取浮点数的小数部分 (Wu 反走样辅助)
-fn fpart(x: f32) -> f32 {
-    x - crate::functions::intcast::f32_from_i32(crate::functions::intcast::i32_from_f32(x))
+/// Q32.32 定点单位 (1.0 的位模式)
+///
+/// 选 32 位小数分辨率而非 Q16: Wu 内部像素按列以 `gradient` 累加, Q16 的
+/// 每步截断误差在数百列上即可累积到 >1 alpha; Q32 下 4096 列的累积误差
+/// 仍 < 1e-6 像素, 与 f32 参考的差异只剩 f32 自身的舍入.
+const Q32_ONE: i64 = 1 << 32;
+
+/// Q32.32 → `i32`: 向零截断 (对齐原 f32 `as i32` 的截断口径).
+fn q32_trunc(v: i64) -> i32 {
+    crate::functions::intcast::low_i32_from_i64(v / Q32_ONE)
 }
 
-/// 取浮点数小数部分的补值 (Wu 反走样辅助)
-fn rfpart(x: f32) -> f32 {
-    1.0f32 - fpart(x)
+/// 取 Q32.32 值的小数部分 (向零截断口径, 与原 f32 `fpart` 逐值对应).
+fn q32_fpart(v: i64) -> i64 {
+    v - (v / Q32_ONE) * Q32_ONE
+}
+
+/// 取 Q32.32 值小数部分的补值 (对应原 `rfpart`).
+fn q32_rfpart(v: i64) -> i64 {
+    Q32_ONE - q32_fpart(v)
+}
+
+/// 小数比例 → alpha: 复现 `trunc(value * gap * 255)` 的有符号截断.
+fn q32_alpha(value: i64, gap: i64) -> u8 {
+    // i128 仅用于乘积: Q32 量纲下 `value * gap` 会溢出 i64; 比例本身仍回到 i64 量级.
+    let ratio = (i128::from(value) * i128::from(gap)) / i128::from(Q32_ONE);
+    let alpha = crate::functions::intcast::low_i64_from_i128(ratio) * 255 / Q32_ONE;
+    crate::functions::intcast::u8_from_i32(crate::functions::intcast::low_i32_from_i64(alpha))
 }
 
 /// Wu 反走样直线的几何预处理结果
@@ -317,8 +337,8 @@ struct AaLine {
     x1: i32,
     /// 终点纵坐标
     y1: i32,
-    /// 每列纵向增量
-    gradient: f32,
+    /// 每列纵向增量 (Q32.32)
+    gradient: i64,
 }
 
 /// 归一化端点方向 (steep 交换 / 起点在前) 并计算斜率
@@ -335,9 +355,9 @@ fn aa_geometry(x0: i32, y0: i32, x1: i32, y1: i32) -> AaLine {
         core::mem::swap(&mut y0, &mut y1);
     }
 
-    let dx = crate::functions::intcast::f32_from_i32(x1 - x0);
-    let dy = crate::functions::intcast::f32_from_i32(y1 - y0);
-    let gradient = if dx == 0.0 { 1.0f32 } else { dy / dx };
+    let dx = i64::from(x1 - x0);
+    let dy = i64::from(y1 - y0);
+    let gradient = if dx == 0 { Q32_ONE } else { (dy << 32) / dx };
 
     AaLine {
         steep,
@@ -349,21 +369,22 @@ fn aa_geometry(x0: i32, y0: i32, x1: i32, y1: i32) -> AaLine {
     }
 }
 
-/// 计算端点列 (`xend_i`), 端点纵向位置与 `xgap`
+/// 计算端点列 (`xend_i`), 端点纵向位置 (Q32.32) 与 `xgap` (Q32.32)
 ///
 /// `use_rfpart_gap`: 起点端点取 `rfpart`, 终点端点取 `fpart` (与拆分前口径一致).
-fn aa_endpoint(x: i32, y: i32, gradient: f32, use_rfpart_gap: bool) -> (i32, f32, f32) {
-    let xend_i =
-        crate::functions::intcast::i32_from_f32(crate::functions::intcast::f32_from_i32(x) + 0.5);
-    let xend_f = crate::functions::intcast::f32_from_i32(xend_i);
-    let yend_f = crate::functions::intcast::f32_from_i32(y)
-        + gradient * (xend_f - crate::functions::intcast::f32_from_i32(x));
+fn aa_endpoint(x: i32, y: i32, gradient: i64, use_rfpart_gap: bool) -> (i32, i64, i64) {
+    // x 为整数坐标: `x + 0.5` 向零截断后, 正坐标得 x, 负坐标得 x + 1
+    let xend_i = if x >= 0 { x } else { x + 1 };
+    let yend = (i64::from(y) << 32) + gradient * (i64::from(xend_i) - i64::from(x));
+    // 同理 `fpart(x + 0.5)`: 正坐标为 0.5, 负坐标为 -0.5
+    let half = Q32_ONE / 2;
+    let fpart_half = if x >= 0 { half } else { -half };
     let xgap = if use_rfpart_gap {
-        rfpart(crate::functions::intcast::f32_from_i32(x) + 0.5)
+        Q32_ONE - fpart_half
     } else {
-        fpart(crate::functions::intcast::f32_from_i32(x) + 0.5)
+        fpart_half
     };
-    (xend_i, yend_f, xgap)
+    (xend_i, yend, xgap)
 }
 
 /// 绘制单个端点 (相邻两像素的 alpha 混合)
@@ -371,17 +392,13 @@ fn blend_endpoint(
     canvas: &mut dyn PixelCanvas,
     steep: bool,
     xpxl: i32,
-    yend_f: f32,
-    xgap: f32,
+    yend: i64,
+    xgap: i64,
     color: Color,
 ) {
-    let ypxl = crate::functions::intcast::i32_from_f32(yend_f);
-    let a1 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
-        rfpart(yend_f) * xgap * 255.0,
-    ));
-    let a2 = crate::functions::intcast::u8_from_i32(crate::functions::intcast::i32_from_f32(
-        fpart(yend_f) * xgap * 255.0,
-    ));
+    let ypxl = q32_trunc(yend);
+    let a1 = q32_alpha(q32_rfpart(yend), xgap);
+    let a2 = q32_alpha(q32_fpart(yend), xgap);
     if steep {
         blend_pixel_impl(
             canvas,
@@ -415,29 +432,25 @@ fn blend_endpoint(
 fn blend_interior(
     canvas: &mut dyn PixelCanvas,
     steep: bool,
-    mut intery: f32,
-    gradient: f32,
+    mut intery: i64,
+    gradient: i64,
     x_start: i32,
     x_end: i32,
     color: Color,
 ) {
     if steep {
         for x in x_start..x_end {
-            let alpha = crate::functions::intcast::u8_from_i32(
-                crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
-            );
+            let alpha = q32_alpha(q32_rfpart(intery), Q32_ONE);
             blend_pixel_impl(
                 canvas,
-                crate::functions::intcast::i32_from_f32(intery).cast_unsigned(),
+                q32_trunc(intery).cast_unsigned(),
                 x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = crate::functions::intcast::u8_from_i32(
-                crate::functions::intcast::i32_from_f32(fpart(intery) * 255.0),
-            );
+            let alpha = q32_alpha(q32_fpart(intery), Q32_ONE);
             blend_pixel_impl(
                 canvas,
-                crate::functions::intcast::i32_from_f32(intery + 1.0).cast_unsigned(),
+                q32_trunc(intery + Q32_ONE).cast_unsigned(),
                 x.cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
@@ -445,22 +458,18 @@ fn blend_interior(
         }
     } else {
         for x in x_start..x_end {
-            let alpha = crate::functions::intcast::u8_from_i32(
-                crate::functions::intcast::i32_from_f32(rfpart(intery) * 255.0),
-            );
+            let alpha = q32_alpha(q32_rfpart(intery), Q32_ONE);
             blend_pixel_impl(
                 canvas,
                 x.cast_unsigned(),
-                crate::functions::intcast::i32_from_f32(intery).cast_unsigned(),
+                q32_trunc(intery).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
-            let alpha = crate::functions::intcast::u8_from_i32(
-                crate::functions::intcast::i32_from_f32(fpart(intery) * 255.0),
-            );
+            let alpha = q32_alpha(q32_fpart(intery), Q32_ONE);
             blend_pixel_impl(
                 canvas,
                 x.cast_unsigned(),
-                crate::functions::intcast::i32_from_f32(intery + 1.0).cast_unsigned(),
+                q32_trunc(intery + Q32_ONE).cast_unsigned(),
                 Color::new_alpha(color.r, color.g, color.b, alpha),
             );
             intery += gradient;
@@ -681,6 +690,199 @@ mod tests {
 
         assert_eq!(canvas.at(0, 0), colors::BLACK);
         assert_eq!(canvas.at(2, 2), colors::BLACK);
+    }
+
+    /// 定点实现与 f32 参考逐像素对照 (白色直线画在黑底上, 通道值即 alpha)
+    fn assert_aa_matches_reference(w: u32, h: u32, lines: &[(i32, i32, i32, i32)]) {
+        for &(x0, y0, x1, y1) in lines {
+            let mut fixed = MockCanvas::new(w, h);
+            StandardFramebufferOps.draw_line_aa(&mut fixed, x0, y0, x1, y1, colors::WHITE);
+
+            let mut reference = MockCanvas::new(w, h);
+            reference_draw_line_aa(&mut reference, x0, y0, x1, y1);
+
+            for y in 0..h {
+                for x in 0..w {
+                    let got = fixed.at(x, y).r;
+                    let want = reference.at(x, y).r;
+                    assert!(
+                        got.abs_diff(want) <= 1,
+                        "线 ({x0},{y0})->({x1},{y1}) 像素 ({x},{y}): 定点={got} f32={want}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Wu 反走样的 f32 参考实现 — 定点化前的原算法拷贝, 仅测试编译 (不进内核产物).
+    ///
+    /// 只覆盖画布内的非负坐标: 该取值域内 `as` 截断与内核原 `f32_from_i32` /
+    /// `i32_from_f32` / `u8_from_i32` 逐值等价.
+    fn reference_draw_line_aa(canvas: &mut MockCanvas, x0: i32, y0: i32, x1: i32, y1: i32) {
+        fn fpart(x: f32) -> f32 {
+            x - (x as i32) as f32
+        }
+
+        fn rfpart(x: f32) -> f32 {
+            1.0 - fpart(x)
+        }
+
+        fn endpoint(x: i32, y: i32, gradient: f32, use_rfpart_gap: bool) -> (i32, f32, f32) {
+            let xend_i = (x as f32 + 0.5) as i32;
+            let xend_f = xend_i as f32;
+            let yend_f = y as f32 + gradient * (xend_f - x as f32);
+            let xgap = if use_rfpart_gap {
+                rfpart(x as f32 + 0.5)
+            } else {
+                fpart(x as f32 + 0.5)
+            };
+            (xend_i, yend_f, xgap)
+        }
+
+        fn blend_endpoint(
+            canvas: &mut MockCanvas,
+            steep: bool,
+            xpxl: i32,
+            yend_f: f32,
+            xgap: f32,
+            color: Color,
+        ) {
+            let ypxl = yend_f as i32;
+            let a1 = (rfpart(yend_f) * xgap * 255.0) as u8;
+            let a2 = (fpart(yend_f) * xgap * 255.0) as u8;
+            if steep {
+                blend_pixel_impl(
+                    canvas,
+                    ypxl as u32,
+                    xpxl as u32,
+                    Color::new_alpha(color.r, color.g, color.b, a1),
+                );
+                blend_pixel_impl(
+                    canvas,
+                    (ypxl + 1) as u32,
+                    xpxl as u32,
+                    Color::new_alpha(color.r, color.g, color.b, a2),
+                );
+            } else {
+                blend_pixel_impl(
+                    canvas,
+                    xpxl as u32,
+                    ypxl as u32,
+                    Color::new_alpha(color.r, color.g, color.b, a1),
+                );
+                blend_pixel_impl(
+                    canvas,
+                    xpxl as u32,
+                    (ypxl + 1) as u32,
+                    Color::new_alpha(color.r, color.g, color.b, a2),
+                );
+            }
+        }
+
+        fn blend_interior(
+            canvas: &mut MockCanvas,
+            steep: bool,
+            mut intery: f32,
+            gradient: f32,
+            x_start: i32,
+            x_end: i32,
+            color: Color,
+        ) {
+            if steep {
+                for x in x_start..x_end {
+                    let alpha = (rfpart(intery) * 255.0) as u8;
+                    blend_pixel_impl(
+                        canvas,
+                        intery as i32 as u32,
+                        x as u32,
+                        Color::new_alpha(color.r, color.g, color.b, alpha),
+                    );
+                    let alpha = (fpart(intery) * 255.0) as u8;
+                    blend_pixel_impl(
+                        canvas,
+                        (intery + 1.0) as i32 as u32,
+                        x as u32,
+                        Color::new_alpha(color.r, color.g, color.b, alpha),
+                    );
+                    intery += gradient;
+                }
+            } else {
+                for x in x_start..x_end {
+                    let alpha = (rfpart(intery) * 255.0) as u8;
+                    blend_pixel_impl(
+                        canvas,
+                        x as u32,
+                        intery as i32 as u32,
+                        Color::new_alpha(color.r, color.g, color.b, alpha),
+                    );
+                    let alpha = (fpart(intery) * 255.0) as u8;
+                    blend_pixel_impl(
+                        canvas,
+                        x as u32,
+                        (intery + 1.0) as i32 as u32,
+                        Color::new_alpha(color.r, color.g, color.b, alpha),
+                    );
+                    intery += gradient;
+                }
+            }
+        }
+
+        let steep = (y1 - y0).abs() > (x1 - x0).abs();
+        let (mut x0, mut y0, mut x1, mut y1) = (x0, y0, x1, y1);
+        if steep {
+            core::mem::swap(&mut x0, &mut y0);
+            core::mem::swap(&mut x1, &mut y1);
+        }
+        if x0 > x1 {
+            core::mem::swap(&mut x0, &mut x1);
+            core::mem::swap(&mut y0, &mut y1);
+        }
+
+        let dx = (x1 - x0) as f32;
+        let dy = (y1 - y0) as f32;
+        let gradient = if dx == 0.0 { 1.0 } else { dy / dx };
+
+        let (xpxl1, yend1, xgap1) = endpoint(x0, y0, gradient, true);
+        blend_endpoint(canvas, steep, xpxl1, yend1, xgap1, colors::WHITE);
+        let intery = yend1 + gradient;
+
+        let (xpxl2, yend2, xgap2) = endpoint(x1, y1, gradient, false);
+        blend_endpoint(canvas, steep, xpxl2, yend2, xgap2, colors::WHITE);
+
+        blend_interior(
+            canvas,
+            steep,
+            intery,
+            gradient,
+            xpxl1 + 1,
+            xpxl2,
+            colors::WHITE,
+        );
+    }
+
+    /// 定点实现 vs f32 参考: 逐像素 alpha 差 ≤1 (覆盖浅/陡/负斜率/水平/垂直/单点)
+    #[test]
+    fn draw_line_aa_fixed_point_matches_f32_reference() {
+        const W: u32 = 64;
+        const H: u32 = 64;
+        let lines = [
+            (0, 0, 63, 63),
+            (0, 0, 63, 0),
+            (0, 0, 0, 63),
+            (0, 0, 63, 31),
+            (0, 63, 63, 0),
+            (5, 5, 58, 10),
+            (10, 2, 14, 61),
+            (2, 30, 61, 33),
+            (7, 7, 7, 7),
+        ];
+        assert_aa_matches_reference(W, H, &lines);
+    }
+
+    /// 长线跨 256 列: 定点累加误差不得随列数放大, 逐像素仍 ≤1 alpha
+    #[test]
+    fn draw_line_aa_long_line_keeps_alpha_within_one() {
+        assert_aa_matches_reference(256, 256, &[(0, 0, 255, 97)]);
     }
 
     #[test]
