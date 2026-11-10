@@ -199,7 +199,6 @@ use crate::privileged::syscall::Errno;
 // ============================================================================
 
 pub mod epoll;
-pub mod eventfd;
 pub mod futex;
 pub mod signalfd;
 

@@ -252,3 +252,145 @@ fn fs_mod_reexports_file_abstractions() {
         "File/PollEvents/RegularFile 必须顶层 re-export"
     );
 }
+
+// ============================================================================
+// 阶段 3: EventFd 迁移 — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn eventfd_object_implements_file_contract() {
+    use edgine::kernel::functions::fs::eventfd::EventFdFile;
+
+    let efd = EventFdFile::new(5, false);
+    let mut buf = [0u8; 8];
+    assert_eq!(efd.read_at(0, &mut buf, 0), Ok(8));
+    assert_eq!(u64::from_ne_bytes(buf), 5, "读返回计数并清零");
+    assert_eq!(
+        efd.read_at(0, &mut buf, 0),
+        Err(KernelError::WouldBlock),
+        "计数清零后读 EAGAIN"
+    );
+
+    assert_eq!(efd.write_at(0, &3u64.to_ne_bytes(), 0), Ok(8));
+    assert_eq!(
+        efd.poll(PollEvents::IN | PollEvents::OUT),
+        PollEvents::IN | PollEvents::OUT,
+        "计数 > 0 时可读可写"
+    );
+    assert_eq!(
+        efd.write_at(0, &[0u8; 8], 0),
+        Err(KernelError::InvalidArgument),
+        "write(0) → EINVAL"
+    );
+    assert!(
+        efd.stream(),
+        "eventfd 不可定位 (lseek → ESPIPE), 必须声明流式对象"
+    );
+    assert!(efd.as_inode().is_none(), "eventfd 非 inode 承载");
+    assert_eq!(efd.file_type(), VfsFileType::File);
+
+    let sem = EventFdFile::new(3, true);
+    for _ in 0..3 {
+        assert_eq!(sem.read_at(0, &mut buf, 0), Ok(8));
+        assert_eq!(u64::from_ne_bytes(buf), 1, "信号量模式每次读 1");
+    }
+    assert_eq!(sem.read_at(0, &mut buf, 0), Err(KernelError::WouldBlock));
+}
+
+#[test]
+fn eventfd_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/fs/eventfd.rs");
+    assert!(
+        src.contains("impl File for EventFdFile"),
+        "EventFdFile 必须实现统一 File 接口"
+    );
+    assert!(
+        src.contains("OpenFile::from_file"),
+        "创建路径必须构造 OpenFile 挂表"
+    );
+    assert!(
+        src.contains("OPEN_FILE_TABLE.alloc"),
+        "创建路径必须分配 OpenFileTable 槽位"
+    );
+    assert!(
+        src.contains("t.alloc_fd(handle_id, cloexec)"),
+        "用户 fd 必须由 per-process fd 表分配并携带 CLOEXEC"
+    );
+    assert!(
+        !src.contains("FdPlan"),
+        "迁移后不得引用全局 FD 编号区间 (FdPlan)"
+    );
+    assert!(!src.contains("EFD_TABLE"), "迁移后不得保留子系统槽位表");
+    let old = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("src/kernel/privileged/syscall/eventfd.rs");
+    assert!(
+        !old.exists(),
+        "privileged 旧槽位实现必须删除 (阶段 3 迁移完成)"
+    );
+}
+
+#[test]
+fn eventfd_special_object_dispatch_sites() {
+    // 统一判据: as_inode() == None 的挂表对象走通用 VFS 分发路径.
+    let io = read_file("functions/fs/io.rs");
+    assert!(
+        io.contains("vfs_is_special_fd"),
+        "写循环必须用 vfs_is_special_fd 识别特殊对象并短写即停"
+    );
+    assert!(
+        !io.contains("is_eventfd_fd") && !io.contains("EFD_FD_BASE"),
+        "io.rs 不得残留 eventfd 数值特判"
+    );
+
+    let handle = read_file("functions/fs/handle.rs");
+    assert!(
+        handle.contains("pub fn vfs_is_special_fd"),
+        "handle 必须暴露特殊对象判据"
+    );
+    assert!(
+        handle.contains("fn fd_event_may_change"),
+        "读写后唤醒必须覆盖非 inode 特殊对象"
+    );
+    assert!(
+        handle.contains("OPEN_FILE_TABLE.close(handle_id)"),
+        "close 必须经 OpenFileTable 回收槽位"
+    );
+    assert!(
+        handle.contains("fd_notify::notify_fd_close"),
+        "close 必须唤醒 epoll 等待者"
+    );
+
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    assert!(
+        epoll.contains("fd_poll_special"),
+        "epoll 必须经 VfsOps::fd_poll_special 求值特殊对象就绪位"
+    );
+    assert!(
+        !epoll.contains("is_eventfd_fd"),
+        "epoll 不得残留 eventfd 数值分支"
+    );
+
+    let sendfile = read_file("functions/fs/sendfile.rs");
+    assert!(
+        sendfile.contains("of.as_inode().is_some()"),
+        "sendfile 必须按 as_inode 判据排除非文件对象"
+    );
+    assert!(
+        !sendfile.contains("EFD_FD_BASE") && !sendfile.contains("200..216"),
+        "sendfile 不得残留 eventfd 数值区间"
+    );
+
+    let ops = read_file("privileged/fs/vfs/ops_trait.rs");
+    assert!(
+        ops.contains("fn fd_poll_special"),
+        "VfsOps 契约必须暴露 fd_poll_special"
+    );
+
+    let reexport = read_file("functions/fs/mod.rs");
+    assert!(
+        reexport.contains("fn fd_poll_special") && reexport.contains("of.file().poll("),
+        "FunctionsVfsOps 必须把 fd_poll_special 接到 File::poll"
+    );
+}

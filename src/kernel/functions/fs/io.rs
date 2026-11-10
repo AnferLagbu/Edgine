@@ -11,7 +11,8 @@
 //! ## 安全边界
 //!
 //! - functions 层: 验证参数类型/范围, 用户缓冲区校验, fd 路由策略
-//!   (console / eventfd / signalfd / timerfd / inotify / VFS)
+//!   (console / signalfd / timerfd / inotify / VFS; eventfd 已纳入 fd 对象模型,
+//!   经 VFS 统一分发到 `functions::fs::eventfd::EventFdFile`)
 //! - privileged 层: 用户内存拷贝机制 (`mm::copy_user`), 特殊 fd 权威实现,
 //!   实际访问 VFS / 创建内核对象
 
@@ -64,8 +65,8 @@ fn wait_pipe_eagain(fd: i32, want_read: bool) -> bool {
 /// read 系统调用策略
 ///
 /// fd 路由: 0/1/2 仅在 fd 表无对应条目时按标准流处理 (stdin 键盘 / stdout
-/// stderr 只写), 否则走 VFS (支持 `dup2` 重定向); eventfd/signalfd/timerfd/
-/// inotify = 各自权威实现, 其余走 VFS.
+/// stderr 只写), 否则走 VFS (支持 `dup2` 重定向); signalfd/timerfd/inotify =
+/// 各自权威实现; eventfd 与其余 fd 走 VFS 对象分发.
 ///
 /// # Errors
 /// - `buf` 为空或 `count` 为 0 → `EINVAL`
@@ -95,11 +96,6 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         return Ok(0);
     }
     // 特殊 fd 路由: 顺序与原 privileged 实现一致
-    if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        return ret_to_result(crate::privileged::syscall::eventfd::sys_eventfd_read(
-            fd, buf,
-        ));
-    }
     if crate::privileged::syscall::signalfd::is_signalfd_fd(fd) {
         return ret_to_result(crate::privileged::syscall::signalfd::sys_signalfd_read(
             fd, buf,
@@ -144,14 +140,14 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
 
 /// write 系统调用策略
 ///
-/// fd 路由: 1/2 仅在 fd 表无对应条目时按控制台 (串口输出) 处理; eventfd =
-/// 计数器写入; 其余走 VFS (支持管道端点与 `dup2` 重定向).
+/// fd 路由: 1/2 仅在 fd 表无对应条目时按控制台 (串口输出) 处理; 其余走 VFS
+/// (支持管道端点、eventfd 对象与 `dup2` 重定向).
 /// 用户数据经 `mm::copy_user::copy_from_user` (异常表兜底) 分块拷入内核.
 ///
 /// # Errors
 /// - `buf` 为空或 `count` 为 0 → `EINVAL`
 /// - 用户缓冲区未通过校验 → `EFAULT`
-/// - eventfd 写入不足 8 字节 → `EINVAL`; 其余错误由底层实现以对应
+/// - 其余错误 (含 eventfd 写入不足 8 字节的 `EINVAL`) 由底层对象以对应
 ///   `Errno` 传播.
 pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if buf == 0 || count == 0 {
@@ -180,20 +176,6 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             }
         }
         return Ok(crate::functions::intcast::usize_from_u64(count));
-    }
-    if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        if count < 8 {
-            return Err(Errno::Einval);
-        }
-        let mut val_buf = [0u8; 8];
-        match crate::privileged::mm::copy_user::copy_from_user(&mut val_buf, buf, 8) {
-            Ok(8) => {}
-            _ => return Err(Errno::Efault),
-        }
-        return ret_to_result(crate::privileged::syscall::eventfd::sys_eventfd_write(
-            fd,
-            u64::from_ne_bytes(val_buf),
-        ));
     }
     // 文件写入: 分块拷贝用户数据到内核缓冲区, 再走 VFS.
     //
@@ -228,6 +210,13 @@ pub fn write_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             break;
         }
         written += crate::functions::intcast::usize_from_i32(n);
+        // 非 inode 承载的特殊对象 (eventfd 等) 只消费前 8 字节: 短写即完成,
+        // 不得像管道那样续写剩余分块 (否则同一 8 字节值会被重复累加).
+        if n < crate::functions::intcast::low_i32_from_usize(copied)
+            && crate::functions::fs::api::vfs_is_special_fd(fd.cast_unsigned())
+        {
+            break;
+        }
     }
     Ok(written)
 }

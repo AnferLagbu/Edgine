@@ -3,9 +3,9 @@
   "generated_by": "python3 scripts/audit_deadlock_matrix.py --update-lock-order-baseline",
   "note": "A-3b 覆盖率棘轮: 未分类取锁点按 (文件, 接收者末段名) 冻结. 新增/增加即门禁判红; 收缩时重跑 --update-lock-order-baseline. 这份快照不是锁序判据 —— 倒序判定走 scripts/lock_class_order.json.",
   "totals": {
-    "unclassified_sites": 848,
+    "unclassified_sites": 845,
     "classified_sites": 396,
-    "acquisition_sites": 1244,
+    "acquisition_sites": 1241,
     "lock_class_edges": 14
   },
   "unclassified": {
@@ -41,6 +41,8 @@
     "src/kernel/functions/fs/egfs/txg.rs::io_list": 2,
     "src/kernel/functions/fs/egfs/zil.rs::records": 5,
     "src/kernel/functions/fs/egfs/zil_persist.rs::records": 1,
+    "src/kernel/functions/fs/eventfd.rs::FS_GLOBAL_TEST_LOCK": 1,
+    "src/kernel/functions/fs/eventfd.rs::state": 3,
     "src/kernel/functions/fs/exfat/mount.rs::EXFAT_FS": 8,
     "src/kernel/functions/fs/ext2/mount.rs::EXT2_FS": 19,
     "src/kernel/functions/fs/file_handle.rs::mounts": 1,
@@ -173,7 +175,7 @@
     "src/kernel/privileged/sgeg/session.rs::session": 5,
     "src/kernel/privileged/sgeg/session.rs::session_elev_stack": 2,
     "src/kernel/privileged/sync/irq_spinlock.rs::self": 3,
-    "src/kernel/privileged/sync/lockdep.rs::LOCK_DEP_MAP": 10,
+    "src/kernel/privileged/sync/lockdep.rs::LOCK_DEP_MAP": 8,
     "src/kernel/privileged/sync/mutex.rs::mutex": 7,
     "src/kernel/privileged/sync/pi_mutex.rs::PI_MUTEX_HELD": 1,
     "src/kernel/privileged/sync/pi_mutex.rs::PI_MUTEX_WAITING": 1,
@@ -185,7 +187,6 @@
     "src/kernel/privileged/sync/spinlock.rs::lock": 3,
     "src/kernel/privileged/syscall/dispatch.rs::FB_MAP_RECORD": 2,
     "src/kernel/privileged/syscall/epoll.rs::EPOLL_INSTANCES": 6,
-    "src/kernel/privileged/syscall/eventfd.rs::EFD_TABLE": 5,
     "src/kernel/privileged/syscall/signalfd.rs::SFD_TABLE": 6,
     "src/kernel/privileged/syscall/timerfd.rs::TFD_TABLE": 8,
     "src/kernel/privileged/tests/mod.rs::registry": 3,

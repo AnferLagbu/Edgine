@@ -44,6 +44,13 @@ pub trait VfsOps: Send + Sync {
     /// 返回 `None` 表示 fd 非法或未映射; `Some(ft)` 为 `VfsFileType` 原始字节.
     fn fd_file_type(&self, fd: i32) -> Option<u8>;
 
+    /// 查询非 inode 承载对象 (eventfd 等) 的 poll 就绪位.
+    ///
+    /// 返回 `None` 表示 fd 由 inode 承载 (消费点继续走
+    /// [`VfsOps::fd_file_type`] + `VfsPollPolicy`); `Some(raw)` 为对象
+    /// `File::poll` 的原始就绪位 (Linux `POLL*` 编码).
+    fn fd_poll_special(&self, fd: i32, events: u32) -> Option<u32>;
+
     /// 从 inode 读取数据到缓冲区 (mmap demand paging 路径).
     ///
     /// 返回实际读取字节数, 负数表示错误.
@@ -87,6 +94,10 @@ impl VfsOps for FallbackVfsOps {
     fn dec_open_file_ref(&self, _handle_id: u32) {}
 
     fn fd_file_type(&self, _fd: i32) -> Option<u8> {
+        None
+    }
+
+    fn fd_poll_special(&self, _fd: i32, _events: u32) -> Option<u32> {
         None
     }
 

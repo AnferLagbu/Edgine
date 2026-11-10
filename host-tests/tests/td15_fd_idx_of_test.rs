@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
-// TD-15: TD-02 V4 — fd_alloc::idx_of 集中反查 + 4 子系统本地 fd_to_idx 迁移
+// TD-15: TD-02 V4 — fd_alloc::idx_of 集中反查 + 子系统本地 fd_to_idx 迁移
 //
 // 验收:
-//   - 4 子系统本地 fd_to_idx (eventfd/signalfd/timerfd/unix) 全部不再用
+//   - 仍留在 FdPlan 的 3 子系统本地 fd_to_idx (signalfd/timerfd/unix) 全部不再用
 //     `*_FD_BASE + 字面量` / `*_FD_BASE - 字面量` 算术
-//   - `idx_of` 在 FdPlan::ALL 6 范围内反查都正确
+//   - `idx_of` 在 FdPlan::ALL 范围内反查都正确
 //   - timerfd 历史 240 已迁出 smoltcp [0, 256) 重叠 (基址改 1160)
 //   - 双架构编译通过; 静态契约测试 5+ 用例全过
 //
 // 该测试为 I-51/TD-01/TD-02 V4 验收的强化版.
+// fd 对象模型阶段 3 (2026-11-10): eventfd 已迁至 OpenFileTable 挂表, 不再有本地
+// fd_to_idx; 相关范围条目保留至阶段 4 随 FdPlan 一并退役.
 
 use std::fs;
 use std::path::Path;
 
 const FD_ALLOC: &str = "src/kernel/privileged/proc/fd_alloc.rs";
-const EVENTFD: &str = "src/kernel/privileged/syscall/eventfd.rs";
 const SIGNALFD: &str = "src/kernel/privileged/syscall/signalfd.rs";
 const TIMERFD: &str = "src/kernel/privileged/syscall/timerfd.rs";
 const UNIX: &str = "src/kernel/functions/net/unix.rs";
@@ -61,7 +62,7 @@ fn test_timerfd_subsystem_in_fd_plan() {
 fn test_subsystem_local_fd_to_idx_no_base_arith() {
     // 每个子系统的本地 fd_to_idx / is_xxx_fd 必须不再使用 `*_FD_BASE + i32字面量` /
     // `*_FD_BASE - i32字面量` 算术 (赋值语句中的常量定义除外).
-    for path in &[EVENTFD, SIGNALFD, TIMERFD, UNIX] {
+    for path in &[SIGNALFD, TIMERFD, UNIX] {
         let src = read(path);
         // 抽取本地 fd_to_idx / is_xxx_fd 函数体
         // 简化: 全文搜索可疑算术, 排除 const 声明.
@@ -73,8 +74,8 @@ fn test_subsystem_local_fd_to_idx_no_base_arith() {
                 // 形如 `pub const SFD_FD_BASE: i32 = ...` 允许
                 continue;
             }
-            // 形如 `fd - SFD_FD_BASE`, `fd - EFD_FD_BASE`, `fd - TFD_FD_BASE`,
-            // `fd - UDS_FD_BASE` 都不应出现 (本地反查已迁出).
+            // 形如 `fd - SFD_FD_BASE`, `fd - TFD_FD_BASE`, `fd - UDS_FD_BASE`
+            // 都不应出现 (本地反查已迁出). EFD_FD_BASE 随 eventfd 迁出, 一并保留在检查表.
             for base in &["SFD_FD_BASE", "EFD_FD_BASE", "TFD_FD_BASE", "UDS_FD_BASE"] {
                 let sub_pattern = format!(" - {base} ");
                 let add_pattern = format!(" + {base} ");
@@ -90,7 +91,7 @@ fn test_subsystem_local_fd_to_idx_no_base_arith() {
 #[test]
 fn test_subsystem_local_fd_to_idx_uses_idx_of() {
     // 反向验证: fd_to_idx 体内应出现 fd_alloc::idx_of 调用
-    for path in &[EVENTFD, SIGNALFD, TIMERFD, UNIX] {
+    for path in &[SIGNALFD, TIMERFD, UNIX] {
         let src = read(path);
         // 抽取 fn fd_to_idx(...) 函数体
         let needle = "fn fd_to_idx(fd: i32)";

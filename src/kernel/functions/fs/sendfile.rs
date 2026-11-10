@@ -19,10 +19,13 @@
 //!
 //! ## FD 类型识别
 //!
-//! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在)
+//! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在),
+//!   且由 inode 承载 (`as_inode()` 为 `Some`)
 //! - Pipe fd: 同样位于 VFS fd 空间, 由 `OpenFile` 的 `pipe_key` 标记区分
 //!   (`functions::fs::pipe_fd`)
-//! - Eventfd/Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
+//! - Eventfd: 已纳入 fd 对象模型 (per-process fd 表 + `OpenFileTable`), 但
+//!   `as_inode() == None`, 据此排除
+//! - Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
 //!
 //! ## 安全约束
 //!
@@ -66,9 +69,6 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if (100..116).contains(&fd) {
         return false; // UDS
     }
-    if (200..216).contains(&fd) {
-        return false; // eventfd
-    }
     if (220..236).contains(&fd) {
         return false; // signalfd
     }
@@ -81,8 +81,14 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     if super::pipe_fd::is_pipe_fd(fd) {
         return false;
     }
-    // 检查当前进程 fd 表 (fd → OpenFileTable handle 映射存在即有效)
-    vfs_get_fd_handle(fd_usize).is_some()
+    // 检查当前进程 fd 表 (fd → OpenFileTable handle 映射存在即有效);
+    // 非 inode 承载的特殊对象 (eventfd 等) 不作为 sendfile 数据源.
+    let Some(handle_id) = vfs_get_fd_handle(fd_usize) else {
+        return false;
+    };
+    OPEN_FILE_TABLE
+        .with_file(handle_id, |of| of.as_inode().is_some())
+        .unwrap_or(false)
 }
 
 /// 判断 fd 是否为 pipe fd (VFS fd 空间内的管道端点)

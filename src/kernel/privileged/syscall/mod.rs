@@ -3,7 +3,6 @@ pub mod dispatch;
 /// T-03: 系统调用分发决策 trait
 pub mod dispatch_trait;
 pub mod epoll;
-pub mod eventfd;
 pub mod futex;
 pub mod madvise_mlock;
 pub mod signalfd;

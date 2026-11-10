@@ -9,6 +9,7 @@
 
 pub mod sys;
 pub mod test_config;
+pub mod test_eventfd;
 pub mod test_ipc;
 #[cfg(test)]
 pub mod test_ipc_inline;
@@ -31,6 +32,8 @@ pub fn register_upper_tests() {
     test_pwm::register_pwm_tests();
     test_ipc::register_ipc_tests();
     test_uds::register_uds_tests();
+    #[cfg(feature = "kernel_test")]
+    test_eventfd::register_eventfd_tests();
     #[cfg(target_arch = "x86_64")]
     sys::register_tests();
 }

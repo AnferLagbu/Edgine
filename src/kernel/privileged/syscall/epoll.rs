@@ -473,27 +473,27 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
 /// 未注册策略时使用 `VfsPollPolicyRef::Fallback` 行为, 与原硬编码一致.
 ///
 /// 仍然在 privileged 处理 (因为这些是 syscall 层的特殊 fd):
-///   - eventfd/signalfd/timerfd: 框架内部状态
+///   - signalfd/timerfd: 框架内部状态
+///   - 其它非 inode 特殊对象 (eventfd 等): 经 `VfsOps::fd_poll_special` 回呼
 ///   - VFS fd: 委托给 `VfsPollPolicy`
 ///
 /// 与 user 事件掩码做 AND 运算, 只报告 user 关心的位.
 fn check_fd_ready(fd: i32, events: u32) -> u32 {
     use crate::privileged::fs::VfsFileType;
-    // 1. eventfd 空间 [200, 216)
-    if crate::privileged::syscall::eventfd::is_eventfd_fd(fd) {
-        let raw = crate::privileged::syscall::eventfd::eventfd_poll_events(fd);
-        return raw & events;
-    }
-
-    // 2. signalfd 空间 [220, 236)
+    // 1. signalfd 空间 [220, 236)
     if crate::privileged::syscall::signalfd::is_signalfd_fd(fd) {
         let raw = crate::privileged::syscall::signalfd::signalfd_poll_events(fd);
         return raw & events;
     }
 
-    // 3. timerfd 空间 [240, 256)
+    // 2. timerfd 空间 [240, 256)
     if crate::privileged::syscall::timerfd::is_timerfd_fd(fd) {
         let raw = crate::privileged::syscall::timerfd::timerfd_poll_events(fd);
+        return raw & events;
+    }
+
+    // 3. 非 inode 承载的特殊对象 (eventfd 等): 对象级 poll 快照
+    if let Some(raw) = crate::privileged::fs::current_vfs_ops().fd_poll_special(fd, events) {
         return raw & events;
     }
 

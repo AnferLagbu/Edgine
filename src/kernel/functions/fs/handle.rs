@@ -26,6 +26,27 @@ fn current_fd_handle(fd_idx: usize) -> Option<u32> {
     crate::privileged::proc::with_current_fd_table(|t| t.get_handle_id(fd_idx)).flatten()
 }
 
+/// fd 是否指向非 inode 承载的特殊对象 (eventfd 等).
+///
+/// 该判据供: 写循环对特殊对象短写即停 / sendfile 排除特殊对象 / 特殊对象
+/// I/O 后通知 epoll 重新求值.
+#[must_use]
+pub fn vfs_is_special_fd(fd: u32) -> bool {
+    let Some(handle_id) = current_fd_handle(fd as usize) else {
+        return false;
+    };
+    OPEN_FILE_TABLE
+        .with_file(handle_id, |open_file| open_file.as_inode().is_none())
+        .unwrap_or(false)
+}
+
+/// 对象 I/O 是否可能改变 epoll 就绪态 (管道端点 / 非 inode 特殊对象).
+///
+/// 普通文件内容恒可读可写, 就绪态不随 I/O 变化, 无需通知.
+fn fd_event_may_change(open_file: &OpenFile) -> bool {
+    open_file.is_pipe_endpoint() || open_file.as_inode().is_none()
+}
+
 // ============================================================================
 // VFS 核心接口 (内部)
 // ============================================================================
@@ -267,9 +288,9 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
         result.map_or_else(KernelError::as_vfs_ret, |n| {
             let new_offset = offset + n as u64;
             open_file.set_offset(new_offset);
-            // 管道读走数据 ⇒ 对端可写状态可能变化, 通知 epoll 重新求值
+            // 管道 / 特殊对象读走数据 ⇒ 就绪状态可能变化, 通知 epoll 重新求值
             // (普通文件就绪态恒定, 无需通知).
-            if open_file.is_pipe_endpoint() {
+            if fd_event_may_change(open_file) {
                 fd_notify::notify_fd_event(fd_idx.cast_signed());
             }
             crate::functions::intcast::low_i32_from_usize(n)
@@ -412,9 +433,9 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
             .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
-                // 管道写入数据 ⇒ 对端可读状态变化, 通知 epoll 重新求值;
+                // 管道 / 特殊对象写入数据 ⇒ 就绪状态变化, 通知 epoll 重新求值;
                 // 普通文件就绪态恒定, 不发事件 (原实现在写路径误调 close 通知).
-                if open_file.is_pipe_endpoint() {
+                if fd_event_may_change(open_file) {
                     fd_notify::notify_fd_event(fd_idx.cast_signed());
                 }
                 super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
@@ -753,25 +774,32 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
 
     // I4: 用户内存经 privileged 安全代理 (范围校验后写入)
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
-        let Some(inode) = open_file.as_inode() else {
-            return -1;
-        };
         let pwm = open_file.pwm;
-        inode.stat(pwm).map_or(-1, |stat| {
-            // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
-            let mut stat = stat;
-            let tbl = crate::privileged::sgeg::identity::get_table();
-            stat.uid = tbl.uid_of(stat.owner_pwm);
-            stat.gid = tbl.gid_of(stat.group_pwm);
-            if stat.gid == 0xFFFF_FFFF {
-                stat.gid = stat.uid;
-            }
-            if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
-                0
-            } else {
-                -1
-            }
-        })
+        // 非 inode 承载的特殊对象 (eventfd 等): 合成最小 stat (无 inode 编号)
+        let mut stat = match open_file.as_inode() {
+            Some(inode) => match inode.stat(pwm) {
+                Ok(stat) => stat,
+                Err(_) => return -1,
+            },
+            None => VfsStat {
+                perm: 0o600,
+                file_type: open_file.file_type,
+                owner_pwm: pwm,
+                ..VfsStat::default()
+            },
+        };
+        // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
+        let tbl = crate::privileged::sgeg::identity::get_table();
+        stat.uid = tbl.uid_of(stat.owner_pwm);
+        stat.gid = tbl.gid_of(stat.group_pwm);
+        if stat.gid == 0xFFFF_FFFF {
+            stat.gid = stat.uid;
+        }
+        if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
+            0
+        } else {
+            -1
+        }
     });
 
     result.unwrap_or(-1)

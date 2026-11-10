@@ -25,6 +25,8 @@ pub mod devpts;
 /// 目录与定位操作策略 — lseek / getdents
 pub mod dir_ops;
 pub mod egfs;
+/// 统一 fd 对象模型: eventfd 事件计数器对象
+pub mod eventfd;
 pub mod exfat;
 pub mod ext2;
 /// 统一 fd 对象接口 (`File` trait) + 文件系统薄适配器
@@ -170,6 +172,25 @@ impl crate::privileged::fs::VfsOps for FunctionsVfsOps {
     fn fd_file_type(&self, fd: i32) -> Option<u8> {
         let handle_id = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
         OPEN_FILE_TABLE.with_file(handle_id, |of| of.file_type)
+    }
+
+    fn fd_poll_special(&self, fd: i32, events: u32) -> Option<u32> {
+        let handle_id = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
+        OPEN_FILE_TABLE
+            .with_file(handle_id, |of| {
+                // inode 承载对象走 `fd_file_type` + VfsPollPolicy, 不在此处理
+                if of.as_inode().is_some() {
+                    return None;
+                }
+                let requested =
+                    PollEvents::from_bits_truncate(crate::functions::intcast::low_i16_from_i32(
+                        crate::functions::intcast::low_i32_from_u32(events),
+                    ));
+                Some(crate::functions::intcast::u32_from_i16(
+                    of.file().poll(requested).bits(),
+                ))
+            })
+            .flatten()
     }
 
     fn pread_inode(

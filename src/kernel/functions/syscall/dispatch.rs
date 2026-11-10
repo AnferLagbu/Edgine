@@ -1270,7 +1270,7 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
 
         // eventfd
-        SYS_EVENTFD | SYS_EVENTFD2 => as_ret(crate::functions::sync::eventfd::eventfd_syscall(
+        SYS_EVENTFD | SYS_EVENTFD2 => as_ret(crate::functions::fs::eventfd::eventfd_syscall(
             a0,
             crate::functions::intcast::low_i32_from_u64(a1),
         )),
