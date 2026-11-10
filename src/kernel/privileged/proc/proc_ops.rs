@@ -528,16 +528,36 @@ pub fn process_block_prepare(pid: u32, reason: BlockReason, sleep_until: u64) ->
     true
 }
 
-/// 在阻塞态已置位后完成调度切换, 并收口组退出 / `de_thread` 的致命信号.
+/// 在阻塞态已置位后完成调度切换, 并在入睡侧与唤醒侧两处收口组退出 / `de_thread`
+/// 的致命信号.
 ///
-/// 唤醒返回处收口致命信号: `process_exit_group` 对睡眠中的兄弟线程只投递一次
-/// `SIGKILL` + `unblock`, 该线程醒来后若立刻重睡同一个等待字, 而本架构尚未接线
-/// 「返回用户态前信号投递」(aarch64), 它就永远停在队列外的 Blocked 态 —— 整组
-/// 收不齐, 等待方 (父进程 `wait4` / `de_thread`) 永久挂死. 判据与
-/// [`Scheduler::yield_current`] 的致命信号检查同源: 内核内等待循环都不是信号投递点.
+/// **入睡侧 (H2 修复, 裁定 A)**: `process_block_prepare` 已置 Blocked, 此刻若
+/// `SIGKILL` 已在 pending 且组退出 / `de_thread` 已登记, 直接退出而**不入睡**.
+/// 这封闭了丢唤醒窗口: 唤醒方先置 SIGKILL 再 `unblock`, 若 `unblock` 落在目标仍
+/// Running 的窗口被丢弃, 目标随后走到本检查时 SIGKILL 必已 pending (置位早于被丢弃
+/// 的 `unblock`, 后者又早于目标置 Blocked), 于是命中退出. 反之若本检查未看到
+/// SIGKILL, 则 Blocked 已先于检查 store, 唤醒方 `unblock` 必见 Blocked 而投送,
+/// 由醒后检查兜底. 判据与 [`Scheduler::yield_current`] 同源.
+///
+/// **唤醒侧**: 睡眠中被 `unblock` 唤醒后, 若立刻重睡同一等待字而本架构尚未接线
+/// 「返回用户态前信号投递」(aarch64), 没此收口就永停队列外 Blocked. 内核内等待
+/// 循环都不是信号投递点, 故醒来后再查一次.
+///
+/// 范围: 本函数是 futex / `process_block` 等阻塞入口的共用收尾, 入睡侧检查覆盖
+/// 经此收尾的全部阻塞原因; 不经本函数的无限期阻塞入口若出现同类丢唤醒需另补检查.
 pub fn process_block_finish(pid: u32) {
     if pid == 0 || pid != Scheduler::current().unwrap_or(0) {
         return;
+    }
+    // 入睡侧: 已置 Blocked, 入睡前命中致命组信号即退出, 不 schedule (闭窗见函数 doc).
+    let kill_before_sleep = PROCESS_TABLE
+        .with_process(pid, |p| {
+            p.signal_pending_get() & (1u64 << super::signal::SIGKILL) != 0
+                && (p.group().exit_requested() || p.group().exec_de_thread())
+        })
+        .unwrap_or(false);
+    if kill_before_sleep {
+        process_exit(u32::from(super::signal::SIGKILL) << 8 | 0x7f);
     }
     Scheduler::schedule();
 

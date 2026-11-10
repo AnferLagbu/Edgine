@@ -19,7 +19,7 @@
 ## 2. 待验证假设（按优先级）
 
 - **H1 组退出链未达终态**：`exit_requested` 已置真（`[REAP]` 行只在置真后打印）但组长自身或 helper 仍有成员未落 Zombie。需确认 helper 是否已 Zombie、组长停在退出流程的哪一步。
-- **H2 丢唤醒**：组退出侧的 SIGKILL + unblock 对 helper 的唤醒丢失，helper 永睡在 futex，组无法整体落 Zombie。P-78 修的是父侧等待，不覆盖此路径。**（2026-11-10 R-6 坐实：静态断点链 + SMP=4 定向复现 4/80 直证，修复待裁。）**
+- **H2 丢唤醒**：组退出侧的 SIGKILL + unblock 对 helper 的唤醒丢失，helper 永睡在 futex，组无法整体落 Zombie。P-78 修的是父侧等待，不覆盖此路径。**（2026-11-10 R-6 坐实：静态断点链 + SMP=4 定向复现 4/80 直证，修复待裁。）** **（2026-11-10 R-7：初次裁定 B 施工后经 A/B 负控制坐实严重回归——SMP=2 同宿主同 harness pre-fix 0/60 vs post-fix 19/60 失败、组长自旋 livelock，用户重裁取 A 入睡侧检查；A 修复后 SMP=2 双架构 60/60、SMP=4 双架构 160/160 零命中，对照修前 aarch64 SMP=4 4/80。）**
 - **H3 跨核内存序**：aarch64 弱内存序下 `exit_requested` / 组退出码 / 成员状态的跨核读顺序不一致，`process_group_exit_code` 或 Zombie 判定延迟/漏判。
 - **H4 调度饿死**：helper 或组长在 aarch64 EEVDF 合格集上饿死（与 P-78 同族但不同路径）。
 - **H0 前置**：先区分「真挂死」与「宿主过载导致 5 s 预算内未完成」——取证轮须记录宿主负载与 tick 速率。
@@ -76,7 +76,26 @@
 
   **静默冻结取证面**：本批 160 轮（80×2）无静默冻结样本（全部失败轮都打印了 FAIL 行）。四命中轮 `[HB] tick=5000/10000/15000` 持续打印且跨核（cpu=0..3）⇒ 内核未停摆，是「成员线程永久阻塞而内核仍活」，与 §6 (b)「guest 整体停摆」可区分；同轮 `EL0 sync fault pid=10 FAR=0xFFFF000040080000` 是 KPTI 负判据（故意），非 wild-PC。
 
-  **修复候选（待裁，未施工）**：**A 入睡侧检查**——futex 阻塞点入睡前查 pending SIGKILL + 组退出标记，命中即不入睡（返回 -EINTR 或直接走退出）；最小改动，但每个无限期阻塞入口都需补检查。**B 唤醒侧重发**——`process_exit_group` 加 `exec_de_thread` 同构的轮询重发循环（每轮 SIGKILL + unblock 直至成员全 Zombie）；树内已有验证过的范式，覆盖所有阻塞原因不限于 futex，代价是 exit_group 延迟受兄弟调度影响、需按 bounded-wait 纪律加截止。**C 机制层 sticky wake**——`unblock` 对 Running 目标置 wake-pending 标志，`block_prepare` 消费（置位则拒绝入睡）；泛化封闭所有 unblock 调用方的同类窗口，但新增每进程字段与排序不变式，触调度器热路径。
+  **修复候选（待裁，未施工）**：**A 入睡侧检查**——futex 阻塞点入睡前查 pending SIGKILL + 组退出标记，命中即不入睡（返回 -EINTR 或直接走退出）；最小改动，但每个无限期阻塞入口都需补检查。**B 唤醒侧重发**——`process_exit_group` 加 `exec_de_thread` 同构的轮询重发循环（每轮 SIGKILL + unblock 直至成员全 Zombie）；树内已有验证过的范式，覆盖所有阻塞原因不限于 futex，代价是 exit_group 延迟受兄弟调度影响、需按 bounded-wait 纪律加截止。**C 机制层 sticky wake**——`unblock` 对 Running 目标置 wake-pending 标志，`block_prepare` 消费（置位则拒绝入睡）；泛化封闭所有 unblock 调用方的同类窗口，但新增每进程字段与排序不变式，触调度器热路径。**（2026-11-10 用户初次裁定取 B，施工后 A/B 负控制坐实严重回归——SMP=2 同宿主同 harness pre-fix 0/60 vs post-fix 19/60 失败、组长自旋 livelock；上报重裁后用户改取 A 入睡侧检查，B 已 revert、C 不取，见 R-7。）**
+
+### R-7 H2 修复：裁定 B 回归 → 重裁 A 入睡侧检查
+
+- 描述：R-6 坐实 H2 后用户初次裁定取 B（唤醒侧轮询重发循环）；B 施工后经 A/B 负控制坐实严重回归，上报用户重新裁定（§11.3 架构关键路径 / §9.1 决策灰色地带），改取 A（入睡侧检查，Linux `signal_pending_state` 范式）。
+- 方案：A 在阻塞共用收尾 `process_block_finish` 的 `Scheduler::schedule()` **之前**查 pending SIGKILL + 组退出 / `de_thread` 标记，命中即 `process_exit` 不入睡；`process_exit_group` 维持 HEAD 单次投递（revert B 的 wait-loop）。回归锁改 A 形状（删 B 形状锁、`thread_group_k06_test` revert 回 HEAD 仍 pin 单次投递）。
+- 状态：[X]
+- 详情：2026-11-10 按用户重裁「改取 A」施工并复验。
+
+  **B 回归归因（A/B 负控制，已弃 B）**：B 给 `process_exit_group` 加 `exec_de_thread` 同构的轮询重发循环（每轮 SIGKILL + unblock 直至成员全 Zombie），让组长等 helper 落 Zombie；但 futex-loop helper 在某 SMP 竞态下永不收敛 ⇒ 组长 livelock（x86_64 现场 `state=Running members=2 runnable=2`；aarch64 组长 logged `exit:` 但 `[REAP] state=Running` 持续）。同宿主同 harness SMP=2 负控制：pre-fix（HEAD 单次投递，`cp`+sha256 备份 → `git show HEAD:` 单文件 revert → build → 30 轮 × 2 架构 → `cp` 复原校验）**0/60 失败** vs post-fix（B wait-loop）**19/60 失败**。B 的 loop 与 `exec_de_thread` 逐字同构且**无界**（R-6 修复候选段早已注明 B「需按 bounded-wait 纪律加截止」而施工时未加），故弃 B、revert `process_exit_group` 回 HEAD（`git diff` 对该函数 byte-identical）。
+
+  **A 施工（唯一生产改动）**：`process_block_finish`（[proc_ops.rs:548](../../src/kernel/privileged/proc/proc_ops.rs#L548)）在 `Scheduler::schedule()` 前增入睡侧致命检查，谓词与醒后检查 / `Scheduler::yield_current` 同源：`signal_pending_get() & (1<<SIGKILL) != 0 && (group().exit_requested() || group().exec_de_thread())`，命中即 `process_exit(SIGKILL<<8 | 0x7f)` 不入睡；醒后检查 body 逐字保留。**闭窗论证**：`process_exit_group` 先 `group.request_exit`（`exit_requested.swap(true, AcqRel)`）**再**投递 SIGKILL + unblock；`process_block_prepare` 已置 Blocked 先于本检查。① 若本检查未看到 SIGKILL ⇒ Blocked 已先于检查 store ⇒ 唤醒方 unblock 必见 Blocked 而投送，由醒后检查兜底；② 若 unblock 落在目标仍 Running 的窗口被丢弃 ⇒ SIGKILL 置位早于被丢弃的 unblock、后者早于目标置 Blocked 与本检查 ⇒ 检查必看到 SIGKILL（且 `exit_requested` 已先置）⇒ 命中退出。两路闭合 H2「永不醒来」窗口。
+
+  **回归锁**：删 B 形状锁 `host-tests/tests/exit_group_resend_test.rs`；新增 `host-tests/tests/h2_pre_sleep_kill_test.rs` 5 例——真源码判绿 + 合成修复样本判绿（证判据非恒真）+ 3 负控制判红（仅醒后检查 / 无检查 / 有检查无 `process_exit`），判据 = `schedule()` 之前须存在查 SIGKILL（带组退出标记）并 `process_exit` 的收口；`thread_group_k06_test` revert 回 HEAD（无 diff，仍 pin `for tid in group.members() {` 单次投递形状，与 revert 后的 `process_exit_group` 一致）。
+
+  **复验读数（全部串行，不重建 characterization 读的镜像）**：`./ci/build.sh all` Passed 6 / Failed 0。**无回归表征** `THREAD_STRESS_ARCH=both THREAD_STRESS_SMP=2 THREAD_STRESS_KEEP_LOG=1 scripts/thread_stress_test.sh 30` = **60/60 通过、0 失败**（对照 B 的 SMP=2 19/60 失败）。**H2 修复验证** `THREAD_STRESS_ARCH=both THREAD_STRESS_SMP=4 THREAD_STRESS_KEEP_LOG=1 scripts/thread_stress_test.sh 80` = **160/160 通过、0 失败、零命中**（对照修前 aarch64 SMP=4 4/80，R-6）；目录内 `thread_stress_*_fail_*.log` 经 mtime 核实皆 B 回归批旧物（19:24，早于本批 20:20），本批运行日志 `grep FAIL` 计数 0。日志留 `other/build/log/h2_a_smp2_char.log` / `h2_a_smp4_disturb.log`。
+
+  **七门槛**：① `./ci/build.sh all` Passed 6 / Failed 0；② clippy pedantic 七树 + feature 维 + `cargo fmt --check` 四 crate 全绿（首跑 audit 因新增测试文件缺尾换行判 fmt 漂移，`cargo fmt --manifest-path host-tests/Cargo.toml` 仅对该文件补尾换行后复跑全绿）；③ `bash ci/audit.sh full` exit 0（2e 存量审计腿 10/10 无静默跳过、2f bench 在预算内、Lockbud 实编 4/4 crate 零发现）；④ `make test-host` exit 0（**190 套件**全 ok，含新增 `h2_pre_sleep_kill_test` 5 例）；⑤ QEMU 双架构 2/2 + P-62 feature 运行维 4/4 + 线程压力 3 轮 × 2 架构 6/6 + initramfs 载体双架构 + lockdep 构建面探针；⑥ `make test-kernel-host` exit 0（12 + 637 + 513 passed 三腿）；⑦ `make -f Makefile.ci ci-rustdoc` 双架构 exit 0（0 源码级 link 错误 + 0 私有项链接）。日志留 `other/build/log/h2_a_gates.log` / `h2_a_audit2.log`。
+
+  **判据未放宽**：`THREAD_WAIT_BUDGET_MS = 5000`、`reap-timeout` 判据逐字未动。**范围**：A 覆盖经 `process_block_finish` 收尾的全部阻塞原因（futex / `process_block` 等）；不经本函数的无限期阻塞入口若出现同类丢唤醒需另补检查。C（机制层 sticky wake，泛化封闭所有 unblock 调用方）未取，留待将来泛化需求。**文档**：本册 §2 H2 行与 R-6 段尾的预写假读数（「裁定 B 修复…0 命中」）更正为 B 回归 → 重裁 A → A 真实读数；`multithreading-project.md` §6 风险条 ③ 与 §8.1「§6③a」行同步更正（历史正文未改）。
 
 ## 4. 边界
 
