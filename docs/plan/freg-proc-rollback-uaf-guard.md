@@ -54,13 +54,13 @@
 
 描述：为 `proc_freg_capture` 快照的每个 `NonNull<Process>` 建立引用保护——capture 时对在册进程加 refcount（或 pin 其生命周期），rollback 时据此校验槽位仍有效再写回，释放旧快照引用；确认安全后方把 `PROC_FREG_ROLLBACK_SAFE` 翻为 `true`。
 方案：属**复活 FREG** 范畴，须与 FREG 重新立项合并推进；设计要点（进程释放路径递减 refcount、快照持有引用直至下一次 capture/显式清理、rollback 前后成对校验）留待该立项细化。**在此之前禁止翻护栏**。
-状态：[]
+状态：[]（**2026-11-10 用户裁定：维持休眠，不复活 FREG**；护栏保持 fail-closed，`PROC_FREG_ROLLBACK_SAFE` 恒 `false`。）
 
 ### D-3 pmm 侧同构 inert 复核
 
 描述：`pmm_register_freg_domain`（`find(3)`）落在相同的 id-归属缺口上；物理帧快照的 rollback 是否也需要生命周期保护，语义与 proc 不同，需单列复核。
 方案：待 D-2 的 FREG 复活立项时一并评估 pmm capture 的帧引用计数是否需要与 proc 侧对称加护栏；本轮不改。
-状态：[]
+状态：[]（**2026-11-10 用户裁定：FREG 维持休眠，本项随之阻塞**，不单独施工。）
 
 ## 5. 验收
 

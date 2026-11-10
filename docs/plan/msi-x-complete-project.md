@@ -16,7 +16,8 @@
 - **MSIX-02. 未验证/未完整路径**
   - 描述：(1) NVMe MSI-X 端到端**无 QEMU 实测**（仅编译通过）；(2) VirtIO 使用 virtio-mmio（非 PCI），无 MSI-X capability，未接入；(3) 多队列驱动（NVMe 多队列 / virtio-pci 多队列）接入时 vector 池 96 是否够用未评估；(4) LAPIC EOI 路径未在真实中断验证。
   - 方案：按 MSIX-03~06 顺序验证与完整化。
-  - 状态：[]
+  - 详情：2026-11-10 四项全部结清：(1) NVMe MSI-X 端到端 → MSIX-03 已 QEMU 实测闭环；(2) VirtIO 无 MSI-X → MSIX-04 评估结论「暂不接入」；(3) vector 池 → MSIX-05 评估结论「96 富余」（实测 2/96）；(4) LAPIC EOI → MSIX-06 已实测闭环。
+  - 状态：[X]
 
 ### 待办
 
@@ -29,12 +30,14 @@
 - **MSIX-04. virtio-pci MSI-X 接入评估**
   - 描述：当前 virtio-blk 用 virtio-mmio（INTx IRQ 11），无 MSI-X。若后续接入 virtio-pci（PCI 传输层），则启用 MSI-X。
   - 方案：评估 virtio-pci 接入范围（新传输层实现 vs 现有 mmio 迁移）；若接入则复用 `msix_enable` + `register_msi_irq`。纯评估项，可输出结论"暂不接入"并关闭。
-  - 状态：[]
+  - 详情：2026-11-10 评估结论 **暂不接入**。依据：(1) 当前 virtio 传输层为 virtio-mmio（`privileged/driver/virtio/mod.rs:103` `VIRTIO_MMIO_BASE=0x0a000000`、stride 0x200、最多 32 设备），仓库内**无 virtio-pci 传输层** —— grep `virtio_pci` / `VIRTIO_PCI` 仅命中 `privileged/driver/virtio/queue.rs:96` 一处 legacy 对齐常量注释，无 PCI capability 解析 / BAR 映射 / notify 通路；(2) 接入 MSI-X 属**新传输层实现**而非现有 mmio 迁移：须先落 PCI 传输层（common/isr/notify/device 四类 capability + BAR 映射），再叠加 `msix_enable`；(3) 当前无需求驱动 —— QEMU 上 virtio 走 mmio 已端到端可用，MSI-X 路径已由 e1000/NVMe 两处实测覆盖。触发条件：目标平台只提供 virtio-pci（真实硬件或无 mmio 平台）时再立项，届时复用 `msix_enable` + `register_msi_irq`。
+  - 状态：[X]
 
 - **MSIX-05. 多队列 vector 池评估**
   - 描述：`MSI_VECTOR_COUNT=96`（vector 0x40-0x9F，irq32-127）。多队列驱动（NVMe 多队列 / virtio-pci 多队列）每队列 1 vector，96 个可支撑 ~96 队列。超出需扩 IDT stub（isr.asm + init_msi_idt）至 vector 0xA0+。
   - 方案：评估当前驱动规模（NVMe 1 队列 + virtio 1 队列 = 2 vector），确认 96 富余；预留扩容点注释（IDT stub 扩展时同步上调 MSI_VECTOR_COUNT）。
-  - 状态：[]
+  - 详情：2026-11-10 评估结论 **96 富余，无需改码**。实测消费者仅 2 处、各 1 vector：e1000（`functions/driver/net/e1000.rs:404` 请求 1 向量）+ NVMe（`functions/driver/storage/mod.rs:275` → `storage/nvme.rs:1084` 请求 1 向量）⇒ 2/96。多队列接入时每队列 1 vector，96 可支撑 ~96 队列，远高于当前模拟环境的队列规模。扩容点约束注释已在 `privileged/pci/msi.rs:91-98` 在位（COUNT 必须 ≤ 96 且与 IDT stub 精确一致，扩展 stub 时同步上调），本项无需补充代码或注释。
+  - 状态：[X]
 
 - **MSIX-06. LAPIC EOI 与 aarch64 路径**
   - 描述：x86_64 `handle_irq` MSI 分支的 `send_eoi`（LAPIC 优先）需在 MSIX-03 实测确认；aarch64 MSI（GIC ITS）当前未实现，需评估是否纳入本工程范围。

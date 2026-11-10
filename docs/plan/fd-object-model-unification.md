@@ -6,5 +6,5 @@
 2. [ ] 抽象落地：`functions::fs` 引入 fd 对象 trait；`OpenFile` 与 Inode 解耦（socket/eventfd 等非文件对象进入 `OpenFileTable`）；VFS fd 迁移至统一分发点（read/write/close/poll 单入口）。
 3. [ ] 子系统迁移：8 个非 VFS 子系统逐个把槽位注册改为 fd 对象挂表（每个子系统一个 PR + 回归测试）；全局位图分配器随最后一个子系统迁移后删除。
 4. [ ] 收尾退役：删除 `FdPlan`/`FdSubsystem`/`subsystem_of`/`idx_of` 与 `sm_slot` 类适配层（2026-10 方案 C 引入的 sm_fi.rs `sm_slot` 是唯一残留消费面，grep 本符号即全部迁移点）；同步 `fd_allocator_unified_test` / `td15_fd_idx_of_test` 等契约测试退役或反转。
-状态：[]（阶段 1 设计定稿已完成；阶段 2-4 未开始。前置依赖解除：P4/D8b poll 接线的签名/位值/契约已按设计文档第四节锚定（`sm_socket_poll` 为 `File::poll` 数值 fd 前影），P4 可先行施工；终态迁移时仅改写分发点。
+状态：[]（**2026-11-10 用户裁定：阶段 2 作为下一项主工程开工**，阶段 2 单批收口，阶段 3/4 另批。阶段 1 设计定稿已完成；前置依赖解除：P4/D8b poll 接线的签名/位值/契约已按设计文档第四节锚定（`sm_socket_poll` 为 `File::poll` 数值 fd 前影），P4 可先行施工；终态迁移时仅改写分发点。
 详情：输入依据见 `docs/report/context-consistency-audit.md` §5（TCB 压力与双路径收敛约束）与 `other/HANDOFF-socket-layer-P3.md` §3.2（命名空间重叠根因）；方案 C（fd_alloc 基址重排 + `sm_slot` 单点换算，2026-10）为止血桥接，非本工程的替代。
