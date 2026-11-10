@@ -10,6 +10,7 @@
 #   make -f Makefile.ci ci-rustdoc      # 双架构 rustdoc 0 warning (对齐 ci-lint.yml)
 #   make -f Makefile.ci ci-bench        # 性能指标测试腿 (release 实测 vs 绝对预算)
 #   make -f Makefile.ci ci-bench-record # 重新记录读数与预算 (每项 5 次取中位)
+#   make -f Makefile.ci ci-liveness     # 整机 liveness 探针 (可选/定期腿, 非门禁)
 #   make -f Makefile.ci ci-fix          # auto-fix where possible
 #   make -f Makefile.ci ci-clean        # clean log dir
 #
@@ -36,7 +37,7 @@ PY := python3
 
 .PHONY: ci ci-build ci-cargo ci-audit ci-unsafe-scan \
         ci-test-host ci-test-kernel-host ci-boot ci-test-x86 ci-test-aarch64 \
-        ci-rustdoc ci-bench ci-bench-record ci-fix ci-clean help
+        ci-rustdoc ci-bench ci-bench-record ci-liveness ci-fix ci-clean help
 
 # ── §2.3 六条验证门槛的一键聚合 ─────────────────────────────────
 # 前置条件按依赖序排列: 先产出双架构产物 (build), 审计与 QEMU 才有可信输入.
@@ -180,6 +181,22 @@ ci-bench-record:
 	@$(PY) scripts/record_bench_baseline.py --runs 5 | tee $(LOG_DIR)/bench_baseline.txt
 	@echo "PASS: baseline.json 已更新 (读数 + 预算同源重算)"
 
+# ── liveness 探针: 可选/定期腿 (D-3) ────────────────────────────
+# 判据与用法见 docs/plan/lockdep-observer-liveness-metric.md D-1/D-3. 本目标只
+# 委派 scripts/qemu_liveness_probe.sh: 读**预构建**镜像 (不重建), 单 boot 采样判
+# ALIVE/FROZEN. 退出码 0=全 ALIVE / 1=出现 FROZEN / 2=环境或镜像错误, 或 tick
+# 读数不可得 (测不出不判冻).
+# 按 D-3 裁定先作**可选/定期**腿运行 —— 不进 ci 聚合、不进 audit.sh full, 稳定后
+# 再评估升强制门禁; 需要多样本时用 BOOTS=n SMP=n HAMMER_S=n 覆盖 (示例:
+# `make -f Makefile.ci ci-liveness BOOTS=6 SMP=4 HAMMER_S=12`).
+# SMP 默认取 2, 与 §2.3 门槛的 QEMU 启动配置一致; 探针自身默认 4. x86_64 的
+# -smp 4 目前会暴露一个与本腿无关的线程退出重现签名 (登记在
+# docs/plan/aarch64-reap-timeout-rootcause.md §1), 修复前不宜作定期读数基线.
+ci-liveness:
+	@echo "[+] 整机 liveness 探针 (可选/定期腿, 非门禁)..."
+	@mkdir -p $(LOG_DIR)
+	@SMP=$${SMP:-2} bash scripts/qemu_liveness_probe.sh 2>&1 | tee $(LOG_DIR)/liveness_probe.txt; exit $${PIPESTATUS[0]}
+
 # ── 辅助目标 ────────────────────────────────────────────────────
 ci-fix:
 	@echo "Running auto-fix..."
@@ -203,6 +220,7 @@ help:
 	@echo "  make -f Makefile.ci ci-rustdoc           - 双架构 rustdoc 0 warning"
 	@echo "  make -f Makefile.ci ci-bench             - 性能指标测试 (release 实测 vs 绝对预算)"
 	@echo "  make -f Makefile.ci ci-bench-record      - 重新记录读数与预算"
+	@echo "  make -f Makefile.ci ci-liveness          - 整机 liveness 探针 (可选/定期腿, 非门禁)"
 	@echo "  make -f Makefile.ci ci-unsafe-scan       - functions unsafe 单点快查"
 	@echo "  make -f Makefile.ci ci-fix               - auto-fix"
 	@echo "  make -f Makefile.ci ci-clean             - clean log dir"

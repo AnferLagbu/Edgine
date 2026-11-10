@@ -15,7 +15,9 @@
 #
 # KPTI 读数伪影: TICK_ADDR 是内核 .bss 虚拟地址, gdb `x/1xg` 走被附加 CPU 的
 #   当前 CR3; 该 CPU 在用户态时读回的是用户指针垃圾 (>= TICK_SANITY_MAX), 而非
-#   真 tick. 故先选 "#0 rip ∈ 内核文本窗" 的线程再读, 并只采信小整数.
+#   真 tick. 故在**同一次** gdb 会话内遍历各 vCPU: 只对 "#0 rip ∈ 内核文本窗" 的
+#   核读 tick, 且只采信小整数 (旧形态 bt 与 x 分两次会话, 中间 vCPU 可切到用户
+#   CR3, 读回垃圾后只剩重试这一条路). 全部核都不可读时判 UNREADABLE, 不判冻.
 #
 # 用法:
 #   scripts/qemu_liveness_probe.sh                    # 单 boot, 自动解析 TICK_ADDR
@@ -23,12 +25,14 @@
 #
 # 环境变量 (全部可选):
 #   ARCH=x86_64  IMG=<kernel.flat>  MAP=<kernel.map>
-#   TICK_ADDR=0x..   不填则从 MAP 解析 kernel::privileged::timer::tick::TICK_IRQ_COUNT
+#   TICK_ADDR=0x..   不填则从 MAP 解析 timer::tick::TICK_IRQ_COUNT (crate 名随
+#                    workspace 拆分有两种形态: kernel_privileged / kernel::privileged)
 #   SMP=4  BOOTS=1  HAMMER_S=12  GDB_BASE=1434  HOST_PORT=8080
 #   KTEXT_LO=0x100000  KTEXT_HI=0x300000  TICK_SANITY_MAX=0x100000
 #
 # 输出: 每 boot 一行 `LIVENESS ...`; 末尾一行 `LIVENESS_SUMMARY ...`.
-# 退出码: 0=全部 ALIVE; 1=出现 FROZEN; 2=环境/镜像错误.
+# 退出码: 0=全部 ALIVE; 1=出现 FROZEN; 2=环境/镜像错误, 或存在 UNREADABLE
+#   (tick 测不出 ≠ 冻结: 该 boot 不参与判冻, 退出码按「测不出」分档).
 # ============================================================================
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
@@ -55,7 +59,9 @@ mkdir -p "$OUT"
 resolve_tick_addr() {
     [ -n "${TICK_ADDR:-}" ] && { echo "$TICK_ADDR"; return; }
     [ -f "$MAP" ] || return 1
-    grep -aE '0x[0-9a-f]+[[:space:]]+kernel::privileged::timer::tick::TICK_IRQ_COUNT' "$MAP" \
+    # 符号名两种形态: P-71 workspace 拆分后 crate = kernel-privileged
+    # (mangled 可读名 kernel_privileged::...); 拆分前是 kernel::privileged::...
+    grep -aE '0x[0-9a-f]+[[:space:]]+(kernel_privileged|kernel::privileged)::timer::tick::TICK_IRQ_COUNT' "$MAP" \
         | grep -oE '0x[0-9a-f]+' | head -1
 }
 TICK_ADDR=$(resolve_tick_addr || true)
@@ -63,26 +69,39 @@ TICK_ADDR=$(resolve_tick_addr || true)
 echo "=== liveness probe: IMG=$IMG TICK_ADDR=$TICK_ADDR SMP=$SMP BOOTS=$BOOTS HAMMER_S=${HAMMER_S}s ==="
 
 GP=""; HP=""   # 供 read_tick 内部引用当前 boot 的 gdb/host 端口
-# 内核态线程读 tick: 选 #0 rip ∈ [KTEXT_LO,KTEXT_HI) 的线程, 值 < TICK_SANITY_MAX 才采信, 否则重试.
+# 读 tick: 单次 gdb 会话内遍历 vCPU, 选 #0 rip ∈ [KTEXT_LO,KTEXT_HI) 且
+# 读出值 < TICK_SANITY_MAX 的核; 全部核不可读时返回空串 (调用侧判 UNREADABLE).
 read_tick() {
-    local dump tid tries=0 v d
+    local script="$OUT/.read_tick.gdb" tries=0 v
     while [ "$tries" -lt 5 ]; do
-        dump=$(gdb -batch -q -ex "target remote :${GP}" -ex "thread apply all bt 1" -ex "detach" -ex "quit" 2>/dev/null)
-        tid=$(printf '%s\n' "$dump" | awk -v lo="$KTEXT_LO" -v hi="$KTEXT_HI" '
-            BEGIN { lo=strtonum(lo); hi=strtonum(hi); seen=0 }
-            /^Thread [0-9]+/ { match($0,/Thread ([0-9]+)/,m); cur=m[1] }
-            /^#0/ { match($0,/0x([0-9a-f]+)/,a); v=strtonum("0x" a[1]);
-                    if (v>=lo && v<hi && !seen){ print cur; seen=1 } }')
-        [ -z "$tid" ] && tid=1
-        v=$(gdb -batch -q -ex "target remote :${GP}" -ex "thread $tid" -ex "x/1xg $TICK_ADDR" -ex "detach" -ex "quit" 2>/dev/null \
-            | grep -oE '0x[0-9a-f]{16}' | tail -1)
-        d=$((16#${v#0x})); [ "$d" -lt "$((16#${TICK_SANITY_MAX#0x}))" ] && { echo "$v"; return; }
+        cat > "$script" <<GDB
+target remote :${GP}
+python
+import gdb
+lo, hi, cap = ${KTEXT_LO}, ${KTEXT_HI}, ${TICK_SANITY_MAX}
+for t in gdb.selected_inferior().threads():
+    try:
+        t.switch()
+        if lo <= int(gdb.parse_and_eval('\$pc')) < hi:
+            val = int(gdb.parse_and_eval('*(unsigned long*)${TICK_ADDR}'))
+            if val < cap:
+                print('TICKVAL=0x%x' % val)
+                break
+    except gdb.error:
+        pass
+end
+detach
+quit
+GDB
+        v=$(gdb -batch -q -x "$script" 2>/dev/null | grep -oE 'TICKVAL=0x[0-9a-f]+' | tail -1)
+        [ -n "$v" ] && { rm -f "$script"; echo "${v#TICKVAL=}"; return; }
         tries=$((tries+1)); sleep 0.3
     done
-    echo "${v:-0x0}"
+    rm -f "$script"
+    echo ""
 }
 
-frozen=0; alive=0
+frozen=0; alive=0; unreadable=0
 for b in $(seq 1 "$BOOTS"); do
     LOG="$OUT/boot${b}.log"; BT="$OUT/boot${b}.bt"; rm -f "$LOG" "$BT"
     HP=$((HOST_PORT + b)); GP=$((GDB_BASE + b))
@@ -116,21 +135,31 @@ PY
     wait "$HAM" 2>/dev/null
     kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
 
-    ad=$((16#${a#0x})); cd_=$((16#${c#0x})); delta=$((cd_ - ad))
-    rate=$(( delta / (HAMMER_S>0?HAMMER_S:1) ))
     idle=0; grep -aqE "\[halted" "$BT" 2>/dev/null && idle=1
     echo_ok=$(grep -acF "[tcp] Echo ok" "$LOG" 2>/dev/null); echo_ok=${echo_ok:-0}
-    # FROZEN 需三条件同时: delta<=0 且 两次 tick 相同 且 无 halted 核
-    if [ "$delta" -le 0 ] && [ "$a" = "$c" ] && [ "$idle" -eq 0 ]; then
-        st=FROZEN; frozen=$((frozen+1))
+    if [ -z "$a" ] || [ -z "$c" ]; then
+        # 测不出 ≠ 冻结: 缺任一读数即不满足判冻前提, 本 boot 不参与判冻.
+        st=UNREADABLE; unreadable=$((unreadable+1))
+        printf 'LIVENESS boot=%d state=%s ready=%d tick=NA->NA delta=0 rate_per_s=0 halted_core=%d echo_ok=%d\n' \
+            "$b" "$st" "$ready" "$idle" "$echo_ok"
     else
-        st=ALIVE; alive=$((alive+1))
+        ad=$((16#${a#0x})); cd_=$((16#${c#0x})); delta=$((cd_ - ad))
+        rate=$(( delta / (HAMMER_S>0?HAMMER_S:1) ))
+        # FROZEN 需三条件同时: delta<=0 且 两次 tick 相同 且 无 halted 核
+        if [ "$delta" -le 0 ] && [ "$a" = "$c" ] && [ "$idle" -eq 0 ]; then
+            st=FROZEN; frozen=$((frozen+1))
+        else
+            st=ALIVE; alive=$((alive+1))
+        fi
+        printf 'LIVENESS boot=%d state=%s ready=%d tick=0x%x->0x%x delta=%d rate_per_s=%d halted_core=%d echo_ok=%d\n' \
+            "$b" "$st" "$ready" "$ad" "$cd_" "$delta" "$rate" "$idle" "$echo_ok"
+        [ "$st" = FROZEN ] && { echo "  !!! FROZEN bt 摘录:"; grep -aE "Thread|#[0-9]" "$BT" | head -12 | sed 's/^/    /'; }
     fi
-    printf 'LIVENESS boot=%d state=%s ready=%d tick=0x%x->0x%x delta=%d rate_per_s=%d halted_core=%d echo_ok=%d\n' \
-        "$b" "$st" "$ready" "$ad" "$cd_" "$delta" "$rate" "$idle" "$echo_ok"
-    [ "$st" = FROZEN ] && { echo "  !!! FROZEN bt 摘录:"; grep -aE "Thread|#[0-9]" "$BT" | head -12 | sed 's/^/    /'; }
 done
 
-total=$((alive + frozen)); rc=0; [ "$frozen" -gt 0 ] && rc=1
-printf 'LIVENESS_SUMMARY boots=%d alive=%d frozen=%d exit=%d out=%s\n' "$total" "$alive" "$frozen" "$rc" "$OUT"
+total=$((alive + frozen + unreadable)); rc=0
+[ "$frozen" -gt 0 ] && rc=1
+[ "$rc" -eq 0 ] && [ "$unreadable" -gt 0 ] && rc=2
+printf 'LIVENESS_SUMMARY boots=%d alive=%d frozen=%d unreadable=%d exit=%d out=%s\n' \
+    "$total" "$alive" "$frozen" "$unreadable" "$rc" "$OUT"
 exit "$rc"

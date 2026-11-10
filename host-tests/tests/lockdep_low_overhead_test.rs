@@ -197,6 +197,67 @@ fn violation_messages_are_unchanged() {
     );
 }
 
+/// D-2 方案 A: 其余 `lockdep_log!` 发射点同样不得落在 `LOCK_DEP_MAP` 持锁窗内.
+///
+/// M5 已把 acquire/release 的违规报告改为 guard 外发射; 本契约覆盖当时遗留的两处:
+/// `register()` 的类表满告警与 `dump_state()` 的状态输出. 判据按函数分面 ——
+/// 锁内只取快照/读数, 发射点必须位于 guard 块之外.
+#[test]
+fn class_table_warning_and_dump_logs_are_outside_the_guard() {
+    let text = src();
+
+    // ① register(): 锁内只累加粘滞读数
+    let register = strip_line_comments(&fn_body(&text, "fn register(&mut self,"));
+    assert!(
+        !register.contains("lockdep_log!"),
+        "register() 体内仍有 `lockdep_log!`: 类表满告警在 `LOCK_DEP_MAP` 持锁窗内发射 \
+         (D-2 方案 A 失效)"
+    );
+
+    // ② register_class(): 告警在快照块 (`};`) 之后发射
+    let register_class = strip_line_comments(&fn_body(&text, "pub fn register_class("));
+    assert_eq!(
+        count_of(&register_class, "lockdep_log!"),
+        1,
+        "register_class() 的满表告警应有且只有一处"
+    );
+    let log_at = register_class.find("lockdep_log!").unwrap();
+    let snapshot_end = register_class
+        .find("};")
+        .expect("register_class() 缺快照块结尾 `};`: 本契约需同步");
+    assert!(
+        snapshot_end < log_at,
+        "register_class() 的告警发射点在快照块 `}};` 之前: 仍在 `LOCK_DEP_MAP` 持锁窗内"
+    );
+    assert!(
+        register_class.contains("id == LockClassId::INVALID"),
+        "register_class() 不再按 `INVALID` 判「本次调用被丢弃」: 满表告警会重复报历史丢弃"
+    );
+
+    // ③ dump_state(): 不直接持锁 (读面全在 StateSnapshot::take)
+    let dump = strip_line_comments(&fn_body(&text, "pub fn dump_state()"));
+    assert!(
+        !dump.contains("LOCK_DEP_MAP"),
+        "dump_state() 仍直接取 `LOCK_DEP_MAP`: 快照与发射未分离, 日志重新落回持锁窗"
+    );
+    let take = strip_line_comments(&fn_body(&text, "fn take() -> Self"));
+    assert!(
+        !take.contains("lockdep_log!"),
+        "StateSnapshot::take() 体内有 `lockdep_log!`: 持锁取快照时发射日志"
+    );
+    assert_eq!(
+        count_of(&take, "LOCK_DEP_MAP.lock()"),
+        1,
+        "StateSnapshot::take() 应恰好取一次 `LOCK_DEP_MAP`: dump 的读面必须单次快照"
+    );
+
+    // ④ 告警文本与载荷逐字不变 (门禁取证脚本按该串判因)
+    assert!(
+        text.contains("lockdep: MAX_LOCK_CLASSES ({}) exceeded, skipping '{}' (dropped={})"),
+        "类表满告警文本丢失或改写: 取证脚本的判因串已失效"
+    );
+}
+
 /// 归因入口必须存在且只读一次全局锁 (A-1 常开裁定的量化前置).
 #[test]
 fn stats_accessor_is_exposed() {

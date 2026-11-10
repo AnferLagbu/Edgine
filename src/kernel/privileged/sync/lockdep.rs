@@ -56,7 +56,8 @@
 //!   记账路径 **零堆分配** (持有栈快照用定长栈数组), 依赖图 BFS 只在
 //!   **首次观察到新边** 时执行 (已知边直接跳过)
 //! - 违规打印一律延迟到临界区之后 (`PendingReports`), 不在持有全局 map
-//!   guard 时写串口
+//!   guard 时写串口; 类表满告警与 `dump_state` 同样锁内只取快照、锁外发射
+//!   (D-2 方案 A: 持元锁不做串口写)
 //!
 //! ## 框内核契约
 //!
@@ -269,15 +270,11 @@ impl LockDepMap {
 
         // 新注册
         if self.class_count >= MAX_LOCK_CLASSES {
-            // 显式失败 (不静默): 粘滞计数 + 告警. 返回 INVALID 后 acquire/release
+            // 显式失败 (不静默): 粘滞计数. 返回 INVALID 后 acquire/release
             // 对该 ID 短路 —— 锁本身照常工作, 丢的是检测覆盖, 故必须留下可读的账.
+            // 告警不在本临界区内发射 (D-2 方案 A: 持元锁不做串口写), 由
+            // `register_class` 在 guard 释放后按返回值补发.
             self.stats.class_table_dropped += 1;
-            lockdep_log!(
-                "lockdep: MAX_LOCK_CLASSES ({}) exceeded, skipping '{}' (dropped={})",
-                MAX_LOCK_CLASSES,
-                desc.name,
-                self.stats.class_table_dropped
-            );
             return LockClassId::INVALID;
         }
 
@@ -695,8 +692,23 @@ impl PendingReports {
 /// 即注册失败只丢失观测, 不影响锁本身; 该丢失**不静默**: 每次都累加
 /// [`LockdepStats::class_table_dropped`] 粘滞读数 (判据见模块文档).
 pub fn register_class(desc: LockClassDesc) -> LockClassId {
-    let mut map = LOCK_DEP_MAP.lock();
-    map.register(desc)
+    let (id, dropped) = {
+        let mut map = LOCK_DEP_MAP.lock();
+        let id = map.register(desc);
+        (id, map.stats.class_table_dropped)
+    };
+    // 满表告警在 guard 释放后发射 (D-2 方案 A). 锁内只取粘滞读数快照;
+    // `INVALID` 是「本次调用被丢弃」的唯一凭据 —— 已注册同名类走早退分支返回有效 ID,
+    // 故不能只看读数是否非零 (那会把历史丢弃重复报给后续每次注册).
+    if id == LockClassId::INVALID {
+        lockdep_log!(
+            "lockdep: MAX_LOCK_CLASSES ({}) exceeded, skipping '{}' (dropped={})",
+            MAX_LOCK_CLASSES,
+            desc.name,
+            dropped
+        );
+    }
+    id
 }
 
 /// 锁获取通知
@@ -882,48 +894,106 @@ pub fn stats() -> LockdepStats {
     LOCK_DEP_MAP.lock().stats
 }
 
+/// `dump_state` 的锁内快照: 标量 + 类名表 + 非零边位图 (全定长, 零堆分配).
+///
+/// 快照与发射分离 (D-2 方案 A): `LOCK_DEP_MAP` 持锁窗里只读数据, 串口写在 guard
+/// 释放之后 —— dump 期间不持元锁自旋, 且全部输出取自同一时间点.
+struct StateSnapshot {
+    num_classes: usize,
+    num_violations: u32,
+    stats: LockdepStats,
+    deadlock_detected: bool,
+    /// 已注册类名 (`[0, num_classes)` 有效; 其余为空串)
+    names: [&'static str; MAX_LOCK_CLASSES],
+    /// 非零依赖边位图: 位索引 = `from * MAX_LOCK_CLASSES + to`
+    edges: [u8; MAX_LOCK_CLASSES * MAX_LOCK_CLASSES / 8],
+}
+
+impl StateSnapshot {
+    /// 在 `LOCK_DEP_MAP` 临界区内取一次快照 (本函数不发日志)
+    fn take() -> Self {
+        let map = LOCK_DEP_MAP.lock();
+        Self::from_map(&map)
+    }
+
+    /// 从 map 读数构造快照 —— 锁内只读, 不发射日志 (单测直接传本地 map)
+    fn from_map(map: &LockDepMap) -> Self {
+        let mut snap = Self {
+            num_classes: 0,
+            num_violations: 0,
+            stats: LockdepStats::ZERO,
+            deadlock_detected: false,
+            names: [""; MAX_LOCK_CLASSES],
+            edges: [0u8; MAX_LOCK_CLASSES * MAX_LOCK_CLASSES / 8],
+        };
+        snap.num_classes = map.num_classes();
+        snap.num_violations = map.num_violations();
+        snap.stats = map.stats;
+        snap.deadlock_detected = map.deadlock_detected.load(Ordering::Relaxed);
+        for (i, name) in snap.names.iter_mut().enumerate().take(map.class_count) {
+            *name = map.classes[i].name;
+        }
+        for (from, row) in map.adjacency.iter().enumerate().take(map.class_count) {
+            for (to, mark) in row.iter().enumerate().take(map.class_count) {
+                if *mark != 0 {
+                    let bit = from * MAX_LOCK_CLASSES + to;
+                    snap.edges[bit / 8] |= 1u8 << (bit % 8);
+                }
+            }
+        }
+        snap
+    }
+
+    /// 快照中是否存在依赖边
+    fn has_edge(&self, from: usize, to: usize) -> bool {
+        let bit = from * MAX_LOCK_CLASSES + to;
+        self.edges[bit / 8] & (1u8 << (bit % 8)) != 0
+    }
+
+    /// 类名查询 (越界/未注册返回 `(unknown)`, 与 `LockDepMap::class_name` 同口径)
+    fn name_of(&self, id: LockClassId) -> &'static str {
+        let idx = id.0 as usize;
+        if idx < self.num_classes {
+            self.names[idx]
+        } else {
+            "(unknown)"
+        }
+    }
+}
+
 /// 打印当前锁依赖状态 (调试用)
 pub fn dump_state() {
     lockdep_log!("=== Lockdep State Dump ===");
-    {
-        let map = LOCK_DEP_MAP.lock();
-        lockdep_log!("Registered classes: {}", map.num_classes());
-        lockdep_log!("Violations: {}", map.num_violations());
-        lockdep_log!("Stats: {:?}", map.stats);
-        lockdep_log!(
-            "Deadlock detected: {}",
-            map.deadlock_detected.load(Ordering::Relaxed)
-        );
-    }
+    let snap = StateSnapshot::take();
+    lockdep_log!("Registered classes: {}", snap.num_classes);
+    lockdep_log!("Violations: {}", snap.num_violations);
+    lockdep_log!("Stats: {:?}", snap.stats);
+    lockdep_log!("Deadlock detected: {}", snap.deadlock_detected);
 
     // 当前 CPU 持有锁栈 (仅 lockdep 激活时). 定长栈快照 —— 与记账路径同一口径:
-    // 不在持有栈的借用期内做堆分配.
+    // 不在持有栈的借用期内做堆分配. 类名取自同一份状态快照, 不再逐条回取 map.
     #[cfg(any(debug_assertions, feature = "lockdep"))]
     {
         let held = with_current_stack(|stack| {
-            let mut snap = [(LockClassId::INVALID, false); MAX_HELD_LOCKS];
+            let mut entries = [(LockClassId::INVALID, false); MAX_HELD_LOCKS];
             for (i, entry) in stack.held_classes().iter().enumerate() {
-                snap[i] = (entry.class_id, entry.in_irq);
+                entries[i] = (entry.class_id, entry.in_irq);
             }
-            (stack.len(), snap)
+            (stack.len(), entries)
         });
-        if let Some((depth, snap)) = held {
+        if let Some((depth, entries)) = held {
             lockdep_log!("Held locks (depth={}):", depth);
-            for &(class_id, in_irq) in snap.iter().take(depth) {
-                let name = LOCK_DEP_MAP.lock().class_name(class_id);
-                lockdep_log!("  {} (irq={})", name, in_irq);
+            for &(class_id, in_irq) in entries.iter().take(depth) {
+                lockdep_log!("  {} (irq={})", snap.name_of(class_id), in_irq);
             }
         }
     }
 
-    {
-        let map = LOCK_DEP_MAP.lock();
-        lockdep_log!("Dependency edges:");
-        for i in 0..map.class_count {
-            for j in 0..map.class_count {
-                if map.adjacency[i][j] != 0 {
-                    lockdep_log!("  {} → {}", map.classes[i].name, map.classes[j].name,);
-                }
+    lockdep_log!("Dependency edges:");
+    for (from, from_name) in snap.names.iter().enumerate().take(snap.num_classes) {
+        for (to, to_name) in snap.names.iter().enumerate().take(snap.num_classes) {
+            if snap.has_edge(from, to) {
+                lockdep_log!("  {} → {}", from_name, to_name);
             }
         }
     }
@@ -1177,6 +1247,31 @@ mod tests {
             LockClassId::INVALID
         );
         assert_eq!(map.stats.class_table_dropped, before + 2);
+    }
+
+    /// D-2 方案 A: dump 快照必须完整保留 map 的读数面 —— 类名按 `class_count` 截断,
+    /// 边位图覆盖全部非零边 (锁外发射的输入不少读).
+    #[test]
+    fn test_state_snapshot_preserves_map_readings() {
+        let mut map = LockDepMap::new();
+        let id_a = map.register(LockClassDesc {
+            name: "snap_a",
+            kind: LockKind::SpinLock,
+        });
+        let id_b = map.register(LockClassDesc {
+            name: "snap_b",
+            kind: LockKind::SpinLock,
+        });
+        assert!(map.add_dependency(id_a, id_b));
+
+        let snap = StateSnapshot::from_map(&map);
+        assert_eq!(snap.num_classes, 2);
+        assert_eq!(snap.name_of(id_a), "snap_a");
+        assert_eq!(snap.name_of(id_b), "snap_b");
+        // 越界/未注册 ID 与 `LockDepMap::class_name` 同口径
+        assert_eq!(snap.name_of(LockClassId::INVALID), "(unknown)");
+        assert!(snap.has_edge(id_a.0 as usize, id_b.0 as usize));
+        assert!(!snap.has_edge(id_b.0 as usize, id_a.0 as usize));
     }
 
     /// A-127b ③: 持有栈溢出的丢失同样必须留下粘滞读数.
