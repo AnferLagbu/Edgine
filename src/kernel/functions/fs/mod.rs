@@ -27,6 +27,8 @@ pub mod dir_ops;
 pub mod egfs;
 pub mod exfat;
 pub mod ext2;
+/// 统一 fd 对象接口 (`File` trait) + 文件系统薄适配器
+pub mod file;
 /// 文件句柄系统 (name_to_handle_at / open_by_handle_at)
 pub mod file_handle;
 /// 文件操作策略 — ioctl / clock_gettime / poll / chown / truncate / flock
@@ -208,6 +210,8 @@ pub fn init() {
 //  `types::*` → `vfs_types::*`, `vfs::*` → `vfs_manager::*`)
 // ============================================================================
 
+/// 统一 fd 对象接口顶层 re-export
+pub use file::{File, PollEvents, RegularFile};
 /// Plan B: Inode trait 顶层 re-export
 pub use inode::Inode;
 /// 全局 `OpenFile` 表顶层 re-export

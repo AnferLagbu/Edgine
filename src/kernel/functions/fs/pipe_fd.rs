@@ -26,6 +26,7 @@
 
 use alloc::sync::Arc;
 
+use super::file::{File, PollEvents};
 use super::inode::Inode;
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::vfs_types::{
@@ -142,6 +143,44 @@ impl Drop for PipeEndpointInode {
     }
 }
 
+impl File for PipeEndpointInode {
+    fn read_at(&self, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+        Inode::read(self, offset, buf, pwm)
+    }
+
+    fn write_at(&self, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
+        Inode::write(self, offset, buf, pwm)
+    }
+
+    fn poll(&self, events: PollEvents) -> PollEvents {
+        // 管道端点恒为有效对象: 就绪位与 VFS 常规对象同口径 (epoll 的
+        // 差异化映射走 VfsPollPolicy, 本方法服务 poll(2) 单次扫描).
+        events & (PollEvents::IN | PollEvents::OUT)
+    }
+
+    fn io_control(&self, _cmd: u32, _arg: usize) -> KernelResult<usize> {
+        Err(KernelError::NotSupported)
+    }
+
+    fn file_type(&self) -> VfsFileType {
+        VfsFileType::File
+    }
+
+    fn read_forward(&self, buf: &mut [u8]) -> Option<KernelResult<usize>> {
+        // 管道是前进型字节流: 读不依赖 offset, 分发层优先走本方法.
+        Some(Inode::read(self, 0, buf, 0))
+    }
+
+    fn stream(&self) -> bool {
+        // POSIX: 管道不可定位 (lseek → ESPIPE)
+        true
+    }
+
+    fn as_inode(&self) -> Option<&dyn Inode> {
+        Some(self)
+    }
+}
+
 /// 创建一对管道端点并分配用户 fd (读端, 写端).
 ///
 /// 两个 fd 共用当前进程的 fd 空间 (与 VFS fd 同源), 编号互不重叠.
@@ -155,8 +194,9 @@ pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
             .map_err(|_| KernelError::ProcessFileLimit)?;
     let (read_key, write_key) = (read_end.fd, write_end.fd);
 
+    let read_file: Arc<dyn File> = Arc::new(PipeEndpointInode::new(read_key, true));
     let read_of = OpenFile::new_pipe(
-        Arc::new(PipeEndpointInode::new(read_key, true)),
+        read_file,
         VfsOpenFlags::RDONLY.bits(),
         0,
         read_key,
@@ -168,8 +208,9 @@ pub fn create_pair(cloexec: bool, nonblock: bool) -> KernelResult<(i32, i32)> {
         return Err(KernelError::ProcessFileLimit);
     };
 
+    let write_file: Arc<dyn File> = Arc::new(PipeEndpointInode::new(write_key, false));
     let write_of = OpenFile::new_pipe(
-        Arc::new(PipeEndpointInode::new(write_key, false)),
+        write_file,
         VfsOpenFlags::WRONLY.bits(),
         0,
         write_key,

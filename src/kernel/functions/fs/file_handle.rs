@@ -194,9 +194,8 @@ pub fn open_by_handle_at_syscall(
         .fs_resolve_inode(inode_id, mount_idx)
         .ok_or(Errno::Einval)?;
 
-    // 通过 stat 获取 file_type (避免硬编码)
-    let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
-    let open_file = OpenFile::new(inode, flags, pwm, file_type);
+    // 文件类型由 File 对象 (RegularFile) 在构造时经 stat 派生
+    let open_file = OpenFile::new(inode, flags, pwm);
 
     // 插入全局 OpenFile 表
     let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::Enomem)?;

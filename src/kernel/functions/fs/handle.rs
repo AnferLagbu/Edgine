@@ -55,9 +55,8 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
     if let Some(fs) = fs_opt {
         match fs.fs_open(rel_path, flags, pwm) {
             Ok(inode) => {
-                // Plan B: fs_open 直接返回 Inode trait object
-                let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
-                let open_file = OpenFile::new(inode, flags, pwm, file_type);
+                // Plan B: fs_open 直接返回 Inode trait object, 经 RegularFile 适配为 File
+                let open_file = OpenFile::new(inode, flags, pwm);
 
                 // 插入全局 OpenFile 表
                 let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
@@ -82,9 +81,8 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                 let (parent_path, name) = split_parent_name(rel_path);
                 match fs.fs_create(parent_path, name, pwm) {
                     Ok(inode) => {
-                        let file_type = inode.stat(pwm).map_or(0, |s| s.file_type);
                         let inode_id = inode.node_id();
-                        let open_file = OpenFile::new(inode, flags, pwm, file_type);
+                        let open_file = OpenFile::new(inode, flags, pwm);
 
                         let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
                             return -1;
@@ -259,20 +257,23 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
             }
         }
 
-        // 慢速路径: Inode trait 分发 (错误保留 errno, 管道 EAGAIN/EPIPE/ESPIPE 依赖此传播)
-        open_file
-            .inode()
-            .read(offset, dst, pwm)
-            .map_or_else(KernelError::as_vfs_ret, |n| {
-                let new_offset = offset + n as u64;
-                open_file.set_offset(new_offset);
-                // 管道读走数据 ⇒ 对端可写状态可能变化, 通知 epoll 重新求值
-                // (普通文件就绪态恒定, 无需通知).
-                if open_file.is_pipe_endpoint() {
-                    fd_notify::notify_fd_event(fd_idx.cast_signed());
-                }
-                crate::functions::intcast::low_i32_from_usize(n)
-            })
+        // 慢速路径: File 对象分发 (前进型流优先 read_forward; 错误保留 errno,
+        // 管道 EAGAIN/EPIPE/ESPIPE 依赖此传播)
+        let file = open_file.file();
+        let result = match file.read_forward(dst) {
+            Some(result) => result,
+            None => file.read_at(offset, dst, pwm),
+        };
+        result.map_or_else(KernelError::as_vfs_ret, |n| {
+            let new_offset = offset + n as u64;
+            open_file.set_offset(new_offset);
+            // 管道读走数据 ⇒ 对端可写状态可能变化, 通知 epoll 重新求值
+            // (普通文件就绪态恒定, 无需通知).
+            if open_file.is_pipe_endpoint() {
+                fd_notify::notify_fd_event(fd_idx.cast_signed());
+            }
+            crate::functions::intcast::low_i32_from_usize(n)
+        })
     });
 
     result.unwrap_or(KernelError::BadFd.as_vfs_ret())
@@ -359,9 +360,12 @@ pub extern "C" fn vfs_truncate_internal(fd: u32, size: u64) -> i32 {
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
-        match open_file.inode().truncate(size, pwm) {
+        let Some(inode) = open_file.as_inode() else {
+            return -1;
+        };
+        match inode.truncate(size, pwm) {
             Ok(()) => {
-                let node_id = open_file.inode_id();
+                let node_id = inode.node_id();
                 super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
                 0
             }
@@ -388,22 +392,23 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
-        // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append)
+        let pwm = open_file.pwm;
+        let node_id = open_file.inode_id();
+        // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append);
+        // 仅文件对象有 inode 尺寸, 非文件对象按当前偏移写.
         let offset = if (open_file.get_flags() & super::vfs_types::VfsOpenFlags::APPEND.bits()) != 0
         {
             open_file
-                .inode()
-                .stat(open_file.pwm)
-                .map_or_else(|_| open_file.get_offset(), |stat| u64::from(stat.size))
+                .as_inode()
+                .and_then(|inode| inode.stat(pwm).ok())
+                .map_or_else(|| open_file.get_offset(), |stat| u64::from(stat.size))
         } else {
             open_file.get_offset()
         };
-        let pwm = open_file.pwm;
-        let node_id = open_file.inode_id();
 
         open_file
-            .inode()
-            .write(offset, src, pwm)
+            .file()
+            .write_at(offset, src, pwm)
             .map_or_else(KernelError::as_vfs_ret, |n| {
                 let new_offset = offset + n as u64;
                 open_file.set_offset(new_offset);
@@ -467,8 +472,11 @@ pub extern "C" fn vfs_readdir_internal(fd: u32, entry: *mut VfsDirEntry) -> i32 
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let offset = open_file.get_offset();
+        let Some(inode) = open_file.as_inode() else {
+            return -1;
+        };
 
-        match open_file.inode().readdir(offset) {
+        match inode.readdir(offset) {
             Ok((name, file_type, has_more)) => {
                 if !has_more {
                     return 0;
@@ -555,8 +563,8 @@ pub fn vfs_pread(fd: u32, buf: *mut u8, count: u32, offset: u64) -> i32 {
         .with_file(handle_id, |open_file| {
             let pwm = open_file.pwm;
             open_file
-                .inode()
-                .read(offset, user_buf.as_mut_slice(), pwm)
+                .file()
+                .read_at(offset, user_buf.as_mut_slice(), pwm)
                 .map_or(-1, crate::functions::intcast::low_i32_from_usize)
         })
         .unwrap_or(-1)
@@ -581,8 +589,8 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
             let pwm = open_file.pwm;
             let node_id = open_file.inode_id();
             open_file
-                .inode()
-                .write(offset, user_buf.as_slice(), pwm)
+                .file()
+                .write_at(offset, user_buf.as_slice(), pwm)
                 .map_or(-1, |n| {
                     // inotify IN_MODIFY 通知 (与 vfs_write 一致)
                     super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
@@ -652,7 +660,10 @@ pub extern "C" fn vfs_fchmod(fd: u32, mode: u16) -> i32 {
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
-        match open_file.inode().chmod(mode, open_file.pwm) {
+        let Some(inode) = open_file.as_inode() else {
+            return -1;
+        };
+        match inode.chmod(mode, open_file.pwm) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -676,7 +687,10 @@ pub extern "C" fn vfs_fchown(fd: u32, owner_pwm: u64, group_pwm: u64, pwm: u64) 
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
-        match open_file.inode().chown(owner_pwm, group_pwm, pwm) {
+        let Some(inode) = open_file.as_inode() else {
+            return -1;
+        };
+        match inode.chown(owner_pwm, group_pwm, pwm) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -700,9 +714,15 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
     };
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
+        // 流式对象 (pipe/socket) 不可定位 (POSIX ESPIPE)
+        if open_file.file().stream() {
+            return KernelError::IllegalSeek.as_vfs_ret();
+        }
+        let Some(inode) = open_file.as_inode() else {
+            return KernelError::IllegalSeek.as_vfs_ret();
+        };
         let current_offset = open_file.get_offset();
-        open_file
-            .inode()
+        inode
             .seek(i64::from(offset), whence, current_offset)
             .map_or_else(KernelError::as_vfs_ret, |new_offset| {
                 open_file.set_offset(new_offset);
@@ -733,8 +753,11 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
 
     // I4: 用户内存经 privileged 安全代理 (范围校验后写入)
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
+        let Some(inode) = open_file.as_inode() else {
+            return -1;
+        };
         let pwm = open_file.pwm;
-        open_file.inode().stat(pwm).map_or(-1, |stat| {
+        inode.stat(pwm).map_or(-1, |stat| {
             // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
             let mut stat = stat;
             let tbl = crate::privileged::sgeg::identity::get_table();

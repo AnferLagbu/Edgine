@@ -166,9 +166,13 @@ fn poll_syscall_validates_fd_via_per_process_fd_table() {
     let path = Path::new("../src/kernel/functions/fs/file_ops.rs");
     let src = fs::read_to_string(path).expect("读取 functions/fs/file_ops.rs 失败");
     let body = pub_fn_body(&src, "pub fn poll_syscall");
+    // rustfmt 会把长调用拆行并保留尾逗号; 判据按去空白/逗号归一后比对
+    let compact: String = body
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != ',')
+        .collect();
     assert!(
-        body.contains("vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(")
-            && body.contains("pfd.fd"),
+        compact.contains("vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(pfd.fd))"),
         "poll_syscall 必须以 per-process fd 表判定 fd 有效性 (B-9.5):\n{body}"
     );
     assert!(

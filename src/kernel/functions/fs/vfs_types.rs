@@ -559,6 +559,7 @@ pub trait FileSystem: Send + Sync {
 // 对应 POSIX "打开文件描述", 多个 fd 可共享 (dup 语义).
 // offset 和 flags 在所有共享者之间共享.
 
+use super::file::{File, RegularFile};
 use super::inode::Inode;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -568,11 +569,12 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 /// 多个 fd 可以指向同一个 `OpenFile` (通过 dup).
 /// offset 和 flags 在所有共享者之间共享.
 ///
-/// Plan B: 持有 `Arc<dyn Inode>` 替代原来的 `inode_id: u32`,
-/// 实现完全的 POSIX 打开文件描述语义.
+/// fd 对象模型阶段 2: 持有 `Arc<dyn File>` (统一 fd 对象接口), 文件系统
+/// 对象经 [`RegularFile`] 适配器桥接, 非文件对象 (管道/socket) 直接实现
+/// `File`. 目录与元数据操作经 [`OpenFile::as_inode`] 回到 Inode.
 pub struct OpenFile {
-    /// Inode trait object — 文件级 I/O 操作
-    inode: Arc<dyn Inode>,
+    /// 统一 fd 对象 trait object — I/O / poll / ioctl / 释放
+    file: Arc<dyn File>,
     /// 共享文件偏移 (原子操作, dup 共享)
     pub offset: AtomicU64,
     /// 共享状态标志 (`O_RDONLY`, `O_APPEND` 等, dup 共享)
@@ -581,7 +583,7 @@ pub struct OpenFile {
     pub pwm: u64,
     /// 引用计数 (dup 增加, close 减少)
     pub refcount: AtomicU32,
-    /// 文件类型 (`VfsFileType::as_u8`)
+    /// 文件类型 (`VfsFileType::as_u8`, 构造时由对象 `file_type()` 派生)
     pub file_type: u8,
     /// 是否匿名文件 (memfd)
     pub is_anonymous: bool,
@@ -598,7 +600,8 @@ pub struct OpenFile {
 impl core::fmt::Debug for OpenFile {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OpenFile")
-            .field("inode_id", &self.inode.node_id())
+            // 直接读 `file` 字段: clippy::missing_fields_in_debug 以 fmt 体内字段读取判定"已展示"
+            .field("inode_id", &self.file.as_inode().map_or(0, Inode::node_id))
             .field("offset", &self.offset)
             .field("flags", &self.flags)
             .field("pwm", &self.pwm)
@@ -616,10 +619,16 @@ impl core::fmt::Debug for OpenFile {
 }
 
 impl OpenFile {
-    /// 创建新的 `OpenFile` (Plan B: 使用 Inode trait object)
-    pub fn new(inode: Arc<dyn Inode>, flags: u32, pwm: u64, file_type: u8) -> Self {
+    /// 创建新的 `OpenFile` — 文件系统对象经 [`RegularFile`] 适配为 `File`.
+    pub fn new(inode: Arc<dyn Inode>, flags: u32, pwm: u64) -> Self {
+        Self::from_file(Arc::new(RegularFile::new(inode, pwm)), flags, pwm)
+    }
+
+    /// 以统一 `File` 对象构造 `OpenFile` (对象类型由 `file_type()` 派生).
+    pub fn from_file(file: Arc<dyn File>, flags: u32, pwm: u64) -> Self {
+        let file_type = file.file_type().as_u8();
         Self {
-            inode,
+            file,
             offset: AtomicU64::new(0),
             flags,
             pwm,
@@ -633,26 +642,27 @@ impl OpenFile {
     }
 
     /// 创建匿名文件 `OpenFile` (memfd 用)
-    pub fn new_anonymous(inode: Arc<dyn Inode>, flags: u32, pwm: u64, file_type: u8) -> Self {
-        let mut of = Self::new(inode, flags, pwm, file_type);
+    pub fn new_anonymous(inode: Arc<dyn Inode>, flags: u32, pwm: u64) -> Self {
+        let mut of = Self::new(inode, flags, pwm);
         of.is_anonymous = true;
         of
     }
 
     /// 创建匿名管道端点 `OpenFile`
     ///
+    /// - `file`: 已实现 `File` 的管道端点对象
     /// - `pipe_key`: 端点 key (`functions::ipc::pipe` 派生, 非用户 fd)
     /// - `is_read`: 端点方向
     /// - `nonblock`: 初始 `O_NONBLOCK` 状态 (`pipe2` 标志)
     pub fn new_pipe(
-        inode: Arc<dyn Inode>,
+        file: Arc<dyn File>,
         flags: u32,
         pwm: u64,
         pipe_key: i32,
         is_read: bool,
         nonblock: bool,
     ) -> Self {
-        let mut of = Self::new(inode, flags, pwm, VfsFileType::File.as_u8());
+        let mut of = Self::from_file(file, flags, pwm);
         of.pipe_key = pipe_key;
         of.pipe_is_read = is_read;
         of.nonblock = AtomicBool::new(nonblock);
@@ -684,28 +694,29 @@ impl OpenFile {
             .store(nonblock, core::sync::atomic::Ordering::Relaxed);
     }
 
-    // ---- 兼容旧 API (折中实现过渡期) ----
+    // ---- fd 对象统一面 ----
 
-    /// 获取底层 `inode_id` (兼容旧代码, 供 pcache 等使用)
+    /// 获取底层 `inode_id` (供 pcache / flock / mmap 等使用)
     ///
-    /// 注意: 新代码应优先使用 `inode()` 方法.
+    /// 非文件对象 (无 Inode 关联) 返回 0 哨兵; 目录/元数据操作请改用
+    /// [`OpenFile::as_inode`] 显式判别.
     pub fn inode_id(&self) -> u32 {
-        self.inode.node_id()
+        self.as_inode().map_or(0, Inode::node_id)
     }
 
-    /// 获取挂载点索引 (兼容旧代码)
+    /// 获取挂载点索引 (非文件对象返回 `u32::MAX` 哨兵)
     pub fn mount_idx(&self) -> u32 {
-        self.inode.mount_idx()
+        self.as_inode().map_or(u32::MAX, Inode::mount_idx)
     }
 
-    /// 获取 Inode trait object 引用
-    pub fn inode(&self) -> &dyn Inode {
-        &*self.inode
+    /// 获取统一 fd 对象 (`File`) 引用 — I/O / poll / ioctl 单入口
+    pub fn file(&self) -> &dyn File {
+        &*self.file
     }
 
-    /// 获取 Inode Arc 引用 (用于 dup 时克隆)
-    pub fn inode_arc(&self) -> &Arc<dyn Inode> {
-        &self.inode
+    /// 桥接回文件系统 Inode; 非文件对象返回 `None`
+    pub fn as_inode(&self) -> Option<&dyn Inode> {
+        self.file.as_inode()
     }
 
     /// 增加引用计数 (dup 时调用)

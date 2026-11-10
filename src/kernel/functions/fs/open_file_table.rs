@@ -81,13 +81,25 @@ impl OpenFileTable {
     }
 
     /// 减少引用计数 (close 时调用)
+    ///
+    /// 计数归零时把 `OpenFile` 移出槽位, 在表锁释放后调用对象的
+    /// `File::release()` 并丢弃 `OpenFile` (其 `Arc<dyn File>` 随之归零).
+    /// 对象释放回调不得在表锁内执行, 避免回调重入 `OpenFileTable`.
     pub fn dec_ref(&self, handle_id: u32) {
-        let mut files = self.files.lock();
-        if let Some(file) = files[handle_id as usize].as_ref() {
-            let remaining = file.dec_ref();
-            if remaining == 0 {
-                files[handle_id as usize] = None;
+        let removed = {
+            let mut files = self.files.lock();
+            let Some(file) = files[handle_id as usize].as_ref() else {
+                return;
+            };
+            // `OpenFile::dec_ref` 返回减少前的值: 1 表示本次是最后一个引用
+            if file.dec_ref() == 1 {
+                files[handle_id as usize].take()
+            } else {
+                None
             }
+        };
+        if let Some(file) = removed {
+            file.file().release();
         }
     }
 

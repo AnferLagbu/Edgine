@@ -2,7 +2,8 @@
 //!
 //! 验证 Plan B 架构变更的静态契约:
 //! 1. Inode trait 定义在 functions/fs/inode.rs
-//! 2. `OpenFile` 持有 Arc<dyn Inode> (非 `inode_id`: u32)
+//! 2. `OpenFile` 持有 Arc<dyn File> (fd 阶段 2 对象模型: File 统一接口,
+//!    `Inode` 经 `RegularFile` 适配 + `as_inode()` 桥接)
 //! 3. per-process `FdTable` 定义在 `privileged/proc/fd_table.rs`, 仅存 `handle_id` (u32)
 //! 4. `FileSystem::fs_open` 返回 Arc<dyn Inode> (非 `FsOpenResult`)
 //! 5. 7 个 FS 均有原生 Inode 实现 (非 `LegacyInode`)
@@ -71,27 +72,34 @@ fn inode_trait_deny_unsafe() {
 }
 
 // ============================================================================
-// 2. OpenFile 持有 Arc<dyn Inode>
+// 2. OpenFile 持有 Arc<dyn File> (fd 阶段 2 解耦)
 // ============================================================================
 
 #[test]
-fn open_file_uses_arc_dyn_inode() {
-    // 阶段 4b: OpenFile 定义已随 VFS 完整下沉迁至 functions/fs/vfs_types.rs
+fn open_file_uses_arc_dyn_file() {
+    // fd 阶段 2: OpenFile 不再直接持有 Inode, 改持统一 File 对象;
+    // Inode 经 RegularFile 适配, 目录/元数据操作走 as_inode() 桥接.
     let src = read_file("functions/fs/vfs_types.rs");
-    // OpenFile 应持有 Arc<dyn Inode> 而非 inode_id: u32
     assert!(
-        src.contains("inode: Arc<dyn Inode>"),
-        "OpenFile 必须持有 Arc<dyn Inode>"
+        src.contains("file: Arc<dyn File>"),
+        "OpenFile 必须持有 Arc<dyn File>"
+    );
+    assert!(
+        !src.contains("\n    inode: Arc<dyn Inode>"),
+        "OpenFile 不应再直接持有 Arc<dyn Inode> 字段"
     );
     // 不应有 inode_id 字段
     assert!(
         !src.contains("pub inode_id: u32"),
         "OpenFile 不应有 inode_id 字段"
     );
-    // 应有 inode() 方法
     assert!(
-        src.contains("pub fn inode(&self) -> &dyn Inode"),
-        "OpenFile 必须有 inode() 方法"
+        src.contains("pub fn file(&self) -> &dyn File"),
+        "OpenFile 必须提供 file() 对象访问器"
+    );
+    assert!(
+        src.contains("pub fn as_inode(&self) -> Option<&dyn Inode>"),
+        "OpenFile 必须提供 as_inode() 桥接 (非文件对象返回 None)"
     );
 }
 
@@ -283,17 +291,18 @@ fn exfat_has_native_inode() {
 }
 
 // ============================================================================
-// 6. VFS API 使用 Inode trait
+// 6. VFS API 经 File 对象分发 / as_inode() 桥接
 // ============================================================================
 
 #[test]
-fn vfs_read_uses_inode_trait() {
-    // 阶段 4b: vfs_read_internal 已随 VFS 完整下沉迁至 functions/fs/handle.rs
+fn vfs_read_dispatches_via_file_object() {
+    // fd 阶段 2: 读路径优先 File::read_forward (管道等前进型流), 否则 File::read_at
     let src = read_file("functions/fs/handle.rs");
-    // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
-        src.contains(".inode()") && src.contains(".read(") && src.contains("open_file"),
-        "vfs_read_internal 必须使用 Inode::read (open_file.inode().read(...))"
+        src.contains("read_forward(")
+            && src.contains("read_at(")
+            && src.contains("open_file.file()"),
+        "vfs_read_internal 必须经 File 对象分发 (read_forward / read_at)"
     );
     assert!(
         !src.contains("fs.fs_read("),
@@ -302,13 +311,12 @@ fn vfs_read_uses_inode_trait() {
 }
 
 #[test]
-fn vfs_write_uses_inode_trait() {
-    // 阶段 4b: vfs_write_internal 已随 VFS 完整下沉迁至 functions/fs/handle.rs
+fn vfs_write_dispatches_via_file_object() {
+    // fd 阶段 2: 写路径统一走 File::write_at (偏移由 OpenFile 管理)
     let src = read_file("functions/fs/handle.rs");
-    // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
-        src.contains(".inode()") && src.contains(".write(") && src.contains("open_file"),
-        "vfs_write_internal 必须使用 Inode::write (open_file.inode().write(...))"
+        src.contains(".write_at(") && src.contains("open_file"),
+        "vfs_write_internal 必须经 File::write_at 分发"
     );
     assert!(
         !src.contains("fs.fs_write("),
@@ -317,35 +325,33 @@ fn vfs_write_uses_inode_trait() {
 }
 
 #[test]
-fn vfs_fstat_uses_inode_trait() {
-    // 阶段 4b: vfs_fstat 已随 VFS 完整下沉迁至 functions/fs/handle.rs
+fn vfs_fstat_bridges_to_inode() {
+    // fd 阶段 2: stat 属文件系统语义, 经 as_inode() 桥接回 Inode
     let src = read_file("functions/fs/handle.rs");
     assert!(
-        src.contains("open_file.inode().stat("),
-        "vfs_fstat 必须使用 Inode::stat"
+        src.contains("open_file.as_inode()") && src.contains(".stat("),
+        "vfs_fstat 必须经 as_inode() 桥接 Inode::stat"
     );
 }
 
 #[test]
-fn vfs_seek_uses_inode_trait() {
-    // 阶段 4b: vfs_seek 已随 VFS 完整下沉迁至 functions/fs/handle.rs
+fn vfs_seek_uses_stream_check_and_inode() {
+    // fd 阶段 2: 流式对象 (pipe/socket) 由 File::stream() 判 ESPIPE,
+    // 可定位对象再经 as_inode() 调 Inode::seek.
     let src = read_file("functions/fs/handle.rs");
-    // rustfmt 可能将链式调用拆为多行; 匹配 `.inode()` 与 `.seek(` 在同一函数体内
-    // (两者间隔 ≤ 200 字符, 适配 rustfmt 拆行格式).
     assert!(
-        src.contains(".inode()") && src.contains(".seek(") && src.contains("open_file"),
-        "vfs_seek 必须使用 Inode::seek (open_file.inode().seek(...))"
+        src.contains(".stream()") && src.contains(".seek(") && src.contains("open_file"),
+        "vfs_seek 必须先用 File::stream() 判 ESPIPE, 再经 as_inode() 调 Inode::seek"
     );
 }
 
 #[test]
-fn vfs_truncate_uses_inode_trait() {
-    // 阶段 4b: vfs_truncate_internal 已随 VFS 完整下沉迁至 functions/fs/handle.rs
+fn vfs_truncate_bridges_to_inode() {
+    // fd 阶段 2: truncate 属文件系统语义, 经 as_inode() 桥接回 Inode
     let src = read_file("functions/fs/handle.rs");
-    // 鲁棒匹配: rustfmt 拆行时链式调用分散在多行, 用独立子串 + 同函数体检查
     assert!(
-        src.contains(".inode()") && src.contains(".truncate(") && src.contains("open_file"),
-        "vfs_truncate 必须使用 Inode::truncate (open_file.inode().truncate(...))"
+        src.contains(".as_inode()") && src.contains(".truncate(") && src.contains("open_file"),
+        "vfs_truncate 必须经 as_inode() 桥接 Inode::truncate"
     );
 }
 
@@ -422,8 +428,8 @@ fn vfs_write_checks_append_flag() {
         "vfs_write_internal 必须检查 O_APPEND flag"
     );
     assert!(
-        src.contains("open_file.inode().stat("),
-        "O_APPEND 写入前必须通过 stat 获取文件大小"
+        src.contains(".as_inode()") && src.contains(".stat("),
+        "O_APPEND 写入前必须经 as_inode() + stat 获取文件大小"
     );
 }
 

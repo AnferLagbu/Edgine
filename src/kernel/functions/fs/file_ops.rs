@@ -17,9 +17,6 @@
 
 use crate::privileged::syscall::Errno;
 
-const POLLIN: i16 = 1;
-const POLLOUT: i16 = 4;
-
 const TIOCGWINSZ: u64 = 0x5413;
 const TCGETS: u64 = 0x5401;
 
@@ -35,6 +32,21 @@ pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
     // T1 G4: userfaultfd fd 类型路由 (Linux 语义: uffd 的 ioctl 只认 UFFDIO_*)
     if crate::privileged::mm::is_uffd_fd(fd) {
         return crate::functions::mm::uffd::ioctl_uffd(fd, request, arg);
+    }
+    // VFS fd: 交给对象 io_control; 对象未实现 (NotSupported / 无对象) 时
+    // 回落终端/默认策略, 保持 stdio 与常规文件既有 ENOTTY 语义.
+    if let Some(handle_id) =
+        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+    {
+        let cmd = crate::functions::intcast::low_u32_from_u64(request);
+        let arg_usize = crate::functions::intcast::usize_from_u64(arg);
+        let outcome = crate::functions::fs::OPEN_FILE_TABLE
+            .with_file(handle_id, |of| of.file().io_control(cmd, arg_usize));
+        match outcome {
+            Some(Ok(ret)) => return crate::functions::intcast::i64_from_usize(ret),
+            Some(Err(crate::functions::fs::KernelError::NotSupported)) | None => {}
+            Some(Err(e)) => return i64::from(e.as_vfs_ret()),
+        }
     }
     match request {
         TIOCGWINSZ => {
@@ -109,20 +121,19 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             let _ = crate::privileged::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
             continue;
         }
-        if pfd.events & POLLIN != 0 {
-            // fd 有效性改由 per-process fd 表判定 (fd → OpenFileTable handle 映射存在即有效)
-            if crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(
-                pfd.fd,
-            ))
-            .is_some()
-            {
-                pfd.revents |= POLLIN;
+        // VFS fd: 统一对象分发 (fd → OpenFile → File::poll 快照).
+        // fd 有效性改由 per-process fd 表判定 (映射存在即有效, 不存在则不就绪);
+        // 每个 fd 至多计一次 ready (POSIX poll 返回有事件的 fd 数).
+        if let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(
+            crate::functions::intcast::usize_from_i32(pfd.fd),
+        ) {
+            let requested = crate::functions::fs::PollEvents::from_bits_truncate(pfd.events);
+            pfd.revents = crate::functions::fs::OPEN_FILE_TABLE
+                .with_file(handle_id, |of| of.file().poll(requested))
+                .map_or(0, |events| events.bits());
+            if pfd.revents != 0 {
                 ready += 1;
             }
-        }
-        if pfd.events & POLLOUT != 0 {
-            pfd.revents |= POLLOUT;
-            ready += 1;
         }
 
         let _ = crate::privileged::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
