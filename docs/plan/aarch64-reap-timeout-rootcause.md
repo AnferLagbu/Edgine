@@ -19,7 +19,7 @@
 ## 2. 待验证假设（按优先级）
 
 - **H1 组退出链未达终态**：`exit_requested` 已置真（`[REAP]` 行只在置真后打印）但组长自身或 helper 仍有成员未落 Zombie。需确认 helper 是否已 Zombie、组长停在退出流程的哪一步。
-- **H2 丢唤醒**：组退出侧的 SIGKILL + unblock 对 helper 的唤醒丢失，helper 永睡在 futex，组无法整体落 Zombie。P-78 修的是父侧等待，不覆盖此路径。
+- **H2 丢唤醒**：组退出侧的 SIGKILL + unblock 对 helper 的唤醒丢失，helper 永睡在 futex，组无法整体落 Zombie。P-78 修的是父侧等待，不覆盖此路径。**（2026-11-10 R-6 坐实：静态断点链 + SMP=4 定向复现 4/80 直证，修复待裁。）**
 - **H3 跨核内存序**：aarch64 弱内存序下 `exit_requested` / 组退出码 / 成员状态的跨核读顺序不一致，`process_group_exit_code` 或 Zombie 判定延迟/漏判。
 - **H4 调度饿死**：helper 或组长在 aarch64 EEVDF 合格集上饿死（与 P-78 同族但不同路径）。
 - **H0 前置**：先区分「真挂死」与「宿主过载导致 5 s 预算内未完成」——取证轮须记录宿主负载与 tick 速率。
@@ -60,6 +60,23 @@
 - 方案：判据 = `bash ci/audit.sh full` 全绿 + `THREAD_STRESS_ARCH=both` 多轮 0 失败；文档只更新状态与结论，不改历史正文。
 - 状态：[X]
 - 详情：2026-11-10 收口读数（全部串行执行）——`./ci/build.sh all` Passed 6 / Failed 0；`bash ci/audit.sh full` exit 0（含 clippy/fmt、2d/2e（10/10 腿无静默跳过）/2f、Lockbud、QEMU 双架构 2/2、P-62 feature 运行维 4/4、线程压力 3 轮 × 2 架构全过）；`make test-host` exit 0（189 个测试套件全 ok、无 FAILED）；`make test-kernel-host` exit 0（513 passed + 637 passed 两腿）；`make -f Makefile.ci ci-rustdoc` 双架构 exit 0。**加压腿**：`THREAD_STRESS_ARCH=both scripts/thread_stress_test.sh 20`（每架构 20 轮，逐轮留痕）= **40/40 通过、0 失败**；对照该签名历史命中量级（默认构建 aarch64 约 1/8–1/11 单轮）本批零命中。**判据未放宽**：`THREAD_WAIT_BUDGET_MS = 5000`、`reap-timeout` 判据与两处旧形状针的契约语义逐字未动。**文档**：本册 R-1–R-5 状态与详情；`multithreading-project.md` §8.1「§6③a」行与 §6 风险条 ③ 追加结论（历史正文未改）；`bounded-wait-deadline.md` §5 原「属既有偶发家族」表述仍成立（现已定因并修复），不回填。
+
+### R-6 H2 纠察：静态审计 + 定向复现（修复待裁）
+
+- 描述：用户批准家族纠察范围（2026-11-10「可以」）：本轮只做 H2 静态审计 + 定向复现（含静默冻结 tick 读数取证面），修复方案另行裁定（§11.3 调度器/TCB 关键路径）；wild-PC 与 NULL-copy 只立项不施工。
+- 方案：逐行读 `process_exit_group` → `Scheduler::unblock` → futex 阻塞链，对照 `exec_de_thread` 既有重发循环；复现用 `scripts/thread_stress_test.sh`（SMP=2 基线 + SMP=4 扰动），命中轮按 `[REAP]` 成员 state 归类，静默轮以 `[HB]` 心跳区分 guest 停摆 vs 成员阻塞。
+- 状态：[X]
+- 详情：2026-11-10 审计与复现收口，**H2 坐实**（静态断点链 + 运行直证），修复未施工。
+
+  **静态断点链（五步，行号当日核实）**：① `process_exit_group`（[proc_ops.rs:443-473](../../src/kernel/privileged/proc/proc_ops.rs#L443-L473)）对每个兄弟线程只投递**一次** SIGKILL pending + `Scheduler::unblock`（460-470），随后自身 `process_exit`，无重发、无等待成员落 Zombie 的兜底循环。② `Scheduler::unblock`（[scheduler.rs:2119](../../src/kernel/privileged/proc/scheduler.rs#L2119)）的投送判据（2133-2137）：`Blocked/Frozen → true`、`Ready → !eevdf_on_rq`、**其余（含 Running）→ false 直接丢弃**，无 sticky wake 标志；此刻 `has_exited()` 尚假（组长未退出），L-2 取证发射判据（Zombie/Terminated 或 gexit=1）不满足，丢弃静默。③ 竞态窗口：helper 报到（`GROUP_HELPER_READY.store(1)` + futex_wake）后进入 `futex_wait(GROUP_HOLD)` 之前仍在核上 Running；组长被唤醒 → `exit_group` → unblock 恰落在此窗口内即被丢弃。④ 入睡侧无信号检查：`futex_wait`（[futex.rs:381-471](../../src/kernel/privileged/syscall/futex.rs#L381-L471)）入睡前不查 pending SIGKILL；`process_block_finish`（[proc_ops.rs:538-553](../../src/kernel/privileged/proc/proc_ops.rs#L538-L553)）的致命信号收口只在 `schedule()` **返回后**（即醒来后）跑——永不被唤醒则永不执行。⑤ 无兜底唤醒源：tick 睡眠扫描入选判据只取 `BlockReason::Sleeping + sleep_until > 0`（[scheduler.rs:2761-2770](../../src/kernel/privileged/proc/scheduler.rs#L2761-L2770)），无限期 FutexWait（reason=FutexWait、sleep_until=0）不在射程；`ready_orphan_due`（2809）只救 Ready 隐形不救 Blocked；`GROUP_HOLD` 永不变 1、无其他唤醒者；wait4/收割路径不重发 SIGKILL。⇒ helper 永久 Blocked ⇒ 组等不齐 Zombie ⇒ `process_group_exit_code` 恒 -1 ⇒ 父 `wait4(WNOHANG)` 轮询至 5 s 预算 ⇒ `reap-timeout`，`[REAP]` 打印 `state=Blocked`——与 `bounded-wait-deadline.md` §5 历史样本逐字同形。
+
+  **对照修复范式**：`exec_de_thread`（[proc_ops.rs:581](../../src/kernel/privileged/proc/proc_ops.rs#L581)，重发循环 605-633）对**同一窗口**已有兜底——每轮轮询重发 SIGKILL + unblock 直至全部落 Zombie，注释明言「目标可能恰在『置 pending 之后、block 之前』完成入睡，单次 unblock 会落空（Running 状态不投送）」。`process_exit_group` 缺此循环。`process_block_finish` 的文档注释（533-537）亦自述该 hazard，但其收口只覆盖「醒来后」分支，不覆盖「永不醒来」分支。
+
+  **复现读数**：SMP=2 基线 `THREAD_STRESS_ARCH=aarch64 THREAD_STRESS_KEEP_LOG=1 scripts/thread_stress_test.sh 80` = **0/80 命中**；SMP=4 扰动 `THREAD_STRESS_SMP=4` 同 80 轮 = **4/80 命中**（第 21/57/66/80 轮），四轮签名逐字同形：`exit: pid=15 code=7`（组长已落 Zombie）+ `[REAP] tgid=15 unreaped pid=16 state=Blocked`（helper 永睡）+ `[THREAD] FAIL: reap-timeout code=0`。fail_80 另给出窗口直证时序：`exit: pid=15` @0.234 → `[REAP] pid=16 state=Running` @0.235 → `state=Blocked` @0.237，即组长的 unblock 在 helper 仍 Running 时发出并被丢弃，helper 随后入睡再无人唤醒。证据日志留存 `other/build/log/h2_smp4_evidence/r{21,57,66,80}.log`（sha256 首段 `350bb2a4…` / `9145b267…` / `b42e7ab7…` / `34d4e722…`）。量级对照：历史 ~1/8–1/11 是家族混计（含 R-4 已修的 H1）；H2 单分支在 SMP=2 下 80 轮零命中、SMP=4 下 4/80，与「跨核真并行才打开窗口」的机理一致（SMP=2 时组长与 helper 串行于同一核的时序占主导）。
+
+  **静默冻结取证面**：本批 160 轮（80×2）无静默冻结样本（全部失败轮都打印了 FAIL 行）。四命中轮 `[HB] tick=5000/10000/15000` 持续打印且跨核（cpu=0..3）⇒ 内核未停摆，是「成员线程永久阻塞而内核仍活」，与 §6 (b)「guest 整体停摆」可区分；同轮 `EL0 sync fault pid=10 FAR=0xFFFF000040080000` 是 KPTI 负判据（故意），非 wild-PC。
+
+  **修复候选（待裁，未施工）**：**A 入睡侧检查**——futex 阻塞点入睡前查 pending SIGKILL + 组退出标记，命中即不入睡（返回 -EINTR 或直接走退出）；最小改动，但每个无限期阻塞入口都需补检查。**B 唤醒侧重发**——`process_exit_group` 加 `exec_de_thread` 同构的轮询重发循环（每轮 SIGKILL + unblock 直至成员全 Zombie）；树内已有验证过的范式，覆盖所有阻塞原因不限于 futex，代价是 exit_group 延迟受兄弟调度影响、需按 bounded-wait 纪律加截止。**C 机制层 sticky wake**——`unblock` 对 Running 目标置 wake-pending 标志，`block_prepare` 消费（置位则拒绝入睡）；泛化封闭所有 unblock 调用方的同类窗口，但新增每进程字段与排序不变式，触调度器热路径。
 
 ## 4. 边界
 
