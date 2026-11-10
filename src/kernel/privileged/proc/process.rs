@@ -660,6 +660,8 @@ impl Process {
 
     /// ✅ 安全的状态设置 (带合法性检查和审计日志)
     ///
+    /// **退出不走本函数**: 退出是不可拒绝的终态, 见 [`Self::mark_zombie`].
+    ///
     /// # Arguments
     /// * `new_state` - 目标新状态
     ///
@@ -707,6 +709,25 @@ impl Process {
         self.state.store(new_state as u32, Ordering::Release);
 
         Ok(())
+    }
+
+    /// 退出专用终态写点: 任意存活态一律落 `Zombie`, `Zombie` 幂等.
+    ///
+    /// 与 [`Self::set_state_safe`] 的分工: 白名单状态机管**运行期迁移** (调度 /
+    /// 阻塞 / 冻结), 而退出是**不可拒绝的终态** —— 任务可能恰以 `Ready` (已投送、
+    /// 尚未上核) 或 `Frozen` 进入退出路径, 若被状态机拒绝, TCB 就留在可运行集:
+    /// 调度器会继续拣选 / 重排它, 线程组永远等不齐 Zombie, `wait4` 只能超时
+    /// (`reap-timeout`). 故本写点不做合法性检查, 唯一调用方是
+    /// [`crate::privileged::proc::Scheduler::exit`].
+    ///
+    /// `Terminated` 是已回收的终态 (由 `reap_zombie_group` 写入), 不得被迟到的
+    /// 退出写者打回僵尸 —— 读到即保持原状.
+    pub fn mark_zombie(&self) {
+        if self.get_state() == ProcessState::Terminated {
+            return;
+        }
+        self.state
+            .store(ProcessState::Zombie as u32, Ordering::Release);
     }
 
     /// 旧版兼容接口 (内部使用, 不建议新代码使用)

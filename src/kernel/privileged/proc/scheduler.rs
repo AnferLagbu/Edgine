@@ -971,6 +971,7 @@ impl Scheduler {
         let snap = PROCESS_TABLE.with_process(pid, |p| {
             (
                 p.get_state(),
+                p.exiting.load(Ordering::Acquire),
                 p.eevdf_vruntime.load(Ordering::Acquire),
                 p.eevdf_weight.load(Ordering::Acquire),
                 p.eevdf_on_rq.load(Ordering::Acquire),
@@ -980,10 +981,13 @@ impl Scheduler {
                 p.eevdf_requested_slice.load(Ordering::Acquire),
             )
         });
-        let Some((state, vr, weight, on_rq, on_cpu, slice_left, vd, requested_raw)) = snap else {
+        let Some((state, exiting, vr, weight, on_rq, on_cpu, slice_left, vd, requested_raw)) = snap
+        else {
             return PlacementOutcome::FAILED;
         };
-        let gone = state == ProcessState::Zombie || state == ProcessState::Terminated;
+        // 退出中的任务与 Zombie 同价: 退出是单向的, 任何投送都只会把它塞回
+        // 可运行集 (reap-timeout 的 `[REDISPATCH] via=requeue` 形态).
+        let gone = exiting || state == ProcessState::Zombie || state == ProcessState::Terminated;
         if gone {
             return PlacementOutcome::FAILED;
         }
@@ -1322,6 +1326,7 @@ impl Scheduler {
             let alive = PROCESS_TABLE
                 .with_process(pid, |p| {
                     p.get_state() != ProcessState::Zombie
+                        && !p.exiting.load(Ordering::Acquire)
                         && p.get_sched_policy() == SchedPolicy::Deadline
                 })
                 .unwrap_or(false);
@@ -1360,6 +1365,7 @@ impl Scheduler {
                 let state = p.get_state();
                 if p.get_sched_policy() != SchedPolicy::Normal
                     || (state != ProcessState::Running && state != ProcessState::Ready)
+                    || p.exiting.load(Ordering::Acquire)
                 {
                     return None;
                 }
@@ -1427,6 +1433,7 @@ impl Scheduler {
                     (
                         state != ProcessState::Blocked
                             && state != ProcessState::Zombie
+                            && !p.exiting.load(Ordering::Acquire)
                             && p.get_sched_policy() == SchedPolicy::Normal,
                         p.eevdf_weight.load(Ordering::Acquire),
                         p.eevdf_on_rq.load(Ordering::Acquire),
@@ -1560,18 +1567,33 @@ impl Scheduler {
         // - prev 已不在 Running/Ready (如 `exit()` 之后的 Zombie, 或阻塞中的
         //   Blocked): 同样会被 `pick_eevdf_task` 判为不可调度而返回 None; 且把
         //   Blocked/Zombie 任务塞回 EEVDF 树/置回 Ready 与阻塞、退出语义冲突.
+        // 第三个排除条件: prev 正在退出 (`exiting`) ⇒ 一律不重排, 无论状态读数
+        // 是什么. 退出是单向的, 重排会把它钉死在可运行集 (reap-timeout 的
+        // `[REDISPATCH] via=requeue state=Ready` 形态); 到此处它必须离开 EEVDF
+        // 可运行账 (下方走 `eevdf_deactivate`).
+        //
+        // 内核态在 syscall/中断门内 IF=0, 退出链不会被异步抢占 —— `exiting` 只在
+        // 本任务自己的最后 `schedule()` 处被观察到, 不会把"退出到一半"的任务
+        // 从运行账里摘掉. 本轮退出若以 Ready/Frozen 进入, 状态先在 `exit()` 内
+        // 经 `mark_zombie` 落到 Zombie, 与本条互为双保险.
         let prev_state_code = Self::prev_state_code(current_pid);
+        let prev_exiting = PROCESS_TABLE
+            .with_process(current_pid, |p| p.exiting.load(Ordering::Acquire))
+            .unwrap_or(false);
         let prev_requeue = if prev_ptr.is_some() {
             per_cpu.idle.load(Ordering::SeqCst) != current_pid
                 && (prev_state_code == 1 || prev_state_code == 2)
+                && !prev_exiting
         } else {
             false
         };
 
         if prev_requeue {
             Self::requeue_prev(per_cpu, current_pid);
-        } else if prev_ptr.is_some() && (prev_state_code == 3 || prev_state_code == 4) {
-            // prev 切走且不可重排 (Blocked / Zombie): 离开 EEVDF 可运行集 —— 撤账.
+        } else if prev_ptr.is_some()
+            && (prev_state_code == 3 || prev_state_code == 4 || prev_exiting)
+        {
+            // prev 切走且不可重排 (Blocked / Zombie / 退出中): 离开 EEVDF 可运行集 —— 撤账.
             // 幂等: `block()` 已撤账者其 on_rq 凭证已为 false, 此处不二次扣减;
             // 旧模型缺这一步, 使 total_weight 随退出单调虚增, 均衡判定随之失真.
             Self::eevdf_deactivate(current_pid);
@@ -1604,7 +1626,9 @@ impl Scheduler {
                 let rt_pid = rt_task.pid;
 
                 let alive = PROCESS_TABLE
-                    .with_process(rt_pid, |p| p.get_state() != ProcessState::Zombie)
+                    .with_process(rt_pid, |p| {
+                        p.get_state() != ProcessState::Zombie && !p.exiting.load(Ordering::Acquire)
+                    })
                     .unwrap_or(false);
 
                 if !alive {
@@ -1674,7 +1698,8 @@ impl Scheduler {
                 && PROCESS_TABLE
                     .with_process(current_pid, |p| {
                         let s = p.get_state();
-                        s == ProcessState::Running || s == ProcessState::Ready
+                        (s == ProcessState::Running || s == ProcessState::Ready)
+                            && !p.exiting.load(Ordering::Acquire)
                     })
                     .unwrap_or(false);
             if keep_current {
@@ -1991,6 +2016,7 @@ impl Scheduler {
         if state == ProcessState::Ready
             && !on_rq
             && policy == SchedPolicy::Normal
+            && !was_exiting
             && per_cpu.idle.load(Ordering::SeqCst) != prev
         {
             Self::eevdf_place_on(
@@ -2339,7 +2365,9 @@ impl Scheduler {
                 .with_process(pid, |proc| {
                     let pwm = proc.get_pwm();
                     proc.exit_code.store(effective_code, Ordering::SeqCst);
-                    let _ = proc.set_state_safe(ProcessState::Zombie);
+                    // 退出是强制终态: 状态机拒绝 Ready/Frozen→Zombie 会把 TCB
+                    // 留在可运行集 (reap-timeout 根因), 故走不可拒绝写点.
+                    proc.mark_zombie();
                     // K-04: 进程级计数按线程组收口, 非最后成员退出不得撤销
                     // 整个组的计数 (组长创建时已计一次, 组退出时只减一次).
                     if last_member {
@@ -2782,6 +2810,7 @@ impl Scheduler {
         if process.pid.0 == current_pid
             || process.get_state() != ProcessState::Ready
             || process.get_sched_policy() != SchedPolicy::Normal
+            || process.exiting.load(Ordering::Acquire)
             || !process.eevdf_placed_once.load(Ordering::Acquire)
         {
             return None;
@@ -3145,10 +3174,11 @@ impl Scheduler {
             {
                 continue;
             }
-            let (state, policy, vr, weight, on_rq, on_cpu, vd) = PROCESS_TABLE
+            let (state, exiting, policy, vr, weight, on_rq, on_cpu, vd) = PROCESS_TABLE
                 .with_process(pid, |p| {
                     (
                         p.get_state(),
+                        p.exiting.load(Ordering::Acquire),
                         p.get_sched_policy(),
                         p.eevdf_vruntime.load(Ordering::Acquire),
                         p.eevdf_weight.load(Ordering::Acquire),
@@ -3159,6 +3189,7 @@ impl Scheduler {
                 })
                 .unwrap_or((
                     ProcessState::Zombie,
+                    false,
                     SchedPolicy::Normal,
                     0,
                     0,
@@ -3175,6 +3206,7 @@ impl Scheduler {
             let schedulable = state != ProcessState::Blocked
                 && state != ProcessState::Zombie
                 && state != ProcessState::Terminated
+                && !exiting
                 && policy == SchedPolicy::Normal;
             if !schedulable {
                 // 与 `pick_eevdf_task` 同口径: 不可调度者撤账摘除, 不留树上占位 (IC2).

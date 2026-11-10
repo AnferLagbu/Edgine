@@ -206,8 +206,8 @@ fn exit_path_touches_only_the_exiting_thread() {
         "E-08: 组退出状态只在最后成员离开时置位"
     );
     assert!(
-        has(&exit, "set_state_safe(ProcessState::Zombie)"),
-        "E-08: 退出只把调用线程置 Zombie"
+        has(&exit, "proc.mark_zombie()"),
+        "E-08: 退出只把调用线程置 Zombie (R-4: 经不可拒绝终态写点)"
     );
     for token in ["eevdf_rq", "eevdf_vruntime", "eevdf_weight", "eevdf_"] {
         assert!(

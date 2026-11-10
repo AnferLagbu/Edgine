@@ -330,8 +330,8 @@ fn exit_teardown_is_gated_on_last_group_member() {
         has(
             &body,
             "proc.exit_code.store(effective_code, Ordering::SeqCst);"
-        ) && has(&body, "set_state_safe(ProcessState::Zombie)"),
-        "K-06: 每个 TCB 记录组有效退出码, 并各自置 Zombie"
+        ) && has(&body, "proc.mark_zombie();"),
+        "K-06: 每个 TCB 记录组有效退出码, 并各自置 Zombie (R-4: 经不可拒绝终态写点)"
     );
     assert!(
         has(&body, "itimer_real_release_pid(pid);") && has(&body, "posix_timer_release_pid(pid);"),
