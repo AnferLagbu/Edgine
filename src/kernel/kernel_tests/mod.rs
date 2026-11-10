@@ -14,6 +14,7 @@ pub mod test_ipc;
 #[cfg(test)]
 pub mod test_ipc_inline;
 pub mod test_pwm;
+pub mod test_signalfd;
 pub mod test_uds;
 
 /// FS 全局单例初始化 — 测试模式下注册前必须调用.
@@ -34,6 +35,8 @@ pub fn register_upper_tests() {
     test_uds::register_uds_tests();
     #[cfg(feature = "kernel_test")]
     test_eventfd::register_eventfd_tests();
+    #[cfg(feature = "kernel_test")]
+    test_signalfd::register_signalfd_tests();
     #[cfg(target_arch = "x86_64")]
     sys::register_tests();
 }

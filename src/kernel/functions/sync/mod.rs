@@ -200,7 +200,6 @@ use crate::privileged::syscall::Errno;
 
 pub mod epoll;
 pub mod futex;
-pub mod signalfd;
 
 pub mod irq_lock;
 pub mod once;

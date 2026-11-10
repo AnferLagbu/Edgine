@@ -1276,7 +1276,7 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
 
         // signalfd
-        SYS_SIGNALFD | SYS_SIGNALFD4 => as_ret(crate::functions::sync::signalfd::signalfd_syscall(
+        SYS_SIGNALFD | SYS_SIGNALFD4 => as_ret(crate::functions::fs::signalfd::signalfd_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
             a1,
             crate::functions::intcast::low_i32_from_u64(a2),

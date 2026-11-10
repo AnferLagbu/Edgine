@@ -394,3 +394,159 @@ fn eventfd_special_object_dispatch_sites() {
         "FunctionsVfsOps 必须把 fd_poll_special 接到 File::poll"
     );
 }
+
+// ============================================================================
+// 阶段 3 第 2 个迁移子系统: SignalFd — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn signalfd_object_implements_file_contract() {
+    use edgine::kernel::functions::fs::signalfd::{
+        SFD_IOC_SETMASK, SIGNALFD_SIGINFO_SIZE, SignalFdFile,
+    };
+
+    // host 侧无进程上下文 (current pid == 0), 与绑定 pid 0 相同 ⇒ pending 恒 0
+    let sfd = SignalFdFile::new(0, 0);
+    assert_eq!(
+        sfd.io_control(
+            SFD_IOC_SETMASK,
+            (1usize << 9) | (1usize << 8) | (1usize << 18)
+        ),
+        Ok(0),
+        "改掩码命令应成功 (不可屏蔽信号在对象内过滤)"
+    );
+    assert!(
+        sfd.poll(PollEvents::IN).is_empty(),
+        "无 pending 信号时不可读"
+    );
+    assert_eq!(
+        sfd.poll(PollEvents::ERR),
+        PollEvents::empty(),
+        "绑定进程内不附加 ERR"
+    );
+    assert_eq!(
+        sfd.write_at(0, &[0u8; SIGNALFD_SIGINFO_SIZE], 0),
+        Err(KernelError::InvalidArgument),
+        "signalfd 只读, 写入返回 EINVAL"
+    );
+    assert_eq!(
+        sfd.read_at(0, &mut [0u8; 64], 0),
+        Err(KernelError::InvalidArgument),
+        "缓冲区小于 signalfd_siginfo → EINVAL"
+    );
+    assert_eq!(
+        sfd.io_control(0x1234_5678, 0),
+        Err(KernelError::NotSupported),
+        "未知控制命令回落默认策略"
+    );
+    assert!(sfd.stream(), "signalfd 不可定位 (lseek → ESPIPE)");
+    assert!(sfd.as_inode().is_none(), "signalfd 非 inode 承载");
+    assert_eq!(sfd.file_type(), VfsFileType::File);
+
+    let foreign = SignalFdFile::new(1 << 9, 42);
+    assert_eq!(
+        foreign.poll(PollEvents::IN | PollEvents::ERR),
+        PollEvents::ERR,
+        "非绑定进程 (fork 继承 fd) 按无效 fd 报 ERR"
+    );
+}
+
+#[test]
+fn signalfd_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/fs/signalfd.rs");
+    assert!(
+        src.contains("impl File for SignalFdFile"),
+        "SignalFdFile 必须实现统一 File 接口"
+    );
+    assert!(
+        src.contains("OpenFile::from_file"),
+        "创建路径必须构造 OpenFile 挂表"
+    );
+    assert!(
+        src.contains("OPEN_FILE_TABLE.alloc"),
+        "创建路径必须分配 OpenFileTable 槽位"
+    );
+    assert!(
+        src.contains("t.alloc_fd(handle_id, cloexec)"),
+        "用户 fd 必须由 per-process fd 表分配并携带 CLOEXEC"
+    );
+    assert!(
+        !src.contains("FdPlan"),
+        "迁移后不得引用全局 FD 编号区间 (FdPlan)"
+    );
+    assert!(!src.contains("SFD_TABLE"), "迁移后不得保留子系统槽位表");
+    let old = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("src/kernel/privileged/syscall/signalfd.rs");
+    assert!(
+        !old.exists(),
+        "privileged 旧槽位实现必须删除 (阶段 3 迁移完成)"
+    );
+}
+
+#[test]
+fn signalfd_special_object_dispatch_sites() {
+    let io = read_file("functions/fs/io.rs");
+    assert!(
+        io.contains("vfs_is_special_fd"),
+        "写循环必须用 vfs_is_special_fd 识别特殊对象并短写即停"
+    );
+    assert!(
+        !io.contains("is_signalfd_fd") && !io.contains("sys_signalfd_read"),
+        "io.rs 不得残留 signalfd 数值特判"
+    );
+
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    assert!(
+        epoll.contains("fd_poll_special"),
+        "epoll 必须经 VfsOps::fd_poll_special 求值特殊对象就绪位"
+    );
+    assert!(
+        !epoll.contains("is_signalfd_fd"),
+        "epoll 不得残留 signalfd 数值分支"
+    );
+
+    let dispatch = read_file("functions/syscall/dispatch.rs");
+    assert!(
+        dispatch.contains("functions::fs::signalfd::signalfd_syscall"),
+        "SYS_SIGNALFD/SYS_SIGNALFD4 必须分发到对象模型实现"
+    );
+
+    let sendfile = read_file("functions/fs/sendfile.rs");
+    assert!(
+        sendfile.contains("of.as_inode().is_some()"),
+        "sendfile 必须按 as_inode 判据排除非文件对象"
+    );
+    assert!(
+        !sendfile.contains("220..236"),
+        "sendfile 不得残留 signalfd 数值区间"
+    );
+
+    let fs_mod = read_file("functions/fs/mod.rs");
+    assert!(
+        fs_mod.contains("pub mod signalfd;"),
+        "对象实现必须落在 functions/fs"
+    );
+    let sync_mod = read_file("functions/sync/mod.rs");
+    assert!(
+        !sync_mod.contains("pub mod signalfd;"),
+        "旧 functions/sync 代理必须删除"
+    );
+    let priv_mod = read_file("privileged/syscall/mod.rs");
+    assert!(
+        !priv_mod.contains("pub mod signalfd;"),
+        "privileged 旧 syscall 模块必须摘除"
+    );
+
+    let kernel_tests = read_file("kernel_tests/mod.rs");
+    assert!(
+        kernel_tests.contains("test_signalfd::register_signalfd_tests()"),
+        "对象级内核测试必须注册到 glue 侧统一 runner"
+    );
+    let priv_tests = read_file("privileged/tests/mod.rs");
+    assert!(
+        !priv_tests.contains("register_signalfd_tests"),
+        "旧 privileged 注册点必须删除"
+    );
+}

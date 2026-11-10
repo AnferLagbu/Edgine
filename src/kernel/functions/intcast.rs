@@ -332,6 +332,13 @@ pub const fn low_u64_from_u128(v: u128) -> u64 {
     u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
 }
 
+/// `usize` → `u64`: 64 位目标上逐位等价于 `v as u64` (32 位目标编译失败).
+#[inline]
+#[must_use]
+pub const fn u64_from_usize(v: usize) -> u64 {
+    u64::from_le_bytes(v.to_le_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +401,8 @@ mod tests {
         assert_eq!(low_i8_from_i32(0xFF), -1);
         assert_eq!(low_u64_from_u128(u128::MAX), u64::MAX);
         assert_eq!(low_u64_from_u128(0x1_0000_0000_0000_0001), 1);
+        assert_eq!(u64_from_usize(usize::MAX), u64::MAX);
+        assert_eq!(u64_from_usize(0x1234_5678), 0x1234_5678);
         assert_eq!(low_i16_from_i32(0x1_0001), 1);
         assert_eq!(low_i16_from_i32(i32::MAX), -1);
         assert_eq!(low_i64_from_i128(i128::MAX), -1);

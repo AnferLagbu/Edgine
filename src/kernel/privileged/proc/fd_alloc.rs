@@ -29,7 +29,7 @@
 //! | Smoltcp | 64 | MAX_SM_FD | 256 | `privileged/net/init.rs` |
 //! | Uds     | 1000 | UDS 范围 | 16 | `privileged/net/unix.rs` |
 //! | EventFd | 1100 | EFD 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
-//! | SignalFd| 1120 | SFD 范围 | 16 | `privileged/syscall/signalfd.rs` |
+//! | SignalFd| 1120 | SFD 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | Inotify | 1140 | INOTIFY 范围 | 16 | `functions/fs/inotify.rs` |
 //! | TimerFd | 1160 | `TIMER_FD` 范围 | 16 | `privileged/syscall/timerfd.rs` |
 //! | PidFd   | 1180 | `PID_FD` 范围 | 16 | `functions/proc/pidfd.rs` |

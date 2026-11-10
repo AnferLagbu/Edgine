@@ -62,6 +62,8 @@ pub mod ramfs;
 /// ramfs 核心实现 (RamFsData / RamFsFileSystem / ramfs_fs)
 pub mod ramfs_core;
 pub mod sendfile;
+/// 统一 fd 对象模型: signalfd 信号接收对象
+pub mod signalfd;
 /// 快照 (snapshot) 系统调用处理器
 pub mod snapshot;
 pub mod stat;

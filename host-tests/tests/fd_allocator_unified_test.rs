@@ -140,17 +140,12 @@ fn test_fd_range_overlaps_helper() {
 #[test]
 fn test_v2_subsystems_reference_fdplan() {
     // TD-02 V2: 仍留在 FdPlan 的子系统 *FD_BASE 常量必须从 FdPlan 派生, 不再硬编码字面量
-    // (eventfd 已在 fd 对象模型阶段 3 迁至 OpenFileTable, 无 *FD_BASE)
+    // (eventfd/signalfd 已在 fd 对象模型阶段 3 迁至 OpenFileTable, 无 *FD_BASE)
     let cases: &[(&str, &str, &str)] = &[
         (
             "UDS_FD_BASE",
             "src/kernel/functions/net/unix.rs",
             "crate::privileged::proc::FdPlan::UDS.base",
-        ),
-        (
-            "SFD_FD_BASE",
-            "src/kernel/privileged/syscall/signalfd.rs",
-            "crate::privileged::proc::FdPlan::SIGNAL_FD.base",
         ),
         (
             "INOTIFY_FD_BASE",
@@ -210,13 +205,11 @@ fn test_v3_fd_at_helper_exposed() {
 #[test]
 fn test_v3_subsystems_use_fd_at_not_base_plus() {
     // TD-02 V3: 各子系统的"base + i" 模式必须改走 fd_at(FdSubsystem::X, i)
-    // 3 个 FD 分配点 (eventfd 已迁至 OpenFileTable, 不再走 FdPlan):
+    // 2 个 FD 分配点 (eventfd/signalfd 已迁至 OpenFileTable, 不再走 FdPlan):
     //   1. unix.rs idx_to_fd
-    //   2. signalfd.rs sys_signalfd 内部
-    //   3. inotify.rs InotifyInstance::fd (含通知循环 epoll_pwake)
+    //   2. inotify.rs InotifyInstance::fd (含通知循环 epoll_pwake)
     let cases: &[(&str, &str)] = &[
         ("src/kernel/functions/net/unix.rs", "fd_at"),
-        ("src/kernel/privileged/syscall/signalfd.rs", "fd_at"),
         ("src/kernel/functions/fs/inotify.rs", "fd_at"),
     ];
     for (path, expected) in cases {

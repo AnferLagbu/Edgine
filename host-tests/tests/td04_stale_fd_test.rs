@@ -1,21 +1,19 @@
 // TD-04: 验证 close 路径在释放槽位后唤醒 epoll 等待者, 防止 epoll_wait 睡在已关闭 fd 上
 //
 // 验收:
-//   1. eventfd 关闭走 VFS 通用 `vfs_close_internal`: 先 `OPEN_FILE_TABLE.close`
+//   1. eventfd/signalfd 关闭走 VFS 通用 `vfs_close_internal`: 先 `OPEN_FILE_TABLE.close`
 //      释放槽位, 后 `fd_notify::notify_fd_close` 唤醒等待者
-//   2. SFD sys_signalfd_close 在释放 SFD_TABLE 锁之后调用 epoll_pwake
-//   3. 已关闭 fd 在 epoll 扫描中按无效 fd 处理, 统一报告 EPOLLERR|EPOLLHUP
+//   2. 已关闭 fd 在 epoll 扫描中按无效 fd 处理, 统一报告 EPOLLERR|EPOLLHUP
 //
 // 注: 静态契约扫描, 不进内核态.
-// fd 对象模型阶段 3 (2026-11-10): eventfd 由 privileged 子系统表迁至
-// OpenFileTable 统一挂表, close 路径不再是 `sys_eventfd_close`, 而是 VFS 通用
-// `vfs_close_internal`; 槽位回收随 `OpenFile` 引用归零自然完成.
+// fd 对象模型阶段 3 (2026-11-10): eventfd 与 signalfd 由 privileged 子系统表迁至
+// OpenFileTable 统一挂表, close 路径不再是 `sys_eventfd_close` / `sys_signalfd_close`,
+// 而是 VFS 通用 `vfs_close_internal`; 槽位回收随 `OpenFile` 引用归零自然完成.
 
 use std::fs;
 use std::path::Path;
 
 const HANDLE: &str = "src/kernel/functions/fs/handle.rs";
-const SFD: &str = "src/kernel/privileged/syscall/signalfd.rs";
 const POLL_POLICY: &str = "src/kernel/functions/fs/vfs_poll_policy.rs";
 const EPOLL: &str = "src/kernel/privileged/syscall/epoll.rs";
 
@@ -60,29 +58,6 @@ fn test_efd_close_notifies_after_releasing_slot() {
     assert!(
         close_idx < pwake_idx,
         "TD-04: 唤醒必须在槽位释放之后, 让 waiter 看到 fd 已关闭"
-    );
-}
-
-#[test]
-fn test_sfd_close_pwake_after_drop_lock() {
-    // TD-04: SFD close 必须在 drop(table) 之后 epoll_pwake
-    let src = read(SFD);
-    let body = extract_body(&src, "pub fn sys_signalfd_close(");
-    assert!(
-        body.contains("epoll_pwake"),
-        "TD-04: SFD sys_signalfd_close 必须调用 epoll_pwake, 防止 epoll_wait 睡在已关闭 fd 上:\n{body}"
-    );
-    let drop_idx = body
-        .find("drop(table);")
-        .or_else(|| body.find("drop(table)"))
-        .or_else(|| body.find("drop( table )"))
-        .expect("TD-04: 必须有 drop(table) 显式释放锁");
-    let pwake_idx = body
-        .find("epoll_pwake")
-        .expect("TD-04: epoll_pwake 必须存在");
-    assert!(
-        drop_idx < pwake_idx,
-        "TD-04: epoll_pwake 必须在 drop(table) 之后, 让 waiter 看到槽位已释放"
     );
 }
 
