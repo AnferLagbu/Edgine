@@ -27,8 +27,8 @@
 //!     timer: HrTimer,
 //! }
 //!
-//! fn my_timer_callback(timer: &HrTimer) -> HrTimerRestart {
-//!     // 处理超时逻辑
+//! fn my_timer_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+//!     // 处理超时逻辑; `_seq` 为本次激活的入队序号, 需要代际校验时使用
 //!     HrTimerRestart::Periodic  // 或 OneShot
 //! }
 //!
@@ -63,11 +63,16 @@ pub enum HrTimerRestart {
 
 /// 定时器回调函数类型
 ///
+/// 第 2 个参数是本次激活的入队序号 (`run_queues` 收集条目时携带), 供需要
+/// 代际校验的调用方 (如 timerfd 槽位复用) 丢弃迟到回调.
+///
 /// # 约束
 /// - 在中断上下文执行, 不可睡眠
 /// - 不可长时间阻塞 (建议 < 1ms)
-/// - 不可调用 `hrtimer_start/cancel` (避免死锁)
-pub type HrTimerCallback = fn(&HrTimer) -> HrTimerRestart;
+/// - 回调在队列锁释放后执行, 允许调用 `hrtimer_start` 自行重挂 (timerfd
+///   周期路径依赖此语义); 自行重挂后应返回 [`HrTimerRestart::OneShot`],
+///   框架不会覆盖回调写入的 Pending 状态
+pub type HrTimerCallback = fn(&HrTimer, u64) -> HrTimerRestart;
 
 /// 定时器状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +147,14 @@ impl HrTimer {
         self.expiry_ns.load(Ordering::Acquire)
     }
 
+    /// 当前激活序号 (最近一次 `hrtimer_start` 分配的入队序号; 0 = 未入队/已取消)
+    ///
+    /// 与回调第 2 参数的比较用于代际校验: 定时器被重新入队或取消后, 旧激活
+    /// 的迟到回调携带的序号与当前值不一致, 应被丢弃.
+    pub fn activation_seq(&self) -> u64 {
+        self.queue_seq.load(Ordering::Acquire)
+    }
+
     /// 获取周期间隔 (纳秒)
     pub fn interval_ns(&self) -> u64 {
         self.interval_ns.load(Ordering::Acquire)
@@ -194,7 +207,7 @@ impl HrTimer {
 }
 
 /// 空回调 (未初始化定时器的默认值)
-fn noop_callback(_timer: &HrTimer) -> HrTimerRestart {
+fn noop_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     HrTimerRestart::OneShot
 }
 
@@ -259,7 +272,7 @@ pub fn is_hrtimer_ready() -> bool {
 ///
 /// 调用方必须保证:
 /// - `timer` 在回调触发前保持有效内存
-/// - 不在回调中调用此函数 (会死锁)
+/// - 回调在队列锁释放后执行, 允许在回调内调用本函数 (timerfd 周期路径)
 pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
     if !HRTIMER_READY.load(Ordering::Acquire) {
         return;
@@ -397,33 +410,48 @@ pub fn hrtimer_run_queues() {
     };
 
     // 执行回调 (无锁, 允许回调中操作定时器)
-    for (timer_ptr, callback, _seq) in expired {
+    for (timer_ptr, callback, seq) in expired {
         // SAFETY: 入队时保证指针有效
         let timer = unsafe { timer_ptr.as_ref() };
-        let restart = callback(timer);
+        dispatch_expired(timer, callback, seq, now_ns);
+    }
+}
 
-        match restart {
-            HrTimerRestart::OneShot => {
+/// 执行单个已到期条目的回调, 并收敛其状态.
+///
+/// 收集与执行之间定时器可能已被取消 (`queue_seq = 0`) 或重新入队 (新序号),
+/// 此时条目的激活序号已失效 — 不得执行回调, 否则迟到回调会触碰已被复用/
+/// 重新编排的状态 (timerfd 槽位复用场景下的真实缺陷). 回调内自行 `hrtimer_start`
+/// 重挂时, 保留回调写入的 Pending 状态, 不被 `OneShot` 收敛覆盖.
+fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns: u64) {
+    if timer.activation_seq() != seq {
+        return;
+    }
+
+    let restart = callback(timer, seq);
+
+    match restart {
+        HrTimerRestart::OneShot => {
+            // 回调内可能已自行重挂: 仅收敛仍处于 Running 的定时器.
+            if timer.state() == HrTimerState::Running {
                 timer.set_state(HrTimerState::Inactive);
                 timer.queue_seq.store(0, Ordering::Release);
             }
-            HrTimerRestart::Periodic => {
-                let interval = timer.interval_ns.load(Ordering::Acquire);
-                if interval > 0 {
-                    let old_expiry = timer.expiry_ns.load(Ordering::Acquire);
-                    let new_expiry = old_expiry + interval;
-                    // 如果已严重过期, 从当前时间开始
-                    let next = if new_expiry <= now_ns {
-                        now_ns + interval
-                    } else {
-                        new_expiry
-                    };
-                    // 重新入队: hrtimer_start 会获取锁
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    hrtimer_start(unsafe { timer_ptr.as_ref() }, next);
+        }
+        HrTimerRestart::Periodic => {
+            let interval = timer.interval_ns.load(Ordering::Acquire);
+            if interval > 0 {
+                let old_expiry = timer.expiry_ns.load(Ordering::Acquire);
+                let new_expiry = old_expiry + interval;
+                // 如果已严重过期, 从当前时间开始
+                let next = if new_expiry <= now_ns {
+                    now_ns + interval
                 } else {
-                    timer.set_state(HrTimerState::Inactive);
-                }
+                    new_expiry
+                };
+                hrtimer_start(timer, next);
+            } else {
+                timer.set_state(HrTimerState::Inactive);
             }
         }
     }
@@ -516,7 +544,7 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
     // SAFETY: SLEEP_FLAG 仅为本函数独占, 不会跨调用并发 (单线程执行模型).
 
     let mut timer = HrTimer::uninit();
-    timer.init(|_t| {
+    timer.init(|_t, _seq| {
         // SLEEP_FLAG 为原子量, 回调仅 store true.
         SLEEP_FLAG.store(true, Ordering::Release);
         HrTimerRestart::OneShot
@@ -546,6 +574,7 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::sync::atomic::AtomicU32;
 
     #[test]
     fn test_hrtimer_state_encoding() {
@@ -643,6 +672,62 @@ mod tests {
         // 1ms = 1_000_000 ns, 在 host 环境下无 tick 中断, 走 SLEEP_WAIT_BOUND 退路,
         // 仍返回 Ok (不卡死, 不 panic)
         assert!(hrtimer_sleep(1_000_000).is_ok());
+    }
+
+    static STALE_CALLS: AtomicU32 = AtomicU32::new(0);
+    static REARM_CALLS: AtomicU32 = AtomicU32::new(0);
+
+    fn stale_guard_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+        STALE_CALLS.fetch_add(1, Ordering::Relaxed);
+        HrTimerRestart::OneShot
+    }
+
+    fn self_rearm_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+        REARM_CALLS.fetch_add(1, Ordering::Relaxed);
+        // 模拟 timerfd 周期路径: 回调内自行重挂 (新激活序号 + Pending).
+        timer.queue_seq.store(99, Ordering::Release);
+        timer.set_state(HrTimerState::Pending);
+        HrTimerRestart::OneShot
+    }
+
+    #[test]
+    fn test_dispatch_skips_stale_activation() {
+        let mut timer = HrTimer::uninit();
+        timer.init(stale_guard_callback);
+        timer.set_state(HrTimerState::Running);
+        timer.queue_seq.store(5, Ordering::Release);
+        STALE_CALLS.store(0, Ordering::Relaxed);
+
+        // 收集后定时器已被重新入队 (序号 5), 旧条目 (序号 4) 不得执行回调.
+        dispatch_expired(&timer, stale_guard_callback, 4, 0);
+        assert_eq!(
+            STALE_CALLS.load(Ordering::Relaxed),
+            0,
+            "迟到激活不得执行回调"
+        );
+        // 当前激活正常执行并收敛到 Inactive.
+        dispatch_expired(&timer, stale_guard_callback, 5, 0);
+        assert_eq!(STALE_CALLS.load(Ordering::Relaxed), 1, "当前激活应执行回调");
+        assert_eq!(timer.state(), HrTimerState::Inactive);
+    }
+
+    #[test]
+    fn test_dispatch_preserves_callback_rearm() {
+        let mut timer = HrTimer::uninit();
+        timer.init(self_rearm_callback);
+        timer.set_state(HrTimerState::Running);
+        timer.queue_seq.store(7, Ordering::Release);
+        REARM_CALLS.store(0, Ordering::Relaxed);
+
+        dispatch_expired(&timer, self_rearm_callback, 7, 0);
+        assert_eq!(REARM_CALLS.load(Ordering::Relaxed), 1);
+        // 回调内自行重挂后返回 OneShot: 框架不得覆盖回调写入的 Pending.
+        assert_eq!(
+            timer.state(),
+            HrTimerState::Pending,
+            "回调内重挂的 Pending 不得被覆盖"
+        );
+        assert_eq!(timer.activation_seq(), 99);
     }
 }
 
@@ -761,7 +846,7 @@ fn test_periodic_restart() -> crate::privileged::tests::TestResult {
 }
 
 #[cfg(feature = "kernel_test")]
-fn periodic_test_callback(_timer: &HrTimer) -> HrTimerRestart {
+fn periodic_test_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     HrTimerRestart::Periodic
 }
 

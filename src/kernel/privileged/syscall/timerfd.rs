@@ -77,6 +77,11 @@ struct TimerFdSlot {
     interval_ns: u64,
     /// 是否已启动 (armed)
     armed: bool,
+    /// 当前激活序号 (`hrtimer_start` 分配的入队序号; 0 = 无有效激活)
+    ///
+    /// 回调携带入队时序号, 与此值不一致即说明槽位已释放/复用或已重新设时,
+    /// 该回调属迟到条目, 不得计入当前实例.
+    arm_seq: u64,
     /// 是否已使用
     used: bool,
     /// 唤醒用数值 fd (对象挂表时登记; -1 = 未登记)
@@ -90,6 +95,7 @@ impl TimerFdSlot {
             expiry_count: 0,
             interval_ns: 0,
             armed: false,
+            arm_seq: 0,
             used: false,
             wake_fd: -1,
         }
@@ -101,6 +107,7 @@ impl TimerFdSlot {
         self.expiry_count = 0;
         self.interval_ns = 0;
         self.armed = false;
+        self.arm_seq = 0;
         self.used = false;
         self.wake_fd = -1;
     }
@@ -165,6 +172,7 @@ pub fn set_time(idx: usize, value_ns: u64, interval_ns: u64, abstime: bool) -> O
     if slot.armed {
         hrtimer_cancel(&slot.timer);
         slot.armed = false;
+        slot.arm_seq = 0;
     }
     slot.expiry_count = 0;
 
@@ -182,6 +190,7 @@ pub fn set_time(idx: usize, value_ns: u64, interval_ns: u64, abstime: bool) -> O
     };
     hrtimer_start(&slot.timer, expiry_ns);
     slot.armed = true;
+    slot.arm_seq = slot.timer.activation_seq();
     Some(old)
 }
 
@@ -244,9 +253,12 @@ pub fn free_slot(idx: usize) {
 
 /// timerfd 定时器回调
 ///
-/// 在中断上下文执行: 递增到期计数, 唤醒 epoll; 周期定时器手动重新入队.
-/// 槽位经 `timer` 地址在静态槽位表中反查 (不依赖裸指针偏移假设).
-fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
+/// 在中断上下文执行: 代际校验 → 递增到期计数 → 周期重挂 (锁内) → 锁外
+/// 唤醒 epoll. 槽位经 `timer` 地址在静态槽位表中反查 (不依赖裸指针偏移假设).
+///
+/// `seq` 为本次激活的入队序号. 槽位释放/复用或重新设时后, 旧激活的迟到
+/// 回调携带的序号与 `arm_seq` 不一致, 直接丢弃 — 不得计入新实例.
+fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart {
     let mut table = TFD_TABLE.lock();
     let Some(idx) = table
         .slots
@@ -256,23 +268,23 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
         return HrTimerRestart::OneShot;
     };
     let slot = &mut table.slots[idx];
+    // 代际校验与计数/重挂同在 `TFD_TABLE` 临界区: 与 `set_time` 的取消/
+    // 重设互斥, 不存在「校验通过后状态又被改写」的窗口.
+    if !slot.used || slot.arm_seq != seq {
+        return HrTimerRestart::OneShot;
+    }
+
+    slot.expiry_count = slot.expiry_count.saturating_add(1);
     let wake_fd = slot.wake_fd;
     let interval_ns = slot.interval_ns;
-    if slot.used {
-        slot.expiry_count = slot.expiry_count.saturating_add(1);
-        if interval_ns == 0 {
-            // 单次定时器到期后自动解除 armed
-            slot.armed = false;
-        }
-    }
-    drop(table);
 
-    if wake_fd >= 0 {
-        crate::privileged::syscall::epoll::epoll_pwake(wake_fd);
-    }
-
-    // 周期定时器: 相对原到期时刻推进, 落后于当前时刻则从当前时刻重新计时
-    if interval_ns > 0 {
+    if interval_ns == 0 {
+        // 单次定时器到期后自动解除 armed
+        slot.armed = false;
+        slot.arm_seq = 0;
+    } else {
+        // 周期定时器: 相对原到期时刻推进, 落后于当前时刻则从当前时刻重新计时.
+        // 重挂留在锁内: 与 `set_time` 互斥, 且回写新激活序号供下一次回调校验.
         let now = hrtimer_clock_read();
         let next = timer.expiry_ns().saturating_add(interval_ns);
         let next = if next <= now {
@@ -281,7 +293,67 @@ fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
             next
         };
         hrtimer_start(timer, next);
+        slot.arm_seq = timer.activation_seq();
+    }
+    drop(table);
+
+    if wake_fd >= 0 {
+        crate::privileged::syscall::epoll::epoll_pwake(wake_fd);
     }
 
     HrTimerRestart::OneShot
+}
+
+// ============================================================================
+// 单元测试 (host-side, 不依赖硬件时基)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 取槽位内 `HrTimer` 的裸指针 (回调需在表锁释放后取得对象引用).
+    fn timer_ptr(idx: usize) -> *const HrTimer {
+        let table = TFD_TABLE.lock();
+        core::ptr::from_ref(&table.slots[idx].timer)
+    }
+
+    #[test]
+    fn stale_callback_after_slot_reuse_is_ignored() {
+        let idx = alloc_slot().expect("分配槽位");
+        let old_seq = 7_u64;
+        {
+            let mut table = TFD_TABLE.lock();
+            let slot = &mut table.slots[idx];
+            slot.armed = true;
+            slot.interval_ns = 0;
+            slot.arm_seq = old_seq;
+        }
+        // SAFETY: 指针指向静态槽位表内的 `HrTimer`, 表生命周期覆盖进程;
+        // 本测试独占该槽位, 期间无并发释放.
+        let timer = unsafe { &*timer_ptr(idx) };
+        let _ = timerfd_callback(timer, old_seq);
+        assert!(matches!(take_expiry(idx), TakeExpiry::Count(1)));
+
+        // 释放并复用槽位 (代际变更)
+        free_slot(idx);
+        let new_seq = 8_u64;
+        {
+            let mut table = TFD_TABLE.lock();
+            let slot = &mut table.slots[idx];
+            slot.used = true;
+            slot.armed = true;
+            slot.interval_ns = 0;
+            slot.arm_seq = new_seq;
+        }
+        // SAFETY: 同上, 静态槽位指针在整个测试期间有效.
+        let timer = unsafe { &*timer_ptr(idx) };
+        // 旧代际的迟到回调不得计入新实例
+        let _ = timerfd_callback(timer, old_seq);
+        assert!(matches!(take_expiry(idx), TakeExpiry::Empty));
+        // 新代际回调正常计数
+        let _ = timerfd_callback(timer, new_seq);
+        assert!(matches!(take_expiry(idx), TakeExpiry::Count(1)));
+        free_slot(idx);
+    }
 }

@@ -274,7 +274,10 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
         return KernelError::BadFd.as_vfs_ret();
     };
 
-    // 通过 OpenFile 获取 offset 和 Inode
+    // 通过 OpenFile 获取 offset 和 Inode.
+    // 就绪变化通知只带出标志、锁释放后再发出: `with_file` 闭包持
+    // `OpenFileTable` 自旋锁, 而 epoll 回调的就绪重算 (`fd_poll_special`)
+    // 会再次取同一把锁 (不可重入) → 自锁死.
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let offset = open_file.get_offset();
         let pwm = open_file.pwm;
@@ -305,7 +308,7 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
                     }
                 }
                 if all_ok {
-                    return count.cast_signed();
+                    return (count.cast_signed(), false);
                 }
             }
         }
@@ -317,19 +320,24 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
             Some(result) => result,
             None => file.read_at(offset, dst, pwm),
         };
-        result.map_or_else(KernelError::as_vfs_ret, |n| {
+        let mut notify = false;
+        let ret = result.map_or_else(KernelError::as_vfs_ret, |n| {
             let new_offset = offset + n as u64;
             open_file.set_offset(new_offset);
-            // 管道 / 特殊对象读走数据 ⇒ 就绪状态可能变化, 通知 epoll 重新求值
-            // (普通文件就绪态恒定, 无需通知).
-            if fd_event_may_change(open_file) {
-                fd_notify::notify_fd_event(fd_idx.cast_signed());
-            }
+            // 管道 / 特殊对象读走数据 ⇒ 就绪状态可能变化 (普通文件就绪态恒定)
+            notify = fd_event_may_change(open_file);
             crate::functions::intcast::low_i32_from_usize(n)
-        })
+        });
+        (ret, notify)
     });
 
-    result.unwrap_or(KernelError::BadFd.as_vfs_ret())
+    let Some((ret, notify)) = result else {
+        return KernelError::BadFd.as_vfs_ret();
+    };
+    if notify {
+        fd_notify::notify_fd_event(fd_idx.cast_signed());
+    }
+    ret
 }
 
 /// 读 fd — 用户缓冲入口.
@@ -444,6 +452,8 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
         return KernelError::BadFd.as_vfs_ret();
     };
 
+    // 就绪变化通知同样只带出标志、锁释放后再发出 (见 `vfs_read_slice` 的
+    // 不可重入说明).
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
         let node_id = open_file.file().inode_namespace_id();
@@ -459,25 +469,36 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
             open_file.get_offset()
         };
 
-        open_file
-            .file()
-            .write_at(offset, src, pwm)
-            .map_or_else(KernelError::as_vfs_ret, |n| {
-                let new_offset = offset + n as u64;
-                open_file.set_offset(new_offset);
-                // 管道 / 特殊对象写入数据 ⇒ 就绪状态变化, 通知 epoll 重新求值;
-                // 普通文件就绪态恒定, 不发事件 (原实现在写路径误调 close 通知).
-                if fd_event_may_change(open_file) {
-                    fd_notify::notify_fd_event(fd_idx.cast_signed());
-                }
-                if let Some(node_id) = node_id {
-                    super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
-                }
-                crate::functions::intcast::low_i32_from_usize(n)
-            })
+        let mut notify = false;
+        let ret =
+            open_file
+                .file()
+                .write_at(offset, src, pwm)
+                .map_or_else(KernelError::as_vfs_ret, |n| {
+                    let new_offset = offset + n as u64;
+                    open_file.set_offset(new_offset);
+                    // 管道 / 特殊对象写入数据 ⇒ 就绪状态变化; 普通文件就绪态恒定.
+                    notify = fd_event_may_change(open_file);
+                    if let Some(node_id) = node_id {
+                        super::inotify::inotify_notify(
+                            node_id,
+                            super::inotify::IN_MODIFY,
+                            "",
+                            false,
+                        );
+                    }
+                    crate::functions::intcast::low_i32_from_usize(n)
+                });
+        (ret, notify)
     });
 
-    result.unwrap_or(KernelError::BadFd.as_vfs_ret())
+    let Some((ret, notify)) = result else {
+        return KernelError::BadFd.as_vfs_ret();
+    };
+    if notify {
+        fd_notify::notify_fd_event(fd_idx.cast_signed());
+    }
+    ret
 }
 
 /// 写 fd — 用户缓冲入口.

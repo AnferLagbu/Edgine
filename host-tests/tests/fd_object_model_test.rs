@@ -1383,3 +1383,121 @@ fn timerfd_dispatch_sites_use_vfs_object_path() {
         "对象级内核测试必须注册到 glue 侧统一 runner"
     );
 }
+
+/// 提取 `needle` 之后第一个花括号块 (按深度配对, 跳过行注释与字符串字面量).
+///
+/// 返回 `(块结束字节偏移, 块切片)`; 找不到返回 `None`.
+fn braced_block_after<'a>(src: &'a str, needle: &str, from: usize) -> Option<(usize, &'a str)> {
+    let idx = from + src[from..].find(needle)?;
+    let bytes = src.as_bytes();
+    let mut i = idx + needle.len();
+    while i < bytes.len() && bytes[i] != b'{' {
+        i += 1;
+    }
+    if i >= bytes.len() {
+        return None;
+    }
+    let start = i;
+    let mut depth = 0usize;
+    let mut in_comment = false;
+    let mut in_string = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_comment {
+            in_comment = b != b'\n';
+        } else if in_string {
+            if b == b'\\' {
+                i += 1;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            in_comment = true;
+            i += 1;
+        } else if b == b'"' {
+            in_string = true;
+        } else if b == b'{' {
+            depth += 1;
+        } else if b == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some((i + 1, &src[start..=i]));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+#[test]
+fn fd_notify_is_called_outside_open_file_table_lock() {
+    // `with_file` 闭包持 OpenFileTable 自旋锁 (不可重入). epoll 的就绪重算
+    // (`check_fd_ready → fd_poll_special`) 会再次取同一把锁: 锁域内回调
+    // 必然自锁死, 故就绪通知必须只带出标志、锁释放后再发.
+    let src = read_file("functions/fs/handle.rs");
+    for needle in [", |open_file| {", ", |of| {"] {
+        let mut from = 0;
+        while let Some((end, block)) = braced_block_after(&src, needle, from) {
+            assert!(
+                !block.contains("notify_fd_event"),
+                "fd_notify 就绪通知不得在 OpenFileTable 锁域内发出"
+            );
+            from = end;
+        }
+    }
+    // 反向针: 通知不得被「直接删除」式修复, 读/写路径各保留一次锁外通知.
+    assert_eq!(
+        src.matches("fd_notify::notify_fd_event").count(),
+        2,
+        "读/写路径各须保留一次锁外就绪通知"
+    );
+    assert_eq!(
+        src.matches("let Some((ret, notify)) = result else").count(),
+        2,
+        "读/写路径必须把通知标志带出闭包"
+    );
+}
+
+#[test]
+fn sendfile_has_no_stale_uds_numeric_range() {
+    // UDS 已迁入统一 fd 空间: 以编号区间排除会误拒复用该号段的普通文件 fd.
+    let sendfile = read_file("functions/fs/sendfile.rs");
+    for needle in ["100..116", "UDS_FD_BASE", "is_uds_fd"] {
+        assert!(
+            !sendfile.contains(needle),
+            "sendfile 不得残留 UDS 数值区间判据: {needle}"
+        );
+    }
+    assert!(
+        sendfile.contains("of.as_inode().is_some()"),
+        "特殊对象排除必须按 as_inode 能力判据"
+    );
+}
+
+#[test]
+fn stale_hrtimer_callbacks_are_gated_by_activation_generation() {
+    // 槽位复用后, 旧激活的迟到回调必须被代际序号挡掉; 周期重挂须在
+    // TFD_TABLE 锁域内完成 (与 set_time 的重设互斥).
+    let timerfd = read_file("privileged/syscall/timerfd.rs");
+    assert!(
+        timerfd.contains("fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart"),
+        "timerfd 回调必须接收激活序号"
+    );
+    assert!(
+        timerfd.contains("slot.arm_seq != seq"),
+        "回调必须按槽位激活序号做代际校验"
+    );
+    assert!(
+        timerfd.contains("slot.arm_seq = timer.activation_seq()"),
+        "设时/重挂必须回写当前激活序号"
+    );
+    let hrtimer = read_file("privileged/timer/hrtimer.rs");
+    assert!(
+        hrtimer.contains("if timer.activation_seq() != seq"),
+        "hrtimer 分发必须在回调前校验激活序号"
+    );
+    assert!(
+        hrtimer.contains("if timer.state() == HrTimerState::Running"),
+        "OneShot 收敛不得覆盖回调内自行重挂的 Pending"
+    );
+}

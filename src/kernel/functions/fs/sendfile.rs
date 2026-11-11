@@ -19,13 +19,14 @@
 //!
 //! ## FD 类型识别
 //!
-//! - VFS fd: 当前进程 fd 表中有映射 (fd → `OpenFileTable` handle 存在),
-//!   且由 inode 承载 (`as_inode()` 为 `Some`)
-//! - Pipe fd: 同样位于 VFS fd 空间, 由 `OpenFile` 的 `pipe_key` 标记区分
-//!   (`functions::fs::pipe_fd`)
-//! - Eventfd: 已纳入 fd 对象模型 (per-process fd 表 + `OpenFileTable`), 但
-//!   `as_inode() == None`, 据此排除
-//! - Signalfd/Timerfd/Inotify: 各自独立 FD 空间, 不参与 sendfile/splice
+//! fd 对象模型阶段 3 起, 各子系统共用同一 per-process fd 空间与
+//! `OpenFileTable`, 判据统一为对象能力而非编号区间:
+//!
+//! - VFS 文件 fd: 由 inode 承载 (`as_inode()` 为 `Some`), 可作 sendfile 源
+//! - Pipe fd: 同一 fd 空间内的管道端点 (`OpenFile::is_pipe_endpoint`),
+//!   可作 splice 端 (`functions::fs::pipe_fd`)
+//! - 其余特殊对象 (socket / eventfd / signalfd / inotify / timerfd): 不实现
+//!   `Inode` (`as_inode() == None`), 自动排除
 //!
 //! ## 安全约束
 //!
@@ -65,10 +66,6 @@ fn is_vfs_file_fd(fd: i32) -> bool {
         return false;
     }
     let fd_usize = crate::functions::intcast::usize_from_i32(fd);
-    // 排除特殊 FD 空间
-    if (100..116).contains(&fd) {
-        return false; // UDS
-    }
     if super::pipe_fd::is_pipe_fd(fd) {
         return false;
     }

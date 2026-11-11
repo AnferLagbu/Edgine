@@ -72,7 +72,7 @@ static ITIMER_SLOTS: IrqSpinLock<[ItimerSlot; MAX_PROCESSES]> =
     IrqSpinLock::new([const { ItimerSlot::new() }; MAX_PROCESSES]);
 
 /// `ITIMER_REAL` 到期回调 (hardirq 上下文, 由 `hrtimer_run_queues` 在无锁状态调用)
-fn itimer_real_callback(timer: &HrTimer) -> HrTimerRestart {
+fn itimer_real_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     // 从 timer 指针反推容器槽: `HrTimer` 是 `ItimerSlot` 的第一个字段 (偏移 0),
     // 与 `posix_timer.rs` / `timerfd.rs` 同一模式.
     let slot_ptr = core::ptr::from_ref(timer).cast::<ItimerSlot>();

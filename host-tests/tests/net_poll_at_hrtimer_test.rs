@@ -104,7 +104,12 @@ fn s3_expiry_callback_defers_to_softirq() {
     let start = src
         .find("fn net_poll_deadline_callback")
         .expect("S-3: 缺截止期到期回调");
-    let body = &src[start..start + 400];
+    // 窗口按字符计, 避免固定字节偏移落进多字节汉字 (签名增参后曾触发).
+    let end = src[start..]
+        .char_indices()
+        .nth(400)
+        .map_or(src.len(), |(offset, _)| start + offset);
+    let body = &src[start..end];
     let flat = squash(body);
     assert!(
         flat.contains("raise_softirq(SoftirqVec::NetRx)"),

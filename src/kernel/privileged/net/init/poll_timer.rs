@@ -77,7 +77,7 @@ static NET_POLL_DEADLINE_NS: AtomicU64 = AtomicU64::new(DEADLINE_NONE);
 static NET_POLL_TIMER: IrqSpinLock<HrTimer> = IrqSpinLock::new(HrTimer::uninit());
 
 /// 截止期到期回调 (hardirq 上下文, 由 `hrtimer_run_queues` 在无锁状态调用).
-fn net_poll_deadline_callback(_timer: &HrTimer) -> HrTimerRestart {
+fn net_poll_deadline_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     raise_softirq(SoftirqVec::NetRx);
     HrTimerRestart::OneShot
 }

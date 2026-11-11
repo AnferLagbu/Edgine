@@ -275,7 +275,7 @@ fn id_to_idx(timer_id: i32) -> Option<usize> {
 /// 在中断上下文执行:
 /// 1. 周期定时器: forward 推进 `expiry_ns`, 重新入队
 /// 2. 单次定时器: 标记 disarmed, 发送信号 (`SIGEV_SIGNAL`)
-fn posix_timer_callback(timer: &HrTimer) -> HrTimerRestart {
+fn posix_timer_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     // SAFETY: hrtimer 框架保证 timer 嵌入在 PosixTimerSlot 中, 槽位在 ARMED
     // 状态, 生命周期内有效. 全局 spinlock 在回调执行时可能未持, 我们只读
     // 不变字段, 写操作限定在 *const → *mut 转换后对单字段更新.
