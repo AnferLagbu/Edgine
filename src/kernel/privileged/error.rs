@@ -28,6 +28,8 @@ pub enum KernelError {
     NoSuchProcess,
     /// 文件描述符无效 (EBADF=9)
     BadFd,
+    /// 系统调用被信号中断 (EINTR=4)
+    Interrupted,
     /// 操作会阻塞 (EAGAIN=11)
     WouldBlock,
     /// 内存不足 (ENOMEM=12)
@@ -92,6 +94,7 @@ impl core::fmt::Display for KernelError {
             Self::FileNotFound => write!(f, "文件不存在"),
             Self::NoSuchProcess => write!(f, "进程不存在"),
             Self::BadFd => write!(f, "文件描述符无效"),
+            Self::Interrupted => write!(f, "系统调用被信号中断"),
             Self::WouldBlock => write!(f, "操作会阻塞"),
             Self::NoMemory => write!(f, "内存不足"),
             Self::Fault => write!(f, "错误地址"),
@@ -133,6 +136,7 @@ impl KernelError {
             2 => Self::FileNotFound,
             3 => Self::NoSuchProcess,
             9 => Self::BadFd,
+            4 => Self::Interrupted,
             11 => Self::WouldBlock,
             12 => Self::NoMemory,
             14 => Self::Fault,
@@ -169,6 +173,7 @@ impl KernelError {
             Self::FileNotFound => Errno::Enoent,
             Self::NoSuchProcess => Errno::Esrch,
             Self::BadFd => Errno::Ebadf,
+            Self::Interrupted => Errno::Eintr,
             Self::WouldBlock | Self::NotReady => Errno::Eagain,
             Self::NoMemory => Errno::Enomem,
             Self::Fault => Errno::Efault,
@@ -243,7 +248,7 @@ mod tests {
 
     #[test]
     fn round_trip_common_errnos() {
-        for raw in [1, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111] {
+        for raw in [1, 4, 9, 11, 12, 14, 22, 95, 97, 98, 99, 104, 107, 111] {
             let e = KernelError::from_i32(raw);
             // 反向映射经 as_errno() (无 From<KernelError> for i32 实现).
             let back = e.as_errno().as_i32();
