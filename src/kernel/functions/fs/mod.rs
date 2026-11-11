@@ -357,8 +357,9 @@ mod tests {
                 panic!("OpenFile 表应含该 handle");
             };
             assert_eq!(
-                fd_node_id, node_id,
-                "fd 元数据 node_id 应为真实 inode (元数据未接线时恒为 0)"
+                fd_node_id,
+                Some(node_id),
+                "fd 元数据 node_id 应为真实 inode (元数据未接线时为 None)"
             );
             assert!(
                 usize::try_from(fd_mount_idx).is_ok(),
@@ -373,7 +374,7 @@ mod tests {
     /// 行为, 而非只把元数据填进了表。
     ///
     /// 下游消费者: `functions::mm::mmap::fd_to_inode_id` 是 `mmap_syscall` 文件映射
-    /// 的**唯一** inode 来源, 取 0 时直接返回 `EBADF` (mmap.rs:134-137);
+    /// 的**唯一** inode 来源, 取 `None` 时直接返回 `EBADF` (mmap.rs 文件映射段);
     /// `fd_to_mount_idx` 为其挂载点来源。二者均经 per-process fd 表 (fd →
     /// `OpenFileTable` handle) 读 `OpenFile` 元数据。
     #[test]
@@ -400,11 +401,11 @@ mod tests {
             let fd = api::vfs_open_safe("/fd_down_t", 0, 0);
             assert!(fd >= 0, "open /fd_down_t 应成功");
 
-            // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时恒 0 ⇒ mmap 恒 EBADF
+            // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时为 None ⇒ mmap 恒 EBADF
             assert_eq!(
                 crate::functions::mm::mmap::fd_to_inode_id(fd),
-                node_id,
-                "fd_to_inode_id 应为真实 inode (未接线时恒 0 ⇒ mmap 文件映射恒 EBADF)"
+                Some(node_id),
+                "fd_to_inode_id 应为真实 inode (未接线时为 None ⇒ mmap 文件映射恒 EBADF)"
             );
             // 下游消费者 2: mmap 的挂载点反查 — 未接线时 path 为空 ⇒ None
             assert!(

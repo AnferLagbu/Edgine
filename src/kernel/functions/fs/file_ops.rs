@@ -311,6 +311,7 @@ pub fn flock_syscall(fd: i32, operation: i32) -> i64 {
         };
         match crate::functions::fs::OPEN_FILE_TABLE
             .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
+            .flatten()
         {
             Some(node_id) => node_id,
             None => return Errno::Ebadf.as_ret(),

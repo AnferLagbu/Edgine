@@ -165,21 +165,25 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     // B-9.5: 元数据改源 OpenFile (退役全局 VfsManager.fd_table 的 node_id/flags 副本)
     let (node_id, flags) = OPEN_FILE_TABLE
         .with_file(handle_id, |of| (of.inode_id(), of.get_flags()))
-        .unwrap_or((0, 0));
+        .unwrap_or((None, 0));
 
     // 减少 OpenFile 引用计数 (POSIX dup 语义)
     OPEN_FILE_TABLE.close(handle_id);
 
-    // B2: 释放该 fd 关联 inode 的全部 pcache 缓存页, 避免内存泄漏
-    pcache::pcache_invalidate_inode(node_id);
-    // inotify: 文件关闭通知
-    let close_mask =
-        if (flags & VfsOpenFlags::WRONLY.bits()) != 0 || (flags & VfsOpenFlags::RDWR.bits()) != 0 {
+    // B2: 释放该 fd 关联 inode 的全部 pcache 缓存页, 并通知 inotify 关闭事件.
+    // 非 inode 特殊对象 (eventfd / signalfd 等) 无 inode 命名空间, 两者都跳过.
+    if let Some(node_id) = node_id {
+        pcache::pcache_invalidate_inode(node_id);
+        // inotify: 文件关闭通知
+        let close_mask = if (flags & VfsOpenFlags::WRONLY.bits()) != 0
+            || (flags & VfsOpenFlags::RDWR.bits()) != 0
+        {
             super::inotify::IN_CLOSE_WRITE
         } else {
             super::inotify::IN_CLOSE_NOWRITE
         };
-    super::inotify::inotify_notify(node_id, close_mask, "", false);
+        super::inotify::inotify_notify(node_id, close_mask, "", false);
+    }
     // C1: fd 关闭 → 唤醒该 fd 注册的所有 epoll 等待者 (EPOLLHUP|EPOLLERR)
     fd_notify::notify_fd_close(fd_idx.cast_signed());
     0
@@ -223,6 +227,21 @@ pub fn vfs_close_all_fds() {
     }
 }
 
+/// pcache 快路径判据 — 仅「inode 承载对象 + 4KB 对齐整页 + 页数在上限内」成立.
+///
+/// 返回 `(node_id, 首页号)`; `None` = 走 `File` 对象分发慢路径.
+/// 非 inode 特殊对象 (`inode_id()` 为 `None`, 如 eventfd / signalfd) 必须落
+/// `None`: 它们没有 inode 命名空间, 若沿用 0 哨兵会把 inode 0 的页缓存当成
+/// 自身数据读给调用者.
+fn pcache_fast_target(node_id: Option<u32>, count: u32, offset: u64) -> Option<(u32, u64)> {
+    let node_id = node_id?;
+    let is_aligned_4k = u64::from(count) >= PCACHE_FAST_MIN_BYTES as u64
+        && u64::from(count) <= PCACHE_FAST_MAX_BYTES as u64
+        && u64::from(count).is_multiple_of(PAGE_SIZE)
+        && offset.is_multiple_of(PAGE_SIZE);
+    is_aligned_4k.then_some((node_id, offset / PAGE_SIZE))
+}
+
 /// VFS 读核心 — 以切片作为目标缓冲 (用户/内核路径共用).
 ///
 /// 用户路径 (`vfs_read_internal`) 先经 `UserWritePtr` 校验; 内核路径
@@ -241,17 +260,9 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
         let offset = open_file.get_offset();
         let pwm = open_file.pwm;
 
-        // B2: pcache 快路径 (仅 node_id 已知时, 通过兼容方法获取)
-        let node_id = open_file.inode_id();
-        // 检查是否是 4KB 对齐读取 (pcache 快路径)
-        let is_aligned_4k = u64::from(count) >= PCACHE_FAST_MIN_BYTES as u64
-            && u64::from(count) <= PCACHE_FAST_MAX_BYTES as u64
-            && u64::from(count).is_multiple_of(PAGE_SIZE)
-            && offset.is_multiple_of(PAGE_SIZE);
-
-        if is_aligned_4k {
+        // B2: pcache 快路径 — 仅 inode 承载对象可进 (特殊对象无 inode 命名空间)
+        if let Some((node_id, first_pi)) = pcache_fast_target(open_file.inode_id(), count, offset) {
             let npages = (u64::from(count) / PAGE_SIZE) as usize;
-            let first_pi = offset / PAGE_SIZE;
 
             let mut all_hit = true;
             for i in 0..npages {
@@ -438,7 +449,9 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
                 if fd_event_may_change(open_file) {
                     fd_notify::notify_fd_event(fd_idx.cast_signed());
                 }
-                super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
+                if let Some(node_id) = node_id {
+                    super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
+                }
                 crate::functions::intcast::low_i32_from_usize(n)
             })
     });
@@ -613,8 +626,15 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
                 .file()
                 .write_at(offset, user_buf.as_slice(), pwm)
                 .map_or(-1, |n| {
-                    // inotify IN_MODIFY 通知 (与 vfs_write 一致)
-                    super::inotify::inotify_notify(node_id, super::inotify::IN_MODIFY, "", false);
+                    // inotify IN_MODIFY 通知 (与 vfs_write 一致; 仅 inode 对象)
+                    if let Some(node_id) = node_id {
+                        super::inotify::inotify_notify(
+                            node_id,
+                            super::inotify::IN_MODIFY,
+                            "",
+                            false,
+                        );
+                    }
                     crate::functions::intcast::low_i32_from_usize(n)
                 })
         })
@@ -889,4 +909,72 @@ pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     // 共享 OpenFile: 增加引用计数
     OPEN_FILE_TABLE.inc_ref(old_handle_id);
     newfd.cast_signed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES, pcache_fast_target};
+    use crate::functions::intcast::low_u32_from_u64;
+    use crate::privileged::mm::PAGE_SIZE;
+
+    /// 非 inode 对象 (eventfd / signalfd 等) 必须落在快路径之外.
+    ///
+    /// 历史缺陷: `inode_id()` 曾以 0 哨兵表示"无 inode", 快路径把它当作真实
+    /// inode 0 去查页缓存 — 一旦该命名空间有条目, 特殊对象读会把他人文件
+    /// 数据当成自己的读结果返回.
+    #[test]
+    fn pcache_fast_target_rejects_non_inode_objects() {
+        let page = low_u32_from_u64(PAGE_SIZE);
+        assert_eq!(pcache_fast_target(None, page, 0), None);
+        assert_eq!(
+            pcache_fast_target(None, page * 16, 0),
+            None,
+            "尺寸/偏移完全对齐也不得进快路径"
+        );
+        assert_eq!(
+            pcache_fast_target(None, page, PAGE_SIZE * 5),
+            None,
+            "页对齐偏移也不得进快路径"
+        );
+    }
+
+    #[test]
+    fn pcache_fast_target_accepts_aligned_inode_reads() {
+        let page = low_u32_from_u64(PAGE_SIZE);
+        assert_eq!(pcache_fast_target(Some(7), page, 0), Some((7, 0)));
+        assert_eq!(
+            pcache_fast_target(Some(7), page * 2, PAGE_SIZE * 3),
+            Some((7, 3))
+        );
+        assert_eq!(
+            pcache_fast_target(Some(7), low_u32_from_u64(PCACHE_FAST_MAX_BYTES as u64), 0),
+            Some((7, 0)),
+            "64KB 上限含端点"
+        );
+    }
+
+    #[test]
+    fn pcache_fast_target_rejects_unaligned_or_out_of_range() {
+        let page = low_u32_from_u64(PAGE_SIZE);
+        assert_eq!(pcache_fast_target(Some(7), page - 1, 0), None, "非整页");
+        assert_eq!(pcache_fast_target(Some(7), page, 1), None, "偏移未对齐");
+        assert_eq!(
+            pcache_fast_target(
+                Some(7),
+                low_u32_from_u64(PCACHE_FAST_MIN_BYTES as u64) - 1,
+                0
+            ),
+            None,
+            "低于 4KB 下限"
+        );
+        assert_eq!(
+            pcache_fast_target(
+                Some(7),
+                low_u32_from_u64(PCACHE_FAST_MAX_BYTES as u64) + page,
+                0
+            ),
+            None,
+            "超过 64KB 上限"
+        );
+    }
 }

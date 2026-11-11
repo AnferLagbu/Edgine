@@ -493,6 +493,7 @@ fn sys_fcntl_posix_lock(fd: i32, cmd: i32, arg: u64) -> Result<usize, Errno> {
         };
         match crate::functions::fs::OPEN_FILE_TABLE
             .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
+            .flatten()
         {
             Some(ino) => ino,
             None => return Err(Errno::Ebadf),

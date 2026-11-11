@@ -43,18 +43,16 @@ pub const SYS_MMAP_FLAGS: u64 = 0;
 ///
 /// B-9.5: 经 per-process fd 表取 `OpenFile` handle, 再由 `OpenFile` 读 inode 编号.
 /// 此函数属于 functions 层, 因为它涉及 VFS fd 查找.
-pub fn fd_to_inode_id(fd: i32) -> u32 {
+/// 非 inode 特殊对象 (eventfd / signalfd 等) 无 inode 命名空间, 返回 `None`.
+pub fn fd_to_inode_id(fd: i32) -> Option<u32> {
     if fd < 0 {
-        return 0;
+        return None;
     }
-    let Some(handle_id) =
-        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
-    else {
-        return 0;
-    };
+    let handle_id =
+        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
     crate::functions::fs::OPEN_FILE_TABLE
         .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
-        .unwrap_or(0)
+        .flatten()
 }
 
 /// 把 fd 反查为挂载点索引 (经 `OpenFile` 的 inode).
@@ -155,10 +153,9 @@ pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
         return Err(Errno::Einval);
     }
 
-    let inode_id = fd_to_inode_id(req.fd);
-    if inode_id == 0 {
+    let Some(inode_id) = fd_to_inode_id(req.fd) else {
         return Err(Errno::Ebadf);
-    }
+    };
 
     let mount_idx = fd_to_mount_idx(req.fd);
 

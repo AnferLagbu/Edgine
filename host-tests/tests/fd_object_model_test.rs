@@ -107,7 +107,7 @@ fn open_file_from_file_derives_type_and_non_inode_sentinels() {
         VfsFileType::Dev.as_u8(),
         "file_type 必须由对象 file_type() 派生"
     );
-    assert_eq!(of.inode_id(), 0, "非文件对象 inode_id 走 0 哨兵");
+    assert_eq!(of.inode_id(), None, "非 inode 对象 inode_id 必须为 None");
     assert_eq!(of.mount_idx(), u32::MAX, "非文件对象挂载点走 u32::MAX 哨兵");
     assert!(of.as_inode().is_none(), "非文件对象 as_inode 必须为 None");
     assert!(!of.file().stream(), "默认对象可定位 (非流)");
@@ -125,9 +125,51 @@ fn open_file_new_wraps_regular_file_over_inode() {
         VfsFileType::File.as_u8(),
         "RegularFile 类型由 Inode::stat 派生"
     );
-    assert_eq!(of.inode_id(), 7, "as_inode 桥接回 Inode::node_id");
+    assert_eq!(of.inode_id(), Some(7), "as_inode 桥接回 Inode::node_id");
     assert_eq!(of.mount_idx(), u32::MAX, "匿名 inode 无挂载点");
     assert!(of.as_inode().is_some(), "RegularFile 必须桥接回 Inode");
+}
+
+#[test]
+fn inode_id_is_option_not_zero_sentinel() {
+    // 0 是 pcache / inotify 命名空间的真实键. 特殊对象 (eventfd / signalfd)
+    // 曾以 0 哨兵冒充 inode, 使 VFS 读快路径命中 inode 0 的页缓存 — 特殊
+    // 对象读会把他人文件数据当成自己的读结果返回. 类型化 Option 后所有
+    // inode 命名空间消费点被编译器强制处理 None.
+    let vfs_types = read_file("functions/fs/vfs_types.rs");
+    assert!(
+        vfs_types.contains("pub fn inode_id(&self) -> Option<u32>"),
+        "inode_id 必须返回 Option<u32> (0 不可作「无 inode」哨兵)"
+    );
+    assert!(
+        !vfs_types.contains("pub fn inode_id(&self) -> u32"),
+        "不得回退到裸 u32 + 0 哨兵"
+    );
+
+    let handle = read_file("functions/fs/handle.rs");
+    assert!(
+        handle.contains("pcache_fast_target(open_file.inode_id(), count, offset)"),
+        "pcache 快路径必须经 pcache_fast_target 判据 (Option 解构)"
+    );
+    assert!(
+        handle.contains("fn pcache_fast_target(node_id: Option<u32>"),
+        "快路径判据签名必须接收 Option<u32>"
+    );
+    assert!(
+        !handle.contains(".unwrap_or((0, 0))"),
+        "close 快照不得把无 inode 退化为 0 (旧哨兵形态)"
+    );
+
+    let mmap = read_file("functions/mm/mmap.rs");
+    assert!(
+        mmap.contains("pub fn fd_to_inode_id(fd: i32) -> Option<u32>"),
+        "mmap 的 inode 来源必须同为 Option<u32>"
+    );
+    assert!(
+        mmap.contains("let Some(inode_id) = fd_to_inode_id(req.fd) else {")
+            && !mmap.contains("let inode_id = fd_to_inode_id(req.fd);"),
+        "mmap 文件映射必须以 None 判 EBADF (不得沿用裸 u32 + == 0)"
+    );
 }
 
 #[test]
