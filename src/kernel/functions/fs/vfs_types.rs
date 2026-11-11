@@ -696,18 +696,13 @@ impl OpenFile {
 
     // ---- fd 对象统一面 ----
 
-    /// 获取底层 `inode_id` (供 pcache / flock / mmap 等使用)
+    /// 获取底层 `inode_id` (供 pcache / flock 等使用)
     ///
     /// 非 inode 对象 (无 Inode 关联, 如 eventfd / signalfd) 返回 `None`.
     /// inode 编号是 pcache / inotify 等命名空间的键, 绝不可用哨兵冒充:
     /// 该命名空间内 0 是真实键值, 哨兵会读到他人的页缓存.
     pub fn inode_id(&self) -> Option<u32> {
         self.as_inode().map(Inode::node_id)
-    }
-
-    /// 获取挂载点索引 (非文件对象返回 `u32::MAX` 哨兵)
-    pub fn mount_idx(&self) -> u32 {
-        self.as_inode().map_or(u32::MAX, Inode::mount_idx)
     }
 
     /// 获取统一 fd 对象 (`File`) 引用 — I/O / poll / ioctl 单入口

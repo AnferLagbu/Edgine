@@ -192,8 +192,8 @@ use super::anonymous::ANONYMOUS_FS;
 /// 匿名文件 Inode — memfd / 无路径文件的 Inode 实现
 pub struct AnonymousInode {
     inode_id: u32,
-    /// B06-06: `u32::MAX` 为"匿名文件无挂载点"哨兵; 风险路径 (mmap) 已走 `Option<usize>`,
-    /// 本字段透传值全仓库无调用点 (见 `OpenFile::mount_idx`).
+    /// B06-06: `u32::MAX` 为"匿名文件无挂载点"哨兵; 风险路径 (mmap) 经
+    /// `RegularFile::mmap_backing` 收口为 `Option<usize>`.
     mount_idx: u32,
 }
 

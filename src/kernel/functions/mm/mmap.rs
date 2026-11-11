@@ -12,9 +12,10 @@
 //! ## 职责
 //!
 //! - mmap/munmap/mprotect 策略逻辑 (参数验证、VMA 创建决策)
-//! - VFS 交互: fd → `inode_id` 解析 (属于 functions 层职责)
+//! - VFS 交互: fd → 文件映射后端凭据解析 (属于 functions 层职责)
 //! - 文件映射 Page Cache 引用释放
 
+use crate::functions::fs::MmapBacking;
 use crate::privileged::mm::{FileBackedVma, MmStruct, Vma, VmaType};
 use crate::privileged::mm::{PAGE_SIZE, PageFlags as VmaFlags};
 use crate::privileged::syscall::Errno;
@@ -39,32 +40,28 @@ pub const SYS_MMAP_FLAGS: u64 = 0;
 // VFS 交互 (functions 层职责)
 // ============================================================================
 
-/// 从 fd 获取 `inode_id`
+/// 从 fd 解析文件映射后端凭据
 ///
-/// B-9.5: 经 per-process fd 表取 `OpenFile` handle, 再由 `OpenFile` 读 inode 编号.
-/// 此函数属于 functions 层, 因为它涉及 VFS fd 查找.
-/// 非 inode 特殊对象 (eventfd / signalfd 等) 无 inode 命名空间, 返回 `None`.
-pub fn fd_to_inode_id(fd: i32) -> Option<u32> {
+/// B-9.5: 经 per-process fd 表取 `OpenFile` handle, 再由对象自身声明是否可作
+/// 文件映射 (见 `File::mmap_backing`). 判据在对象侧: 管道 / eventfd / signalfd
+/// 等特殊对象也报告 `VfsFileType::File`, 但其 inode 编号是伪命名空间, 绝不能
+/// 被当作页缓存键; 目录 / 设备 / 符号链接同样不可映射 (对齐 Linux `ENODEV`).
+///
+/// # Errors
+///
+/// - `EBADF`: `fd` 为负或未在当前进程 fd 表中打开.
+/// - `ENODEV`: 对象未声明页缓存后端 (管道 / eventfd / signalfd / 目录等).
+pub fn fd_mmap_backing(fd: i32) -> Result<MmapBacking, Errno> {
     if fd < 0 {
-        return None;
+        return Err(Errno::Ebadf);
     }
     let handle_id =
-        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
+        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+            .ok_or(Errno::Ebadf)?;
     crate::functions::fs::OPEN_FILE_TABLE
-        .with_file(handle_id, crate::functions::fs::OpenFile::inode_id)
+        .with_file(handle_id, |of| of.file().mmap_backing())
         .flatten()
-}
-
-/// 把 fd 反查为挂载点索引 (经 `OpenFile` 的 inode).
-pub fn fd_to_mount_idx(fd: i32) -> Option<usize> {
-    if fd < 0 {
-        return None;
-    }
-    let handle_id =
-        crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
-    crate::functions::fs::OPEN_FILE_TABLE
-        .with_file(handle_id, crate::functions::fs::OpenFile::mount_idx)
-        .and_then(|idx| usize::try_from(idx).ok())
+        .ok_or(Errno::Enodev)
 }
 
 // ============================================================================
@@ -99,6 +96,7 @@ pub struct MmapRequest {
 /// 以下情况返回 `Err`:
 /// - `length == 0`、映射同时或都不带 `MAP_SHARED`/`MAP_PRIVATE`、或文件映射 `offset` 未按页对齐 → `EINVAL`
 /// - 文件映射的 `fd` 无效 → `EBADF`
+/// - 文件映射的对象不可作页缓存后端 (目录 / 管道 / 事件对象等) → `ENODEV`
 /// - 地址分配或 VMA 插入失败(内存不足) → `ENOMEM`
 #[inline]
 pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
@@ -153,11 +151,7 @@ pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
         return Err(Errno::Einval);
     }
 
-    let Some(inode_id) = fd_to_inode_id(req.fd) else {
-        return Err(Errno::Ebadf);
-    };
-
-    let mount_idx = fd_to_mount_idx(req.fd);
+    let backing = fd_mmap_backing(req.fd)?;
 
     let addr = find_or_allocate_addr(mm, req.addr_hint, len_aligned)?;
     let aligned_addr = addr & !(crate::functions::intcast::usize_from_u64(PAGE_SIZE) - 1);
@@ -173,10 +167,10 @@ pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
         end: aligned_addr + len_aligned,
         flags: final_flags,
         offset: req.offset,
-        inode_id,
+        inode_id: backing.inode_id,
         pwm: req.pwm,
         shared: map_shared,
-        mount_idx,
+        mount_idx: backing.mount_idx,
     });
 
     match mm.insert_vma(vma) {
@@ -252,9 +246,12 @@ pub fn munmap_syscall(mm: &MmStruct, addr: u64, length: u64) -> Result<(), Errno
 fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
     let vmas = mm.vmas.lock();
     for vma in vmas.iter() {
-        if vma.kind != VmaType::FileBacked || vma.inode_id == 0 {
+        if vma.kind != VmaType::FileBacked {
             continue;
         }
+        let Some(inode_id) = vma.inode_id else {
+            continue;
+        };
         if vma.start >= end || vma.end <= start {
             continue;
         }
@@ -269,7 +266,7 @@ fn release_file_pages(mm: &MmStruct, start: usize, end: usize, cr3: u64) {
             let _ = crate::privileged::mm::pcache::pcache_release_for_va(
                 cr3,
                 addr as u64,
-                vma.inode_id,
+                inode_id,
                 page_index,
             );
             addr += crate::functions::intcast::usize_from_u64(PAGE_SIZE);

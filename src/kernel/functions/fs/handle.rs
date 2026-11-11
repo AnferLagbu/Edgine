@@ -145,23 +145,13 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
     }
 }
 
-// 注意: 保持 Rust ABI — vfs_close_internal 为内核内部调用 (fd 表原子回收),
-//        TD-03 契约测试按 Rust ABI 签名匹配该函数体.
-/// 关闭 fd — 原子 claim-and-clear 后释放 `OpenFile` 引用.
+/// 释放一个 `OpenFile` 引用并触发全部关闭副作用
 ///
-/// 幂等: 无进程上下文 / fd 未使用 / 已关闭均返回 0. 关闭路径同时触发
-/// pcache 失效、inotify `IN_CLOSE_*` 通知与 epoll 等待者唤醒.
-pub fn vfs_close_internal(fd_idx: u32) -> i32 {
-    let fd_idx_us = fd_idx as usize;
-    // TD-03: 原子 claim-and-clear — FdTable::close_fd 在同一临界区内快照 handle_id
-    // 并清空槽位 (entries→u32::MAX, cloexec→false), 避免双核同时 close 同一 fd
-    // 导致 pcache/inotify 二次触发. 未使用 fd 或越界返回 None, 天然保持幂等.
-    let snapshot = crate::privileged::proc::with_current_fd_table(|t| t.close_fd(fd_idx_us));
-    let Some(Some(handle_id)) = snapshot else {
-        // 无进程上下文 (host 侧单测), 或 fd 已关闭/未使用 → 跳过全部副作用
-        return 0;
-    };
-
+/// `close(2)` 与 `dup2(2)` 覆盖旧 fd 是同一语义: 递减引用计数, 对象关联
+/// inode 时失效其 pcache 缓存页、按打开模式通知 inotify `IN_CLOSE_*`,
+/// 并唤醒该 fd 的 epoll 等待者. 两处共用本入口, 避免 dup2 直连
+/// `OPEN_FILE_TABLE.close` 绕开副作用链.
+fn release_open_file(handle_id: u32, fd_idx: u32) {
     // B-9.5: 元数据改源 OpenFile (退役全局 VfsManager.fd_table 的 node_id/flags 副本)
     let (node_id, flags) = OPEN_FILE_TABLE
         .with_file(handle_id, |of| (of.inode_id(), of.get_flags()))
@@ -186,6 +176,28 @@ pub fn vfs_close_internal(fd_idx: u32) -> i32 {
     }
     // C1: fd 关闭 → 唤醒该 fd 注册的所有 epoll 等待者 (EPOLLHUP|EPOLLERR)
     fd_notify::notify_fd_close(fd_idx.cast_signed());
+}
+
+// 注意: 保持 Rust ABI — vfs_close_internal 为内核内部调用 (fd 表原子回收),
+//        TD-03 契约测试按 Rust ABI 签名匹配该函数体.
+/// 关闭 fd — 原子 claim-and-clear 后释放 `OpenFile` 引用.
+///
+/// 幂等: 无进程上下文 / fd 未使用 / 已关闭均返回 0. 关闭路径同时触发
+/// pcache 失效、inotify `IN_CLOSE_*` 通知与 epoll 等待者唤醒
+/// (副作用实现见 `release_open_file`, 与 dup2 覆盖共享).
+#[must_use]
+pub fn vfs_close_internal(fd_idx: u32) -> i32 {
+    let fd_idx_us = fd_idx as usize;
+    // TD-03: 原子 claim-and-clear — FdTable::close_fd 在同一临界区内快照 handle_id
+    // 并清空槽位 (entries→u32::MAX, cloexec→false), 避免双核同时 close 同一 fd
+    // 导致 pcache/inotify 二次触发. 未使用 fd 或越界返回 None, 天然保持幂等.
+    let snapshot = crate::privileged::proc::with_current_fd_table(|t| t.close_fd(fd_idx_us));
+    let Some(Some(handle_id)) = snapshot else {
+        // 无进程上下文 (host 侧单测), 或 fd 已关闭/未使用 → 跳过全部副作用
+        return 0;
+    };
+
+    release_open_file(handle_id, fd_idx);
     0
 }
 
@@ -203,7 +215,9 @@ pub fn vfs_close_cloexec_fds() {
     .map(crate::functions::intcast::low_u32_from_usize)
     .collect();
     for fd in targets {
-        vfs_close_internal(fd);
+        let rc = vfs_close_internal(fd);
+        // 幂等关闭对有效 fd 恒返回 0; 绑定消费 #[must_use] 并守护该契约
+        debug_assert_eq!(rc, 0, "close 幂等路径必须返回 0");
     }
 }
 
@@ -223,7 +237,9 @@ pub fn vfs_close_all_fds() {
     .map(|(local, _)| crate::functions::intcast::low_u32_from_usize(local))
     .collect();
     for fd in targets {
-        vfs_close_internal(fd);
+        let rc = vfs_close_internal(fd);
+        // 幂等关闭对有效 fd 恒返回 0; 绑定消费 #[must_use] 并守护该契约
+        debug_assert_eq!(rc, 0, "close 幂等路径必须返回 0");
     }
 }
 
@@ -873,7 +889,8 @@ pub extern "C" fn vfs_dup(oldfd: u32) -> i32 {
 
 /// `dup2(2)` — 把 `oldfd` 复制到指定 `newfd`, 覆盖其原有打开文件.
 ///
-/// 覆盖前先释放 `newfd` 原有 `OpenFile` 引用; 结果 fd 无 CLOEXEC.
+/// 覆盖前先按关闭语义释放 `newfd` 原有 `OpenFile` (pcache 失效 / inotify
+/// `IN_CLOSE_*` / epoll 唤醒); 结果 fd 无 CLOEXEC.
 /// `oldfd` 无效或 `newfd` 越界返回 `-EBADF`.
 pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
     let old_usize = oldfd as usize;
@@ -902,9 +919,9 @@ pub extern "C" fn vfs_dup2(oldfd: u32, newfd: u32) -> i32 {
         return -9; // EBADF: 无进程上下文
     };
 
-    // 若 newfd 原本已打开, 先释放其 OpenFile 引用 (POSIX: dup2 先关闭 newfd)
+    // 若 newfd 原本已打开, 按关闭语义释放其 OpenFile 引用 (POSIX: dup2 先关闭 newfd)
     if let Some(prev_hid) = prev {
-        OPEN_FILE_TABLE.close(prev_hid);
+        release_open_file(prev_hid, newfd);
     }
     // 共享 OpenFile: 增加引用计数
     OPEN_FILE_TABLE.inc_ref(old_handle_id);

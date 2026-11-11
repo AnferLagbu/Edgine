@@ -114,7 +114,11 @@ fn vma_file_backed_fields_roundtrip() {
     assert_eq!(vma.end, 0x2000, "end 保留映射结束地址");
     assert_eq!(vma.end - vma.start, 0x1000, "end - start = 映射长度 4KB");
     assert_eq!(vma.kind, VmaType::FileBacked, "vma_type 语义: FileBacked");
-    assert_eq!(vma.inode_id, 42, "inode_id 保留文件后端 inode 编号");
+    assert_eq!(
+        vma.inode_id,
+        Some(42),
+        "inode_id 保留文件后端 inode 编号 (类型化 Option, 0 不再是「无后端」哨兵)"
+    );
     assert!(vma.shared, "shared 标记共享映射");
     assert_eq!(vma.file_pwm, 0xCAFE, "file_pwm 保留进程凭证");
     assert_eq!(vma.offset, 0x100, "offset 保留文件内偏移");
@@ -131,7 +135,7 @@ fn vma_anonymous_fields_defaults() {
         VmaType::Anonymous,
     );
     assert_eq!(vma.kind, VmaType::Anonymous, "vma_type 语义: Anonymous");
-    assert_eq!(vma.inode_id, 0, "匿名映射 inode_id = 0");
+    assert_eq!(vma.inode_id, None, "匿名映射无文件后端 (None, 不是 0 哨兵)");
     assert!(!vma.shared, "匿名映射默认非共享");
     assert_eq!(vma.file_pwm, 0, "匿名映射 file_pwm = 0");
     assert_eq!(vma.offset, 0, "匿名映射 offset = 0");

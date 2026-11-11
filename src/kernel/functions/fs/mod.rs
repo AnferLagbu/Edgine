@@ -234,7 +234,7 @@ pub fn init() {
 // ============================================================================
 
 /// 统一 fd 对象接口顶层 re-export
-pub use file::{File, PollEvents, RegularFile};
+pub use file::{File, MmapBacking, PollEvents, RegularFile};
 /// Plan B: Inode trait 顶层 re-export
 pub use inode::Inode;
 /// 全局 `OpenFile` 表顶层 re-export
@@ -318,7 +318,7 @@ mod tests {
 
     /// T5 甲批 C-1 接线证据: 真实 open 路径 (`open_syscall` → `vfs_open` →
     /// `vfs_open_internal`) 必须把 fd 表元数据写全, 否则
-    /// (flock 的 ino / mmap-by-fd 的 `fd_to_inode_id`) 恒得 0, 挂载点反查失败.
+    /// (flock 的 ino / mmap-by-fd 的映射后端凭据) 恒为空, 挂载点反查失败.
     ///
     /// B-9.5: 元数据源已由全局 `VfsManager.fd_table` 改源为 per-process fd 表
     /// (fd → `OpenFileTable` handle) + `OpenFile` 自身元数据.
@@ -351,8 +351,8 @@ mod tests {
             let Some(handle_id) = vfs_get_fd_handle(fd as usize) else {
                 panic!("per-process fd 表应含该 fd 条目");
             };
-            let Some((fd_node_id, fd_mount_idx)) =
-                OPEN_FILE_TABLE.with_file(handle_id, |of| (of.inode_id(), of.mount_idx()))
+            let Some((fd_node_id, backing)) = OPEN_FILE_TABLE
+                .with_file(handle_id, |of| (of.inode_id(), of.file().mmap_backing()))
             else {
                 panic!("OpenFile 表应含该 handle");
             };
@@ -361,9 +361,16 @@ mod tests {
                 Some(node_id),
                 "fd 元数据 node_id 应为真实 inode (元数据未接线时为 None)"
             );
+            let Some(backing) = backing else {
+                panic!("常规文件必须声明文件映射后端 (未接线时为 None ⇒ mmap 恒 ENODEV)");
+            };
+            assert_eq!(
+                backing.inode_id, node_id,
+                "映射后端 inode 应为真实 inode (mmap-by-fd 依赖)"
+            );
             assert!(
-                usize::try_from(fd_mount_idx).is_ok(),
-                "fd 元数据应携带挂载点索引, 可反查 (mmap-by-fd 依赖)"
+                backing.mount_idx.is_some(),
+                "映射后端应携带挂载点索引, 可反查 (mmap-by-fd 依赖)"
             );
 
             assert_eq!(api::vfs_close_safe(fd as u32), 0, "close 应成功");
@@ -373,12 +380,12 @@ mod tests {
     /// T5 乙批（C-1 证据补齐）: `set_fd` 接线的**下游链路**验证 —— 证明修的是下游
     /// 行为, 而非只把元数据填进了表。
     ///
-    /// 下游消费者: `functions::mm::mmap::fd_to_inode_id` 是 `mmap_syscall` 文件映射
-    /// 的**唯一** inode 来源, 取 `None` 时直接返回 `EBADF` (mmap.rs 文件映射段);
-    /// `fd_to_mount_idx` 为其挂载点来源。二者均经 per-process fd 表 (fd →
-    /// `OpenFileTable` handle) 读 `OpenFile` 元数据。
+    /// 下游消费者: `functions::mm::mmap::fd_mmap_backing` 是 `mmap_syscall` 文件
+    /// 映射的**唯一**后端凭据来源, 取 `Err(ENODEV)` 时直接拒绝映射 (mmap.rs 文件
+    /// 映射段)。凭据经 per-process fd 表 (fd → `OpenFileTable` handle) 由对象
+    /// 自身声明 (`File::mmap_backing`)。
     #[test]
-    fn test_fd_to_inode_id_downstream() {
+    fn test_fd_mmap_backing_downstream() {
         use crate::functions::fs::ramfs_core::{RAMFS_DATA, init as ramfs_init};
         use crate::functions::fs::{api, vfs_get_fd_handle};
 
@@ -401,16 +408,16 @@ mod tests {
             let fd = api::vfs_open_safe("/fd_down_t", 0, 0);
             assert!(fd >= 0, "open /fd_down_t 应成功");
 
-            // 下游消费者 1: mmap 文件映射的 inode 来源 — 未接线时为 None ⇒ mmap 恒 EBADF
+            // 下游消费者: mmap 文件映射的后端凭据 — 未接线时为 ENODEV ⇒ mmap 拒绝
+            let backing = crate::functions::mm::mmap::fd_mmap_backing(fd)
+                .expect("常规文件 fd 应有文件映射后端 (未接线时为 ENODEV)");
             assert_eq!(
-                crate::functions::mm::mmap::fd_to_inode_id(fd),
-                Some(node_id),
-                "fd_to_inode_id 应为真实 inode (未接线时为 None ⇒ mmap 文件映射恒 EBADF)"
+                backing.inode_id, node_id,
+                "映射后端 inode 应为真实 inode (未接线时 mmap 文件映射恒 ENODEV)"
             );
-            // 下游消费者 2: mmap 的挂载点反查 — 未接线时 path 为空 ⇒ None
             assert!(
-                crate::functions::mm::mmap::fd_to_mount_idx(fd).is_some(),
-                "fd_to_mount_idx 应可反查挂载点 (未接线时为 None)"
+                backing.mount_idx.is_some(),
+                "映射后端应可反查挂载点 (未接线时为 None)"
             );
             assert!(
                 vfs_get_fd_handle(fd as usize).is_some(),
@@ -418,6 +425,80 @@ mod tests {
             );
 
             assert_eq!(api::vfs_close_safe(fd as u32), 0, "close 应成功");
+        });
+    }
+
+    /// dup2 覆盖已打开 fd 时, 被覆盖 `OpenFile` 必须走完整关闭链 —
+    /// inotify `IN_CLOSE_NOWRITE` 是可观测证据; 直连 `OPEN_FILE_TABLE.close`
+    /// 会跳过 pcache 失效 / inotify 通知 / epoll 唤醒.
+    #[test]
+    fn test_dup2_releases_overwritten_fd_via_close_chain() {
+        use crate::functions::fs::inotify::{
+            IN_CLOSE_NOWRITE, inotify_read_events, inotify_release, sys_inotify_add_watch,
+            sys_inotify_init1,
+        };
+        use crate::functions::fs::ramfs_core::{RAMFS_DATA, init as ramfs_init};
+        use crate::functions::fs::{api, vfs_dup2, vfs_get_fd_handle};
+
+        let _lock = FS_GLOBAL_TEST_LOCK.lock();
+        crate::functions::fs::init();
+        ramfs_init();
+        let _ = api::vfs_mount_safe("/", "ramfs");
+
+        with_temp_process("dup2-close-t", || {
+            let node_id = {
+                let mut ramfs = RAMFS_DATA.lock();
+                ramfs.create_file("/", "dup2_target_t", 0)
+            };
+            let Some(node_id) = node_id else {
+                panic!("create_file 失败");
+            };
+            {
+                let mut ramfs = RAMFS_DATA.lock();
+                assert!(
+                    ramfs.create_file("/", "dup2_src_t", 0).is_some(),
+                    "create_file 失败"
+                );
+            }
+
+            let target_fd = api::vfs_open_safe("/dup2_target_t", 0, 0);
+            assert!(target_fd >= 0, "open target 应成功");
+            let src_fd = api::vfs_open_safe("/dup2_src_t", 0, 0);
+            assert!(src_fd >= 0, "open src 应成功");
+
+            let ifd = sys_inotify_init1(0);
+            assert!(ifd >= 0, "inotify_init1 应成功");
+            let wd = sys_inotify_add_watch(ifd, node_id, IN_CLOSE_NOWRITE);
+            assert!(wd >= 0, "add_watch 应成功");
+
+            assert_eq!(
+                vfs_dup2(src_fd as u32, target_fd as u32),
+                target_fd,
+                "dup2 应返回 newfd"
+            );
+            assert_eq!(
+                vfs_get_fd_handle(target_fd as usize),
+                vfs_get_fd_handle(src_fd as usize),
+                "dup2 后 newfd 必须与 oldfd 共享同一 OpenFile"
+            );
+
+            let Some((events, _)) = inotify_read_events(ifd, 4096) else {
+                panic!("被覆盖 fd 的关闭必须经关闭链产生 IN_CLOSE_NOWRITE (事件为空)");
+            };
+            assert_eq!(events.len(), 1, "dup2 覆盖关闭只应通知一次");
+            assert_eq!(
+                events[0].mask & IN_CLOSE_NOWRITE,
+                IN_CLOSE_NOWRITE,
+                "只读 fd 的覆盖关闭应为 IN_CLOSE_NOWRITE"
+            );
+
+            assert_eq!(api::vfs_close_safe(src_fd as u32), 0, "close src 应成功");
+            assert_eq!(
+                api::vfs_close_safe(target_fd as u32),
+                0,
+                "close target 应成功"
+            );
+            inotify_release(ifd);
         });
     }
 }

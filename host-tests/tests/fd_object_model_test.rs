@@ -7,10 +7,12 @@ use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use edgine::kernel::functions::fs::file::{File, PollEvents, RegularFile};
-use edgine::kernel::functions::fs::inode::AnonymousInode;
+use edgine::kernel::functions::fs::file::{File, MmapBacking, PollEvents, RegularFile};
+use edgine::kernel::functions::fs::inode::{AnonymousInode, Inode};
 use edgine::kernel::functions::fs::open_file_table::OpenFileTable;
-use edgine::kernel::functions::fs::vfs_types::{KernelError, KernelResult, OpenFile, VfsFileType};
+use edgine::kernel::functions::fs::vfs_types::{
+    KernelError, KernelResult, OpenFile, VfsFileType, VfsSeekWhence, VfsStat,
+};
 
 fn read_file(relative_path: &str) -> String {
     let path = format!(
@@ -46,6 +48,51 @@ impl File for StubFile {
 
     fn file_type(&self) -> VfsFileType {
         self.file_type
+    }
+}
+
+/// 最小 `Inode` 实现: stat 报告的节点号 / 挂载点 / 类型可配置.
+struct StubInode {
+    node_id: u32,
+    mount_idx: u32,
+    file_type: VfsFileType,
+}
+
+impl Inode for StubInode {
+    fn read(&self, _offset: u64, _buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
+        Ok(0)
+    }
+
+    fn write(&self, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
+        Ok(buf.len())
+    }
+
+    fn stat(&self, _pwm: u64) -> KernelResult<VfsStat> {
+        Ok(VfsStat {
+            node_id: self.node_id,
+            file_type: self.file_type.as_u8(),
+            ..VfsStat::default()
+        })
+    }
+
+    fn truncate(&self, _size: u64, _pwm: u64) -> KernelResult<()> {
+        Ok(())
+    }
+
+    fn seek(&self, _offset: i64, _whence: VfsSeekWhence, current_offset: u64) -> KernelResult<u64> {
+        Ok(current_offset)
+    }
+
+    fn is_dir(&self) -> bool {
+        self.file_type == VfsFileType::Dir
+    }
+
+    fn node_id(&self) -> u32 {
+        self.node_id
+    }
+
+    fn mount_idx(&self) -> u32 {
+        self.mount_idx
     }
 }
 
@@ -108,7 +155,10 @@ fn open_file_from_file_derives_type_and_non_inode_sentinels() {
         "file_type 必须由对象 file_type() 派生"
     );
     assert_eq!(of.inode_id(), None, "非 inode 对象 inode_id 必须为 None");
-    assert_eq!(of.mount_idx(), u32::MAX, "非文件对象挂载点走 u32::MAX 哨兵");
+    assert!(
+        of.file().mmap_backing().is_none(),
+        "默认对象未声明映射后端, 不可作文件映射"
+    );
     assert!(of.as_inode().is_none(), "非文件对象 as_inode 必须为 None");
     assert!(!of.file().stream(), "默认对象可定位 (非流)");
     assert!(
@@ -126,8 +176,51 @@ fn open_file_new_wraps_regular_file_over_inode() {
         "RegularFile 类型由 Inode::stat 派生"
     );
     assert_eq!(of.inode_id(), Some(7), "as_inode 桥接回 Inode::node_id");
-    assert_eq!(of.mount_idx(), u32::MAX, "匿名 inode 无挂载点");
+    assert_eq!(
+        of.file().mmap_backing(),
+        Some(MmapBacking {
+            inode_id: 7,
+            mount_idx: None,
+        }),
+        "映射后端由 Inode 派生; 匿名 inode 的 u32::MAX 挂载哨兵必须收口为 None"
+    );
     assert!(of.as_inode().is_some(), "RegularFile 必须桥接回 Inode");
+}
+
+#[test]
+fn regular_file_mmap_backing_gates_type_and_mount_sentinel() {
+    let regular = RegularFile::new(
+        Arc::new(StubInode {
+            node_id: 42,
+            mount_idx: 3,
+            file_type: VfsFileType::File,
+        }),
+        0,
+    );
+    assert_eq!(
+        regular.mmap_backing(),
+        Some(MmapBacking {
+            inode_id: 42,
+            mount_idx: Some(3),
+        }),
+        "常规文件必须声明映射后端并透传挂载点"
+    );
+
+    for file_type in [VfsFileType::Dir, VfsFileType::Dev, VfsFileType::Symlink] {
+        let non_file = RegularFile::new(
+            Arc::new(StubInode {
+                node_id: 7,
+                mount_idx: 0,
+                file_type,
+            }),
+            0,
+        );
+        assert_eq!(
+            non_file.mmap_backing(),
+            None,
+            "非普通文件不可作页缓存后端: {file_type:?}"
+        );
+    }
 }
 
 #[test]
@@ -159,17 +252,127 @@ fn inode_id_is_option_not_zero_sentinel() {
         !handle.contains(".unwrap_or((0, 0))"),
         "close 快照不得把无 inode 退化为 0 (旧哨兵形态)"
     );
+}
+
+#[test]
+fn mmap_requires_object_declared_backing() {
+    // 管道 / eventfd / signalfd 同样报告 VfsFileType::File, 仅凭 file_type 无法
+    // 把伪 inode 命名空间挡在 pcache 之外. 判据改为对象自行声明的映射后端
+    // 凭据: 未声明 = 不可映射 (ENODEV), 而非由 fd 数值区间或类型猜测.
+    let mmap = read_file("functions/mm/mmap.rs");
+    assert!(
+        mmap.contains("pub fn fd_mmap_backing(fd: i32) -> Result<MmapBacking, Errno>"),
+        "mmap 的映射后端来源必须是对象声明的 MmapBacking"
+    );
+    assert!(
+        mmap.contains("let backing = fd_mmap_backing(req.fd)?;"),
+        "mmap 文件映射必须经凭据解析, 不可绕过对象声明"
+    );
+    assert!(
+        mmap.contains(".ok_or(Errno::Enodev)"),
+        "对象未声明映射后端时必须 ENODEV (对齐 Linux 非普通文件语义)"
+    );
+    assert!(
+        !mmap.contains("fd_to_inode_id") && !mmap.contains("fd_to_mount_idx"),
+        "旧的裸 inode / 挂载点直读入口必须删除 (无法区分伪 inode 命名空间)"
+    );
+
+    let file = read_file("functions/fs/file.rs");
+    assert!(
+        file.contains("fn mmap_backing(&self) -> Option<MmapBacking>"),
+        "File trait 必须暴露映射后端凭据 (默认不可映射)"
+    );
+    assert!(
+        file.contains("self.file_type != VfsFileType::File"),
+        "RegularFile 只放行常规文件内容"
+    );
+    assert!(
+        file.contains("if mount == u32::MAX"),
+        "Inode::mount_idx 的 u32::MAX 哨兵必须在凭据处收口为 None"
+    );
+
+    for special in [
+        "functions/fs/pipe_fd.rs",
+        "functions/fs/eventfd.rs",
+        "functions/fs/signalfd.rs",
+    ] {
+        assert!(
+            !read_file(special).contains("fn mmap_backing"),
+            "特殊对象不得声明映射后端 (伪 inode 会污染 pcache 命名空间): {special}"
+        );
+    }
+}
+
+#[test]
+fn dup2_release_shares_close_chain_with_close() {
+    let handle = read_file("functions/fs/handle.rs");
+    assert!(
+        handle.contains("fn release_open_file(handle_id: u32, fd_idx: u32)"),
+        "关闭副作用必须收口到共享入口 release_open_file"
+    );
+    assert!(
+        handle.contains("release_open_file(handle_id, fd_idx);"),
+        "close 路径必须走共享关闭链"
+    );
+
+    // dup2 覆盖分支: 必须复用关闭链, 不得直连 OpenFileTable::close
+    let dup2_start = handle
+        .find("pub extern \"C\" fn vfs_dup2")
+        .expect("vfs_dup2 必须存在");
+    let dup2_body = &handle[dup2_start..];
+    let next_fn = dup2_body[40..]
+        .find("pub fn ")
+        .or_else(|| dup2_body[40..].find("pub extern \"C\" fn "))
+        .map_or(dup2_body.len(), |i| 40 + i);
+    let dup2_body = &dup2_body[..next_fn];
+    assert!(
+        dup2_body.contains("release_open_file(prev_hid, newfd);"),
+        "dup2 覆盖旧 fd 必须经共享关闭链 (pcache/inotify/fd_notify)"
+    );
+    assert!(
+        !dup2_body.contains("OPEN_FILE_TABLE.close(prev_hid)"),
+        "dup2 不得直连 OpenFileTable::close 绕过关闭副作用"
+    );
+}
+
+#[test]
+fn vma_inode_id_is_option_not_zero_sentinel() {
+    // 0 是 inode 命名空间的真实键, 故 VMA 的文件后端同为 Option:
+    // 匿名 VMA 的「无后端」由类型表达, 消费点经编译器强制解构.
+    let vma = read_file("privileged/mm/vma.rs");
+    assert!(
+        vma.contains("pub inode_id: Option<u32>"),
+        "Vma 文件后端必须用 Option<u32> (0 不可作「无后端」哨兵)"
+    );
+    assert!(
+        vma.contains("inode_id: None,"),
+        "匿名 VMA 构造必须显式无文件后端"
+    );
+    assert!(
+        vma.contains("inode_id: Some(inode_id),"),
+        "file_backed 构造器必须把 inode 包成 Some"
+    );
+    assert!(
+        !vma.contains("pub fn with_offset("),
+        "with_offset 是唯一不带 inode 的 FileBacked 构造器, 已删除"
+    );
+
+    let page_fault = read_file("privileged/mm/page_fault.rs");
+    assert!(
+        page_fault.contains("let Some(inode_id) = vma.inode_id"),
+        "文件缺页分发必须以 None 判非文件后端 (不得沿用 != 0)"
+    );
+    assert!(
+        page_fault.contains("handle_file_fault(mm, vma, inode_id, info, aligned, user_cr3)"),
+        "handle_file_fault 必须接收已解构的 inode_id (内部不再读字段)"
+    );
 
     let mmap = read_file("functions/mm/mmap.rs");
     assert!(
-        mmap.contains("pub fn fd_to_inode_id(fd: i32) -> Option<u32>"),
-        "mmap 的 inode 来源必须同为 Option<u32>"
+        mmap.contains("let Some(inode_id) = vma.inode_id else {"),
+        "munmap 释放路径必须解构 Option, 不得保留 == 0 防御哨兵"
     );
-    assert!(
-        mmap.contains("let Some(inode_id) = fd_to_inode_id(req.fd) else {")
-            && !mmap.contains("let inode_id = fd_to_inode_id(req.fd);"),
-        "mmap 文件映射必须以 None 判 EBADF (不得沿用裸 u32 + == 0)"
-    );
+    assert!(!mmap.contains("vma.inode_id == 0"), "不得回退到 0 哨兵判据");
 }
 
 #[test]
@@ -234,6 +437,7 @@ fn file_trait_defined_with_full_contract() {
         "fn read_forward(",
         "fn stream(",
         "fn as_inode(",
+        "fn mmap_backing(",
     ] {
         assert!(src.contains(needle), "File trait 缺契约方法: {needle}");
     }
@@ -290,8 +494,8 @@ fn fs_mod_reexports_file_abstractions() {
     let src = read_file("functions/fs/mod.rs");
     assert!(src.contains("pub mod file;"), "file 模块必须注册");
     assert!(
-        src.contains("pub use file::{File, PollEvents, RegularFile};"),
-        "File/PollEvents/RegularFile 必须顶层 re-export"
+        src.contains("pub use file::{File, MmapBacking, PollEvents, RegularFile};"),
+        "File/MmapBacking/PollEvents/RegularFile 必须顶层 re-export"
     );
 }
 

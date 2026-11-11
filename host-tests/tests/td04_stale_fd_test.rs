@@ -47,14 +47,21 @@ fn extract_body(src: &str, sig: &str) -> String {
 fn test_efd_close_notifies_after_releasing_slot() {
     // TD-04: eventfd 关闭必须先在 OpenFileTable 释放槽位, 再唤醒 epoll 等待者,
     // 让 waiter 醒来后观察到 fd 已关闭.
+    // vfs_dup2 覆盖旧 fd 与 close 共用 release_open_file (关闭链单入口),
+    // 故判据落在该助手函数体内.
     let src = read(HANDLE);
-    let body = extract_body(&src, "pub fn vfs_close_internal(");
+    let close_body = extract_body(&src, "pub fn vfs_close_internal(");
+    assert!(
+        close_body.contains("release_open_file(handle_id, fd_idx)"),
+        "TD-04: vfs_close_internal 必须经 release_open_file 走完整关闭链"
+    );
+    let body = extract_body(&src, "fn release_open_file(");
     let close_idx = body
         .find("OPEN_FILE_TABLE.close(handle_id)")
-        .expect("TD-04: vfs_close_internal 必须经 OPEN_FILE_TABLE.close 释放槽位");
+        .expect("TD-04: release_open_file 必须经 OPEN_FILE_TABLE.close 释放槽位");
     let pwake_idx = body
         .find("fd_notify::notify_fd_close")
-        .expect("TD-04: vfs_close_internal 必须调用 fd_notify::notify_fd_close");
+        .expect("TD-04: release_open_file 必须调用 fd_notify::notify_fd_close");
     assert!(
         close_idx < pwake_idx,
         "TD-04: 唤醒必须在槽位释放之后, 让 waiter 看到 fd 已关闭"

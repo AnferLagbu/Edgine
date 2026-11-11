@@ -174,8 +174,8 @@ pub struct Vma {
     pub kind: VmaType,
     /// 文件映射在文件内的起始偏移
     pub offset: u64,
-    /// 文件映射: inode 编号 (0 = 无文件后端)
-    pub inode_id: u32,
+    /// 文件映射: inode 编号 (`None` = 无文件后端)
+    pub inode_id: Option<u32>,
     /// 文件映射: 是否为 `MAP_SHARED` (true) 或 `MAP_PRIVATE` (false)
     pub shared: bool,
     /// 文件映射: 创建该 VMA 的 pwm (用于 #PF 时 `vfs_pread_inode` 权限校验).
@@ -224,25 +224,7 @@ impl Vma {
             flags,
             kind,
             offset: 0,
-            inode_id: 0,
-            shared: false,
-            file_pwm: 0,
-            mount_idx: None,
-            vm_flags: VmFlags::EMPTY,
-            numa: None,
-        }
-    }
-
-    /// 创建带文件偏移的 VMA (类型固定为 `FileBacked`)
-    #[must_use]
-    pub fn with_offset(start: usize, end: usize, flags: PageFlags, offset: u64) -> Self {
-        Self {
-            start,
-            end,
-            flags,
-            kind: VmaType::FileBacked,
-            offset,
-            inode_id: 0,
+            inode_id: None,
             shared: false,
             file_pwm: 0,
             mount_idx: None,
@@ -275,7 +257,7 @@ impl Vma {
             flags,
             kind: VmaType::FileBacked,
             offset,
-            inode_id,
+            inode_id: Some(inode_id),
             shared,
             file_pwm: pwm,
             mount_idx,

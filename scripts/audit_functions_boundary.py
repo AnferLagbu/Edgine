@@ -480,6 +480,9 @@ def check_functions_inter_module_deps():
         ('syscall', 'fs'),
         # timer 依赖 syscall 是合理的 (POSIX timer 复用 syscall 层 posix_timer 实现)
         ('timer', 'syscall'),
+        # mm 依赖 fs 是合理的 (mmap 经 fd 对象声明的映射后端凭据 MmapBacking
+        # 解析 inode/mount; 特殊对象不声明即被拒映射)
+        ('mm', 'fs'),
         # wasm 依赖 net 是合理的 (WASI snapshot_preview1 的 socket 适配层
         # 经 functions::net 公共门面调用 socket/accept/connect/recv/send/close)
         ('wasm', 'net'),

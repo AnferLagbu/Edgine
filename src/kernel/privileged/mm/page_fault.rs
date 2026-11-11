@@ -359,8 +359,10 @@ fn handle_vma_fault_with_mm(
     }
 
     // ── FileBacked VMA: 从 Page Cache 获取缓存页 ──
-    if vma.kind == VmaType::FileBacked && vma.inode_id != 0 {
-        return handle_file_fault(mm, vma, info, aligned, user_cr3);
+    if vma.kind == VmaType::FileBacked
+        && let Some(inode_id) = vma.inode_id
+    {
+        return handle_file_fault(mm, vma, inode_id, info, aligned, user_cr3);
     }
 
     // ── COW: 写入只读页 ──
@@ -416,9 +418,13 @@ fn handle_uffd_provided(vma: &Vma, aligned: usize, user_cr3: u64) -> PfResult {
 }
 
 /// 文件映射缺页处理: 从 Page Cache 获取/创建缓存页
+///
+/// `inode_id` 由调用方从 VMA 取出 (`Option` 已解构): 本函数只在文件后端
+/// 存在时被调用, 内部不再重复判空.
 fn handle_file_fault(
     _mm: &MmStruct,
     vma: &Vma,
+    inode_id: u32,
     info: &PageFaultInfo,
     aligned: usize,
     user_cr3: u64,
@@ -429,7 +435,7 @@ fn handle_file_fault(
     // 入口内含幂等判据 (该 VA 已持有 ⇒ 不重复登记) 与被替换旧帧的注销,
     // 与拆除侧 `pcache_release_for_va` 共用同一判据实现.
     let Some((cache_phys, newly_inserted)) =
-        super::pcache::pcache_acquire_for_va(user_cr3, aligned as u64, vma.inode_id, page_index)
+        super::pcache::pcache_acquire_for_va(user_cr3, aligned as u64, inode_id, page_index)
     else {
         return PfResult::Oom;
     };
@@ -444,14 +450,14 @@ fn handle_file_fault(
         let mut page_buf = [0u8; crate::privileged::glue::usize_from_u64(PAGE_SIZE)];
         let n = crate::privileged::fs::current_vfs_ops().pread_inode(
             vma.mount_idx,
-            vma.inode_id,
+            inode_id,
             file_off,
             &mut page_buf,
             vma.file_pwm,
         );
         if n > 0 {
             super::pcache::pcache_fill(
-                vma.inode_id,
+                inode_id,
                 page_index,
                 &page_buf[..crate::privileged::glue::usize_from_i32(n)],
             );
@@ -473,7 +479,7 @@ fn handle_file_fault(
 
         // 写入时标记脏页
         if info.access.write {
-            super::pcache::pcache_mark_dirty(vma.inode_id, page_index);
+            super::pcache::pcache_mark_dirty(inode_id, page_index);
         }
     } else {
         // MAP_PRIVATE: 只读映射, 写入时触发 COW
@@ -506,7 +512,7 @@ fn handle_file_fault(
 
             // 注销本 VA 对 Page Cache 的持有: 上面已确认该 VA 正持有此缓存页
             // (acquire 的登记/幂等判据), 故此处直接 pcache_put, 无需再判 PTE.
-            super::pcache::pcache_put(vma.inode_id, page_index);
+            super::pcache::pcache_put(inode_id, page_index);
 
             // 用新页替换映射 (可写)
             let cow_flags = vma.flags | PageFlags::PRESENT | PageFlags::WRITABLE;

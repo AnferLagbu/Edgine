@@ -95,6 +95,25 @@ pub trait File: Send + Sync + 'static {
     fn as_inode(&self) -> Option<&dyn Inode> {
         None
     }
+
+    /// 文件映射后端凭据 (`mmap` 文件映射的合法性判据); 默认不可映射.
+    fn mmap_backing(&self) -> Option<MmapBacking> {
+        None
+    }
+}
+
+/// 文件映射后端凭据 — 可作为页缓存后端的对象提供的命名空间键.
+///
+/// `mmap` 只接受**常规文件内容的页缓存后端**: 管道 / 事件对象等虽同样报告
+/// `VfsFileType::File`, 但其 inode 编号是伪命名空间 (或根本没有), 绝不能落进
+/// `pcache` 的 inode 键空间. 是否存在本凭据由对象自行声明, 不使用类型或
+/// `inode_id` 数值猜测.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MmapBacking {
+    /// 页缓存命名空间键 (对象真实 inode 编号)
+    pub inode_id: u32,
+    /// 缺页回填时的文件系统挂载点 (`None` = 无挂载点, 如 memfd)
+    pub mount_idx: Option<usize>,
 }
 
 /// 文件系统对象 → [`File`] 的薄适配器.
@@ -150,5 +169,23 @@ impl File for RegularFile {
 
     fn as_inode(&self) -> Option<&dyn Inode> {
         Some(&*self.inode)
+    }
+
+    fn mmap_backing(&self) -> Option<MmapBacking> {
+        // 仅常规文件内容有页缓存后端; 目录 / 设备 / 符号链接不可作文件映射.
+        if self.file_type != VfsFileType::File {
+            return None;
+        }
+        let mount = self.inode.mount_idx();
+        Some(MmapBacking {
+            inode_id: self.inode.node_id(),
+            // `Inode::mount_idx` 的 u32::MAX 是「无挂载」哨兵, 在此收口为 None;
+            // 直接转 usize 会得到 4294967295 这种越界挂载索引.
+            mount_idx: if mount == u32::MAX {
+                None
+            } else {
+                usize::try_from(mount).ok()
+            },
+        })
     }
 }
