@@ -51,8 +51,10 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     {
         crate::functions::fs::flock::posix_lock_release_inode(ino);
         let (parent_path, name) = split_parent_name(rel_path);
-        let parent_ino = fs_opt.map_or(0, |fs| fs.fs_resolve_path(parent_path).unwrap_or(0));
-        super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
+        // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
+        if let Some(parent_ino) = fs_opt.and_then(|fs| fs.fs_resolve_path(parent_path)) {
+            super::inotify::inotify_notify(parent_ino, super::inotify::IN_DELETE, name, false);
+        }
         super::inotify::inotify_notify(ino, super::inotify::IN_DELETE_SELF, "", false);
     }
 
@@ -89,8 +91,10 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     // E6-4: trait object 分发
     fs_opt.map_or(-1, |fs| match fs.fs_mkdir(rel_path, pwm) {
         Ok(()) => {
-            let parent_ino = fs.fs_resolve_path(parent_path).unwrap_or(0);
-            super::inotify::inotify_notify(parent_ino, super::inotify::IN_CREATE, name, true);
+            // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
+            if let Some(parent_ino) = fs.fs_resolve_path(parent_path) {
+                super::inotify::inotify_notify(parent_ino, super::inotify::IN_CREATE, name, true);
+            }
             0
         }
         Err(_) => -1,

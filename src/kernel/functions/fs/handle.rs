@@ -119,13 +119,15 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
                         };
 
                         // inotify: 父目录 IN_CREATE + 新文件 IN_OPEN
-                        let parent_ino = fs.fs_resolve_path(parent_path).unwrap_or(0);
-                        super::inotify::inotify_notify(
-                            parent_ino,
-                            super::inotify::IN_CREATE,
-                            name,
-                            false,
-                        );
+                        // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
+                        if let Some(parent_ino) = fs.fs_resolve_path(parent_path) {
+                            super::inotify::inotify_notify(
+                                parent_ino,
+                                super::inotify::IN_CREATE,
+                                name,
+                                false,
+                            );
+                        }
                         super::inotify::inotify_notify(
                             inode_id,
                             super::inotify::IN_OPEN,
@@ -154,14 +156,16 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 fn release_open_file(handle_id: u32, fd_idx: u32) {
     // B-9.5: 元数据改源 OpenFile (退役全局 VfsManager.fd_table 的 node_id/flags 副本)
     let (node_id, flags) = OPEN_FILE_TABLE
-        .with_file(handle_id, |of| (of.inode_id(), of.get_flags()))
+        .with_file(handle_id, |of| {
+            (of.file().inode_namespace_id(), of.get_flags())
+        })
         .unwrap_or((None, 0));
 
     // 减少 OpenFile 引用计数 (POSIX dup 语义)
     OPEN_FILE_TABLE.close(handle_id);
 
     // B2: 释放该 fd 关联 inode 的全部 pcache 缓存页, 并通知 inotify 关闭事件.
-    // 非 inode 特殊对象 (eventfd / signalfd 等) 无 inode 命名空间, 两者都跳过.
+    // 非 inode 命名空间对象 (eventfd / signalfd / 管道伪 inode) 两者都跳过.
     if let Some(node_id) = node_id {
         pcache::pcache_invalidate_inode(node_id);
         // inotify: 文件关闭通知
@@ -243,12 +247,11 @@ pub fn vfs_close_all_fds() {
     }
 }
 
-/// pcache 快路径判据 — 仅「inode 承载对象 + 4KB 对齐整页 + 页数在上限内」成立.
+/// pcache 快路径判据 — 仅「inode 命名空间成员 + 4KB 对齐整页 + 页数在上限内」成立.
 ///
 /// 返回 `(node_id, 首页号)`; `None` = 走 `File` 对象分发慢路径.
-/// 非 inode 特殊对象 (`inode_id()` 为 `None`, 如 eventfd / signalfd) 必须落
-/// `None`: 它们没有 inode 命名空间, 若沿用 0 哨兵会把 inode 0 的页缓存当成
-/// 自身数据读给调用者.
+/// 伪 inode 对象 (eventfd / signalfd / 管道端点) 不声明命名空间键, 必须落
+/// `None`: 它们的编号是合成值, 若用作 pcache 键会与真实 inode 命名空间混淆.
 fn pcache_fast_target(node_id: Option<u32>, count: u32, offset: u64) -> Option<(u32, u64)> {
     let node_id = node_id?;
     let is_aligned_4k = u64::from(count) >= PCACHE_FAST_MIN_BYTES as u64
@@ -276,8 +279,10 @@ fn vfs_read_slice(fd_idx: u32, dst: &mut [u8]) -> i32 {
         let offset = open_file.get_offset();
         let pwm = open_file.pwm;
 
-        // B2: pcache 快路径 — 仅 inode 承载对象可进 (特殊对象无 inode 命名空间)
-        if let Some((node_id, first_pi)) = pcache_fast_target(open_file.inode_id(), count, offset) {
+        // B2: pcache 快路径 — 仅 inode 命名空间成员可进 (伪 inode 无命名空间键)
+        if let Some((node_id, first_pi)) =
+            pcache_fast_target(open_file.file().inode_namespace_id(), count, offset)
+        {
             let npages = (u64::from(count) / PAGE_SIZE) as usize;
 
             let mut all_hit = true;
@@ -441,7 +446,7 @@ fn vfs_write_slice(fd_idx: u32, src: &[u8]) -> i32 {
 
     let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
-        let node_id = open_file.inode_id();
+        let node_id = open_file.file().inode_namespace_id();
         // O_APPEND: 写入前自动 seek 到文件末尾 (POSIX 原子 append);
         // 仅文件对象有 inode 尺寸, 非文件对象按当前偏移写.
         let offset = if (open_file.get_flags() & super::vfs_types::VfsOpenFlags::APPEND.bits()) != 0
@@ -637,7 +642,7 @@ pub fn vfs_pwrite(fd: u32, buf: *const u8, count: u32, offset: u64) -> i32 {
     OPEN_FILE_TABLE
         .with_file(handle_id, |open_file| {
             let pwm = open_file.pwm;
-            let node_id = open_file.inode_id();
+            let node_id = open_file.file().inode_namespace_id();
             open_file
                 .file()
                 .write_at(offset, user_buf.as_slice(), pwm)

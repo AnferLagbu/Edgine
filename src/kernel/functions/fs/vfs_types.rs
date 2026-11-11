@@ -601,7 +601,7 @@ impl core::fmt::Debug for OpenFile {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OpenFile")
             // 直接读 `file` 字段: clippy::missing_fields_in_debug 以 fmt 体内字段读取判定"已展示"
-            .field("inode_id", &self.file.as_inode().map_or(0, Inode::node_id))
+            .field("inode_id", &self.file.inode_namespace_id())
             .field("offset", &self.offset)
             .field("flags", &self.flags)
             .field("pwm", &self.pwm)
@@ -696,11 +696,12 @@ impl OpenFile {
 
     // ---- fd 对象统一面 ----
 
-    /// 获取底层 `inode_id` (供 pcache / flock 等使用)
+    /// 获取底层真实 inode 编号 (供 flock / fcntl 等使用)
     ///
     /// 非 inode 对象 (无 Inode 关联, 如 eventfd / signalfd) 返回 `None`.
-    /// inode 编号是 pcache / inotify 等命名空间的键, 绝不可用哨兵冒充:
-    /// 该命名空间内 0 是真实键值, 哨兵会读到他人的页缓存.
+    /// 注意: 管道端点等伪 inode 对象的编号是合成值; 本方法**不可**用作
+    /// pcache / inotify 的命名空间键, 两类消费者一律经
+    /// [`File::inode_namespace_id`] 取键.
     pub fn inode_id(&self) -> Option<u32> {
         self.as_inode().map(Inode::node_id)
     }

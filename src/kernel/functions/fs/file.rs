@@ -100,6 +100,16 @@ pub trait File: Send + Sync + 'static {
     fn mmap_backing(&self) -> Option<MmapBacking> {
         None
     }
+
+    /// 对象在 VFS inode 命名空间 (`pcache` / `inotify` 键空间) 中的编号.
+    ///
+    /// 默认 `None`: 伪 inode 对象 (管道端点等) 的编号是合成值, 不是命名空间
+    /// 成员, 不得作为 `pcache` / `inotify` 的键. 与 [`File::mmap_backing`] 的
+    /// 「可映射」判据不同 — 目录 / 设备是真实命名空间成员 (可作 inotify 事件
+    /// 源), 但不可作文件映射.
+    fn inode_namespace_id(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// 文件映射后端凭据 — 可作为页缓存后端的对象提供的命名空间键.
@@ -169,6 +179,10 @@ impl File for RegularFile {
 
     fn as_inode(&self) -> Option<&dyn Inode> {
         Some(&*self.inode)
+    }
+
+    fn inode_namespace_id(&self) -> Option<u32> {
+        Some(self.inode.node_id())
     }
 
     fn mmap_backing(&self) -> Option<MmapBacking> {

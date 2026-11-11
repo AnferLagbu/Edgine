@@ -224,6 +224,32 @@ fn regular_file_mmap_backing_gates_type_and_mount_sentinel() {
 }
 
 #[test]
+fn regular_file_declares_namespace_id_for_all_real_inode_types() {
+    // inotify 的 IN_CLOSE_* 对目录同样有意义, 故命名空间键不按 VfsFileType
+    // 收窄 (那会误伤目录); 与 mmap_backing 的「仅普通文件可映射」判据分层.
+    for file_type in [
+        VfsFileType::File,
+        VfsFileType::Dir,
+        VfsFileType::Dev,
+        VfsFileType::Symlink,
+    ] {
+        let regular = RegularFile::new(
+            Arc::new(StubInode {
+                node_id: 9,
+                mount_idx: 0,
+                file_type,
+            }),
+            0,
+        );
+        assert_eq!(
+            regular.inode_namespace_id(),
+            Some(9),
+            "真实 inode 均为 pcache / inotify 命名空间成员: {file_type:?}"
+        );
+    }
+}
+
+#[test]
 fn inode_id_is_option_not_zero_sentinel() {
     // 0 是 pcache / inotify 命名空间的真实键. 特殊对象 (eventfd / signalfd)
     // 曾以 0 哨兵冒充 inode, 使 VFS 读快路径命中 inode 0 的页缓存 — 特殊
@@ -241,8 +267,8 @@ fn inode_id_is_option_not_zero_sentinel() {
 
     let handle = read_file("functions/fs/handle.rs");
     assert!(
-        handle.contains("pcache_fast_target(open_file.inode_id(), count, offset)"),
-        "pcache 快路径必须经 pcache_fast_target 判据 (Option 解构)"
+        handle.contains("pcache_fast_target(open_file.file().inode_namespace_id(), count, offset)"),
+        "pcache 快路径必须经对象声明的 inode 命名空间键 (Option 解构)"
     );
     assert!(
         handle.contains("fn pcache_fast_target(node_id: Option<u32>"),
@@ -252,6 +278,67 @@ fn inode_id_is_option_not_zero_sentinel() {
         !handle.contains(".unwrap_or((0, 0))"),
         "close 快照不得把无 inode 退化为 0 (旧哨兵形态)"
     );
+}
+
+#[test]
+fn inode_namespace_key_is_object_declared() {
+    // 管道端点的 node_id 是合成值 (0xF000_0000 + key), 但 as_inode() = Some,
+    // 所以 OpenFile::inode_id() 对它返回 Some(伪值). pcache / inotify 的键必须
+    // 由对象自行声明命名空间成员身份, 不能以「有 Inode」推断.
+    let file = read_file("functions/fs/file.rs");
+    assert!(
+        file.contains("fn inode_namespace_id(&self) -> Option<u32> {"),
+        "File trait 必须暴露 inode 命名空间键 (默认不声明)"
+    );
+    assert!(
+        file.contains("Some(self.inode.node_id())"),
+        "RegularFile 的真实 inode 必须声明命名空间键"
+    );
+
+    let handle = read_file("functions/fs/handle.rs");
+    assert!(
+        handle.contains("of.file().inode_namespace_id(), of.get_flags()"),
+        "close 的 pcache 失效 / inotify 键必须来自对象声明"
+    );
+    assert_eq!(
+        handle
+            .matches("let node_id = open_file.file().inode_namespace_id();")
+            .count(),
+        2,
+        "write / pwrite 的 inotify IN_MODIFY 键必须来自对象声明"
+    );
+    assert!(
+        !handle.contains("open_file.inode_id()") && !handle.contains("of.inode_id()"),
+        "命名空间消费者不得回退到 OpenFile::inode_id (伪 inode 会混入命名空间)"
+    );
+
+    for special in [
+        "functions/fs/pipe_fd.rs",
+        "functions/fs/eventfd.rs",
+        "functions/fs/signalfd.rs",
+    ] {
+        assert!(
+            !read_file(special).contains("fn inode_namespace_id"),
+            "伪 inode 对象不得声明命名空间键: {special}"
+        );
+    }
+}
+
+#[test]
+fn inotify_parent_lookup_has_no_zero_fallback() {
+    // 父目录解析失败曾以 0 兜底继续发 inotify: 0 是真实 inode 键, 会把
+    // IN_CREATE / IN_DELETE 错误投递给 inode 0 的 watch. 解析失败必须不发事件.
+    for path in ["functions/fs/vfs_path.rs", "functions/fs/handle.rs"] {
+        let src = read_file(path);
+        assert!(
+            !src.contains("fs_resolve_path(parent_path).unwrap_or(0)"),
+            "父目录 inotify 键不得以 0 兜底: {path}"
+        );
+        assert!(
+            src.contains("if let Some(parent_ino) = ") || src.contains("fs_opt.and_then("),
+            "父目录解析失败分支必须跳过 inotify: {path}"
+        );
+    }
 }
 
 #[test]
@@ -438,6 +525,7 @@ fn file_trait_defined_with_full_contract() {
         "fn stream(",
         "fn as_inode(",
         "fn mmap_backing(",
+        "fn inode_namespace_id(",
     ] {
         assert!(src.contains(needle), "File trait 缺契约方法: {needle}");
     }
