@@ -324,6 +324,7 @@ fn inode_namespace_key_is_object_declared() {
         "functions/fs/pipe_fd.rs",
         "functions/fs/eventfd.rs",
         "functions/fs/signalfd.rs",
+        "functions/fs/inotify.rs",
     ] {
         assert!(
             !read_file(special).contains("fn inode_namespace_id"),
@@ -390,6 +391,7 @@ fn mmap_requires_object_declared_backing() {
         "functions/fs/pipe_fd.rs",
         "functions/fs/eventfd.rs",
         "functions/fs/signalfd.rs",
+        "functions/fs/inotify.rs",
     ] {
         assert!(
             !read_file(special).contains("fn mmap_backing"),
@@ -1138,5 +1140,112 @@ fn unix_socket_created_via_open_file_table_not_fdplan() {
     assert!(
         !sys.contains("is_uds_fd") && !sys.contains("uds::uds_create"),
         "socket syscall 层不得残留 UDS 数值 fd 分流"
+    );
+}
+
+// ============================================================================
+// 阶段 3 第 5 个迁移子系统: Inotify — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn inotify_object_implements_file_contract() {
+    use edgine::kernel::functions::fs::inotify::{InotifyEvent, InotifyFile};
+
+    // 槽位下标不触碰 inotify 策略表 (read/poll 会访问, 此处仅验证纯对象面)
+    let nf = InotifyFile::new(2);
+    assert_eq!(nf.idx(), 2, "策略表槽位下标原样保存");
+    assert!(nf.stream(), "inotify 不可定位 (lseek → ESPIPE)");
+    assert!(nf.as_inode().is_none(), "inotify 非 inode 承载");
+    assert!(nf.mmap_backing().is_none(), "inotify 不可作 mmap 后端");
+    assert!(
+        nf.inode_namespace_id().is_none(),
+        "inotify 不属于 inode 命名空间"
+    );
+    assert_eq!(nf.file_type(), VfsFileType::File);
+    assert_eq!(
+        nf.io_control(0x1234_5678, 0),
+        Err(KernelError::NotSupported),
+        "inotify 对象不处理通用 ioctl (回落默认策略)"
+    );
+    assert_eq!(
+        nf.write_at(0, &[0u8; InotifyEvent::FULL_SIZE], 0),
+        Err(KernelError::InvalidArgument),
+        "inotify fd 只读 (写 → EINVAL)"
+    );
+
+    let of = OpenFile::from_file(Arc::new(InotifyFile::new(2)), 0, 0);
+    let recovered = of
+        .file()
+        .as_any()
+        .downcast_ref::<InotifyFile>()
+        .expect("InotifyFile 必须可下转型");
+    assert_eq!(recovered.idx(), 2);
+    assert!(!of.is_nonblock(), "OpenFile 缺省阻塞");
+    of.set_nonblock(true);
+    assert!(
+        of.is_nonblock(),
+        "F_SETFL 的非阻塞位由 OpenFile 单点承载 (inotify 对象不另存)"
+    );
+}
+
+#[test]
+fn inotify_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/fs/inotify.rs");
+    for needle in [
+        "impl File for InotifyFile",
+        "OpenFile::from_file",
+        "OPEN_FILE_TABLE.alloc",
+        "t.alloc_fd(handle_id, cloexec)",
+        "OPEN_FILE_TABLE.close(handle_id)",
+        "OPEN_FILE_TABLE.dec_ref(handle_id)",
+        "Self::free_instance(idx)",
+        "Self::free_instance(self.idx)",
+    ] {
+        assert!(
+            src.contains(needle),
+            "inotify 创建/释放路径必须含: {needle}"
+        );
+    }
+    for needle in [
+        "INOTIFY_FD_BASE",
+        "FdPlan",
+        "fd_alloc::",
+        "fd_at(",
+        "is_inotify_fd",
+        "fd_to_slot",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "迁移后不得引用全局 FD 编号区间 / fd_alloc 位图: {needle}"
+        );
+    }
+}
+
+#[test]
+fn inotify_dispatch_sites_use_vfs_object_path() {
+    // io.rs / sendfile.rs 不得残留 inotify 数值 fd 特判; 读路径经 VFS 对象分发
+    let io = read_file("functions/fs/io.rs");
+    for needle in ["is_inotify_fd", "sys_inotify_read"] {
+        assert!(!io.contains(needle), "io.rs 不得残留 `{needle}` 数值特判");
+    }
+    let sendfile = read_file("functions/fs/sendfile.rs");
+    assert!(
+        !sendfile.contains("is_inotify_fd"),
+        "sendfile.rs 不得残留 inotify 数值特判"
+    );
+
+    // File 接口面: 事件经 read_at 出队, poll 报 IN
+    let src = read_file("functions/fs/inotify.rs");
+    assert!(
+        src.contains("fn read_at(") && src.contains("fn poll("),
+        "inotify 对象必须实现 read_at / poll (VFS / epoll 分发前提)"
+    );
+    assert!(
+        src.contains("instance.event_count > 0"),
+        "poll 就绪判据必须是事件队列非空"
+    );
+    assert!(
+        read_file("kernel_tests/mod.rs").contains("test_inotify::register_inotify_tests()"),
+        "对象级内核测试必须注册到 glue 侧统一 runner"
     );
 }

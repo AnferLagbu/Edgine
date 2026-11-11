@@ -1235,7 +1235,6 @@ src/kernel/functions/fs/flock.rs::posix_lock_count
 src/kernel/functions/fs/flock.rs::posix_lock_ops
 src/kernel/functions/fs/handle.rs::vfs_readdir_safe
 src/kernel/functions/fs/handle.rs::vfs_seek_safe
-src/kernel/functions/fs/inotify.rs::inotify_fd_readable
 src/kernel/functions/fs/inotify.rs::inotify_stats
 src/kernel/functions/fs/egfs/bp.rs::is_data
 src/kernel/functions/fs/egfs/bp.rs::is_encrypted

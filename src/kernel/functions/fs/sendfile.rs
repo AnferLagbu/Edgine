@@ -57,7 +57,7 @@ pub const SPLICE_F_GIFT: u32 = 8;
 // FD 类型判断
 // ============================================================================
 
-/// 判断 fd 是否为 VFS 文件 fd (非 pipe/timerfd/inotify/UDS)
+/// 判断 fd 是否为 VFS 文件 fd (非 pipe/timerfd/UDS)
 ///
 /// 0/1/2 不预排除: `dup2` 可把普通文件/管道重定向到标准流编号.
 fn is_vfs_file_fd(fd: i32) -> bool {
@@ -71,9 +71,6 @@ fn is_vfs_file_fd(fd: i32) -> bool {
     }
     if (240..256).contains(&fd) {
         return false; // timerfd
-    }
-    if crate::functions::fs::inotify::is_inotify_fd(fd) {
-        return false;
     }
     if super::pipe_fd::is_pipe_fd(fd) {
         return false;

@@ -257,10 +257,7 @@ pub use flock::{
     F_GETLK, F_SETLK, F_SETLKW, FlockResult, PosixLockConflict, PosixLockResult, flock_release_fd,
     flock_release_pid, posix_lock_release_pid, sys_flock, sys_posix_lock,
 };
-pub use inotify::{
-    inotify_release, is_inotify_fd, sys_inotify_add_watch, sys_inotify_init1, sys_inotify_read,
-    sys_inotify_rm_watch,
-};
+pub use inotify::{sys_inotify_add_watch, sys_inotify_init1, sys_inotify_rm_watch};
 // T-05: 后端决策策略 re-export
 pub use backend_trait::{
     FallbackFsBackend, FsBackend, current_fs_backend, egfs_fs, register_egfs_fs,
@@ -434,8 +431,7 @@ mod tests {
     #[test]
     fn test_dup2_releases_overwritten_fd_via_close_chain() {
         use crate::functions::fs::inotify::{
-            IN_CLOSE_NOWRITE, inotify_read_events, inotify_release, sys_inotify_add_watch,
-            sys_inotify_init1,
+            IN_CLOSE_NOWRITE, sys_inotify_add_watch, sys_inotify_init1,
         };
         use crate::functions::fs::ramfs_core::{RAMFS_DATA, init as ramfs_init};
         use crate::functions::fs::{api, vfs_dup2, vfs_get_fd_handle};
@@ -482,12 +478,17 @@ mod tests {
                 "dup2 后 newfd 必须与 oldfd 共享同一 OpenFile"
             );
 
-            let Some((events, _)) = inotify_read_events(ifd, 4096) else {
-                panic!("被覆盖 fd 的关闭必须经关闭链产生 IN_CLOSE_NOWRITE (事件为空)");
-            };
-            assert_eq!(events.len(), 1, "dup2 覆盖关闭只应通知一次");
+            // inotify fd 已纳入 fd 对象模型: 事件经 VFS read 路径读取
+            let ifd_u32 = crate::functions::intcast::low_u32_from_i64(ifd);
+            let mut buf = [0u8; 48];
             assert_eq!(
-                events[0].mask & IN_CLOSE_NOWRITE,
+                api::vfs_read_safe(ifd_u32, &mut buf),
+                crate::functions::intcast::low_i32_from_usize(buf.len()),
+                "被覆盖 fd 的关闭必须经关闭链产生 IN_CLOSE_NOWRITE (事件为空)"
+            );
+            let mask = u32::from_ne_bytes(buf[4..8].try_into().expect("mask 字段"));
+            assert_eq!(
+                mask & IN_CLOSE_NOWRITE,
                 IN_CLOSE_NOWRITE,
                 "只读 fd 的覆盖关闭应为 IN_CLOSE_NOWRITE"
             );
@@ -498,7 +499,7 @@ mod tests {
                 0,
                 "close target 应成功"
             );
-            inotify_release(ifd);
+            assert_eq!(api::vfs_close_safe(ifd_u32), 0, "close inotify fd 应成功");
         });
     }
 }

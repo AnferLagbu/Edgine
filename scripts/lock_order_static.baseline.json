@@ -3,9 +3,9 @@
   "generated_by": "python3 scripts/audit_deadlock_matrix.py --update-lock-order-baseline",
   "note": "A-3b 覆盖率棘轮: 未分类取锁点按 (文件, 接收者末段名) 冻结. 新增/增加即门禁判红; 收缩时重跑 --update-lock-order-baseline. 这份快照不是锁序判据 —— 倒序判定走 scripts/lock_class_order.json.",
   "totals": {
-    "unclassified_sites": 848,
-    "classified_sites": 396,
-    "acquisition_sites": 1244,
+    "unclassified_sites": 851,
+    "classified_sites": 397,
+    "acquisition_sites": 1248,
     "lock_class_edges": 14
   },
   "unclassified": {
@@ -49,7 +49,8 @@
     "src/kernel/functions/fs/flock.rs::FLOCK_TABLE": 5,
     "src/kernel/functions/fs/flock.rs::POSIX_LOCK_TABLE": 5,
     "src/kernel/functions/fs/handle.rs::mounts": 1,
-    "src/kernel/functions/fs/inotify.rs::INOTIFY_INSTANCES": 8,
+    "src/kernel/functions/fs/inotify.rs::FS_GLOBAL_TEST_LOCK": 2,
+    "src/kernel/functions/fs/inotify.rs::INOTIFY_INSTANCES": 7,
     "src/kernel/functions/fs/mod.rs::FS_GLOBAL_TEST_LOCK": 3,
     "src/kernel/functions/fs/open_file_table.rs::files": 4,
     "src/kernel/functions/fs/overlayfs.rs::OVERLAY_FS": 15,
@@ -61,6 +62,7 @@
     "src/kernel/functions/fs/signalfd.rs::state": 4,
     "src/kernel/functions/fs/systree.rs::tree": 2,
     "src/kernel/functions/fs/tmpfs.rs::TMPFS_DATA": 14,
+    "src/kernel/functions/fs/vfs_manager.rs::FS_GLOBAL_TEST_LOCK": 2,
     "src/kernel/functions/fs/vfs_manager.rs::initialized": 1,
     "src/kernel/functions/fs/vfs_manager.rs::mounts": 10,
     "src/kernel/functions/fs/vfs_manager.rs::snapshot": 2,

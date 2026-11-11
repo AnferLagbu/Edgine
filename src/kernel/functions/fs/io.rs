@@ -11,8 +11,8 @@
 //! ## 安全边界
 //!
 //! - functions 层: 验证参数类型/范围, 用户缓冲区校验, fd 路由策略
-//!   (console / timerfd / inotify / VFS; eventfd 与 signalfd 已纳入 fd 对象模型,
-//!   经 VFS 统一分发到 `functions::fs::{eventfd,signalfd}` 的对象实现)
+//!   (console / timerfd / VFS; eventfd / signalfd / inotify 已纳入 fd 对象模型,
+//!   经 VFS 统一分发到 `functions::fs::{eventfd,signalfd,inotify}` 的对象实现)
 //! - privileged 层: 用户内存拷贝机制 (`mm::copy_user`), 特殊 fd 权威实现,
 //!   实际访问 VFS / 创建内核对象
 
@@ -65,8 +65,8 @@ fn wait_pipe_eagain(fd: i32, want_read: bool) -> bool {
 /// read 系统调用策略
 ///
 /// fd 路由: 0/1/2 仅在 fd 表无对应条目时按标准流处理 (stdin 键盘 / stdout
-/// stderr 只写), 否则走 VFS (支持 `dup2` 重定向); timerfd/inotify =
-/// 各自权威实现; eventfd/signalfd 与其余 fd 走 VFS 对象分发.
+/// stderr 只写), 否则走 VFS (支持 `dup2` 重定向); timerfd = 权威实现;
+/// eventfd/signalfd/inotify 与其余 fd 走 VFS 对象分发.
 ///
 /// # Errors
 /// - `buf` 为空或 `count` 为 0 → `EINVAL`
@@ -99,13 +99,6 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
     if crate::privileged::syscall::timerfd::is_timerfd_fd(fd) {
         return ret_to_result(crate::privileged::syscall::timerfd::sys_timerfd_read(
             fd, buf,
-        ));
-    }
-    if crate::functions::fs::is_inotify_fd(fd) {
-        return ret_to_result(crate::functions::fs::sys_inotify_read(
-            i64::from(fd),
-            buf as *mut u8,
-            crate::functions::intcast::usize_from_u64(count),
         ));
     }
     // T1 G4: userfaultfd 事件读取 (无事件时阻塞等待缺页通知)

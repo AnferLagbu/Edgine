@@ -6,7 +6,7 @@
 //!
 //! 原代码按统一判据"机制持有的数据结构/常量归 privileged"迁回
 //! `privileged/proc/fd_alloc.rs` (全局 FD 编号为用户态可见内核机制, 被 privileged
-//! 4 处 + functions inotify/pidfd 消费, 依赖闭包为空)。privileged/proc 的 fd_alloc
+//! 4 处 + functions pidfd 消费, 依赖闭包为空)。privileged/proc 的 fd_alloc
 //! 为公开子模块 (`pub mod fd_alloc`), 可直接 glob re-export, 保持 functions 侧
 //! API 兼容 (functions→privileged 合法方向)。
 

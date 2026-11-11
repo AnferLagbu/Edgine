@@ -1,7 +1,7 @@
 //! 跨层测试载体 (P-71 上移出 TCB).
 //!
 //! 本模块收纳同时依赖 `privileged` 与 `functions` 的用例 (`sys` / `config` / `pwm` /
-//! `ipc` / `uds`). `privileged` 独立成 crate 后不能再反向依赖 `functions`, 故这些
+//! `ipc` / `uds` / fd 对象 (eventfd / signalfd / inotify)). `privileged` 独立成 crate 后不能再反向依赖 `functions`, 故这些
 //! 用例改由 glue crate 注册到 `privileged::tests::runner()` 的同一注册表.
 //!
 //! 注册入口与原 `privileged::tests::register_all_tests()` 合并执行, 双端
@@ -10,6 +10,7 @@
 pub mod sys;
 pub mod test_config;
 pub mod test_eventfd;
+pub mod test_inotify;
 pub mod test_ipc;
 #[cfg(test)]
 pub mod test_ipc_inline;
@@ -35,6 +36,8 @@ pub fn register_upper_tests() {
     test_uds::register_uds_tests();
     #[cfg(feature = "kernel_test")]
     test_eventfd::register_eventfd_tests();
+    #[cfg(feature = "kernel_test")]
+    test_inotify::register_inotify_tests();
     #[cfg(feature = "kernel_test")]
     test_signalfd::register_signalfd_tests();
     #[cfg(target_arch = "x86_64")]

@@ -2348,6 +2348,41 @@ mod tests {
         slots::free_all();
     }
 
+    /// 槽位位图: 释放→复用与耗尽边界.
+    ///
+    /// 与 `test_slot_alloc_free_realloc` 同在 `NET_STATE` 锁下串行化; 若并发
+    /// 用例在本用例耗尽循环中途 `free_all`, 计数将超过上限 (故必须持锁).
+    #[test]
+    fn test_slot_alloc_free_reuse_and_exhaustion() {
+        let _guard = NET_STATE.lock();
+        slots::free_all();
+        let a = slots::alloc().expect("首个槽位应可分配");
+        let b = slots::alloc().expect("第二个槽位应可分配");
+        assert_ne!(a, b);
+        assert!(slots::is_allocated(a) && slots::is_allocated(b));
+
+        slots::free(a);
+        assert!(!slots::is_allocated(a));
+        assert!(slots::is_allocated(b), "释放相邻槽位不应影响其它槽位");
+        assert_eq!(slots::alloc(), Some(a), "释放后的槽位应被复用");
+
+        // 耗尽路径: 分配剩余全部槽位后必须返回 None.
+        let mut n = 2;
+        while slots::alloc().is_some() {
+            n += 1;
+            assert!(n <= slots::MAX_SLOTS, "分配数不得超过槽位上限");
+        }
+        assert_eq!(n, slots::MAX_SLOTS, "耗尽时必须恰好分配 MAX_SLOTS 个槽位");
+
+        slots::free_all();
+        assert!(!slots::is_allocated(0) && !slots::is_allocated(slots::MAX_SLOTS - 1));
+        assert!(
+            !slots::is_allocated(slots::MAX_SLOTS),
+            "越界查询必须返回 false"
+        );
+        slots::free(slots::MAX_SLOTS);
+    }
+
     /// D2: 连续分配返回互不相同的端口, 且均落在动态端口区间内.
     #[test]
     fn test_next_ephemeral_unique_and_in_range() {

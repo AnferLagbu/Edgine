@@ -788,6 +788,8 @@ mod tests {
     /// 相对路径以视图 cwd 为基准
     #[test]
     fn test_resolve_relative_to_cwd() {
+        // 解析优先读当前进程 FS 上下文, 须与安装临时进程的用例串行化.
+        let _lock = crate::functions::fs::FS_GLOBAL_TEST_LOCK.lock();
         let mgr = VfsManager::new();
         mgr.set_cwd("/home/user");
         assert!(
@@ -808,6 +810,8 @@ mod tests {
     /// 根前缀: 视图路径 → 真实路径拼接 + 切根后 cwd 重置
     #[test]
     fn test_resolve_with_root_prefix() {
+        // 根前缀解析优先读当前进程 FS 上下文, 须与安装临时进程的用例串行化.
+        let _lock = crate::functions::fs::FS_GLOBAL_TEST_LOCK.lock();
         let mgr = VfsManager::new();
         assert!(resolve_is(&mgr, "/tmp", "/tmp"), "前置: 默认根下路径不变");
 

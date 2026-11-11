@@ -18,6 +18,7 @@ use std::path::Path;
 const FD_ALLOC: &str = "src/kernel/privileged/proc/fd_alloc.rs";
 const TIMERFD: &str = "src/kernel/privileged/syscall/timerfd.rs";
 const UNIX: &str = "src/kernel/functions/net/unix.rs";
+const INOTIFY: &str = "src/kernel/functions/fs/inotify.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -143,6 +144,30 @@ fn test_unix_migrated_off_local_fd_translation() {
     assert!(
         src.contains("pub fn uds_alloc(sock_type: UnixSockType) -> Result<u8, UdsError>"),
         "UDS 策略表必须只暴露槽位下标分配 (TD-15)"
+    );
+}
+
+#[test]
+fn test_inotify_migrated_off_numeric_fd_space() {
+    // fd 对象模型阶段 3 第 5 批: inotify.rs 只暴露策略表槽位下标, 本地 fd 反查 /
+    // FD 编号区间 / 位图分配全部移除 (fd 由 per-process FdTable 管).
+    let src = read(INOTIFY);
+    for needle in [
+        "INOTIFY_FD_BASE",
+        "FdPlan",
+        "fd_alloc::",
+        "fd_at(",
+        "fn fd_to_idx",
+        "fn is_inotify_fd",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "inotify.rs 不得残留 `{needle}` (Inotify 已迁至 fd 对象模型, TD-15)"
+        );
+    }
+    assert!(
+        src.contains("pub struct InotifyFile"),
+        "inotify 必须暴露 InotifyFile 对象 (fd 对象模型)"
     );
 }
 

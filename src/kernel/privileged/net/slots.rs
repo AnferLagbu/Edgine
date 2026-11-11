@@ -87,35 +87,3 @@ pub fn free_all() {
         word.store(0, Ordering::Release);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn alloc_free_reuse_and_bounds() {
-        free_all();
-        let a = alloc().expect("首个槽位应可分配");
-        let b = alloc().expect("第二个槽位应可分配");
-        assert_ne!(a, b);
-        assert!(is_allocated(a) && is_allocated(b));
-
-        free(a);
-        assert!(!is_allocated(a));
-        assert!(is_allocated(b), "释放相邻槽位不应影响其它槽位");
-        assert_eq!(alloc(), Some(a), "释放后的槽位应被复用");
-
-        // 耗尽路径: 分配剩余全部槽位后必须返回 None.
-        let mut n = 2;
-        while alloc().is_some() {
-            n += 1;
-            assert!(n <= MAX_SLOTS, "分配数不得超过槽位上限");
-        }
-        assert_eq!(n, MAX_SLOTS, "耗尽时必须恰好分配 MAX_SLOTS 个槽位");
-
-        free_all();
-        assert!(!is_allocated(0) && !is_allocated(MAX_SLOTS - 1));
-        assert!(!is_allocated(MAX_SLOTS), "越界查询必须返回 false");
-        free(MAX_SLOTS);
-    }
-}

@@ -5,9 +5,9 @@
 //! 原代码于 T6-5 (2026-06-16) 迁至 `functions::proc::fd_alloc`, 本文件仅 re-export。
 //! 按"机制持有的数据结构/常量归 privileged"统一判据反转：全局 FD 编号是**用户态
 //! 可见的内核机制** (集中基址规划 + 位图分配/释放/反查), 被 privileged 3 处
-//! (sm_fi/signalfd/timerfd) + functions (inotify/pidfd) 消费 — 属机制项,
-//! 迁回。EventFd 已于 fd 对象模型阶段 3 迁出本分配器 (per-process fd 表 +
-//! `OpenFileTable`), 其 FdPlan 段仅保留至阶段 4 退役。
+//! (sm_fi/signalfd/timerfd) + functions (pidfd) 消费 — 属机制项,
+//! 迁回。EventFd / Inotify 已于 fd 对象模型阶段 3 迁出本分配器 (per-process
+//! fd 表 + `OpenFileTable`), 其 FdPlan 段仅保留至阶段 4 退役。
 //! 依赖仅 `fd_table::MAX_FDS_PER_PROCESS` (编译期 const, VFS 段宽度单一来源);
 //! 其余为纯 core 原子 + 编译期 const 规划。
 //!
@@ -30,7 +30,7 @@
 //! | Uds     | 1000 | UDS 范围 | 16 | `privileged/net/unix.rs` |
 //! | EventFd | 1100 | EFD 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | SignalFd| 1120 | SFD 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
-//! | Inotify | 1140 | INOTIFY 范围 | 16 | `functions/fs/inotify.rs` |
+//! | Inotify | 1140 | INOTIFY 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | TimerFd | 1160 | `TIMER_FD` 范围 | 16 | `privileged/syscall/timerfd.rs` |
 //! | PidFd   | 1180 | `PID_FD` 范围 | 16 | `functions/proc/pidfd.rs` |
 //! | UserFaultFd | 1200 | `USERFAULT_FD` 范围 | 16 | `privileged/mm/uffd.rs` |
@@ -381,7 +381,7 @@ pub const fn max_slots(sub: FdSubsystem) -> usize {
 ///
 /// V4 替代各子系统的本地 `fd_to_idx` 函数 (`signalfd` / `timerfd` / `unix`),
 /// 集中表达式. 子系统本地不再持有 `*_FD_BASE` 字面量 + 减法边界检查.
-/// `EventFd` 已迁出数值 FD 空间 (fd 对象模型阶段 3), 不再消费本函数.
+/// `EventFd` / `Inotify` 已迁出数值 FD 空间 (fd 对象模型阶段 3), 不再消费本函数.
 ///
 /// 返回 `Some((sub, slot))` 当 `fd ∈ FdPlan::range_for(sub)` 时, 否则 `None`.
 ///
