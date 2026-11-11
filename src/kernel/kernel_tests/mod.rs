@@ -16,6 +16,7 @@ pub mod test_ipc;
 pub mod test_ipc_inline;
 pub mod test_pwm;
 pub mod test_signalfd;
+pub mod test_timerfd;
 pub mod test_uds;
 
 /// FS 全局单例初始化 — 测试模式下注册前必须调用.
@@ -40,6 +41,8 @@ pub fn register_upper_tests() {
     test_inotify::register_inotify_tests();
     #[cfg(feature = "kernel_test")]
     test_signalfd::register_signalfd_tests();
+    #[cfg(feature = "kernel_test")]
+    test_timerfd::register_timerfd_tests();
     #[cfg(target_arch = "x86_64")]
     sys::register_tests();
 }

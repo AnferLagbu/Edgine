@@ -452,7 +452,6 @@ pub fn register_all_tests() {
         crate::privileged::mm::swap::register_swap_tests();
         crate::privileged::pci::msi::register_msi_tests();
         crate::privileged::syscall::epoll::register_epoll_tests();
-        crate::privileged::syscall::timerfd::register_timerfd_tests();
     }
 }
 

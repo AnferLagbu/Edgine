@@ -138,37 +138,6 @@ fn test_fd_range_overlaps_helper() {
 }
 
 #[test]
-fn test_v2_subsystems_reference_fdplan() {
-    // TD-02 V2: 仍留在 FdPlan 的子系统 *FD_BASE 常量必须从 FdPlan 派生, 不再硬编码字面量
-    // (eventfd/signalfd/eventfd 与 UDS/inotify 已在 fd 对象模型阶段 3 迁至
-    // OpenFileTable, 策略表只持槽位下标 — 均无 *FD_BASE)
-    let cases: &[(&str, &str, &str)] = &[(
-        "TFD_FD_BASE",
-        "src/kernel/privileged/syscall/timerfd.rs",
-        "crate::privileged::proc::FdPlan::TIMER_FD.base",
-    )];
-    for (const_name, rel_path, expected_ref) in cases {
-        let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join(rel_path);
-        let src = fs::read_to_string(&p).unwrap_or_else(|_| panic!("读 {rel_path}"));
-        let needle = format!("pub const {const_name}: i32 =");
-        let found = src.lines().any(|l| l.trim().starts_with(&needle));
-        assert!(found, "{const_name} 定义缺失 in {rel_path}");
-        assert!(
-            src.contains(expected_ref),
-            "{} 必须引用 {} (TD-02 V2 单一来源), 实为: {}",
-            const_name,
-            expected_ref,
-            src.lines()
-                .find(|l| l.trim().starts_with(&needle))
-                .unwrap_or("?")
-        );
-    }
-}
-
-#[test]
 fn test_v2_smoltcp_capacity_derived_from_fdplan() {
     // TD-02 V2: smoltcp MAX_SM_FD 从 FdPlan::SMOLTCP.capacity 派生
     let p = Path::new(env!("CARGO_MANIFEST_DIR"))

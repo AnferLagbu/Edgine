@@ -70,6 +70,8 @@ pub mod stat;
 pub mod sysfs;
 /// G9: 动态系统树
 pub mod systree;
+/// 统一 fd 对象模型: timerfd 定时器对象
+pub mod timerfd;
 /// tmpfs 临时文件系统 (基于 ramfs 的内存文件系统)
 pub mod tmpfs;
 /// VFS 管理器 (挂载表 + FD 表 + 路径解析)

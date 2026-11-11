@@ -325,6 +325,7 @@ fn inode_namespace_key_is_object_declared() {
         "functions/fs/eventfd.rs",
         "functions/fs/signalfd.rs",
         "functions/fs/inotify.rs",
+        "functions/fs/timerfd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn inode_namespace_id"),
@@ -392,6 +393,7 @@ fn mmap_requires_object_declared_backing() {
         "functions/fs/eventfd.rs",
         "functions/fs/signalfd.rs",
         "functions/fs/inotify.rs",
+        "functions/fs/timerfd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn mmap_backing"),
@@ -1246,6 +1248,138 @@ fn inotify_dispatch_sites_use_vfs_object_path() {
     );
     assert!(
         read_file("kernel_tests/mod.rs").contains("test_inotify::register_inotify_tests()"),
+        "对象级内核测试必须注册到 glue 侧统一 runner"
+    );
+}
+
+// ============================================================================
+// 阶段 3 第 6 个迁移子系统: TimerFd — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn timerfd_object_implements_file_contract() {
+    use edgine::kernel::functions::fs::timerfd::TimerFdFile;
+
+    // 槽位下标不触碰定时器策略表 (read/poll 会访问, 此处仅验证纯对象面)
+    let tf = TimerFdFile::new(2);
+    assert_eq!(tf.idx(), 2, "策略表槽位下标原样保存");
+    assert!(tf.stream(), "timerfd 不可定位 (lseek → ESPIPE)");
+    assert!(tf.as_inode().is_none(), "timerfd 非 inode 承载");
+    assert!(tf.mmap_backing().is_none(), "timerfd 不可作 mmap 后端");
+    assert!(
+        tf.inode_namespace_id().is_none(),
+        "timerfd 不属于 inode 命名空间"
+    );
+    assert_eq!(tf.file_type(), VfsFileType::File);
+    assert_eq!(
+        tf.io_control(0x1234_5678, 0),
+        Err(KernelError::NotSupported),
+        "timerfd 对象不处理通用 ioctl (回落默认策略)"
+    );
+    assert_eq!(
+        tf.write_at(0, &[0u8; 8], 0),
+        Err(KernelError::InvalidArgument),
+        "timerfd fd 只读 (写 → EINVAL)"
+    );
+
+    let of = OpenFile::from_file(Arc::new(TimerFdFile::new(2)), 0, 0);
+    let recovered = of
+        .file()
+        .as_any()
+        .downcast_ref::<TimerFdFile>()
+        .expect("TimerFdFile 必须可下转型");
+    assert_eq!(recovered.idx(), 2);
+    assert!(!of.is_nonblock(), "OpenFile 缺省阻塞");
+    of.set_nonblock(true);
+    assert!(
+        of.is_nonblock(),
+        "F_SETFL 的非阻塞位由 OpenFile 单点承载 (timerfd 对象不另存)"
+    );
+}
+
+#[test]
+fn timerfd_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/fs/timerfd.rs");
+    for needle in [
+        "impl File for TimerFdFile",
+        "OpenFile::from_file",
+        "OPEN_FILE_TABLE.alloc",
+        "t.alloc_fd(handle_id, cloexec)",
+        "OPEN_FILE_TABLE.close(handle_id)",
+        "OPEN_FILE_TABLE.dec_ref(handle_id)",
+        "Self::free_slot(idx)",
+        "Self::free_slot(self.idx)",
+    ] {
+        assert!(
+            src.contains(needle),
+            "timerfd 创建/释放路径必须含: {needle}"
+        );
+    }
+    for needle in [
+        "TFD_FD_BASE",
+        "FdPlan",
+        "fd_alloc::",
+        "fd_at(",
+        "is_timerfd_fd",
+        "fd_to_slot",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "迁移后不得引用全局 FD 编号区间 / fd_alloc 位图: {needle}"
+        );
+    }
+
+    // 机制侧 (privileged) 只暴露槽位 API, 编号空间归 fd 对象模型
+    let mech = read_file("privileged/syscall/timerfd.rs");
+    for needle in [
+        "TFD_FD_BASE",
+        "FdPlan",
+        "fd_alloc::",
+        "fn fd_to_idx",
+        "fn is_timerfd_fd",
+        "timerfd_poll_events",
+    ] {
+        assert!(
+            !mech.contains(needle),
+            "privileged 定时器机制不得残留编号空间/分发入口: {needle}"
+        );
+    }
+    assert!(
+        mech.contains("pub fn alloc_slot"),
+        "privileged 定时器机制必须只暴露 slot 分配 (OpenFileTable 独占 fd 编号)"
+    );
+}
+
+#[test]
+fn timerfd_dispatch_sites_use_vfs_object_path() {
+    // io.rs / sendfile.rs / epoll.rs 不得残留 timerfd 数值 fd 特判
+    let io = read_file("functions/fs/io.rs");
+    for needle in ["is_timerfd_fd", "sys_timerfd_read"] {
+        assert!(!io.contains(needle), "io.rs 不得残留 `{needle}` 数值特判");
+    }
+    let sendfile = read_file("functions/fs/sendfile.rs");
+    assert!(
+        !sendfile.contains("is_timerfd_fd"),
+        "sendfile.rs 不得残留 timerfd 数值特判"
+    );
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    assert!(
+        !epoll.contains("is_timerfd_fd") && !epoll.contains("timerfd_poll_events"),
+        "epoll 就绪检查不得残留 timerfd 数值分支 (走 fd_poll_special 对象分发)"
+    );
+
+    // File 接口面: 到期计数经 read_at 出队, poll 报 IN
+    let src = read_file("functions/fs/timerfd.rs");
+    assert!(
+        src.contains("fn read_at(") && src.contains("fn poll("),
+        "timerfd 对象必须实现 read_at / poll (VFS / epoll 分发前提)"
+    );
+    assert!(
+        src.contains("poll_ready"),
+        "poll 就绪判据必须来自定时器策略表的到期查询"
+    );
+    assert!(
+        read_file("kernel_tests/mod.rs").contains("test_timerfd::register_timerfd_tests()"),
         "对象级内核测试必须注册到 glue 侧统一 runner"
     );
 }

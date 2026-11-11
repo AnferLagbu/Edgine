@@ -1283,18 +1283,18 @@ fn dispatch_sync(num: u64, args: [u64; 6]) -> Option<i64> {
         )),
 
         // timerfd
-        SYS_TIMERFD_CREATE => as_ret(crate::functions::timer::timerfd::timerfd_create_syscall(
+        SYS_TIMERFD_CREATE => as_ret(crate::functions::fs::timerfd::timerfd_create_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
             crate::functions::intcast::low_i32_from_u64(a1),
         )),
-        SYS_TIMERFD_SETTIME => as_ret(crate::functions::timer::timerfd::timerfd_settime_syscall(
-            crate::functions::intcast::low_i32_from_u64(a0),
+        SYS_TIMERFD_SETTIME => as_ret(crate::functions::fs::timerfd::timerfd_settime_syscall(
+            i64::from(crate::functions::intcast::low_i32_from_u64(a0)),
             crate::functions::intcast::low_i32_from_u64(a1),
             a2,
             a3,
         )),
-        SYS_TIMERFD_GETTIME => as_ret(crate::functions::timer::timerfd::timerfd_gettime_syscall(
-            crate::functions::intcast::low_i32_from_u64(a0),
+        SYS_TIMERFD_GETTIME => as_ret(crate::functions::fs::timerfd::timerfd_gettime_syscall(
+            i64::from(crate::functions::intcast::low_i32_from_u64(a0)),
             a1,
         )),
 

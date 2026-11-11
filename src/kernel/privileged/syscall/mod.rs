@@ -33,6 +33,12 @@ pub mod timerfd;
 /// - 编号常量唯一定义于 `types.rs` (B09-17 归位), 禁止在其他文件重复定义.
 // 公共接口 re-export — 避免跨子系统直接访问内部子模块
 pub use epoll::{EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP, epoll_pwake};
+// timerfd 槽位机制 — 供 functions 侧 `TimerFdFile` 对象消费 (fd 对象模型阶段 3);
+// 槽位表与 HrTimer 必须留在 privileged 静态存储, 故以安全槽位 API 作公开出口.
+pub use timerfd::{
+    TFD_MAX_SLOTS, TakeExpiry, alloc_slot, free_slot, get_time, poll_ready, set_time, set_wake_fd,
+    take_expiry,
+};
 pub use types::Errno;
 pub use types::*;
 

@@ -97,7 +97,7 @@ pub mod freg;
 /// functions 层的安全抽象 (闭包 API / 一次性初始化等)。
 pub mod sync;
 
-/// 定时器子系统 — sleep / POSIX Timer / timerfd / Tickless / NTP-PTP
+/// 定时器子系统 — sleep / POSIX Timer / Tickless / NTP-PTP
 ///
 /// 底层实现见 `privileged::timer` (TCB); 本模块提供
 /// functions 层的安全代理与参数验证 (0 unsafe)。

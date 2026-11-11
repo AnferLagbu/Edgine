@@ -1,8 +1,19 @@
-//! timerfd — 定时器文件描述符 (TCB)
+//! timerfd — 定时器槽位机制 (TCB)
 //!
-//! 实现 Linux timerfd API: `timerfd_create` / `timerfd_settime` / `timerfd_gettime`.
+//! ## fd 对象模型 (阶段 3 第 6 个迁移子系统)
 //!
-//! ## 架构
+//! 自 fd 对象模型阶段 3 起, timerfd 的 fd 编号与对象归属不再由本模块持有:
+//! `TimerFdFile` 对象 (`functions::fs::timerfd`) 挂在全局 `OpenFileTable`,
+//! 用户 fd 由 per-process `FdTable` 分配. 本模块只保留**机制面**:
+//!
+//! - 全局槽位表 `TFD_TABLE` (静态存储, 内核生命周期)
+//! - 嵌入槽位的 `HrTimer` 与到期回调
+//! - 供对象层调用的安全槽位 API (分配 / 设时 / 取到期 / 轮询 / 释放)
+//!
+//! 槽位表必须留在 privileged 静态存储: `hrtimer_cancel` 是异步的 (仅置
+//! Inactive, 队列条目延迟到下次 `hrtimer_run_queues` 移除), 若 `HrTimer`
+//! 随堆上 `Arc<dyn File>` 释放, 迟到回调会触发 use-after-free. 静态槽位
+//! 保证 `HrTimer` 指针在整个内核生命周期有效.
 //!
 //! ```text
 //! TimerFdTable (全局, IrqSpinLock 保护)
@@ -10,84 +21,46 @@
 //!         ├── timer: HrTimer       (嵌入 hrtimer 对象)
 //!         ├── expiry_count: u64    (到期次数累计)
 //!         ├── interval_ns: u64     (周期间隔, 0=单次)
-//!         ├── clockid: i32         (CLOCK_MONOTONIC / CLOCK_REALTIME)
 //!         ├── armed: bool          (是否已启动)
-//!         └── used: bool
-//!
-//! FD 空间: [240, 240 + TFD_MAX_SLOTS)
-//!
-//! read(fd): 返回 expiry_count 并清零; 未到期 → EAGAIN
-//!
-//! timerfd_settime: 设置到期时间和间隔, 启动 hrtimer
-//! timerfd_gettime: 获取剩余时间和间隔
-//!
-//! epoll 集成: expiry_count > 0 → EPOLLIN
+//!         ├── used: bool
+//!         └── wake_fd: i32         (对象挂表时登记的唤醒 fd, -1=未登记)
 //! ```
+//!
+//! epoll 集成: `expiry_count > 0` → `EPOLLIN`; 回调在槽位表锁释放后用
+//! `epoll_pwake(wake_fd)` 唤醒等待者.
 //!
 //! # Safety
 //!
 //! - `TimerFdTable` 由 `IrqSpinLock` 保护
-//! - `HrTimer` 回调在中断上下文执行, 仅递增 `expiry_count` 和唤醒 epoll
-//! - `HrTimer` 对象嵌入 `TimerFdSlot`, 生命周期与槽位一致
+//! - `HrTimer` 回调在中断上下文执行 (不可睡眠); 回调内先取槽位表锁, 释放
+//!   后再唤醒 epoll / 重新入队, 不嵌套其它锁
+//! - `HrTimer` 对象嵌入静态槽位, 生命周期与内核一致
 
 #![deny(missing_docs)]
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use crate::privileged::syscall::Errno;
 use crate::privileged::timer::{
     HrTimer, HrTimerRestart, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
 };
 
 // ============================================================================
-// 常量
+// 公共类型
 // ============================================================================
 
-/// timerfd 最大实例数
+/// timerfd 最大实例数 (全局槽位表容量, 非 fd 编号空间)
 pub const TFD_MAX_SLOTS: usize = 16;
-/// TD-15: FD 空间基址来源已迁移至 `privileged::proc::FdPlan::TIMER_FD` 单一来源 (1160),
-/// 不再硬编码 240 (旧值与 smoltcp [0, 256) 重叠).
-pub const TFD_FD_BASE: i32 = crate::privileged::proc::FdPlan::TIMER_FD.base;
-/// `TFD_CLOEXEC`
-pub const TFD_CLOEXEC: i32 = 0o200_0000;
-/// `TFD_NONBLOCK`
-pub const TFD_NONBLOCK: i32 = 0o4000;
-/// `TFD_TIMER_ABSTIME`
-pub const TFD_TIMER_ABSTIME: i32 = 1;
 
-/// `CLOCK_MONOTONIC`
-pub const CLOCK_MONOTONIC: i32 = 1;
-/// `CLOCK_REALTIME`
-pub const CLOCK_REALTIME: i32 = 0;
+/// 槽位时间读数 `(interval_ns, remaining_ns)`
+pub type TimerTime = (u64, u64);
 
-/// itimerspec 结构体 (与 Linux 兼容)
-///
-/// 字段名对应 C `itimerspec` 的 `it_interval` / `it_value` 两个 `timespec` 的
-/// `tv_sec` / `tv_nsec`（按序仅去前缀, 顺序与类型不变）。
-#[repr(C)]
-pub struct Itimerspec {
-    /// 间隔时间
-    pub interval_sec: i64,
-    /// 间隔时间纳秒部分 (与秒部分合计为间隔时长)
-    pub interval_nsec: i64,
-    /// 初次到期时间
-    pub value_sec: i64,
-    /// 初次到期时间纳秒部分 (与秒部分合计为绝对到期时刻)
-    pub value_nsec: i64,
-}
-
-impl Itimerspec {
-    /// 构造全零的 itimerspec (无间隔、无到期时间)。
-    #[must_use]
-    pub const fn zeroed() -> Self {
-        Self {
-            interval_sec: 0,
-            interval_nsec: 0,
-            value_sec: 0,
-            value_nsec: 0,
-        }
-    }
+/// 到期计数出队结果
+pub enum TakeExpiry {
+    /// 有待消费的到期次数
+    Count(u64),
+    /// 无待消费事件 (非阻塞读 → `EAGAIN`)
+    Empty,
+    /// 槽位无效 (fd 已关闭 → `EBADF`)
+    Invalid,
 }
 
 // ============================================================================
@@ -100,16 +73,14 @@ struct TimerFdSlot {
     timer: HrTimer,
     /// 到期次数累计 (read 时清零)
     expiry_count: u64,
-    /// 周期间隔 (纳秒)
+    /// 周期间隔 (纳秒, 0 = 单次)
     interval_ns: u64,
-    /// 时钟 ID
-    clockid: i32,
     /// 是否已启动 (armed)
     armed: bool,
     /// 是否已使用
     used: bool,
-    /// 对应的 fd (回调中需要)
-    fd: i32,
+    /// 唤醒用数值 fd (对象挂表时登记; -1 = 未登记)
+    wake_fd: i32,
 }
 
 impl TimerFdSlot {
@@ -118,11 +89,20 @@ impl TimerFdSlot {
             timer: HrTimer::uninit(),
             expiry_count: 0,
             interval_ns: 0,
-            clockid: CLOCK_MONOTONIC,
             armed: false,
             used: false,
-            fd: 0,
+            wake_fd: -1,
         }
+    }
+
+    /// 复位槽位 (对象 `release()` 驱动)
+    fn reset(&mut self) {
+        self.timer.init(timerfd_callback);
+        self.expiry_count = 0;
+        self.interval_ns = 0;
+        self.armed = false;
+        self.used = false;
+        self.wake_fd = -1;
     }
 }
 
@@ -142,273 +122,120 @@ impl TimerFdTable {
 /// 全局 timerfd 表
 static TFD_TABLE: Mutex<TimerFdTable> = Mutex::new(TimerFdTable::new());
 
-/// 已分配的 timerfd 数量
-static TFD_COUNT: AtomicU32 = AtomicU32::new(0);
-
 // ============================================================================
-// 系统调用实现
+// 槽位 API (供 `TimerFdFile` 对象调用)
 // ============================================================================
 
-/// `timerfd_create` — 创建 timerfd 实例
-///
-/// `clockid`: `CLOCK_MONOTONIC` 或 `CLOCK_REALTIME`
-/// `flags`: `TFD_CLOEXEC` | `TFD_NONBLOCK`
-/// 返回 fd (≥ 240), 或负 errno
-pub fn sys_timerfd_create(clockid: i32, flags: i32) -> i64 {
-    // clockid 校验
-    if clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME {
-        return Errno::Einval.as_ret();
-    }
-
-    // flags 校验
-    let valid_flags = TFD_CLOEXEC | TFD_NONBLOCK;
-    if flags & !valid_flags != 0 {
-        return Errno::Einval.as_ret();
-    }
-
-    // V2: 使用集中分配器获取 FD
-    let Some(fd) = crate::privileged::proc::fd_alloc::alloc_fd(
-        crate::privileged::proc::fd_alloc::FdSubsystem::TimerFd,
-    ) else {
-        return Errno::Emfile.as_ret();
-    };
-
-    let Some((_sub, slot)) = crate::privileged::proc::fd_alloc::idx_of(fd) else {
-        return Errno::Ebadf.as_ret();
-    };
-
+/// 分配一个空闲槽位并初始化其 `HrTimer`; 表满返回 `None`.
+pub fn alloc_slot() -> Option<usize> {
     let mut table = TFD_TABLE.lock();
-    let s = &mut table.slots[slot];
-    s.used = true;
-    s.fd = fd;
-    s.clockid = clockid;
-    s.armed = false;
-    s.expiry_count = 0;
-    s.interval_ns = 0;
-
-    // 初始化 HrTimer, 回调使用 slot index 编码
-    // SAFETY: timer 嵌入在 slot 中, 生命周期与 slot 一致
-    s.timer.init(timerfd_callback);
-
-    TFD_COUNT.fetch_add(1, Ordering::Relaxed);
-
-    crate::klog_debug!(Sync, "[timerfd] Created fd={} clockid={}", fd, clockid);
-    i64::from(fd)
+    let (idx, slot) = table.slots.iter_mut().enumerate().find(|(_, s)| !s.used)?;
+    slot.reset();
+    slot.used = true;
+    Some(idx)
 }
 
-/// `timerfd_settime` — 设置定时器
-///
-/// `fd`: timerfd 文件描述符
-/// `flags`: 0 或 `TFD_TIMER_ABSTIME`
-/// `new_value_ptr`: 指向 itimerspec 的用户空间指针
-/// `old_value_ptr`: 指向旧 itimerspec 的用户空间指针 (可为 null)
-/// 返回 0 或负 errno
-pub fn sys_timerfd_settime(fd: i32, flags: i32, new_value_ptr: u64, old_value_ptr: u64) -> i64 {
-    let Some(idx) = fd_to_idx(fd) else {
-        return Errno::Ebadf.as_ret();
-    };
-
-    // flags 校验
-    if flags & !TFD_TIMER_ABSTIME != 0 {
-        return Errno::Einval.as_ret();
-    }
-
-    if new_value_ptr == 0 {
-        return Errno::Efault.as_ret();
-    }
-
-    // 读取新值
-    // SAFETY: new_value_ptr 由 syscall 入口验证
-    let new_value = unsafe { core::ptr::read(new_value_ptr as *const Itimerspec) };
-
-    // 校验: it_value 必须非零才能启动 (it_value 全零 = disarm)
-    let value_ns =
-        new_value.value_sec.cast_unsigned() * 1_000_000_000 + new_value.value_nsec.cast_unsigned();
-    let interval_ns = new_value.interval_sec.cast_unsigned() * 1_000_000_000
-        + new_value.interval_nsec.cast_unsigned();
-
+/// 登记唤醒用数值 fd (对象完成 `OpenFileTable` + per-process fd 表挂载后调用).
+pub fn set_wake_fd(idx: usize, fd: i32) {
     let mut table = TFD_TABLE.lock();
-    let slot = &mut table.slots[idx];
-
-    if !slot.used {
-        return Errno::Ebadf.as_ret();
+    if let Some(slot) = table.slots.get_mut(idx) {
+        slot.wake_fd = fd;
     }
-
-    // 保存旧值到 old_value_ptr
-    if old_value_ptr != 0 {
-        let remaining = if slot.armed {
-            let now = hrtimer_clock_read();
-            slot.timer.expiry_ns().saturating_sub(now)
-        } else {
-            0
-        };
-        let old = Itimerspec {
-            interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-            interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-            value_sec: (remaining / 1_000_000_000).cast_signed(),
-            value_nsec: (remaining % 1_000_000_000).cast_signed(),
-        };
-        // SAFETY: old_value_ptr 由 syscall 入口验证
-        unsafe {
-            core::ptr::write(old_value_ptr as *mut Itimerspec, old);
-        }
-    }
-
-    // 取消旧定时器
-    if slot.armed {
-        hrtimer_cancel(&slot.timer);
-        slot.armed = false;
-    }
-
-    // it_value 全零 = disarm
-    if value_ns == 0 {
-        slot.expiry_count = 0;
-        slot.interval_ns = 0;
-        crate::klog_debug!(Sync, "[timerfd] Disarm fd={}", fd);
-        return 0;
-    }
-
-    // 启动新定时器
-    slot.interval_ns = interval_ns;
-    slot.expiry_count = 0;
-
-    let expiry_ns = if (flags & TFD_TIMER_ABSTIME) != 0 {
-        value_ns // 绝对时间
-    } else {
-        hrtimer_clock_read() + value_ns // 相对时间
-    };
-
-    if interval_ns > 0 {
-        // 周期定时器: 使用 hrtimer_start_periodic 语义
-        // 但我们需要自定义回调行为 (递增 expiry_count 而非重新入队)
-        // 所以手动设置 interval 并启动
-        slot.timer.init(timerfd_callback);
-        hrtimer_start(&slot.timer, expiry_ns);
-        // 注意: hrtimer 周期重启在回调中处理
-    } else {
-        slot.timer.init(timerfd_callback);
-        hrtimer_start(&slot.timer, expiry_ns);
-    }
-
-    slot.armed = true;
-
-    crate::klog_debug!(
-        Sync,
-        "[timerfd] Settime fd={} value_ns={} interval_ns={} abstime={}",
-        fd,
-        value_ns,
-        interval_ns,
-        (flags & TFD_TIMER_ABSTIME) != 0
-    );
-    0
 }
 
-/// `timerfd_gettime` — 获取定时器状态
+/// 设置定时器, 返回设置前的 `(interval_ns, remaining_ns)`; 槽位无效返回 `None`.
 ///
-/// `fd`: timerfd 文件描述符
-/// `curr_value_ptr`: 指向 itimerspec 的用户空间指针
-/// 返回 0 或负 errno
-pub fn sys_timerfd_gettime(fd: i32, curr_value_ptr: u64) -> i64 {
-    let Some(idx) = fd_to_idx(fd) else {
-        return Errno::Ebadf.as_ret();
-    };
-
-    if curr_value_ptr == 0 {
-        return Errno::Efault.as_ret();
-    }
-
-    let table = TFD_TABLE.lock();
-    let slot = &table.slots[idx];
-
+/// `value_ns == 0` 表示 disarm (与 Linux 一致). `abstime == true` 时
+/// `value_ns` 视为绝对到期时刻 (与 `hrtimer_clock_read()` 同一单调时基).
+pub fn set_time(idx: usize, value_ns: u64, interval_ns: u64, abstime: bool) -> Option<TimerTime> {
+    let mut table = TFD_TABLE.lock();
+    let slot = table.slots.get_mut(idx)?;
     if !slot.used {
-        return Errno::Ebadf.as_ret();
+        return None;
     }
 
+    let now = hrtimer_clock_read();
     let remaining = if slot.armed {
-        let now = hrtimer_clock_read();
         slot.timer.expiry_ns().saturating_sub(now)
     } else {
         0
     };
-    let curr = Itimerspec {
-        interval_sec: (slot.interval_ns / 1_000_000_000).cast_signed(),
-        interval_nsec: (slot.interval_ns % 1_000_000_000).cast_signed(),
-        value_sec: (remaining / 1_000_000_000).cast_signed(),
-        value_nsec: (remaining % 1_000_000_000).cast_signed(),
-    };
-
-    // SAFETY: curr_value_ptr 由 syscall 入口验证
-    unsafe {
-        core::ptr::write(curr_value_ptr as *mut Itimerspec, curr);
-    }
-
-    0
-}
-
-/// timerfd read — 读取到期次数
-///
-/// `fd`: timerfd 文件描述符
-/// `buf`: 用户空间 8 字节缓冲区
-/// 返回 8 (成功), 或负 errno
-pub fn sys_timerfd_read(fd: i32, buf: u64) -> i64 {
-    let Some(idx) = fd_to_idx(fd) else {
-        return Errno::Ebadf.as_ret();
-    };
-
-    let mut table = TFD_TABLE.lock();
-    let slot = &mut table.slots[idx];
-
-    if !slot.used {
-        return Errno::Ebadf.as_ret();
-    }
-
-    if slot.expiry_count == 0 {
-        return Errno::Eagain.as_ret();
-    }
-
-    let count = slot.expiry_count;
-    slot.expiry_count = 0;
-
-    drop(table);
-
-    if buf == 0 {
-        return Errno::Efault.as_ret();
-    }
-    // SAFETY: buf 由 syscall 入口验证
-    unsafe {
-        core::ptr::write(buf as *mut u64, count);
-    }
-
-    crate::klog_debug!(Sync, "[timerfd] Read fd={} count={}", fd, count);
-    8
-}
-
-/// timerfd close — 关闭 timerfd
-pub fn sys_timerfd_close(fd: i32) -> i64 {
-    let Some(idx) = fd_to_idx(fd) else {
-        return Errno::Ebadf.as_ret();
-    };
-
-    let mut table = TFD_TABLE.lock();
-    let slot = &mut table.slots[idx];
-
-    if !slot.used {
-        return Errno::Ebadf.as_ret();
-    }
+    let old = (slot.interval_ns, remaining);
 
     if slot.armed {
         hrtimer_cancel(&slot.timer);
+        slot.armed = false;
+    }
+    slot.expiry_count = 0;
+
+    if value_ns == 0 {
+        slot.interval_ns = 0;
+        return Some(old);
     }
 
-    slot.used = false;
-    slot.armed = false;
-    slot.expiry_count = 0;
-    slot.interval_ns = 0;
-    slot.fd = 0;
-    TFD_COUNT.fetch_sub(1, Ordering::Relaxed);
+    slot.interval_ns = interval_ns;
+    slot.timer.init(timerfd_callback);
+    let expiry_ns = if abstime {
+        value_ns
+    } else {
+        now.saturating_add(value_ns)
+    };
+    hrtimer_start(&slot.timer, expiry_ns);
+    slot.armed = true;
+    Some(old)
+}
 
-    crate::klog_debug!(Sync, "[timerfd] Closed fd={}", fd);
-    0
+/// 读取当前 `(interval_ns, remaining_ns)`; 槽位无效返回 `None`.
+pub fn get_time(idx: usize) -> Option<TimerTime> {
+    let table = TFD_TABLE.lock();
+    let slot = table.slots.get(idx)?;
+    if !slot.used {
+        return None;
+    }
+    let remaining = if slot.armed {
+        slot.timer.expiry_ns().saturating_sub(hrtimer_clock_read())
+    } else {
+        0
+    };
+    Some((slot.interval_ns, remaining))
+}
+
+/// 取出到期次数 (读后清零).
+pub fn take_expiry(idx: usize) -> TakeExpiry {
+    let mut table = TFD_TABLE.lock();
+    let Some(slot) = table.slots.get_mut(idx) else {
+        return TakeExpiry::Invalid;
+    };
+    if !slot.used {
+        return TakeExpiry::Invalid;
+    }
+    if slot.expiry_count == 0 {
+        return TakeExpiry::Empty;
+    }
+    let count = slot.expiry_count;
+    slot.expiry_count = 0;
+    TakeExpiry::Count(count)
+}
+
+/// 查询槽位是否就绪 (到期计数非空); 槽位无效返回 `None`.
+pub fn poll_ready(idx: usize) -> Option<bool> {
+    let table = TFD_TABLE.lock();
+    let slot = table.slots.get(idx)?;
+    if !slot.used {
+        return None;
+    }
+    Some(slot.expiry_count > 0)
+}
+
+/// 释放槽位 (最后一个 fd 引用关闭时调用).
+pub fn free_slot(idx: usize) {
+    let mut table = TFD_TABLE.lock();
+    let Some(slot) = table.slots.get_mut(idx) else {
+        return;
+    };
+    if slot.used {
+        slot.reset();
+    }
 }
 
 // ============================================================================
@@ -417,177 +244,44 @@ pub fn sys_timerfd_close(fd: i32) -> i64 {
 
 /// timerfd 定时器回调
 ///
-/// 在中断上下文执行: 递增 `expiry_count`, 唤醒 epoll.
-/// 周期定时器: 手动重新入队.
+/// 在中断上下文执行: 递增到期计数, 唤醒 epoll; 周期定时器手动重新入队.
+/// 槽位经 `timer` 地址在静态槽位表中反查 (不依赖裸指针偏移假设).
 fn timerfd_callback(timer: &HrTimer) -> HrTimerRestart {
-    // 从 timer 指针反推 slot index
-    // HrTimer 嵌入在 TimerFdSlot 中, 偏移量为 0 (第一个字段)
-    let slot_ptr = core::ptr::from_ref::<HrTimer>(timer).cast::<TimerFdSlot>();
-    // SAFETY: timer 嵌入在 slot 中, 指针有效
-    let slot = unsafe { &*slot_ptr };
-
-    let fd = slot.fd;
+    let mut table = TFD_TABLE.lock();
+    let Some(idx) = table
+        .slots
+        .iter()
+        .position(|s| core::ptr::eq(&raw const s.timer, timer))
+    else {
+        return HrTimerRestart::OneShot;
+    };
+    let slot = &mut table.slots[idx];
+    let wake_fd = slot.wake_fd;
     let interval_ns = slot.interval_ns;
+    if slot.used {
+        slot.expiry_count = slot.expiry_count.saturating_add(1);
+        if interval_ns == 0 {
+            // 单次定时器到期后自动解除 armed
+            slot.armed = false;
+        }
+    }
+    drop(table);
 
-    // 递增 expiry_count (需要锁保护, 因为 read 路径也访问)
-    // 但回调在中断上下文, 与 read 路径的锁可能冲突
-    // 使用 try_lock 避免死锁: 如果锁被持有了, 说明 read 正在进行,
-    // 我们在中断上下文不能等待, 直接递增 (原子性由中断禁用保证)
-    //
-    // 简化方案: expiry_count 使用原子操作
-    // 但 TimerFdSlot 不是原子字段... 需要调整
-    //
-    // 实际方案: 在中断上下文中, IrqSpinLock 是安全的 (不会睡眠)
-    {
-        let mut table = TFD_TABLE.lock();
-        // 重新定位 slot (因为锁释放后 table 可能被移动? 不, 是静态的)
-        let Some(idx) = fd_to_idx(fd) else {
-            return HrTimerRestart::OneShot;
-        };
-        table.slots[idx].expiry_count += 1;
+    if wake_fd >= 0 {
+        crate::privileged::syscall::epoll::epoll_pwake(wake_fd);
     }
 
-    // 唤醒 epoll
-    crate::privileged::syscall::epoll::epoll_pwake(fd);
-
-    // 周期定时器: 重新入队
+    // 周期定时器: 相对原到期时刻推进, 落后于当前时刻则从当前时刻重新计时
     if interval_ns > 0 {
         let now = hrtimer_clock_read();
-        let old_expiry = timer.expiry_ns();
-        let next_expiry = old_expiry + interval_ns;
-        let next = if next_expiry <= now {
-            now + interval_ns
+        let next = timer.expiry_ns().saturating_add(interval_ns);
+        let next = if next <= now {
+            now.saturating_add(interval_ns)
         } else {
-            next_expiry
+            next
         };
         hrtimer_start(timer, next);
-        // 不通过 HrTimerRestart::Periodic, 因为我们需要自定义 expiry_count 递增
-        HrTimerRestart::OneShot // 我们已手动重新入队
-    } else {
-        // 单次定时器
-        // SAFETY: slot 在 table 中, 生命周期由 table 管理
-        let mut table = TFD_TABLE.lock();
-        if let Some(idx) = fd_to_idx(fd) {
-            table.slots[idx].armed = false;
-        }
-        HrTimerRestart::OneShot
-    }
-}
-
-// ============================================================================
-// epoll 集成
-// ============================================================================
-
-/// 检查 timerfd 是否就绪 (供 epoll `check_fd_ready` 调用)
-///
-/// 返回 EPOLLIN (有到期事件) 或 0
-pub fn timerfd_poll_events(fd: i32) -> u32 {
-    use crate::privileged::syscall::{EPOLLERR, EPOLLIN};
-
-    let Some(idx) = fd_to_idx(fd) else {
-        return EPOLLERR;
-    };
-
-    let table = TFD_TABLE.lock();
-    let slot = &table.slots[idx];
-
-    if !slot.used {
-        return EPOLLERR;
     }
 
-    if slot.expiry_count > 0 { EPOLLIN } else { 0 }
-}
-
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/// fd → 槽位索引
-///
-/// TD-15: 改走 `fd_alloc::idx_of` 集中反查, 本地不再持有 `TFD_FD_BASE` 字面量 +
-/// 减法边界检查.
-fn fd_to_idx(fd: i32) -> Option<usize> {
-    match crate::privileged::proc::idx_of(fd) {
-        Some((crate::privileged::proc::FdSubsystem::TimerFd, slot)) => Some(slot),
-        _ => None,
-    }
-}
-
-/// 检查 fd 是否属于 timerfd 空间
-///
-/// TD-15: 改走 `fd_alloc::idx_of`, 不再持有 `TFD_FD_BASE` 字面量 + 算术.
-#[must_use]
-pub fn is_timerfd_fd(fd: i32) -> bool {
-    matches!(
-        crate::privileged::proc::idx_of(fd),
-        Some((crate::privileged::proc::FdSubsystem::TimerFd, _))
-    )
-}
-
-// ============================================================================
-// 内核测试
-// ============================================================================
-
-#[cfg(feature = "kernel_test")]
-fn test_timerfd_create() -> crate::privileged::tests::TestResult {
-    use crate::privileged::tests::{TestResult, check};
-
-    let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
-    check!(fd >= 240, "timerfd returns fd >= 240");
-
-    let fd2 = sys_timerfd_create(99, 0); // 无效 clockid
-    check!(fd2 < 0, "timerfd invalid clockid returns error");
-
-    sys_timerfd_close(crate::privileged::glue::low_i32_from_i64(fd));
-    TestResult::Pass
-}
-
-#[cfg(feature = "kernel_test")]
-fn test_timerfd_settime_disarm() -> crate::privileged::tests::TestResult {
-    use crate::privileged::tests::{TestResult, check};
-
-    let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
-    check!(fd >= 240, "timerfd create ok");
-
-    // disarm: it_value 全零
-    let new_val = Itimerspec::zeroed();
-    let ret = sys_timerfd_settime(
-        crate::privileged::glue::low_i32_from_i64(fd),
-        0,
-        (&raw const new_val) as u64,
-        0,
-    );
-    check!(ret == 0, "timerfd disarm ok");
-
-    sys_timerfd_close(crate::privileged::glue::low_i32_from_i64(fd));
-    TestResult::Pass
-}
-
-#[cfg(feature = "kernel_test")]
-fn test_timerfd_read_empty() -> crate::privileged::tests::TestResult {
-    use crate::privileged::tests::{TestResult, check};
-
-    let fd = sys_timerfd_create(CLOCK_MONOTONIC, 0);
-    check!(fd >= 240, "timerfd create ok");
-
-    // 未启动时 read → EAGAIN
-    let mut val: u64 = 0;
-    let ret = sys_timerfd_read(
-        crate::privileged::glue::low_i32_from_i64(fd),
-        (&raw mut val) as u64,
-    );
-    check!(ret < 0, "timerfd read unarmed returns error");
-
-    sys_timerfd_close(crate::privileged::glue::low_i32_from_i64(fd));
-    TestResult::Pass
-}
-
-/// 注册 timerfd 子系统的内核测试用例.
-#[cfg(feature = "kernel_test")]
-pub fn register_timerfd_tests() {
-    use crate::privileged::tests::runner;
-    let r = runner();
-    r.register("timerfd", "create", test_timerfd_create);
-    r.register("timerfd", "settime_disarm", test_timerfd_settime_disarm);
-    r.register("timerfd", "read_empty", test_timerfd_read_empty);
+    HrTimerRestart::OneShot
 }

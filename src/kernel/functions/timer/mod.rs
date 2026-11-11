@@ -8,7 +8,6 @@
 //! - `clock` — clock_gettime / gettimeofday 时钟查询
 //! - `sleep` — nanosleep 安全代理
 //! - `posix_timer` — POSIX Timer 安全代理
-//! - `timerfd` — timerfd 安全代理
 //! - `tickless` — Tickless (NO_HZ) 安全代理
 //! - `time_sync` — NTP/PTP 时钟同步安全代理
 //!
@@ -25,4 +24,3 @@ pub mod posix_timer;
 pub mod sleep;
 pub mod tickless;
 pub mod time_sync;
-pub mod timerfd;
