@@ -302,7 +302,7 @@
 - **KPTI-18. aarch64 用户态 FPU 上下文跨 syscall 不保留**
   - 描述：`ExceptionFrame`（35×8，x0–x30 + elr/spsr/sp）不含浮点/SIMD 寄存器；`context_switch_asm` 的 `stp q0..q31` 保存的是**内核态** FPU 状态。故 EL0 使用 V0–V31 后经 SVC/IRQ 往返，用户 FPU 上下文不保证保留。
   - 方案：或在异常入口增存 V0–V31（帧膨胀 512 字节），或引入 lazy FPU（对齐 `ProcessContext.fpu_state` Phase 3 预留）。属独立工程，与 KPTI-17 无耦合。
-  - 状态：[]（KPTI-18a 已修复并入本轮；KPTI-18b 已立独立工程文档 [aarch64-kernel-fp-free.md](./aarch64-kernel-fp-free.md) 并裁定下轮实施，见 DECISION-079）
+  - 状态：[X]（KPTI-18a 落点修复已并入本轮，回归锁 `host-tests/tests/aarch64_fpu_ctx_offset_test.rs`；KPTI-18b 已由独立工程 [aarch64-kernel-fp-free.md](./aarch64-kernel-fp-free.md) 按 DECISION-064 路线④「内核零 FP/SIMD」收口——FP-01..FP-08 全部 `[X]`，aarch64 内核改走 `aarch64-unknown-none-softfloat` 使 EL1 不执行 FP/SIMD，FP-06 反汇编审计（`scripts/audit_aarch64_kernel_fp_free.py`，`ci/audit.sh` 步骤 0.5i）在产物层强制「白名单外 FP/SIMD = 0」。故用户 FP 上下文跨 SVC/IRQ 由「内核不碰 V0–V31」保证保留：本条原列的两条候选（异常帧增存 V0–V31 / lazy FPU）均不必采用，缺陷已按第三条路线根治）
   - 详情：当前用户态程序（`src/user/init`）不使用浮点，故不影响 Phase 1 验收判据；aarch64 用户态线程库/浮点应用出现前必须解决。**另发现（本轮读汇编时确认，未修）**：`context_switch_asm` 把 `FPCR`/`FPSR` 存入偏移 640/648，而该区间属 `fpu_state` 的 `q31`（`fpu_state` 占 144..656，`q31` = 640..656）⇒ 每次保存都会覆盖 `q31`；结构体内偏移 656/664 的 `fpcr`/`fpsr` 字段从未被汇编引用（等于死字段）。
   - 深度排查结论（2026-09-23，与代码逐行核对）：
     - 覆盖链路（双向）：保存侧 `arch/aarch64/context.rs:95-116` 先 `stp q30,q31,[x2,#480]`（写 624..655，`q31` = 640..655）再 `str x2,[x0,#640]`（FPCR）/`str x2,[x0,#648]`（FPSR）⇒ **`q31` 上半（640..647）与下半（648..655）分别被 FPCR/FPSR 覆盖**；`context.rs:112` 注释"FPCR/FPSR 保存在 `fpu_state[62]/[63]`"实际就是 `q31` 的两半。恢复侧 `:153-161` 先 `ldp q30,q31,[x2,#480]` 再从 640/648 读 FPCR/FPSR ⇒ 用被污染的 `q31` 恢复 SIMD 寄存器、又用被 `q31` 污染的值写 FPCR/FPSR（双向污染）。
