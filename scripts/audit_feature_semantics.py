@@ -63,7 +63,7 @@ FUNCTIONS_WHITELIST = [
     'src/kernel/functions/config/caps.rs',
 ]
 
-# P-49 E-03 丙・定性收口: 13 处 functions 层 HIGH 逐项读码定性为**硬件路径/构建配置门控**
+# P-49 E-03 丙・定性收口: 12 处 functions 层 HIGH 逐项读码定性为**硬件路径/构建配置门控**
 # (不属「纯逻辑门控文件残留仅 kernel_test」缺陷类), 故登记后由 HIGH 降为 INFO, 不改代码.
 # 粒度刻意到「文件 + 门控表达式」而非整文件 —— dispatch.rs / io.rs / unix.rs 是大体积生产
 # 文件, 整文件豁免会让日后真正的语义错门控悄悄通过 (同 TESTS_RUNTIME_CFG_ALLOWANCE 机制).
@@ -71,7 +71,6 @@ FUNCTIONS_WHITELIST = [
 #   driver/net/mod.rs net_functions_probe 复合探测槽注册 (裸机 PCI/MMIO 枚举)
 #   virtio/mod.rs     virtio_net_registration 随唯一消费者同门控 (§5 F9 死代码防线)
 #   fs/io.rs          stdin 键盘输入源仅 x86_64 生产构建存在
-#   net/unix.rs       SO_PASSCRED 钩子注册对齐 privileged::net::init 门控 (FFI 层)
 #   sgeg/storage/disk.rs + syscall/dispatch.rs  引导安装 (磁盘扇区写) 仅 x86_64 生产实装
 FUNCTIONS_WHITELIST_GATES = {
     ('src/kernel/functions/driver/net/e1000.rs',
@@ -84,8 +83,6 @@ FUNCTIONS_WHITELIST_GATES = {
      '#[cfg(not(feature = "kernel_test"))]'): 1,
     ('src/kernel/functions/fs/io.rs',
      '#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]'): 1,
-    ('src/kernel/functions/net/unix.rs',
-     '#[cfg(not(feature = "kernel_test"))]'): 1,
     ('src/kernel/functions/sgeg/storage/disk.rs',
      '#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]'): 1,
     ('src/kernel/functions/sgeg/storage/disk.rs',

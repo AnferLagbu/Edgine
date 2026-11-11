@@ -26,9 +26,9 @@ fn read(path: &str) -> String {
 #[test]
 fn test_sm_socket_accepts_af_inet6() {
     let src = read(SM_FI_RS);
-    // sm_socket 必须同时接受 AF_INET (2) 与 AF_INET6 (10)
+    // sm_socket 必须同时接受 AF_INET (2) 与 AF_INET6 (10) 的 TCP/UDP 创建
     assert!(
-        src.contains("domain == 2 || domain == 10"),
+        src.contains("(2 | 10, 1)") && src.contains("(2 | 10, 2)"),
         "sm_socket 未接受 AF_INET6 (domain=10)"
     );
 }

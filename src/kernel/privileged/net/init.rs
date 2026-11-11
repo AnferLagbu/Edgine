@@ -573,7 +573,12 @@ pub extern "C" fn eg_net_init() {
 
     // 分配 NetState 的各 `TOTAL_SLOTS` 项 (惰性堆置), 以覆盖旧内容实现复位.
     // 放在状态机确认 (重) 初始化之后, 避免 "already initialized" 早返回时误清空.
-    NET_STATE.lock().allocate();
+    // 槽位分配位图与 per-slot 表同步复位: 位图残留会让新 socket 复用已占槽位.
+    {
+        let mut guard = NET_STATE.lock();
+        guard.allocate();
+        crate::privileged::net::slots::free_all();
+    }
 
     raw::klog_msg("Step1: hardware probe");
 
@@ -806,7 +811,7 @@ fn net_tx_softirq_handler() {
 // 公共 API
 // ============================================================================
 
-// I-47: FD 表容量 (sm_socket 段, 每个 FD 对应一个 smoltcp socket).
+// I-47: 槽位表容量 (每个槽位对应一个 smoltcp socket).
 // TD-02: 基址与容量改由 `privileged::proc::FdPlan::SMOLTCP` 单一来源; 容量现从 FdRange.capacity 派生.
 const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
 const TCP_BUF_SIZE: usize = 4096;
@@ -814,8 +819,8 @@ const UDP_BUF_SIZE: usize = 2048;
 const UDP_META_COUNT: usize = 4;
 
 // P-18: SmoltcpNetStack 专属槽位段已随「SocketHandle 单入口」改造退役,
-// NetState 各表统一为紧凑 sm_socket 槽位空间 [0, MAX_SM_FD)
-// (方案 C: fd = FdPlan::SMOLTCP.base + 槽位, 经 sm_fi::sm_slot 换算).
+// NetState 各表统一为紧凑 sm_socket 槽位空间 [0, MAX_SM_FD).
+// 用户可见 fd 现由 `OpenFileTable` 统一分配, 槽位编号存于 `SocketFile`.
 const TOTAL_SLOTS: usize = MAX_SM_FD;
 
 // TD-05: 8 张 smoltcp 大表, 现已合并到 NetState 结构中 (由 NET_STATE IrqSpinLock 保护).

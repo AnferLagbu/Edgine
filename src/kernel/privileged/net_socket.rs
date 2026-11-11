@@ -46,74 +46,76 @@ mod init {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_bind(_fd: i32, _a: *const u8, _l: u32) -> i32 {
+    pub unsafe fn sm_bind(_slot: i32, _a: *const u8, _l: u32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_listen(_fd: i32, _b: i32) -> i32 {
+    pub unsafe fn sm_listen(_slot: i32, _b: i32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_accept(_fd: i32, _a: *mut u8, _l: *mut u32) -> i32 {
+    pub unsafe fn sm_accept(_slot: i32, _a: *mut u8, _l: *mut u32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_connect(_fd: i32, _a: *const u8, _l: u32) -> i32 {
+    pub unsafe fn sm_connect(_slot: i32, _a: *const u8, _l: u32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_send(_fd: i32, _b: *const u8, _l: u32, _f: i32) -> i32 {
+    pub unsafe fn sm_send(_slot: i32, _b: *const u8, _l: u32, _f: i32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_recv(_fd: i32, _b: *mut u8, _l: u32, _f: i32) -> i32 {
+    pub unsafe fn sm_recv(_slot: i32, _b: *mut u8, _l: u32, _f: i32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_sendto(
-        _fd: i32,
+        _slot: i32,
         _b: *const u8,
         _l: u32,
         _f: i32,
         _d: *const u8,
         _a: u32,
+        _blocking: bool,
     ) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_recvfrom(
-        _fd: i32,
+        _slot: i32,
         _b: *mut u8,
         _l: u32,
         _f: i32,
         _s: *mut u8,
         _a: *mut u32,
+        _blocking: bool,
     ) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_close(_fd: i32) -> i32 {
+    pub unsafe fn sm_close(_slot: i32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_shutdown(_fd: i32, _how: i32) -> i32 {
+    pub unsafe fn sm_shutdown(_slot: i32, _how: i32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_socket_poll(_fd: i32, _events: i16) -> i16 {
+    pub unsafe fn sm_socket_poll(_slot: i32, _events: i16) -> i16 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_sendmsg(_fd: i32, _m: *const u8, _f: i32) -> i32 {
+    pub unsafe fn sm_sendmsg(_slot: i32, _m: *const u8, _f: i32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_recvmsg(_fd: i32, _m: *mut u8, _f: i32) -> i32 {
+    pub unsafe fn sm_recvmsg(_slot: i32, _m: *mut u8, _f: i32, _blocking: bool) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_setsockopt(
-        _fd: i32,
+        _slot: i32,
         _level: i32,
         _name: i32,
         _val: *const u8,
@@ -123,7 +125,7 @@ mod init {
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_getsockopt(
-        _fd: i32,
+        _slot: i32,
         _level: i32,
         _name: i32,
         _val: *mut u8,
@@ -132,22 +134,15 @@ mod init {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_getsockname(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
+    pub unsafe fn sm_getsockname(_slot: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
-    pub unsafe fn sm_getpeername(_fd: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
+    pub unsafe fn sm_getpeername(_slot: i32, _addr: *mut u8, _addrlen: *mut u32) -> i32 {
         0
     }
     // SAFETY: kernel_test 桩, no-op 无内存/硬件访问; unsafe 仅与真实实现签名对齐
     pub unsafe fn sm_poll_sockets() -> i32 {
-        0
-    }
-    // D10 非阻塞标志桩: 真实实现为 safe `pub fn`, 桩保持同签名 (no-op).
-    pub fn sm_set_nonblocking(_fd: i32, _nonblock: bool) -> i32 {
-        0
-    }
-    pub fn sm_get_nonblocking(_fd: i32) -> i32 {
         0
     }
 }
@@ -226,16 +221,16 @@ pub fn sm_socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
 ///
 /// `addr` 必须为至少 `addrlen` 字节的有效指针, 调用期间不释放。
 #[must_use]
-pub unsafe fn sm_bind(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
+pub unsafe fn sm_bind(slot_id: i32, addr: *const u8, addrlen: u32) -> i32 {
     // SAFETY: addr 由调用方保证有效, sm_bind 同步读取
-    unsafe { init::sm_bind(fd, addr, addrlen) }
+    unsafe { init::sm_bind(slot_id, addr, addrlen) }
 }
 
 /// POSIX `listen(fd, backlog)` — 将 socket 置为监听状态
 #[must_use]
-pub fn sm_listen(fd: i32, backlog: i32) -> i32 {
+pub fn sm_listen(slot_id: i32, backlog: i32) -> i32 {
     // SAFETY: NET_LOCK 内部获取
-    unsafe { init::sm_listen(fd, backlog) }
+    unsafe { init::sm_listen(slot_id, backlog) }
 }
 
 /// POSIX `accept(fd, addr, addrlen)` — 返回新连接的 FD
@@ -243,9 +238,9 @@ pub fn sm_listen(fd: i32, backlog: i32) -> i32 {
 /// # Safety
 ///
 /// `addr` 和 `addrlen` 可为 null 表示不关心对端地址。
-pub unsafe fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe fn sm_accept(slot_id: i32, addr: *mut u8, addrlen: *mut u32, blocking: bool) -> i32 {
     // SAFETY: null 表示不写对端地址, 由调用方契约保证
-    unsafe { init::sm_accept(fd, addr, addrlen) }
+    unsafe { init::sm_accept(slot_id, addr, addrlen, blocking) }
 }
 
 /// POSIX `connect(fd, addr, addrlen)`
@@ -254,9 +249,9 @@ pub unsafe fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 ///
 /// `addr` 必须为至少 `addrlen` 字节的有效指针, 调用期间不释放。
 #[must_use]
-pub unsafe fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
+pub unsafe fn sm_connect(slot_id: i32, addr: *const u8, addrlen: u32, blocking: bool) -> i32 {
     // SAFETY: addr 栈上有效, sm_connect 同步读取
-    unsafe { init::sm_connect(fd, addr, addrlen) }
+    unsafe { init::sm_connect(slot_id, addr, addrlen, blocking) }
 }
 
 /// POSIX `send(fd, buf, len, flags)` — 阻塞发送
@@ -265,9 +260,9 @@ pub unsafe fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
 ///
 /// `buf` 必须为至少 `len` 字节的有效只读指针, 调用期间不释放。
 #[must_use]
-pub unsafe fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
+pub unsafe fn sm_send(slot_id: i32, buf: *const u8, len: u32, flags: i32, blocking: bool) -> i32 {
     // SAFETY: buf 在调用期间有效, sm_send 同步读取
-    unsafe { init::sm_send(fd, buf, len, flags) }
+    unsafe { init::sm_send(slot_id, buf, len, flags, blocking) }
 }
 
 /// POSIX `recv(fd, buf, len, flags)` — 阻塞接收
@@ -275,9 +270,9 @@ pub unsafe fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
 /// # Safety
 ///
 /// `buf` 必须为至少 `len` 字节的有效可写指针。
-pub unsafe fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
+pub unsafe fn sm_recv(slot_id: i32, buf: *mut u8, len: u32, flags: i32, blocking: bool) -> i32 {
     // SAFETY: out 在调用期间有效可写
-    unsafe { init::sm_recv(fd, buf, len, flags) }
+    unsafe { init::sm_recv(slot_id, buf, len, flags, blocking) }
 }
 
 /// POSIX `sendto(fd, buf, len, flags, dest_addr, addrlen)`
@@ -287,15 +282,16 @@ pub unsafe fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
 /// `buf` 和 `dest_addr` 必须为有效指针, 调用期间不释放。
 #[must_use]
 pub unsafe fn sm_sendto(
-    fd: i32,
+    slot_id: i32,
     buf: *const u8,
     len: u32,
     flags: i32,
     dest_addr: *const u8,
     addrlen: u32,
+    blocking: bool,
 ) -> i32 {
     // SAFETY: buf + dest_addr 同步有效
-    unsafe { init::sm_sendto(fd, buf, len, flags, dest_addr, addrlen) }
+    unsafe { init::sm_sendto(slot_id, buf, len, flags, dest_addr, addrlen, blocking) }
 }
 
 /// POSIX `recvfrom(fd, buf, len, flags, src_addr, addrlen)`
@@ -304,36 +300,37 @@ pub unsafe fn sm_sendto(
 ///
 /// `buf` 可写, `src_addr` 为有效可写 8 字节缓冲, `addrlen` 为可写 u32。
 pub unsafe fn sm_recvfrom(
-    fd: i32,
+    slot_id: i32,
     buf: *mut u8,
     len: u32,
     flags: i32,
     src_addr: *mut u8,
     addrlen: *mut u32,
+    blocking: bool,
 ) -> i32 {
     // SAFETY: out 可写, src 8 字节栈缓冲
-    unsafe { init::sm_recvfrom(fd, buf, len, flags, src_addr, addrlen) }
+    unsafe { init::sm_recvfrom(slot_id, buf, len, flags, src_addr, addrlen, blocking) }
 }
 
 /// POSIX `close(fd)` — 关闭 socket 并释放其资源
 #[must_use]
-pub fn sm_close(fd: i32) -> i32 {
+pub fn sm_close(slot_id: i32) -> i32 {
     // SAFETY: sm_close 内部 NET_LOCK 串行化
-    unsafe { init::sm_close(fd) }
+    unsafe { init::sm_close(slot_id) }
 }
 
 /// POSIX `shutdown(fd, how)` — 半关闭 socket (不回收 FD/缓冲)
 #[must_use]
-pub fn sm_shutdown(fd: i32, how: i32) -> i32 {
+pub fn sm_shutdown(slot_id: i32, how: i32) -> i32 {
     // SAFETY: sm_shutdown 内部 NET_LOCK 串行化
-    unsafe { init::sm_shutdown(fd, how) }
+    unsafe { init::sm_shutdown(slot_id, how) }
 }
 
 /// POSIX `poll` 单 socket 就绪快照 — 返回 revents 位掩码 (D8b)
 #[must_use]
-pub fn sm_socket_poll(fd: i32, events: i16) -> i16 {
+pub fn sm_socket_poll(slot_id: i32, events: i16) -> i16 {
     // SAFETY: sm_socket_poll 内部 NET_LOCK 串行化
-    unsafe { init::sm_socket_poll(fd, events) }
+    unsafe { init::sm_socket_poll(slot_id, events) }
 }
 
 /// POSIX `sendmsg(fd, msg, flags)` — 散聚 I/O
@@ -342,9 +339,9 @@ pub fn sm_socket_poll(fd: i32, events: i16) -> i16 {
 ///
 /// `msg` 必须指向已校验的 `Msghdr` 用户内存 (含 iovec 数组), 调用期间不释放.
 #[must_use]
-pub unsafe fn sm_sendmsg(fd: i32, msg: *const u8, flags: i32) -> i32 {
+pub unsafe fn sm_sendmsg(slot_id: i32, msg: *const u8, flags: i32, blocking: bool) -> i32 {
     // SAFETY: sm_sendmsg 内部 NET_LOCK 持有, msg 由 functions 校验 msghdr 布局.
-    unsafe { init::sm_sendmsg(fd, msg, flags) }
+    unsafe { init::sm_sendmsg(slot_id, msg, flags, blocking) }
 }
 
 /// POSIX `recvmsg(fd, msg, flags)` — 散聚 I/O
@@ -352,9 +349,9 @@ pub unsafe fn sm_sendmsg(fd: i32, msg: *const u8, flags: i32) -> i32 {
 /// # Safety
 ///
 /// `msg` 必须指向已校验的 `Msghdr` 用户内存 (含 iovec 数组), 调用期间不释放.
-pub unsafe fn sm_recvmsg(fd: i32, msg: *mut u8, flags: i32) -> i32 {
+pub unsafe fn sm_recvmsg(slot_id: i32, msg: *mut u8, flags: i32, blocking: bool) -> i32 {
     // SAFETY: sm_recvmsg 内部 NET_LOCK 持有, msg 由 functions 校验 msghdr 布局.
-    unsafe { init::sm_recvmsg(fd, msg, flags) }
+    unsafe { init::sm_recvmsg(slot_id, msg, flags, blocking) }
 }
 
 /// POSIX `setsockopt(fd, level, optname, optval, optlen)`
@@ -364,14 +361,14 @@ pub unsafe fn sm_recvmsg(fd: i32, msg: *mut u8, flags: i32) -> i32 {
 /// `optval` 必须为至少 `optlen` 字节的有效指针。
 #[must_use]
 pub unsafe fn sm_setsockopt(
-    fd: i32,
+    slot_id: i32,
     level: i32,
     optname: i32,
     optval: *const u8,
     optlen: u32,
 ) -> i32 {
     // SAFETY: optval 栈上有效
-    unsafe { init::sm_setsockopt(fd, level, optname, optval, optlen) }
+    unsafe { init::sm_setsockopt(slot_id, level, optname, optval, optlen) }
 }
 
 /// POSIX `getsockopt(fd, level, optname, optval, optlen)` → i32
@@ -380,14 +377,14 @@ pub unsafe fn sm_setsockopt(
 ///
 /// `optval` 必须为可写指针, `optlen` 为可写 u32。
 pub unsafe fn sm_getsockopt(
-    fd: i32,
+    slot_id: i32,
     level: i32,
     optname: i32,
     optval: *mut u8,
     optlen: *mut u32,
 ) -> i32 {
     // SAFETY: optval 可写, optlen 可写
-    unsafe { init::sm_getsockopt(fd, level, optname, optval, optlen) }
+    unsafe { init::sm_getsockopt(slot_id, level, optname, optval, optlen) }
 }
 
 /// POSIX `getsockname(fd, addr, addrlen)` — 获取本端地址
@@ -395,9 +392,9 @@ pub unsafe fn sm_getsockopt(
 /// # Safety
 ///
 /// `addr` 必须为可写缓冲区, `addrlen` 为可写 u32。
-pub unsafe fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     // SAFETY: addr 可写, addrlen 可写, 由调用方保证有效
-    unsafe { init::sm_getsockname(fd, addr, addrlen) }
+    unsafe { init::sm_getsockname(slot_id, addr, addrlen) }
 }
 
 /// POSIX `getpeername(fd, addr, addrlen)` — 获取对端地址
@@ -405,9 +402,9 @@ pub unsafe fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 /// # Safety
 ///
 /// `addr` 必须为可写缓冲区, `addrlen` 为可写 u32。
-pub unsafe fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     // SAFETY: addr 可写, addrlen 可写, 由调用方保证有效
-    unsafe { init::sm_getpeername(fd, addr, addrlen) }
+    unsafe { init::sm_getpeername(slot_id, addr, addrlen) }
 }
 
 /// 轮询所有 socket
@@ -415,20 +412,6 @@ pub unsafe fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
 pub fn sm_poll_sockets() -> i32 {
     // SAFETY: try_lock 内部使用, ISR 安全
     unsafe { init::sm_poll_sockets() }
-}
-
-/// POSIX `fcntl(F_SETFL, O_NONBLOCK)` 的 socket 侧落点 (D10): 设置非阻塞标志.
-///
-/// 真实实现为 safe `pub fn` (内部自持 `NET_STATE` 锁), 本层无 unsafe.
-#[must_use]
-pub fn sm_set_nonblocking(fd: i32, nonblock: bool) -> i32 {
-    init::sm_set_nonblocking(fd, nonblock)
-}
-
-/// POSIX `fcntl(F_GETFL)` 读取 socket 非阻塞标志 (D10).
-#[must_use]
-pub fn sm_get_nonblocking(fd: i32) -> i32 {
-    init::sm_get_nonblocking(fd)
 }
 
 // ============================================================================
@@ -444,17 +427,17 @@ pub fn sm_get_nonblocking(fd: i32) -> i32 {
 ///
 /// `addr` 必须为至少 `addrlen` 字节的有效指针, 调用期间不释放。
 #[must_use]
-pub fn sm_net_bind(fd: i32, addr_addr: usize, addrlen: u32) -> i32 {
+pub fn sm_net_bind(slot_id: i32, addr_addr: usize, addrlen: u32) -> i32 {
     let addr = addr_addr as *const u8;
     // SAFETY: addr 由调用方保证有效, sm_bind 同步读取
-    unsafe { init::sm_bind(fd, addr, addrlen) }
+    unsafe { init::sm_bind(slot_id, addr, addrlen) }
 }
 
 /// `SmoltcpNetStack::listen` — POSIX listen 委托
 #[must_use]
-pub fn sm_net_listen(fd: i32, backlog: i32) -> i32 {
+pub fn sm_net_listen(slot_id: i32, backlog: i32) -> i32 {
     // SAFETY: NET_LOCK 内部获取
-    unsafe { init::sm_listen(fd, backlog) }
+    unsafe { init::sm_listen(slot_id, backlog) }
 }
 
 /// `SmoltcpNetStack::accept` — POSIX accept 委托
@@ -463,11 +446,12 @@ pub fn sm_net_listen(fd: i32, backlog: i32) -> i32 {
 ///
 /// `addr` 和 `addrlen` 可为 null 表示不关心对端地址。
 #[must_use]
-pub fn sm_net_accept(fd: i32, addr_addr: usize, addrlen_addr: usize) -> i32 {
+pub fn sm_net_accept(slot_id: i32, addr_addr: usize, addrlen_addr: usize) -> i32 {
     let addr = addr_addr as *mut u8;
     let addrlen = addrlen_addr as *mut u32;
+    // 抽象 NetStack 面不暴露 fcntl, 槽位恒阻塞 (与迁移前 per-slot 缺省 true 同口径).
     // SAFETY: null 表示不写对端地址, 由调用方契约保证
-    unsafe { init::sm_accept(fd, addr, addrlen) }
+    unsafe { init::sm_accept(slot_id, addr, addrlen, true) }
 }
 
 /// `SmoltcpNetStack::connect` — POSIX connect 委托
@@ -476,10 +460,11 @@ pub fn sm_net_accept(fd: i32, addr_addr: usize, addrlen_addr: usize) -> i32 {
 ///
 /// `addr` 必须为至少 `addrlen` 字节的有效指针, 调用期间不释放。
 #[must_use]
-pub fn sm_net_connect(fd: i32, addr_addr: usize, addrlen: u32) -> i32 {
+pub fn sm_net_connect(slot_id: i32, addr_addr: usize, addrlen: u32) -> i32 {
     let addr = addr_addr as *const u8;
+    // 抽象 NetStack 面不暴露 fcntl, 槽位恒阻塞 (迁移前缺省 true 同口径).
     // SAFETY: addr 栈上有效, sm_connect 同步读取
-    unsafe { init::sm_connect(fd, addr, addrlen) }
+    unsafe { init::sm_connect(slot_id, addr, addrlen, true) }
 }
 
 /// `SmoltcpNetStack::send` — POSIX send 委托
@@ -488,10 +473,11 @@ pub fn sm_net_connect(fd: i32, addr_addr: usize, addrlen: u32) -> i32 {
 ///
 /// `buf` 必须为至少 `len` 字节的有效只读指针, 调用期间不释放。
 #[must_use]
-pub fn sm_net_send(fd: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
+pub fn sm_net_send(slot_id: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
     let buf = buf_addr as *const u8;
+    // 阻塞属性恒 true, `MSG_DONTWAIT` 仍由 `sm_send` 内部按 flags 解释.
     // SAFETY: buf 在调用期间有效, sm_send 同步读取
-    unsafe { init::sm_send(fd, buf, len, flags) }
+    unsafe { init::sm_send(slot_id, buf, len, flags, true) }
 }
 
 /// `SmoltcpNetStack::recv` — POSIX recv 委托
@@ -500,10 +486,11 @@ pub fn sm_net_send(fd: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
 ///
 /// `buf` 必须为至少 `len` 字节的有效可写指针。
 #[must_use]
-pub fn sm_net_recv(fd: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
+pub fn sm_net_recv(slot_id: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
     let buf = buf_addr as *mut u8;
+    // 阻塞属性恒 true, `MSG_DONTWAIT` 仍由 `sm_recv` 内部按 flags 解释.
     // SAFETY: buf 在调用期间有效可写
-    unsafe { init::sm_recv(fd, buf, len, flags) }
+    unsafe { init::sm_recv(slot_id, buf, len, flags, true) }
 }
 
 /// `SmoltcpNetStack::sendto` — POSIX sendto 委托
@@ -513,7 +500,7 @@ pub fn sm_net_recv(fd: i32, buf_addr: usize, len: u32, flags: i32) -> i32 {
 /// `buf` 和 `dest_addr` 必须为有效指针, 调用期间不释放。
 #[must_use]
 pub fn sm_net_sendto(
-    fd: i32,
+    slot_id: i32,
     buf_addr: usize,
     len: u32,
     flags: i32,
@@ -523,7 +510,7 @@ pub fn sm_net_sendto(
     let buf = buf_addr as *const u8;
     let dest_addr = dest_addr_addr as *const u8;
     // SAFETY: buf + dest_addr 同步有效
-    unsafe { init::sm_sendto(fd, buf, len, flags, dest_addr, addrlen) }
+    unsafe { init::sm_sendto(slot_id, buf, len, flags, dest_addr, addrlen, true) }
 }
 
 /// `SmoltcpNetStack::recvfrom` — POSIX recvfrom 委托
@@ -533,7 +520,7 @@ pub fn sm_net_sendto(
 /// `buf` 可写, `src_addr` 为有效可写缓冲, `addrlen` 为可写 u32。
 #[must_use]
 pub fn sm_net_recvfrom(
-    fd: i32,
+    slot_id: i32,
     buf_addr: usize,
     len: u32,
     flags: i32,
@@ -544,14 +531,14 @@ pub fn sm_net_recvfrom(
     let src_addr = src_addr_addr as *mut u8;
     let addrlen = addrlen_addr as *mut u32;
     // SAFETY: buf 可写, src_addr 可写
-    unsafe { init::sm_recvfrom(fd, buf, len, flags, src_addr, addrlen) }
+    unsafe { init::sm_recvfrom(slot_id, buf, len, flags, src_addr, addrlen, true) }
 }
 
 /// `SmoltcpNetStack::close` — POSIX close 委托
 #[must_use]
-pub fn sm_net_close(fd: i32) -> i32 {
+pub fn sm_net_close(slot_id: i32) -> i32 {
     // SAFETY: sm_close 内部 NET_LOCK 串行化
-    unsafe { init::sm_close(fd) }
+    unsafe { init::sm_close(slot_id) }
 }
 
 // ============================================================================
@@ -575,10 +562,16 @@ pub fn sm_net_socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
 ///
 /// `val` 必须为至少 `optlen` 字节的有效只读指针.
 #[must_use]
-pub fn sm_net_setsockopt(fd: i32, level: i32, optname: i32, val_addr: usize, optlen: u32) -> i32 {
+pub fn sm_net_setsockopt(
+    slot_id: i32,
+    level: i32,
+    optname: i32,
+    val_addr: usize,
+    optlen: u32,
+) -> i32 {
     let val = val_addr as *const u8;
     // SAFETY: val 由调用方保证有效, sm_setsockopt 同步读取
-    unsafe { init::sm_setsockopt(fd, level, optname, val, optlen) }
+    unsafe { init::sm_setsockopt(slot_id, level, optname, val, optlen) }
 }
 
 /// 获取 Socket 选项 (POSIX getsockopt).
@@ -588,7 +581,7 @@ pub fn sm_net_setsockopt(fd: i32, level: i32, optname: i32, val_addr: usize, opt
 /// `val` 必须为可写缓冲区, `optlen` 为可写 u32.
 #[must_use]
 pub fn sm_net_getsockopt(
-    fd: i32,
+    slot_id: i32,
     level: i32,
     optname: i32,
     val_addr: usize,
@@ -597,7 +590,7 @@ pub fn sm_net_getsockopt(
     let val = val_addr as *mut u8;
     let optlen = optlen_addr as *mut u32;
     // SAFETY: val 可写, optlen 可写
-    unsafe { init::sm_getsockopt(fd, level, optname, val, optlen) }
+    unsafe { init::sm_getsockopt(slot_id, level, optname, val, optlen) }
 }
 
 /// 轮询所有 Socket 状态.

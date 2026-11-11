@@ -232,6 +232,10 @@ impl File for SignalFdFile {
         // POSIX: signalfd 不可定位 (lseek → ESPIPE)
         true
     }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 // ============================================================================

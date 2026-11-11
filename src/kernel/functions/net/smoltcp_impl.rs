@@ -16,8 +16,9 @@
 //!   `sendto` / `recvfrom` / `setsockopt` / `getsockopt`
 //! - 轮询: `poll` / `poll_at` / `poll_sockets`
 //!
-//! 对外句柄是不透明的 `SocketHandle`; 句柄槽位登记 `sm_socket` 分配的全局
-//! privileged fd, 与 POSIX syscall 路径共用同一 fd 空间. 历史上的 inherent
+//! 对外句柄是不透明的 `SocketHandle`; 句柄槽位登记 `sm_socket` 分配的 smoltcp
+//! 槽位编号 (非 fd). 用户可见 fd 由 `SocketFile` 挂在 `OpenFileTable` 上,
+//! POSIX syscall 路径经 `SocketFd::resolve` 反查槽位. 历史上的 inherent
 //! `*_fd` 平行入口与专属槽位段已在 P-18 退役.
 //!
 //! ## 实现边界
@@ -63,28 +64,27 @@ pub const MAX_SOCKETS: usize = 32;
 // 句柄槽位 (类型擦除, 替代 smoltcp::iface::SocketHandle<usize>)
 // ============================================================================
 
-/// Socket 句柄的内部表示: `(user_id, privileged_fd)`.
+/// Socket 句柄的内部表示: `(user_id, slot_id)`.
 ///
 /// smoltcp 的 `SocketHandle(usize)` 直接暴露数组索引, 任何 `usize` 都可能被
-/// 误用. 本类型把对外句柄 (`SocketHandle`, user 域) 与 privileged 侧 socket fd
-/// 解耦: 句柄槽位的存在性 = 句柄有效性, fd 只是该槽位登记的资源编号.
+/// 误用. 本类型把对外句柄 (`SocketHandle`, user 域) 与 privileged 侧 smoltcp
+/// 槽位编号解耦: 句柄槽位的存在性 = 句柄有效性, 槽位编号只是该槽位登记的资源编号.
 ///
 /// ## 内存布局 (P-18 单入口)
 ///
-/// - `Some((u, fd))` = 句柄已分配, u 是用户态 ID, fd 是 `sm_socket` 分配的
-///   全局 fd (与 POSIX syscall 路径同一 fd 空间); fd 为负值表示预留槽位
-///   (DHCP), 不对应真实 socket
+/// - `Some((u, slot))` = 句柄已分配, u 是用户态 ID, slot 是 `sm_socket` 分配的
+///   协议栈槽位编号; 负值表示预留槽位 (DHCP), 不对应真实 socket
 /// - `None` = 句柄槽位空闲
 ///
-/// P-18 之前 fd 由 `SmoltcpNetStack` 专属槽位段隐式换算 (slot = base + i),
-/// 与 privileged `idx_of` 的基址换算叠加后偏移错位, 且 `accept` 产出的 fd
-/// 无法反查句柄. 现在 fd 直接登记在槽位内, 单次换算 (单一 fd 空间).
+/// P-18 之前槽位由 `SmoltcpNetStack` 专属段隐式换算 (slot = base + i), 与
+/// privileged `idx_of` 的基址换算叠加后偏移错位, 且 `accept` 产出的槽位无法
+/// 反查句柄. 现在槽位直接登记在句柄槽位内, 单次换算.
 type HandleSlot = Option<(u32, i32)>;
 
-/// DHCP 预留槽位的 fd 哨兵 (不对应任何真实 socket).
+/// DHCP 预留槽位的槽位哨兵 (不对应任何真实 socket).
 ///
 /// DHCP 客户端 socket 由 privileged `poll_network` 独占管理. 句柄表为其预留
-/// 一个槽位以防用户句柄与 DHCP socket 冲突; `handle_to_fd` 对负值 fd 返回
+/// 一个槽位以防用户句柄与 DHCP socket 冲突; `handle_to_fd` 对负值槽位返回
 /// `None`, 使 DHCP 句柄上的任何数据面操作都按无效句柄拒绝.
 const DHCP_SENTINEL_FD: i32 = -1;
 
@@ -105,7 +105,7 @@ const DHCP_SENTINEL_FD: i32 = -1;
 /// ## 字段说明
 ///
 /// - `config`: `init()` 时缓存, 后续只读
-/// - `handle_map`: 句柄槽位表, 容量 = `MAX_SOCKETS`, 槽位登记 privileged fd
+/// - `handle_map`: 句柄槽位表, 容量 = `MAX_SOCKETS`, 槽位登记 smoltcp 槽位编号
 /// - `next_user_id`: 下一个分配的 user 句柄 (u32, 0 = INVALID)
 /// - `dhcp_user_id`: DHCP socket 的 user 句柄 (若有)
 /// - `dhcp_state`: DHCP 状态缓存
@@ -212,7 +212,7 @@ impl SmoltcpNetStack {
         self.dhcp_user_id == Some(user_id)
     }
 
-    /// 从 `handle_map` 反查 privileged 侧 socket fd (`sm_*` 函数使用的全局 fd).
+    /// 从 `handle_map` 反查 privileged 侧 smoltcp 槽位编号 (`sm_*` 函数使用的编号).
     ///
     /// DHCP 预留槽位以 [`DHCP_SENTINEL_FD`] 占位, 不是真实 socket, 返回 `None`
     /// 使所有数据面操作按无效句柄拒绝.
@@ -220,7 +220,7 @@ impl SmoltcpNetStack {
         self.find_handle(h).map(|(_, fd)| fd).filter(|fd| *fd >= 0)
     }
 
-    /// 反查句柄所在的槽位索引与登记的 fd.
+    /// 反查句柄所在的槽位索引与登记的槽位编号.
     fn find_handle(&self, h: SocketHandle) -> Option<(usize, i32)> {
         if !h.is_valid() {
             return None;
@@ -234,7 +234,7 @@ impl SmoltcpNetStack {
             })
     }
 
-    /// 登记一个 privileged socket fd (或负值预留槽位), 返回用户句柄.
+    /// 登记一个 smoltcp 槽位编号 (或负值预留槽位), 返回用户句柄.
     ///
     /// 先占槽位再分配用户 ID, 任一失败均无副作用 (DECISION-025). 失败时
     /// 调用方负责归还已创建的 fd.
@@ -390,8 +390,8 @@ impl NetStack for SmoltcpNetStack {
 
     /// 打开一个 Socket.
     ///
-    /// 经 `sm_net_socket` 在统一 fd 空间创建 privileged socket, 并把返回的
-    /// 全局 fd 登记到句柄槽位; 句柄表/用户 ID 耗尽或后端拒绝时返回错误.
+    /// 经 `sm_net_socket` 创建 privileged 侧 socket, 并把返回的槽位编号
+    /// 登记到句柄槽位; 句柄表/用户 ID 耗尽或后端拒绝时返回错误.
     /// `SocketKind::Tcp` / `SocketKind::Udp` 之外的种类返回 `BadConfig`.
     fn socket_open(&mut self, kind: SocketKind) -> Result<SocketHandle> {
         if !self.initialized {
@@ -399,7 +399,7 @@ impl NetStack for SmoltcpNetStack {
         }
 
         // P-18 单入口: socket 一律经 `sm_socket` 路径创建, 与 POSIX syscall
-        // 共用同一 fd 空间与槽位表 (AF_INET 判别值; smoltcp 层不区分 family,
+        // 共用同一槽位表 (AF_INET 判别值; smoltcp 层不区分 family,
         // 具体 family 在 bind/connect 按 sockaddr 解析).
         let (domain, sock_type) = match kind {
             SocketKind::Tcp => (Domain::Inet as i32, SockType::Stream as i32),

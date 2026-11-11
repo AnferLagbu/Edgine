@@ -77,19 +77,15 @@ pub struct NetState {
     pub(crate) dns_handle: Option<SocketHandle>,
     pub(crate) socket_table: Vec<Option<SocketHandle>>,
     pub(crate) fd_types: Vec<u8>,
-    /// 各 FD 的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
+    /// 各槽位的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
     pub(crate) local_endpoints: Vec<Option<NetEndpoint>>,
-    /// 各 FD 的对端端点 (D1, UDP 专属): `connect` 时登记, 供 send/getpeername.
+    /// 各槽位的对端端点 (D1, UDP 专属): `connect` 时登记, 供 send/getpeername.
     /// TCP 的 remote 由 smoltcp socket 自身持有, 不使用此表.
     pub(crate) remote_endpoints: Vec<Option<NetEndpoint>>,
-    /// 各 FD 的阻塞标志 (D10 / DECISION-092): `true` = 阻塞 (POSIX 默认),
-    /// `false` = 非阻塞 (`SOCK_NONBLOCK` 或 `fcntl(F_SETFL, O_NONBLOCK)` 置位).
-    /// `allocate()` 默认填 `true`; 由 `socket_syscall` / `fcntl` 经 `raw` accessor 改写.
-    pub(crate) blocking: Vec<bool>,
-    /// 各 FD 的接收超时 (`SO_RCVTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时
+    /// 各槽位的接收超时 (`SO_RCVTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时
     /// (阻塞至就绪或被信号打断). `recv`/`recvfrom`/`accept` 进入阻塞前据此算绝对死线.
     pub(crate) recv_timeout_ns: Vec<u64>,
-    /// 各 FD 的发送超时 (`SO_SNDTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
+    /// 各槽位的发送超时 (`SO_SNDTIMEO`, P5d / DECISION-096): 单位纳秒, `0` = 无超时.
     /// `send`/`sendto`/`connect` 进入阻塞前据此算绝对死线.
     pub(crate) send_timeout_ns: Vec<u64>,
     /// 组播成员登记表 (P6 / D11 / DECISION-097): per-slot 成员位图 + 每组引用计数.
@@ -125,7 +121,6 @@ impl NetState {
             fd_types: Vec::new(),
             local_endpoints: Vec::new(),
             remote_endpoints: Vec::new(),
-            blocking: Vec::new(),
             recv_timeout_ns: Vec::new(),
             send_timeout_ns: Vec::new(),
             mcast: McastRegistry::new(),
@@ -147,7 +142,6 @@ impl NetState {
         self.fd_types = (0..TOTAL_SLOTS).map(|_| 0u8).collect();
         self.local_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
         self.remote_endpoints = (0..TOTAL_SLOTS).map(|_| None).collect();
-        self.blocking = (0..TOTAL_SLOTS).map(|_| true).collect();
         self.recv_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
         self.send_timeout_ns = (0..TOTAL_SLOTS).map(|_| 0u64).collect();
         // 组播登记表连带复位 (与上表同一槽位数, 网络重初始化时不残留旧组成员).

@@ -152,6 +152,14 @@ pub const SYS_SETSOCKOPT: u64 = 54;
 /// `SYS_GETSOCKOPT` — 读取套接字选项
 pub const SYS_GETSOCKOPT: u64 = 55;
 
+/// `SOL_SOCKET` — 套接字层 sockopt 的 level (单一权威源 `edgine_abi::socket`).
+///
+/// functions 层经 `functions::syscall::types` 转发引用, 用于 `setsockopt` 的
+/// UDS 专属选项分流.
+pub const SOL_SOCKET: i32 = edgine_abi::socket::SOL_SOCKET;
+/// `SO_PASSCRED` — UDS 对端凭据传递开关 (单一权威源 `edgine_abi::socket`).
+pub const SO_PASSCRED: i32 = edgine_abi::socket::SO_PASSCRED;
+
 // 进程
 /// `SYS_CLONE` — 创建进程或线程 (可指定共享资源)
 ///

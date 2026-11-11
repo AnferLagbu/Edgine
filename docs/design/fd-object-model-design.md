@@ -103,7 +103,7 @@ P4 的 `sm_socket_poll(fd, events) -> i16`（D8b 方案）是本模型的**第�
 
 ## 六、演化路径与开放议题
 
-落地分四阶段（任务分解与验收见 plan 文档）：**设计定稿（本文档）→ 抽象落地（`File` trait + `RegularFile` 适配器 + VFS 单分发点）→ 8 个子系统逐个迁移（每子系统一 PR + 回归）→ FdPlan/换算层退役**。顺序立场：VFS 先行迁移（存量最大、语义最标准，作为抽象的试金石），随后按"迁移成本低→高"排 UDS/EventFd/…/Smoltcp——socket 最后是因为它是唯一带全局槽位表 + 中断侧 poll 的子系统，改造面最大。
+落地分四阶段（任务分解与验收见 plan 文档）：**设计定稿（本文档）→ 抽象落地（`File` trait + `RegularFile` 适配器 + VFS 单分发点）→ 8 个子系统逐个迁移（每子系统一 PR + 回归）→ FdPlan/换算层退役**。顺序立场：VFS 先行迁移（存量最大、语义最标准，作为抽象的试金石），随后按"迁移成本低→高"排 UDS/EventFd/…/Smoltcp——socket 最后是因为它是唯一带全局槽位表 + 中断侧 poll 的子系统，改造面最大。实际实施顺序以 plan 为准：2026-11-11 按用户安排，Smoltcp 已作为阶段 3 第 3 个子系统（先于 UDS/Inotify/TimerFd/PidFd/UserFaultFd）迁移。
 
 开放议题（实施到对应阶段前须由用户决策，此处只锚定问题）：
 

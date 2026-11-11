@@ -86,6 +86,7 @@ pub mod route;
 /// 设计: docs/plan/smoltcp-framekernel-wrapper.md §3.2
 pub mod smoltcp_impl;
 pub mod socket;
+pub mod socket_file;
 pub mod syscall;
 /// T6-9: 网络子系统公共类型 (原 privileged/net/types.rs)
 pub mod types;

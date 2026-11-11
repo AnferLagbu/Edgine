@@ -110,6 +110,14 @@ pub trait File: Send + Sync + 'static {
     fn inode_namespace_id(&self) -> Option<u32> {
         None
     }
+
+    /// 类型擦除入口 — 需要对象特有方法 (socket 协议操作) 时按具体类型下转型.
+    ///
+    /// 通用 `read_at` / `write_at` / `io_control` 只承载无需多参数的请求;
+    /// `socket(2)` 系 syscall 的入参组合超出 `io_control` 的 `(u32, usize)` 面,
+    /// 由 syscall 层 `downcast_ref` 到对象后走对象方法, 避免在 functions 层
+    /// 恢复裸指针.
+    fn as_any(&self) -> &dyn core::any::Any;
 }
 
 /// 文件映射后端凭据 — 可作为页缓存后端的对象提供的命名空间键.
@@ -183,6 +191,10 @@ impl File for RegularFile {
 
     fn inode_namespace_id(&self) -> Option<u32> {
         Some(self.inode.node_id())
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
     }
 
     fn mmap_backing(&self) -> Option<MmapBacking> {

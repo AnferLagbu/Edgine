@@ -109,19 +109,7 @@ pub fn poll_syscall(fds_ptr: u64, nfds: u32, _timeout: i32) -> i64 {
             let _ = crate::privileged::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
             continue;
         }
-        // D8b: Smoltcp 段 socket fd 走真实就绪快照 (委托 functions::net::socket::poll_fd),
-        // 不走下方 VFS 路径. revents 由 privileged 侧按 <poll.h> 位值直接产出, 原样回写.
-        if crate::functions::proc::fd_alloc::subsystem_of(pfd.fd)
-            == Some(crate::functions::proc::fd_alloc::FdSubsystem::Smoltcp)
-        {
-            pfd.revents = crate::functions::net::socket::poll_fd(pfd.fd, pfd.events);
-            if pfd.revents != 0 {
-                ready += 1;
-            }
-            let _ = crate::privileged::syscall::api::write_struct_to_user(fds_ptr + offset, &pfd);
-            continue;
-        }
-        // VFS fd: 统一对象分发 (fd → OpenFile → File::poll 快照).
+        // 统一对象分发 (fd → OpenFile → File::poll 快照), socket 亦经 SocketFile::poll.
         // fd 有效性改由 per-process fd 表判定 (映射存在即有效, 不存在则不就绪);
         // 每个 fd 至多计一次 ready (POSIX poll 返回有事件的 fd 数).
         if let Some(handle_id) = crate::functions::fs::vfs_get_fd_handle(

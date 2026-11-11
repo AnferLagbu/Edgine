@@ -32,14 +32,14 @@
 //
 // ## 与 Framekernel 安全契约
 //
-// 快照不含敏感凭证 (无密码无 key), 仅网络配置 + FD 索引.
+// 快照不含敏感凭证 (无密码无 key), 仅网络配置 + 槽位索引.
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
 /// 快照魔数 (`"ANXS"` 0x584E414C  小端)
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;
 /// 快照版本
 pub const NET_SNAPSHOT_VERSION: u32 = 1;
-/// 快照 FD 表长度: 与 Smoltcp 段 FD 上限 (`FdPlan::SMOLTCP.capacity`) **单一来源**
+/// 快照槽位表长度: 与 smoltcp 槽位上限 (`FdPlan::SMOLTCP.capacity`) **单一来源**
 /// 同源, 与 `net/init.rs` 的 `MAX_SM_FD` 恒等 (二者皆从 `FdRange::capacity` 派生).
 /// `net_save` / `net_restore` 按 `0..MAX_SM_FD` 读写本数组, 若本长度短于
 /// `MAX_SM_FD` 会越界 panic (TD-02 曾将 `MAX_SM_FD` 重基为 256 而此处滞留 16 即

@@ -476,6 +476,12 @@ def check_functions_inter_module_deps():
         ('sgeg', 'fs'),
         # net 依赖 proc 是合理的 (socket fd 经 functions::proc::fd_alloc 分配/释放)
         ('net', 'proc'),
+        # net 依赖 fs 是合理的 (socket fd 对象挂 OpenFileTable, 经 vfs_get_fd_handle +
+        # OPEN_FILE_TABLE 解析出 SocketFile 并持有引用至系统调用结束)
+        ('net', 'fs'),
+        # net 依赖 syscall 是合理的 (setsockopt 的 SOL_SOCKET/SO_PASSCRED 分流
+        # 引用 ABI 常量单源的 functions 转发出口)
+        ('net', 'syscall'),
         # syscall 依赖 fs 是合理的 (固件加载经 functions::fs 的 vfs_open_safe/vfs_read_safe)
         ('syscall', 'fs'),
         # timer 依赖 syscall 是合理的 (POSIX timer 复用 syscall 层 posix_timer 实现)

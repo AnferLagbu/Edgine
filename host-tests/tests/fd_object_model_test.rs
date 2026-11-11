@@ -49,6 +49,10 @@ impl File for StubFile {
     fn file_type(&self) -> VfsFileType {
         self.file_type
     }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 /// 最小 `Inode` 实现: stat 报告的节点号 / 挂载点 / 类型可配置.
@@ -124,6 +128,10 @@ impl File for ReleaseProbe {
 
     fn release(&self) {
         self.released.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
     }
 }
 
@@ -526,6 +534,7 @@ fn file_trait_defined_with_full_contract() {
         "fn as_inode(",
         "fn mmap_backing(",
         "fn inode_namespace_id(",
+        "fn as_any(",
     ] {
         assert!(src.contains(needle), "File trait 缺契约方法: {needle}");
     }
@@ -882,5 +891,174 @@ fn signalfd_special_object_dispatch_sites() {
     assert!(
         !priv_tests.contains("register_signalfd_tests"),
         "旧 privileged 注册点必须删除"
+    );
+}
+
+// ============================================================================
+// 阶段 3 第 3 个迁移子系统: Smoltcp socket — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn socket_object_implements_file_contract() {
+    use edgine::kernel::functions::net::socket_file::SocketFile;
+
+    let sf = SocketFile::new(11);
+    assert_eq!(sf.slot(), 11, "槽位编号原样保存");
+    assert!(sf.stream(), "socket 不可定位 (lseek → ESPIPE)");
+    assert!(sf.as_inode().is_none(), "socket 非 inode 承载");
+    assert_eq!(sf.file_type(), VfsFileType::File);
+    assert_eq!(
+        sf.io_control(0x1234_5678, 0),
+        Err(KernelError::NotSupported),
+        "socket 对象不处理通用 ioctl (回落默认策略)"
+    );
+
+    // syscall 层经 as_any 下转型取槽位; 挂表后 OpenFile 仍可往返.
+    let of = OpenFile::from_file(Arc::new(SocketFile::new(11)), 0, 0);
+    let recovered = of
+        .file()
+        .as_any()
+        .downcast_ref::<SocketFile>()
+        .expect("SocketFile 必须可下转型");
+    assert_eq!(recovered.slot(), 11);
+    assert!(!of.is_nonblock(), "OpenFile 缺省阻塞");
+    of.set_nonblock(true);
+    assert!(
+        of.is_nonblock(),
+        "F_SETFL 的非阻塞位由 OpenFile 单点承载 (socket 对象不另存)"
+    );
+    assert!(
+        of.as_inode().is_none(),
+        "socket 不得经 as_inode 混入 pcache / inotify 命名空间"
+    );
+}
+
+#[test]
+fn socket_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/net/socket_file.rs");
+    assert!(
+        src.contains("impl File for SocketFile"),
+        "SocketFile 必须实现统一 File 接口"
+    );
+    assert!(
+        src.contains("OpenFile::from_file"),
+        "创建路径必须构造 OpenFile 挂表"
+    );
+    assert!(
+        src.contains("OPEN_FILE_TABLE.alloc"),
+        "创建路径必须分配 OpenFileTable 槽位"
+    );
+    assert!(
+        src.contains("t.alloc_fd(handle_id, cloexec)"),
+        "用户 fd 必须由 per-process fd 表分配并携带 CLOEXEC"
+    );
+    assert!(
+        src.contains("net_socket::sm_net_close(slot)"),
+        "挂表失败必须显式归还协议栈槽位"
+    );
+    assert!(
+        src.contains("OPEN_FILE_TABLE.close(handle_id)"),
+        "fd 表耗尽必须经关闭链触发 release 归还槽位"
+    );
+    assert!(
+        src.contains("net_socket::sm_net_close(self.slot)"),
+        "release 必须关闭协议栈槽位 (最后一个 fd 引用归零)"
+    );
+    assert!(
+        !src.contains("FdPlan"),
+        "迁移后不得引用全局 FD 编号区间 (FdPlan)"
+    );
+
+    let sys = read_file("functions/net/syscall.rs");
+    assert!(
+        !sys.contains("FdPlan") && !sys.contains("sm_slot"),
+        "socket syscall 层不得残留 FD 编号区间 / fd→槽位换算"
+    );
+
+    // 槽位分配器归 privileged; sm_socket / sm_accept / sm_close 经其生灭.
+    let slots = read_file("privileged/net/slots.rs");
+    assert!(
+        slots.contains("pub fn alloc()") && slots.contains("pub fn free(slot: usize)"),
+        "槽位分配器必须暴露 alloc / free"
+    );
+    let fi = read_file("privileged/net/init/sm_fi.rs");
+    assert!(
+        fi.contains("slots::alloc()"),
+        "sm_socket / sm_accept 必须经槽位分配器取槽位"
+    );
+    assert!(fi.contains("slots::free(slot)"), "sm_close 必须归还槽位");
+}
+
+#[test]
+fn socket_dispatch_sites_resolve_object_and_pass_slot() {
+    let sys = read_file("functions/net/syscall.rs");
+    assert!(
+        sys.contains("fn resolve(fd: i32) -> Result<Self, Errno>"),
+        "socket syscall 必须以用户 fd 解析对象"
+    );
+    assert!(
+        sys.contains("of.file().as_any().downcast_ref::<SocketFile>()"),
+        "解析必须经 as_any 下转型到 SocketFile"
+    );
+    assert!(
+        sys.contains("fn blocks(&self, flags: i32) -> bool"),
+        "阻塞语义必须由对象非阻塞位与 MSG_DONTWAIT 合成"
+    );
+    assert!(
+        sys.contains("impl Drop for SocketFd"),
+        "系统调用结束必须释放对象引用 (槽位不被并发 close 回收)"
+    );
+
+    // UDS 专属选项 (SO_PASSCRED) 先于 socket 对象解析: UDS fd 不挂 OpenFileTable.
+    let so = sys.find("fn setsockopt_syscall").expect("setsockopt 入口");
+    let body = &sys[so..];
+    let uds_at = body
+        .find("uds::is_uds_fd(fd)")
+        .expect("SO_PASSCRED 必须按 UDS 分流");
+    let resolve_at = body
+        .find("SocketFd::resolve(fd)")
+        .expect("非 UDS 选项必须解析 socket 对象");
+    assert!(
+        uds_at < resolve_at,
+        "SO_PASSCRED 的 UDS 分流必须先于 socket 对象解析"
+    );
+
+    // privileged 入口参数域为槽位编号, 且不再持有 per-slot 阻塞标志.
+    let fw = read_file("privileged/net/syscall.rs");
+    for needle in [
+        "pub fn bind_syscall(slot_id: i32",
+        "pub fn listen_syscall(slot_id: i32",
+        "pub fn accept_syscall(slot_id: i32",
+        "pub fn connect_syscall(slot_id: i32",
+    ] {
+        assert!(
+            fw.contains(needle),
+            "privileged 入口必须接收槽位编号: {needle}"
+        );
+    }
+    assert!(
+        !fw.contains("sm_set_nonblocking"),
+        "非阻塞状态归 functions 对象, privileged 不再持 per-slot 标志"
+    );
+
+    // 通用 poll / close 分发不得残留 socket 数值分支.
+    let file_ops = read_file("functions/fs/file_ops.rs");
+    assert!(
+        !file_ops.contains("Smoltcp") && !file_ops.contains("sm_socket_poll"),
+        "poll 必须走 File::poll 统一对象分发"
+    );
+    let open = read_file("functions/fs/open.rs");
+    assert!(
+        !open.contains("sm_close"),
+        "close 必须经 OpenFileTable 引用归零回调, 不得数值分支直关"
+    );
+    let io = read_file("functions/fs/io.rs");
+    assert!(
+        io.contains("of.is_pipe_endpoint() || of.as_inode().is_none()"),
+        "F_SETFL 必须覆盖非 inode 特殊对象与管道端点"
+    );
+    assert!(
+        !io.contains("Smoltcp") && !io.contains("SMOLTCP"),
+        "io.rs 不得残留 socket 数值特判"
     );
 }

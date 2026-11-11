@@ -47,7 +47,7 @@ pub enum McError {
     NotMember,
     /// 接口组表已满 ([`MC_MAX_GROUPS`] 用尽) → `-E_NOMEM`.
     TableFull,
-    /// `slot` 超出登记表槽位数. 调用方的槽位均取自 `sm_slot`, 正常路径不可达,
+    /// `slot` 超出登记表槽位数. 调用方传入已通过 `fd_type != 0` 校验的槽位, 正常路径不可达,
     /// 但必须显式拒绝 —— 否则 `join` 会占下一个表项却永远无法释放 (该槽位的
     /// 成员位图读写均为 no-op, 引用计数无从归零).
     InvalidSlot,

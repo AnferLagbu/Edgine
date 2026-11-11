@@ -16,6 +16,7 @@ use super::{
     raw, socket_set,
 };
 use crate::privileged::net::mcast::{MC_MAX_GROUPS, McError};
+use crate::privileged::net::slots;
 use crate::privileged::net::{
     SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
 };
@@ -30,8 +31,8 @@ use core::sync::atomic::AtomicU16;
 // 共用; 见 plan socket-option-constants-unification 裁定记录).
 use edgine_abi::socket::{
     IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IPPROTO_IP, IPPROTO_IPV6, IPPROTO_TCP,
-    IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, SO_BROADCAST, SO_ERROR, SO_KEEPALIVE, SO_PASSCRED,
-    SO_RCVTIMEO, SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
+    IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, SO_BROADCAST, SO_ERROR, SO_KEEPALIVE, SO_RCVTIMEO,
+    SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
 };
 use smoltcp::iface::MulticastError;
 use smoltcp::socket::{tcp, udp};
@@ -60,18 +61,16 @@ const E_NOPROTOOPT: i32 = 92;
 /// `EADDRNOTAVAIL` (Linux x86 = 99): `IP_DROP_MEMBERSHIP` 拆一个本 slot 未持有的组.
 const E_ADDRNOTAVAIL: i32 = 99;
 
+/// `MSG_DONTWAIT` (Linux 0x40): 仅本次调用非阻塞, 不改变 socket 自身的阻塞属性.
+/// 自 fd 对象模型阶段 3 起, 每槽位阻塞属性由 `SocketFile` 经 `blocking` 参数传入,
+/// 本标志仍由 privileged 解释, 二者按与关系合成.
+const MSG_DONTWAIT: i32 = 0x40;
+
 // ============================================================================
 // D8: sock 类型回值 (sockopt 常量已迁 edgine-abi 单源, 见顶部 use)
 // ============================================================================
 const SOCK_STREAM: i32 = 1;
 const SOCK_DGRAM: i32 = 2;
-
-// ============================================================================
-// D8c: recv/send flags (P5d / DECISION-096); 超时选项 SO_RCVTIMEO/SO_SNDTIMEO
-// 已迁 edgine-abi 单源
-// ============================================================================
-/// `recv`/`send` 族 flags: 本次调用非阻塞 (不挂起, 立即返 -`E_AGAIN`).
-const MSG_DONTWAIT: i32 = 0x40;
 
 // ============================================================================
 // D11: 组播成员参数长度 (P6 / DECISION-097; 成员管理选项常量已迁 edgine-abi)
@@ -91,21 +90,18 @@ const POLLHUP: i16 = 16;
 const POLLNVAL: i16 = 32;
 
 // ============================================================================
-// 方案 C: fd → 槽位索引单点换算 (Smoltcp 段, base = FdPlan::SMOLTCP.base)
+// fd 对象模型阶段 3: 槽位号校验 (原 fd → 槽位换算退役)
 // ============================================================================
 
-/// 把用户态 fd 换算为 Smoltcp 段内部槽位索引。
+/// 校验对象持有的槽位号并转索引.
 ///
-/// 本模块全部 `raw::*` 静态表以**槽位索引空间**运作 (紧凑 [0, `MAX_SM_FD`)),
-/// fd 数值 (含基址偏移) 仅经本函数进入表。这是 `fd_alloc::idx_of` 在本子树的
-/// 唯一切换面: fd 对象模型终态工程 (全局 `FdPlan` 退役, per-process fd 表接管)
-/// 时整体改写本函数的调用点即可。
+/// 槽位号由 `slots::alloc` 分配, 只存在于 `SocketFile` 私有状态; 用户 fd 由
+/// per-process `FdTable` 分配, 两者不再共享编号空间。本模块全部 `raw::*` 静态表
+/// 以槽位索引空间 (`[0, MAX_SM_FD)`) 运作, 槽位号仅经本函数进入表。
 #[inline]
-fn sm_slot(fd: i32) -> Option<usize> {
-    match crate::privileged::proc::fd_alloc::idx_of(fd) {
-        Some((crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp, slot)) => Some(slot),
-        _ => None,
-    }
+fn as_slot(slot_id: i32) -> Option<usize> {
+    let slot = usize::try_from(slot_id).ok()?;
+    (slot < MAX_SM_FD).then_some(slot)
 }
 
 /// 登记当前进程为 `slot` 上方向 `want`、绝对死线 `deadline_ns` (0=无超时) 的
@@ -149,48 +145,12 @@ unsafe fn sock_block_deadline(slot: usize, recv: bool) -> u64 {
     }
 }
 
-/// 分配一个 Smoltcp 段 FD 并换算为槽位索引, 返回 `(fd, slot)`.
+/// 分配一个空槽位; 槽位耗尽返回 `None`.
 ///
-/// 分配失败与换算失败统一返回 `None`; 换算属防御分支 (alloc 段与 `sm_slot` 换算
-/// 同源, 必然成功), 一旦失败先归还 FD 编号避免位图泄漏. 调用点以单一 let-else
-/// 处理 `-E_NFILE`, 分配-回滚逻辑收敛于此不再重复.
-///
-/// 调用方须持有 `NET_STATE` 锁 (与两处调用点既有约定一致).
+/// 调用方须持有 `NET_STATE` 锁 (与 `slots::free` 的调用点同一临界区约定).
 #[inline]
-fn sm_alloc_slot() -> Option<(i32, usize)> {
-    let fd = crate::privileged::proc::fd_alloc::alloc_fd(
-        crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
-    )?;
-    if let Some(slot) = sm_slot(fd) {
-        return Some((fd, slot));
-    }
-    crate::privileged::proc::fd_alloc::free_fd(
-        crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
-        fd,
-    );
-    None
-}
-
-// ============================================================================
-// UDS setsockopt 策略注册契约 (DECISION-K 统一模式: 机制 init 后注册策略)
-// ============================================================================
-
-/// UDS `SO_PASSCRED` setsockopt 策略钩子 — functions UDS 实现注册, privileged 消费
-///
-/// privileged `sm_setsockopt` (机制 FFI) 识别 `SO_PASSCRED` 路由需求后,
-/// 经由此钩子委托 `functions::net::unix::uds_setsockopt` (策略实现),
-/// privileged 不反向依赖 functions 具象 UDS 模块 (第二十六批反转).
-static UDS_SETOPT_HOOK: crate::privileged::sync::OnceLock<fn(i32, bool) -> i32> =
-    crate::privileged::sync::OnceLock::new();
-
-/// 注册 UDS setsockopt 策略钩子 (由 `functions::net::unix::uds_init` 调用)
-///
-/// # Errors
-/// 钩子已被注册过时返回 Err (幂等语义由调用方忽略重复注册)。
-pub fn register_uds_setsockopt_hook(
-    hook: fn(i32, bool) -> i32,
-) -> Result<(), fn(i32, bool) -> i32> {
-    UDS_SETOPT_HOOK.set(hook)
+fn sm_alloc_slot() -> Option<usize> {
+    slots::alloc()
 }
 
 // ============================================================================
@@ -410,6 +370,11 @@ fn endpoint_to_listen(ep: crate::privileged::net::iface_trait::NetEndpoint) -> I
 
 /// POSIX `socket(domain, type, protocol)` 内核实现。
 ///
+/// 成功返回**槽位编号** (`slot_id`, 非进程 fd): 进程 fd 由 `functions` 侧
+/// `SocketFile` 挂入 `OpenFileTable` 后分配, 见 fd 对象模型阶段 3.
+/// 任一失败分支 (地址族/类型不支持、socket 构造失败) 都归还已分配槽位,
+/// 不留泄漏.
+///
 /// # Safety
 /// - 由 `sys_socket` 系统调用分发, 参数由 syscall 层校验 (cred 检查)。
 /// - 必须 `NET_LOCK` 持有。
@@ -429,71 +394,32 @@ pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) 
             return -E_NFILE;
         }
 
-        // V2: 使用集中分配器获取 FD (方案 C: sm_alloc_slot 分配 + 槽位换算一体,
-        // 换算防御分支内部归还 FD 编号)
-        let Some((fd, fd_idx)) = sm_alloc_slot() else {
+        let Some(slot) = sm_alloc_slot() else {
             return -E_NFILE;
         };
 
         // REVAL-W W4.2.3.3 (2026-06-25): sm_socket 路径迁移到 raw::socket_open_stub.
-        // 删除 75 行重复 socket 构造代码, 统一走 raw 模块 (与 SmoltcpNetStack 共享).
-        // 0 行为变更: sm_socket 仍返回 fd, k_malloc 失败仍返回 -E_NOMEM.
+        // 统一走 raw 模块 (与 SmoltcpNetStack 共享).
         // 双栈 (DECISION-032): AF_INET(2) 与 AF_INET6(10) 均创建同一 smoltcp socket
         // (smoltcp 层不区分 family, bind/connect 时按 sockaddr 族解析).
-        let is_af = domain == 2 || domain == 10;
-        if is_af && sock_type == 1 {
-            // TCP — 委托 raw::socket_open_stub
-            let sockets = &mut *socket_set();
-            let kind = crate::privileged::net::iface_trait::SocketKind::Tcp;
-            if raw::socket_open_stub(sockets, kind, fd_idx).is_none() {
-                return -E_NOMEM;
+        let kind = match (domain, sock_type) {
+            (2 | 10, 1) => crate::privileged::net::iface_trait::SocketKind::Tcp,
+            (2 | 10, 2) => crate::privileged::net::iface_trait::SocketKind::Udp,
+            _ => {
+                slots::free(slot);
+                return -E_AFNOSUPPORT;
             }
-            fd
-        } else if is_af && sock_type == 2 {
-            // UDP — 委托 raw::socket_open_stub
-            let sockets = &mut *socket_set();
-            let kind = crate::privileged::net::iface_trait::SocketKind::Udp;
-            if raw::socket_open_stub(sockets, kind, fd_idx).is_none() {
-                return -E_NOMEM;
-            }
-            fd
-        } else {
-            -E_AFNOSUPPORT
+        };
+        let sockets = &mut *socket_set();
+        if raw::socket_open_stub(sockets, kind, slot).is_none() {
+            slots::free(slot);
+            return -E_NOMEM;
         }
+        i32::try_from(slot).unwrap_or_else(|_| {
+            slots::free(slot);
+            -E_NFILE
+        })
     }
-}
-
-/// 设置 socket 非阻塞标志 (D10 / DECISION-092).
-///
-/// `nonblock` = true 置非阻塞, false 恢复阻塞 (写 per-slot `blocking` 标志).
-/// fd 非法 / 非 socket (`fd_type`=0) 返回 `-E_BADF`, 否则 `0`. 内部持 `NET_STATE`
-/// 锁串行化; 供 `socket_syscall` (剥离 `SOCK_NONBLOCK`) 与 `functions` 侧
-/// `fcntl(F_SETFL, O_NONBLOCK)` 经 `net_socket` 安全代理调用. 阻塞睡眠本身归 P5b.
-pub fn sm_set_nonblocking(fd: i32, nonblock: bool) -> i32 {
-    let _guard = NET_STATE.lock();
-    let Some(slot) = sm_slot(fd) else {
-        return -E_BADF;
-    };
-    if raw::fd_type(slot) == 0 {
-        return -E_BADF;
-    }
-    raw::set_blocking(slot, !nonblock);
-    0
-}
-
-/// 读取 socket 非阻塞标志 (D10). 供 `fcntl(F_GETFL)` 回填 `O_NONBLOCK`.
-///
-/// 返回 `1` (非阻塞) / `0` (阻塞); fd 非法 / 非 socket 返回 `-E_BADF`.
-pub fn sm_get_nonblocking(fd: i32) -> i32 {
-    let _guard = NET_STATE.lock();
-    let Some(slot) = sm_slot(fd) else {
-        return -E_BADF;
-    };
-    if raw::fd_type(slot) == 0 {
-        return -E_BADF;
-    }
-    // 非阻塞 = !blocking; 返回 1 (非阻塞) / 0 (阻塞).
-    i32::from(!raw::is_blocking(slot))
 }
 
 // ============================================================================
@@ -564,10 +490,10 @@ fn next_ephemeral() -> Option<u16> {
 /// - 由 `sys_bind` 系统调用分发, 调用方验证权限。
 /// - `NET_LOCK` 持有。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_bind(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
+pub unsafe extern "C" fn sm_bind(slot_id: i32, addr: *const u8, addrlen: u32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
-        sm_bind_locked(fd, addr, addrlen)
+        sm_bind_locked(slot_id, addr, addrlen)
     }
 }
 
@@ -576,9 +502,9 @@ pub unsafe extern "C" fn sm_bind(fd: i32, addr: *const u8, addrlen: u32) -> i32 
 /// # Safety
 /// - `addr` 必须是有效的 sockaddr 指针, 含 `_addrlen` 字节已初始化。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
+unsafe fn sm_bind_locked(slot_id: i32, addr: *const u8, _addrlen: u32) -> i32 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -659,10 +585,10 @@ unsafe fn sm_bind_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
 /// # Safety
 /// `NET_LOCK` 持有; 由 `sys_listen` 分发, 调用方验证权限。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_listen(fd: i32, backlog: i32) -> i32 {
+pub unsafe extern "C" fn sm_listen(slot_id: i32, backlog: i32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
-        sm_listen_locked(fd, backlog)
+        sm_listen_locked(slot_id, backlog)
     }
 }
 
@@ -670,9 +596,9 @@ pub unsafe extern "C" fn sm_listen(fd: i32, backlog: i32) -> i32 {
 ///
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
+unsafe fn sm_listen_locked(slot_id: i32, _backlog: i32) -> i32 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -716,12 +642,20 @@ unsafe fn sm_listen_locked(fd: i32, _backlog: i32) -> i32 {
 
 /// POSIX `accept(fd, addr, addrlen)` 内核实现。
 ///
+/// `blocking` 为调用方 (`SocketFile`) 维护的阻塞属性; 成功返回**新槽位号**,
+/// 进程 fd 由 functions 侧包装为新的 `SocketFile` 后分配.
+///
 /// # Safety
 /// - `addr`/`addrlen` 可为 NULL; 非 NULL 时 `addr` 须指向至少 16 字节 (V4) /
 ///   28 字节 (V6) 可写内存, `addrlen` 须指向有效 u32。
 /// - `NET_LOCK` 持有; 由 `sys_accept` 分发, 调用方验证权限。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe extern "C" fn sm_accept(
+    slot_id: i32,
+    addr: *mut u8,
+    addrlen: *mut u32,
+    blocking: bool,
+) -> i32 {
     // P5c (DECISION-095): 监听槽暂无已完成握手的连接 (sm_accept_locked 返 -E_AGAIN)
     // 且 fd 阻塞时, 登记 WAITER_ACCEPT 等待者 → 释放 NET_STATE → block+schedule →
     // 回顶重查; poll_network 检测监听槽迁移到 Established/CloseWait 时唤醒. 非阻塞 /
@@ -734,18 +668,18 @@ pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) ->
     unsafe {
         loop {
             let guard = NET_STATE.lock();
-            let r = sm_accept_locked(fd, addr, addrlen);
+            let r = sm_accept_locked(slot_id, addr, addrlen);
             if r != -E_AGAIN {
-                if let Some(slot) = sm_slot(fd) {
+                if let Some(slot) = as_slot(slot_id) {
                     net_clear_waiter(slot, pid);
                 }
                 return r;
             }
             // -E_AGAIN 唯一来源: 监听槽无可交付连接 (其余错误直接返回, 不挂起).
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return r;
             };
-            if !raw::is_blocking(slot) || !can_block {
+            if !blocking || !can_block {
                 return r;
             }
             // 醒来重查仍无连接: 先判信号 (-EINTR), 再判超时 (-E_AGAIN), 均自摘等待者.
@@ -777,9 +711,9 @@ pub unsafe extern "C" fn sm_accept(fd: i32, addr: *mut u8, addrlen: *mut u32) ->
 /// # Safety
 /// - `addr`/`addrlen` 同 [`sm_accept`]。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+unsafe fn sm_accept_locked(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -817,20 +751,16 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             return -E_NFILE;
         }
 
-        // 步骤 2: 为新连接分配 FD 编号 (槽 n; 方案 C: sm_alloc_slot 分配 + 换算
-        // 一体, 换算防御分支内部归还 FD 编号避免位图泄漏).
-        let Some((conn_fd, conn_slot)) = sm_alloc_slot() else {
+        // 步骤 2: 为新连接分配槽位 (与监听槽同一位图空间, 编号全局唯一).
+        let Some(conn_slot) = sm_alloc_slot() else {
             return -E_NFILE;
         };
 
         // 步骤 3: 在槽 n 建新监听 socket (新 handle + 新缓冲).
-        // socket_open_stub 失败时已内部归还缓冲, 此处只需归还 FD 编号.
+        // socket_open_stub 失败时已内部归还缓冲, 此处只需归还槽位.
         let kind = crate::privileged::net::iface_trait::SocketKind::Tcp;
         let Some(new_handle) = raw::socket_open_stub(sockets, kind, conn_slot) else {
-            crate::privileged::proc::fd_alloc::free_fd(
-                crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
-                conn_fd,
-            );
+            slots::free(conn_slot);
             return -E_NOMEM;
         };
 
@@ -855,10 +785,7 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             raw::set_tcp_tx_buf(conn_slot, core::ptr::null_mut());
             raw::set_socket_handle(conn_slot, None);
             raw::set_fd_type(conn_slot, 0);
-            crate::privileged::proc::fd_alloc::free_fd(
-                crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
-                conn_fd,
-            );
+            slots::free(conn_slot);
             return -E_INVAL;
         }
 
@@ -882,18 +809,28 @@ unsafe fn sm_accept_locked(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             write_sockaddr(addr, addrlen, &ep);
         }
 
-        // 步骤 7: 返回承载已连接会话的新 fd; 监听槽 L 持续可用.
-        conn_fd
+        // 步骤 7: 返回承载已连接会话的新槽位号; 监听槽 L 持续可用.
+        i32::try_from(conn_slot).unwrap_or_else(|_| {
+            slots::free(conn_slot);
+            -E_NFILE
+        })
     }
 }
 
 /// POSIX `connect(fd, addr, addrlen)` 内核实现。
 ///
+/// `blocking` 为调用方 (`SocketFile`) 维护的阻塞属性.
+///
 /// # Safety
 /// `addr` 必须指向有效的 sockaddr 结构, 至少 `_addrlen` 字节。
 /// `NET_LOCK` 持有。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i32 {
+pub unsafe extern "C" fn sm_connect(
+    slot_id: i32,
+    addr: *const u8,
+    addrlen: u32,
+    blocking: bool,
+) -> i32 {
     // P5c (DECISION-095, A2): TCP connect 发起 SYN 后进入 SynSent, 需等握手完成.
     // 阻塞 fd → 登记 WAITER_CONNECT 挂起, poll_network 检测 Established(成功)/Closed
     // (失败) 唤醒; 非阻塞 / 中断路径 → 发起后返 -E_INPROGRESS (POSIX 异步 connect).
@@ -901,7 +838,7 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
     // Phase A: 单发发起 (含参数/NET_CONFIGURED/UDP 同步/连接错误映射), 复用 locked.
     let rc = unsafe {
         let _guard = NET_STATE.lock();
-        sm_connect_locked(fd, addr, addrlen)
+        sm_connect_locked(slot_id, addr, addrlen)
     };
     if rc != 0 {
         return rc; // 发起即失败 (E_BADF/E_NODEV/E_INVAL/E_CONNREFUSED)
@@ -915,7 +852,7 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
     unsafe {
         loop {
             let guard = NET_STATE.lock();
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return 0;
             };
             if raw::fd_type(slot) != 1 {
@@ -941,7 +878,7 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
                     return -E_CONNREFUSED;
                 }
                 tcp::State::SynSent | tcp::State::SynReceived => {
-                    if !raw::is_blocking(slot) || !can_block {
+                    if !blocking || !can_block {
                         return -E_INPROGRESS; // 非阻塞 / 不可挂起: 异步进行中
                     }
                     // P5d: 醒来仍 SynSent/SynReceived → 先判信号, 再判超时.
@@ -982,9 +919,9 @@ pub unsafe extern "C" fn sm_connect(fd: i32, addr: *const u8, addrlen: u32) -> i
 /// # Safety
 /// - `addr` 必须指向有效的 sockaddr 结构, 至少 `_addrlen` 字节。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
+unsafe fn sm_connect_locked(slot_id: i32, addr: *const u8, _addrlen: u32) -> i32 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -1085,7 +1022,13 @@ unsafe fn sm_connect_locked(fd: i32, addr: *const u8, _addrlen: u32) -> i32 {
 /// `buf` 必须指向至少 `len` 字节的有效可读内存, 内存必须在调用期间保持有效。
 /// `NET_LOCK` 持有; 由 `sys_send` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) -> i32 {
+pub unsafe extern "C" fn sm_send(
+    slot_id: i32,
+    buf: *const u8,
+    len: u32,
+    flags: i32,
+    blocking: bool,
+) -> i32 {
     // P5b (DECISION-094): TCP 发送缓冲满 (can_send=false) 且连接存活时, 阻塞 fd
     // 登记 WAITER_WRITE 等待者 → 释放 NET_STATE → block+schedule → 回顶重查.
     // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞 (立即 -E_AGAIN); 阻塞时叠加信号
@@ -1098,7 +1041,7 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
         loop {
             let guard = NET_STATE.lock();
 
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -1110,7 +1053,7 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot) && !dontwait;
+            let blocking = blocking && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts(buf, len as usize);
@@ -1183,7 +1126,13 @@ pub unsafe extern "C" fn sm_send(fd: i32, buf: *const u8, len: u32, flags: i32) 
 /// `buf` 必须指向至少 `len` 字节的有效可写内存, 内存必须在调用期间保持有效。
 /// `NET_LOCK` 持有; 由 `sys_recv` 分发。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) -> i32 {
+pub unsafe extern "C" fn sm_recv(
+    slot_id: i32,
+    buf: *mut u8,
+    len: u32,
+    flags: i32,
+    blocking: bool,
+) -> i32 {
     // P5b (DECISION-094): TCP 空缓冲且连接存活 / UDP 无数据报时, 阻塞 fd 登记
     // WAITER_READ → 释放 NET_STATE → block+schedule → 回顶重查. 连接关闭 (EOF) 由
     // poll_network 的 dead 分支唤醒, 避免阻塞挂死.
@@ -1197,7 +1146,7 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
         loop {
             let guard = NET_STATE.lock();
 
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -1209,7 +1158,7 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot) && !dontwait;
+            let blocking = blocking && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts_mut(buf, len as usize);
@@ -1279,12 +1228,13 @@ pub unsafe extern "C" fn sm_recv(fd: i32, buf: *mut u8, len: u32, flags: i32) ->
 /// `NET_LOCK` 持有; 由 `sys_sendto` 分发。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_sendto(
-    fd: i32,
+    slot_id: i32,
     buf: *const u8,
     len: u32,
     flags: i32,
     addr: *const u8,
     _addrlen: u32,
+    blocking: bool,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
     // P5b: TCP sendto 与 sm_send 同阻塞语义 (方向 WAITER_WRITE); UDP sendto 为数据报不阻塞.
@@ -1297,7 +1247,7 @@ pub unsafe extern "C" fn sm_sendto(
         loop {
             let guard = NET_STATE.lock();
 
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -1313,7 +1263,7 @@ pub unsafe extern "C" fn sm_sendto(
             let Some(endpoint) = parse_endpoint(addr) else {
                 return -E_INVAL;
             };
-            let blocking = raw::is_blocking(slot) && !dontwait;
+            let blocking = blocking && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts(buf, len as usize);
@@ -1375,12 +1325,13 @@ pub unsafe extern "C" fn sm_sendto(
 /// `NET_LOCK` 持有; 由 `sys_recvfrom` 分发。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_recvfrom(
-    fd: i32,
+    slot_id: i32,
     buf: *mut u8,
     len: u32,
     flags: i32,
     addr: *mut u8,
     addrlen: *mut u32,
+    blocking: bool,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
     // P5b: 与 sm_recv 同阻塞语义 (方向 WAITER_READ), UDP 额外写回对端 sockaddr.
@@ -1394,7 +1345,7 @@ pub unsafe extern "C" fn sm_recvfrom(
         loop {
             let guard = NET_STATE.lock();
 
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -1406,7 +1357,7 @@ pub unsafe extern "C" fn sm_recvfrom(
             if buf.is_null() || len == 0 {
                 return -E_INVAL;
             }
-            let blocking = raw::is_blocking(slot) && !dontwait;
+            let blocking = blocking && !dontwait;
 
             let sockets = &mut *socket_set();
             let data = core::slice::from_raw_parts_mut(buf, len as usize);
@@ -1479,14 +1430,19 @@ pub unsafe extern "C" fn sm_recvfrom(
 /// 调用方 (functions) 须先校验可读范围.
 /// `NET_LOCK` 持有; 由 `sys_sendmsg` 分发.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32 {
+pub unsafe extern "C" fn sm_sendmsg(
+    slot_id: i32,
+    msg: *const u8,
+    _flags: i32,
+    blocking: bool,
+) -> i32 {
     unsafe {
         if msg.is_null() {
             return -E_FAULT;
         }
-        // 方案 C: 此处仅校验 fd 归属与类型, 实际收发委托 sm_send/sm_recv
+        // 方案 C: 此处仅校验槽位归属与类型, 实际收发委托 sm_send/sm_recv
         // (其内部自行完成槽位换算与二次校验)。
-        if sm_slot(fd).is_none_or(|slot| raw::fd_type(slot) == 0) {
+        if as_slot(slot_id).is_none_or(|slot| raw::fd_type(slot) == 0) {
             return -E_BADF;
         }
         // 读 Msghdr
@@ -1544,10 +1500,11 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
         }
 
         sm_send(
-            fd,
+            slot_id,
             region.as_mut_ptr(),
             crate::privileged::glue::low_u32_from_usize(total),
             0,
+            blocking,
         )
     }
 }
@@ -1558,13 +1515,18 @@ pub unsafe extern "C" fn sm_sendmsg(fd: i32, msg: *const u8, _flags: i32) -> i32
 /// `msg` 必须是有效可写用户指针, functions 校验.
 /// `NET_LOCK` 持有; 由 `sys_recvmsg` 分发.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
+pub unsafe extern "C" fn sm_recvmsg(
+    slot_id: i32,
+    msg: *mut u8,
+    _flags: i32,
+    blocking: bool,
+) -> i32 {
     unsafe {
         if msg.is_null() {
             return -E_FAULT;
         }
         // 方案 C: 同 sm_sendmsg, 仅校验归属与类型, 拆分委托 sm_recv。
-        if sm_slot(fd).is_none_or(|slot| raw::fd_type(slot) == 0) {
+        if as_slot(slot_id).is_none_or(|slot| raw::fd_type(slot) == 0) {
             return -E_BADF;
         }
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
@@ -1604,10 +1566,11 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
             return -E_NOMEM;
         };
         let n = sm_recv(
-            fd,
+            slot_id,
             region.as_mut_ptr(),
             crate::privileged::glue::low_u32_from_usize(cap),
             0,
+            blocking,
         );
         if n <= 0 {
             return n;
@@ -1634,14 +1597,16 @@ pub unsafe extern "C" fn sm_recvmsg(fd: i32, msg: *mut u8, _flags: i32) -> i32 {
 
 /// POSIX `close(fd)` 内核实现。
 ///
+/// `slot_id` 为 smoltcp 槽位编号 (非进程 fd; 对象关闭时由本函数释放).
+///
 /// # Safety
 /// `NET_LOCK` 持有; 由 `sys_close` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
+pub unsafe extern "C" fn sm_close(slot_id: i32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -1717,11 +1682,8 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
         raw::set_socket_local_endpoint(slot, None);
         // D9: 清空 remote 端点表槽位 (UDP connect 登记的对端).
         raw::set_socket_remote_endpoint(slot, None);
-        // G10: 归还 FD 编号, 否则 socket/accept 循环会耗尽 MAX_SM_FD 个 FD 位.
-        crate::privileged::proc::fd_alloc::free_fd(
-            crate::privileged::proc::fd_alloc::FdSubsystem::Smoltcp,
-            fd,
-        );
+        // 归还槽位, 否则 socket/accept 循环会耗尽 MAX_SM_FD 个槽位.
+        slots::free(slot);
         0
     }
 }
@@ -1735,12 +1697,12 @@ pub unsafe extern "C" fn sm_close(fd: i32) -> i32 {
 /// - 其他 `how`: `-EINVAL`.
 ///
 /// # Safety
-/// `fd` 须为合法 socket FD; 内部持 `NET_STATE` 锁串行化.
+/// `slot_id` 须为合法 socket 槽位; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_shutdown(fd: i32, how: i32) -> i32 {
+pub unsafe extern "C" fn sm_shutdown(slot_id: i32, how: i32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
-        sm_shutdown_locked(fd, how)
+        sm_shutdown_locked(slot_id, how)
     }
 }
 
@@ -1748,9 +1710,9 @@ pub unsafe extern "C" fn sm_shutdown(fd: i32, how: i32) -> i32 {
 ///
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_shutdown_locked(fd: i32, how: i32) -> i32 {
+unsafe fn sm_shutdown_locked(slot_id: i32, how: i32) -> i32 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -1795,12 +1757,12 @@ unsafe fn sm_shutdown_locked(fd: i32, how: i32) -> i32 {
 /// - fd 非法 / 非 socket (`fd_type`=0) → POLLNVAL.
 ///
 /// # Safety
-/// `fd` 须为合法 FD; 内部持 `NET_STATE` 锁串行化.
+/// `slot_id` 须为合法槽位; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_socket_poll(fd: i32, events: i16) -> i16 {
+pub unsafe extern "C" fn sm_socket_poll(slot_id: i32, events: i16) -> i16 {
     unsafe {
         let _guard = NET_STATE.lock();
-        sm_socket_poll_locked(fd, events)
+        sm_socket_poll_locked(slot_id, events)
     }
 }
 
@@ -1808,9 +1770,9 @@ pub unsafe extern "C" fn sm_socket_poll(fd: i32, events: i16) -> i16 {
 ///
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
-unsafe fn sm_socket_poll_locked(fd: i32, events: i16) -> i16 {
+unsafe fn sm_socket_poll_locked(slot_id: i32, events: i16) -> i16 {
     unsafe {
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return POLLNVAL;
         };
         let stype = raw::fd_type(slot);
@@ -1884,7 +1846,7 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
             Err(McError::AlreadyMember) => return -E_ADDRINUSE,
             // 接口组表满 (含 smoltcp 为 IPv6 solicited-node 自动占的位).
             Err(McError::TableFull) => return -E_NOMEM,
-            // 槽位越界: 调用方已由 `sm_slot` 校验, 此处 fail-closed.
+            // 槽位越界: 调用方已由 `fd_type != 0` 校验, 此处 fail-closed.
             Err(McError::InvalidSlot) => return -E_BADF,
             // join 路径不会报“非成员”; 保留分支使穷尽且映射显式.
             Err(McError::NotMember) => return -E_INVAL,
@@ -1922,8 +1884,10 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 
 /// POSIX `setsockopt` 内核实现 (D8: 精简集).
 ///
+/// `slot_id` 为 smoltcp 槽位编号 (非进程 fd); `SO_PASSCRED` 属 UDS 专属
+/// 选项, 已在 `functions::net::syscall::setsockopt_syscall` 按 fd 分流.
+///
 /// 已支持选项:
-/// - `SO_PASSCRED` (`SOL_SOCKET`/16): 路由到 UDS 服务层 (`uds_setsockopt`).
 /// - `SO_RCVTIMEO`(20)/`SO_SNDTIMEO`(21): 收发超时, 参数 `struct timeval` (16 字节: `tv_sec` i64 + `tv_usec` i64); 存 ns 于 per-slot (P5d).
 /// - `IP_ADD_MEMBERSHIP`/`IP_DROP_MEMBERSHIP` (`IPPROTO_IP`/35、36) 与
 ///   `IPV6_ADD_MEMBERSHIP`/`IPV6_DROP_MEMBERSHIP` (`IPPROTO_IPV6`/20、21): 组播
@@ -1939,7 +1903,7 @@ fn mc_membership(slot: usize, addr: IpAddress, join: bool) -> i32 {
 /// `optval` 必须是 syscall 层提供的有效内核指针 (i32 选项 4 字节 / `SO_RCVTIMEO`、`SO_SNDTIMEO` 的 `struct timeval` 16 字节 / 组播选项的 `ip_mreq` 8 字节、`ipv6_mreq` 20 字节), `optlen` 为其长度。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_setsockopt(
-    fd: i32,
+    slot_id: i32,
     level: i32,
     optname: i32,
     optval: *const u8,
@@ -1947,21 +1911,6 @@ pub unsafe extern "C" fn sm_setsockopt(
 ) -> i32 {
     // SAFETY: optval 为 syscall 层传入的内核栈指针 (含 4 字节); NET_STATE 锁保护 socket 集合.
     unsafe {
-        // v2 SO_PASSCRED 路由: level==1 (SOL_SOCKET), optname==16 (SO_PASSCRED)
-        if level == SOL_SOCKET && optname == SO_PASSCRED {
-            if optlen < 4 {
-                return -E_INVAL;
-            }
-            let val = core::ptr::read_unaligned(optval.cast::<i32>());
-            // 第二十六批: UDS 策略经注册钩子委托 (未注册 fail-closed, 早期
-            // 启动无用户态进程, -ENOPROTOOPT 窗口安全; 符号与全文件
-            // 负 errno 返回惯例一致)
-            return match UDS_SETOPT_HOOK.get() {
-                Some(&hook) => hook(fd, val != 0),
-                None => -E_NOPROTOOPT,
-            };
-        }
-
         // P5d (DECISION-096): SO_RCVTIMEO / SO_SNDTIMEO — 收发超时. 参数为
         // struct timeval (tv_sec: i64 @0 + tv_usec: i64 @8, 共 16 字节). 存 ns 于
         // per-slot, 供阻塞循环 (accept/connect/send/recv/sendto/recvfrom) 进入挂起
@@ -1986,7 +1935,7 @@ pub unsafe extern "C" fn sm_setsockopt(
                 .saturating_mul(1_000_000_000)
                 .saturating_add(usec.saturating_mul(1_000));
             let _guard = NET_STATE.lock();
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -2024,7 +1973,7 @@ pub unsafe extern "C" fn sm_setsockopt(
             // 忽略; 影响面: 多接口机器上无法按网卡指定加入组; 何时需扩展: 本内核
             // 接入第二个网络接口时 (需先给 iface 建接口索引模型).
             let _guard = NET_STATE.lock();
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             if raw::fd_type(slot) == 0 {
@@ -2052,7 +2001,7 @@ pub unsafe extern "C" fn sm_setsockopt(
         let val = core::ptr::read_unaligned(optval.cast::<i32>());
 
         let _guard = NET_STATE.lock();
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) != 1 {
@@ -2092,7 +2041,7 @@ pub unsafe extern "C" fn sm_setsockopt(
 /// `optval` 必须是 syscall 层提供的可写内核指针 (i32 选项 ≥ 4 字节 / 超时选项 ≥ 16 字节), `optlen` 为可写内核 u32 指针。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_getsockopt(
-    fd: i32,
+    slot_id: i32,
     level: i32,
     optname: i32,
     optval: *mut u8,
@@ -2111,7 +2060,7 @@ pub unsafe extern "C" fn sm_getsockopt(
             }
             let ns = {
                 let _guard = NET_STATE.lock();
-                let Some(slot) = sm_slot(fd) else {
+                let Some(slot) = as_slot(slot_id) else {
                     return -E_BADF;
                 };
                 if raw::fd_type(slot) == 0 {
@@ -2134,7 +2083,7 @@ pub unsafe extern "C" fn sm_getsockopt(
 
         let out: i32 = {
             let _guard = NET_STATE.lock();
-            let Some(slot) = sm_slot(fd) else {
+            let Some(slot) = as_slot(slot_id) else {
                 return -E_BADF;
             };
             let stype = raw::fd_type(slot);
@@ -2202,11 +2151,11 @@ pub unsafe extern "C" fn sm_getsockopt(
 /// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
 /// - `NET_LOCK` 持有; 由 `sys_getsockname` 分发.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -2279,11 +2228,11 @@ pub unsafe extern "C" fn sm_getsockname(fd: i32, addr: *mut u8, addrlen: *mut u3
 /// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
 /// - `NET_LOCK` 持有; 由 `sys_getpeername` 分发.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sm_getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
     unsafe {
         let _guard = NET_STATE.lock();
 
-        let Some(slot) = sm_slot(fd) else {
+        let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
         };
         if raw::fd_type(slot) == 0 {
@@ -2361,7 +2310,6 @@ mod tests {
     use crate::privileged::net::iface_trait::{
         Ipv4Addr as TraitIpv4Addr, NetEndpoint as TraitEndpoint,
     };
-    use crate::privileged::proc::fd_alloc::{FdPlan, FdSubsystem, alloc_fd, fd_at, free_fd};
 
     /// D1: local 端点表写入/读取/清空 往返一致.
     #[test]
@@ -2378,24 +2326,26 @@ mod tests {
         assert_eq!(raw::socket_local_endpoint(0), None);
     }
 
-    /// D10 (P5a): blocking 标志 `allocate()` 默认阻塞, raw accessor 跨槽位往返一致.
+    /// 槽位位图: 分配 → 释放 → 复用闭环, 编号恒落 `[0, MAX_SM_FD)`.
     ///
-    /// 全程持单次 `NET_STATE` 锁 (非可重入), 只验证 per-slot 阻塞表存储 (P5a 数据
-    /// 结构本体); `sm_set_nonblocking`/`fcntl`/`socket_syscall` 为自锁 glue, 其
-    /// 行为待 P5b 阻塞睡眠接入后经 e2e 验证.
+    /// 位图是 `sm_socket`/`accept` 的槽位唯一来源 (原 fd 分配器退役);
+    /// 与共享全局位图的其他用例同在 `NET_STATE` 锁下串行化.
     #[test]
-    fn test_blocking_flag_default_and_roundtrip() {
-        let mut guard = NET_STATE.lock();
-        guard.allocate();
-        // allocate() 默认阻塞 (POSIX); 抽查首/尾槽位.
-        assert!(raw::is_blocking(0), "allocate 后应默认阻塞");
-        assert!(raw::is_blocking(MAX_SM_FD - 1), "末槽位应默认阻塞");
-        // 跨槽位 set/get 往返 (非阻塞仅翻 per-slot 标志, 不触 smoltcp).
-        raw::set_blocking(0, false);
-        assert!(!raw::is_blocking(0), "置非阻塞后应读到 false");
-        assert!(raw::is_blocking(1), "相邻槽位不受影响");
-        raw::set_blocking(0, true);
-        assert!(raw::is_blocking(0));
+    fn test_slot_alloc_free_realloc() {
+        let _guard = NET_STATE.lock();
+        slots::free_all();
+
+        let first = slots::alloc().expect("首次分配应成功");
+        assert!(first < MAX_SM_FD, "槽位 {first} 应落在上界内");
+        assert!(slots::is_allocated(first));
+
+        slots::free(first);
+        assert!(!slots::is_allocated(first), "归还后不应再标记占用");
+
+        let second = slots::alloc().expect("归还后应能重新分配");
+        assert!(second < MAX_SM_FD);
+        slots::free(second);
+        slots::free_all();
     }
 
     /// D2: 连续分配返回互不相同的端口, 且均落在动态端口区间内.
@@ -2430,22 +2380,6 @@ mod tests {
         EPHEMERAL_CURSOR.store(EPHEMERAL_END, Ordering::Relaxed);
         let p = next_ephemeral().expect("回绕后应能分配");
         assert_eq!(p, EPHEMERAL_START);
-    }
-
-    /// G10: 归还 FD 编号后可重新分配 (修复 accept/socket 循环 FD 泄漏).
-    #[test]
-    fn test_free_fd_allows_realloc() {
-        let first = alloc_fd(FdSubsystem::Smoltcp).expect("首次分配应成功");
-        // 方案 C 回归: Smoltcp 段 fd 不得落入 VFS [0, 64) (命名空间重叠防线)
-        assert!(
-            FdPlan::SMOLTCP.contains(first) && !FdPlan::VFS.contains(first),
-            "fd {first} 应落在 Smoltcp 段且不与 VFS 段重叠"
-        );
-        assert!(free_fd(FdSubsystem::Smoltcp, first), "归还已分配 FD 应成功");
-
-        let second = alloc_fd(FdSubsystem::Smoltcp).expect("归还后应能重新分配");
-        // 不与 first 比较具体编号: 其他并行用例可能也在分配同一子系统.
-        free_fd(FdSubsystem::Smoltcp, second);
     }
 
     /// D4/D5: `endpoint_to_listen` 把通配地址映射为 `None`, 具体地址保留, 端口透传.
@@ -2496,7 +2430,7 @@ mod tests {
 
         // host-test 下 kmalloc 仅 4 KiB early_buffer, 无法经受保护路径分配 TCP
         // 缓冲; 故以 Box::leak 自建 'static 缓冲并直接装配 socket, 绕开 k_malloc.
-        let mk_tcp_fd = |fd_idx: usize| {
+        let mk_tcp_fd = |slot: usize| {
             // SAFETY: 持 NET_STATE 锁, SocketSet 已初始化.
             let sockets = unsafe { &mut *raw::socket_set() };
             // Box::leak 交出独占所有权并把生命周期提升为 'static, 仅此处持有.
@@ -2510,8 +2444,8 @@ mod tests {
                 tcp::SocketBuffer::new(rx),
                 tcp::SocketBuffer::new(tx),
             ));
-            raw::set_socket_handle(fd_idx, Some(handle));
-            raw::set_fd_type(fd_idx, 1);
+            raw::set_socket_handle(slot, Some(handle));
+            raw::set_fd_type(slot, 1);
         };
 
         // 127.0.0.1:8080 的 sockaddr (NE family + BE port).
@@ -2520,12 +2454,12 @@ mod tests {
         sa[2..4].copy_from_slice(&8080u16.to_be_bytes());
         sa[4..8].copy_from_slice(&[127, 0, 0, 1]);
 
-        let fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
-        let slot = sm_slot(fd).expect("已分配 FD 应可换算槽位");
+        let slot = slots::alloc().expect("分配槽位");
+        let sid = i32::try_from(slot).expect("槽位号应可入 i32");
         mk_tcp_fd(slot);
         // SAFETY: 持 NET_STATE 锁, sockaddr 为本地栈数组且含 8 字节.
         assert_eq!(
-            unsafe { sm_bind_locked(fd, sa.as_ptr(), 8) },
+            unsafe { sm_bind_locked(sid, sa.as_ptr(), 8) },
             0,
             "TCP bind 应成功"
         );
@@ -2536,29 +2470,35 @@ mod tests {
         );
 
         // D3 冲突检测: 同族同端口再 bind 应失败.
-        let fd2 = alloc_fd(FdSubsystem::Smoltcp).expect("分配第二个 TCP FD");
-        mk_tcp_fd(sm_slot(fd2).expect("第二个 FD 应可换算槽位"));
+        let slot2 = slots::alloc().expect("分配第二个槽位");
+        let sid2 = i32::try_from(slot2).expect("槽位号应可入 i32");
+        mk_tcp_fd(slot2);
         // SAFETY: 同上.
         assert_eq!(
-            unsafe { sm_bind_locked(fd2, sa.as_ptr(), 8) },
+            unsafe { sm_bind_locked(sid2, sa.as_ptr(), 8) },
             -E_ADDRINUSE,
             "同族同端口 bind 应冲突"
         );
 
         // D4: listen 后 socket 进入 Listen 状态.
         // SAFETY: 同上.
-        assert_eq!(unsafe { sm_listen_locked(fd, 1) }, 0, "TCP listen 应成功");
-        let handle = raw::socket_handle(slot).expect("fd 应有 handle");
+        assert_eq!(unsafe { sm_listen_locked(sid, 1) }, 0, "TCP listen 应成功");
+        let handle = raw::socket_handle(slot).expect("槽位应有 handle");
         // SAFETY: 持 NET_STATE 锁, SocketSet 已初始化.
         let state = unsafe { (&*socket_set()).get::<tcp::Socket>(handle).state() };
         assert_eq!(state, tcp::State::Listen, "listen 后应处于 Listen 状态");
 
         // D4 缺省分支: 未 bind 直接 listen, 应自动分配临时端口并回写 D1 端点表.
-        let fd3 = alloc_fd(FdSubsystem::Smoltcp).expect("分配第三个 TCP FD");
-        mk_tcp_fd(sm_slot(fd3).expect("第三个 FD 应可换算槽位"));
+        let slot3 = slots::alloc().expect("分配第三个槽位");
+        let sid3 = i32::try_from(slot3).expect("槽位号应可入 i32");
+        mk_tcp_fd(slot3);
         // SAFETY: 同上.
-        assert_eq!(unsafe { sm_listen_locked(fd3, 1) }, 0, "缺省 listen 应成功");
-        let port3 = raw::socket_local_endpoint(sm_slot(fd3).expect("第三个 FD 应可换算槽位"))
+        assert_eq!(
+            unsafe { sm_listen_locked(sid3, 1) },
+            0,
+            "缺省 listen 应成功"
+        );
+        let port3 = raw::socket_local_endpoint(slot3)
             .expect("listen 应回写本地端点")
             .port;
         assert!(
@@ -2572,7 +2512,8 @@ mod tests {
         dst[2..4].copy_from_slice(&9999u16.to_be_bytes());
         dst[4..8].copy_from_slice(&[127, 0, 0, 1]);
         // SAFETY: 同上.
-        assert_eq!(unsafe { sm_connect_locked(fd, dst.as_ptr(), 8) }, -E_NODEV);
+        assert_eq!(unsafe { sm_connect_locked(sid, dst.as_ptr(), 8) }, -E_NODEV);
+        slots::free_all();
     }
 
     /// D6 契约: TCP `accept` 的门控与错误分支.
@@ -2587,7 +2528,7 @@ mod tests {
         raw::init_sockets();
 
         // 与 D3/D4/D5 契约一致: host-test 下以 Box::leak 自建 'static 缓冲装配 socket.
-        let mk_tcp_fd = |fd_idx: usize| {
+        let mk_tcp_fd = |slot: usize| {
             // SAFETY: 持 NET_STATE 锁, SocketSet 已初始化.
             let sockets = unsafe { &mut *raw::socket_set() };
             let rx: &'static mut [u8] = alloc::boxed::Box::leak(
@@ -2600,11 +2541,11 @@ mod tests {
                 tcp::SocketBuffer::new(rx),
                 tcp::SocketBuffer::new(tx),
             ));
-            raw::set_socket_handle(fd_idx, Some(handle));
-            raw::set_fd_type(fd_idx, 1);
+            raw::set_socket_handle(slot, Some(handle));
+            raw::set_fd_type(slot, 1);
         };
 
-        // 无效 fd: 负数 / 超出 Smoltcp 段上界 / 未使用空槽 (经 fd_at 取段内数值) → -E_BADF.
+        // 无效槽位: 负数 / 超出上界 / 未使用空槽 → -E_BADF.
         // SAFETY: 持 NET_STATE 锁, 地址指针为 null (accept 容忍 NULL).
         assert_eq!(
             unsafe { sm_accept_locked(-1, core::ptr::null_mut(), core::ptr::null_mut()) },
@@ -2613,7 +2554,7 @@ mod tests {
         assert_eq!(
             unsafe {
                 sm_accept_locked(
-                    FdPlan::SMOLTCP.end_exclusive(),
+                    i32::try_from(MAX_SM_FD).expect("上界应可入 i32"),
                     core::ptr::null_mut(),
                     core::ptr::null_mut(),
                 )
@@ -2624,7 +2565,7 @@ mod tests {
         assert_eq!(
             unsafe {
                 sm_accept_locked(
-                    fd_at(FdSubsystem::Smoltcp, MAX_SM_FD - 1),
+                    i32::try_from(MAX_SM_FD - 1).expect("末槽位应可入 i32"),
                     core::ptr::null_mut(),
                     core::ptr::null_mut(),
                 )
@@ -2633,24 +2574,26 @@ mod tests {
         );
 
         // 非 TCP 类型 (fd_type != 1) → -E_NOTSUPP.
-        let other_fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配非 TCP 类型 FD");
-        let other_slot = sm_slot(other_fd).expect("已分配 FD 应可换算槽位");
+        let other_slot = slots::alloc().expect("分配非 TCP 类型槽位");
+        let other_sid = i32::try_from(other_slot).expect("槽位号应可入 i32");
         mk_tcp_fd(other_slot);
         raw::set_fd_type(other_slot, 2);
         // SAFETY: 同上.
         assert_eq!(
-            unsafe { sm_accept_locked(other_fd, core::ptr::null_mut(), core::ptr::null_mut()) },
+            unsafe { sm_accept_locked(other_sid, core::ptr::null_mut(), core::ptr::null_mut()) },
             -E_NOTSUPP
         );
 
-        // TCP fd 但未完成三次握手 (Closed) → -E_AGAIN.
-        let tcp_fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
-        mk_tcp_fd(sm_slot(tcp_fd).expect("已分配 FD 应可换算槽位"));
+        // TCP 槽位但未完成三次握手 (Closed) → -E_AGAIN.
+        let tcp_slot = slots::alloc().expect("分配 TCP 槽位");
+        let tcp_sid = i32::try_from(tcp_slot).expect("槽位号应可入 i32");
+        mk_tcp_fd(tcp_slot);
         // SAFETY: 同上.
         assert_eq!(
-            unsafe { sm_accept_locked(tcp_fd, core::ptr::null_mut(), core::ptr::null_mut()) },
+            unsafe { sm_accept_locked(tcp_sid, core::ptr::null_mut(), core::ptr::null_mut()) },
             -E_AGAIN
         );
+        slots::free_all();
     }
 
     /// D9: remote 端点表写入/读取/清空 往返一致 (UDP connect 登记对端的基础).
@@ -2667,8 +2610,8 @@ mod tests {
         assert_eq!(raw::socket_remote_endpoint(0), None);
     }
 
-    /// D7: `shutdown` 半关闭契约 — 非法 fd / 非法 how 错误分支, SHUT_RD no-op 返 0,
-    /// SHUT_WR 保留 socket (与 close 的关键差异: 不回收 handle/fd_type/FD 编号).
+    /// D7: `shutdown` 半关闭契约 — 非法槽位 / 非法 how 错误分支, SHUT_RD no-op 返 0,
+    /// SHUT_WR 保留 socket (与 close 的关键差异: 不回收 handle/fd_type/槽位).
     #[test]
     fn test_shutdown_contract() {
         let mut guard = NET_STATE.lock();
@@ -2688,28 +2631,29 @@ mod tests {
             tcp::SocketBuffer::new(rx),
             tcp::SocketBuffer::new(tx),
         ));
-        let fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
-        let slot = sm_slot(fd).expect("FD 应可换算槽位");
+        let slot = slots::alloc().expect("分配槽位");
+        let sid = i32::try_from(slot).expect("槽位号应可入 i32");
         raw::set_socket_handle(slot, Some(handle));
         raw::set_fd_type(slot, 1);
 
-        // 非法 fd → -E_BADF.
+        // 非法槽位 → -E_BADF.
         assert_eq!(unsafe { sm_shutdown_locked(-1, 1) }, -E_BADF);
         // 合法 socket 但非法 how (非 0/1/2) → -E_INVAL.
-        assert_eq!(unsafe { sm_shutdown_locked(fd, 5) }, -E_INVAL);
+        assert_eq!(unsafe { sm_shutdown_locked(sid, 5) }, -E_INVAL);
         // SHUT_RD(0) → no-op 返 0, socket 保留.
-        assert_eq!(unsafe { sm_shutdown_locked(fd, 0) }, 0);
+        assert_eq!(unsafe { sm_shutdown_locked(sid, 0) }, 0);
         assert!(raw::fd_type(slot) == 1 && raw::socket_handle(slot).is_some());
-        // SHUT_WR(1) → 返 0, 且 socket/FD **未被回收** (区别于 close).
-        assert_eq!(unsafe { sm_shutdown_locked(fd, 1) }, 0);
+        // SHUT_WR(1) → 返 0, 且 socket/槽位 **未被回收** (区别于 close).
+        assert_eq!(unsafe { sm_shutdown_locked(sid, 1) }, 0);
         assert_eq!(raw::fd_type(slot), 1, "SHUT_WR 不应改 fd_type");
         assert!(
             raw::socket_handle(slot).is_some(),
             "SHUT_WR 不应 remove socket"
         );
+        slots::free_all();
     }
 
-    /// D8b: `sm_socket_poll` 错误/状态分支 — 非法 fd 与空槽 → POLLNVAL;
+    /// D8b: `sm_socket_poll` 错误/状态分支 — 非法槽位与空槽 → POLLNVAL;
     /// TCP 新建 socket (state Closed) → POLLHUP|POLLERR. 真实收发就绪由 QEMU e2e 覆盖.
     #[test]
     fn test_socket_poll_contract() {
@@ -2717,13 +2661,18 @@ mod tests {
         guard.allocate();
         raw::init_sockets();
 
-        // 非法 fd (负数) → POLLNVAL.
-        // SAFETY: 调用 *_locked 变体要求持 NET_STATE 锁 (本测试已持 guard); 负 fd 经 sm_slot 返 None, 不解引用 socket_set.
+        // 非法槽位 (负数) → POLLNVAL.
+        // SAFETY: 调用 *_locked 变体要求持 NET_STATE 锁 (本测试已持 guard); 负值经 as_slot 返 None, 不解引用 socket_set.
         assert_eq!(unsafe { sm_socket_poll_locked(-1, POLLIN) }, POLLNVAL);
         // 段内未使用空槽 (fd_type == 0) → POLLNVAL.
         // SAFETY: 持 NET_STATE 锁 (guard); 空槽 fd_type==0 于取 handle 前早返回 POLLNVAL, 不触碰 socket_set.
         assert_eq!(
-            unsafe { sm_socket_poll_locked(fd_at(FdSubsystem::Smoltcp, MAX_SM_FD - 1), POLLIN) },
+            unsafe {
+                sm_socket_poll_locked(
+                    i32::try_from(MAX_SM_FD - 1).expect("末槽位应可入 i32"),
+                    POLLIN,
+                )
+            },
             POLLNVAL
         );
 
@@ -2740,13 +2689,14 @@ mod tests {
             tcp::SocketBuffer::new(rx),
             tcp::SocketBuffer::new(tx),
         ));
-        let fd = alloc_fd(FdSubsystem::Smoltcp).expect("分配 TCP FD");
-        let slot = sm_slot(fd).expect("FD 应可换算槽位");
+        let slot = slots::alloc().expect("分配槽位");
+        let sid = i32::try_from(slot).expect("槽位号应可入 i32");
         raw::set_socket_handle(slot, Some(handle));
         raw::set_fd_type(slot, 1);
 
-        let rev = unsafe { sm_socket_poll_locked(fd, POLLIN | POLLOUT) };
+        let rev = unsafe { sm_socket_poll_locked(sid, POLLIN | POLLOUT) };
         assert_ne!(rev & POLLHUP, 0, "Closed TCP 应报 POLLHUP");
         assert_ne!(rev & POLLERR, 0, "Closed TCP 应报 POLLERR");
+        slots::free_all();
     }
 }

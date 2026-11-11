@@ -232,34 +232,31 @@ pub fn raw_write_sockaddr_un(ptr: u64, addrlen_ptr: u64, addr: &SockAddrUn) -> R
 // Socket 12 Syscall TCB 实现
 // ============================================================================
 
-/// socket — 创建 socket
+/// socket — 创建 socket, 成功返回**槽位编号** (进程 fd 由 functions 侧分配)
 #[must_use]
 pub fn socket_syscall(domain: i32, sock_type: i32, _protocol: i32) -> i64 {
     let Some(d) = Domain::from_i32(domain) else {
         return Errno::Eafnosupport.as_ret();
     };
-    // D10 (DECISION-092): SOCK_NONBLOCK 是 type 参数的标志位, 非 socket 类型本身.
-    // 校验前剥离本位, 只对基础类型过 SockType; 创建成功后据此置 per-slot 非阻塞标志.
-    let nonblock = sock_type & SOCK_NONBLOCK != 0;
+    // SOCK_NONBLOCK 是 type 参数的标志位, 非 socket 类型本身: 校验前剥离,
+    // 只对基础类型过 SockType. 非阻塞属性归 `functions::net::SocketFile`,
+    // 本层不再持有 per-slot 标志.
     let base_type = sock_type & !SOCK_NONBLOCK;
     let Some(t) = SockType::from_i32(base_type) else {
         return Errno::Einval.as_ret();
     };
-    let fd = net_socket::sm_socket(d as i32, t as i32, 0);
-    if fd < 0 {
+    let slot_id = net_socket::sm_socket(d as i32, t as i32, 0);
+    if slot_id < 0 {
         Errno::Einval.as_ret()
     } else {
-        if nonblock {
-            let _ = net_socket::sm_set_nonblocking(fd, true);
-        }
-        i64::from(fd)
+        i64::from(slot_id)
     }
 }
 
 /// bind — 绑定本地地址到 socket (按 sockaddr 族分流 IPv4/IPv6)
 #[must_use]
-pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
-    if fd < 0 {
+pub fn bind_syscall(slot_id: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // 双栈 (DECISION-032): 按 sockaddr 族分流 — 2 = AF_INET, 10 = AF_INET6
@@ -281,7 +278,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
             bytes[2..4].copy_from_slice(&addr.port.to_be_bytes());
             bytes[4..8].copy_from_slice(&addr.ip);
             // SAFETY: bytes 为栈上有效 8 字节 sockaddr, sm_bind 同步读取.
-            unsafe { net_socket::sm_bind(fd, bytes.as_ptr(), 8) }
+            unsafe { net_socket::sm_bind(slot_id, bytes.as_ptr(), 8) }
         }
         10 => {
             let buf = match raw_read_sockaddr_in6(addr_ptr) {
@@ -289,7 +286,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
                 Err(e) => return e.as_ret(),
             };
             // SAFETY: buf 为栈上有效 28 字节 sockaddr, sm_bind 同步读取.
-            unsafe { net_socket::sm_bind(fd, buf.as_ptr(), 28) }
+            unsafe { net_socket::sm_bind(slot_id, buf.as_ptr(), 28) }
         }
         _ => return Errno::Eafnosupport.as_ret(),
     };
@@ -298,33 +295,40 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
 
 /// listen — 将 socket 置为监听状态并设置连接队列长度
 #[must_use]
-pub fn listen_syscall(fd: i32, backlog: i32) -> i64 {
-    if fd < 0 {
+pub fn listen_syscall(slot_id: i32, backlog: i32) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     if backlog < 0 {
         return Errno::Einval.as_ret();
     }
-    let rc = net_socket::sm_listen(fd, backlog);
+    let rc = net_socket::sm_listen(slot_id, backlog);
     i64::from(rc)
 }
 
 /// accept — 接受连接, 并把对端地址回写到 `addr`/`addrlen` (二者可为 0)。
 #[must_use]
-pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
-    if fd < 0 {
+pub fn accept_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64, blocking: bool) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // addr/addrlen 非 0 时须为有效可写用户指针; sm_accept 校验并直写 (同 getsockname 约定).
     // SAFETY: addr/addrlen 为已校验的用户指针 (可为 0 表示不关心), sm 层直接回写.
-    let rc = unsafe { net_socket::sm_accept(fd, addr_ptr as *mut u8, addrlen_ptr as *mut u32) };
+    let rc = unsafe {
+        net_socket::sm_accept(
+            slot_id,
+            addr_ptr as *mut u8,
+            addrlen_ptr as *mut u32,
+            blocking,
+        )
+    };
     i64::from(rc)
 }
 
 /// connect — 连接远端地址 (按 sockaddr 族分流 IPv4/IPv6)
 #[must_use]
-pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
-    if fd < 0 {
+pub fn connect_syscall(slot_id: i32, addr_ptr: u64, _addrlen: u32, blocking: bool) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // 双栈 (DECISION-032): 按 sockaddr 族分流 — 2 = AF_INET, 10 = AF_INET6
@@ -344,7 +348,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
             bytes[2..4].copy_from_slice(&addr.port.to_be_bytes());
             bytes[4..8].copy_from_slice(&addr.ip);
             // SAFETY: bytes 为栈上有效 8 字节 sockaddr, sm_connect 同步读取.
-            unsafe { net_socket::sm_connect(fd, bytes.as_ptr(), 8) }
+            unsafe { net_socket::sm_connect(slot_id, bytes.as_ptr(), 8, blocking) }
         }
         10 => {
             let buf = match raw_read_sockaddr_in6(addr_ptr) {
@@ -352,7 +356,7 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
                 Err(e) => return e.as_ret(),
             };
             // SAFETY: buf 为栈上有效 28 字节 sockaddr, sm_connect 同步读取.
-            unsafe { net_socket::sm_connect(fd, buf.as_ptr(), 28) }
+            unsafe { net_socket::sm_connect(slot_id, buf.as_ptr(), 28, blocking) }
         }
         _ => return Errno::Eafnosupport.as_ret(),
     };
@@ -362,14 +366,15 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, _addrlen: u32) -> i64 {
 /// sendto / send — 发送数据, 指定目标地址时按族分流, 否则走已连接路径
 #[must_use]
 pub fn sendto_syscall(
-    fd: i32,
+    slot_id: i32,
     buf_ptr: u64,
     len: u32,
-    _flags: i32,
+    flags: i32,
     dest_ptr: u64,
     _dest_len: u32,
+    blocking: bool,
 ) -> i64 {
-    if fd < 0 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     let data = match raw_copy_in(buf_ptr, len) {
@@ -380,10 +385,11 @@ pub fn sendto_syscall(
         // SAFETY: data 为已 copy-in 的内核 Vec, sm_send 同步读取.
         unsafe {
             net_socket::sm_send(
-                fd,
+                slot_id,
                 data.as_ptr(),
                 crate::privileged::glue::low_u32_from_usize(data.len()),
-                0,
+                flags,
+                blocking,
             )
         }
     } else {
@@ -406,12 +412,13 @@ pub fn sendto_syscall(
                 // SAFETY: data / bytes 均为内核侧有效缓冲, sm_sendto 同步读取.
                 unsafe {
                     net_socket::sm_sendto(
-                        fd,
+                        slot_id,
                         data.as_ptr(),
                         crate::privileged::glue::low_u32_from_usize(data.len()),
-                        0,
+                        flags,
                         bytes.as_ptr(),
                         8,
+                        blocking,
                     )
                 }
             }
@@ -423,12 +430,13 @@ pub fn sendto_syscall(
                 // SAFETY: data / buf 均为内核侧有效缓冲, sm_sendto 同步读取.
                 unsafe {
                     net_socket::sm_sendto(
-                        fd,
+                        slot_id,
                         data.as_ptr(),
                         crate::privileged::glue::low_u32_from_usize(data.len()),
-                        0,
+                        flags,
                         buf.as_ptr(),
                         28,
+                        blocking,
                     )
                 }
             }
@@ -441,15 +449,16 @@ pub fn sendto_syscall(
 /// recvfrom / recv — 接收数据到用户缓冲区, 并回写对端地址 (D9).
 #[must_use]
 pub fn recvfrom_syscall(
-    fd: i32,
+    slot_id: i32,
     buf_ptr: u64,
     len: u32,
-    _flags: i32,
+    flags: i32,
     src_ptr: u64,
     src_len_ptr: u64,
+    blocking: bool,
 ) -> i64 {
     const MAX: usize = 4096;
-    if fd < 0 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     if buf_ptr == 0 || len == 0 {
@@ -466,12 +475,13 @@ pub fn recvfrom_syscall(
     // SAFETY: stack_buf 为内核栈缓冲, src_ptr/src_len_ptr 为已校验的用户指针 (可为 0).
     let n = unsafe {
         net_socket::sm_recvfrom(
-            fd,
+            slot_id,
             stack_buf.as_mut_ptr(),
             crate::privileged::glue::low_u32_from_usize(want),
-            0,
+            flags,
             src_ptr as *mut u8,
             src_len_ptr as *mut u32,
+            blocking,
         )
     };
     if n < 0 {
@@ -492,8 +502,8 @@ pub fn recvfrom_syscall(
 
 /// setsockopt — 设置 socket 选项 (按 valen 全长 copy-in, 覆盖 i32 / timeval / mreq 选项)
 #[must_use]
-pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen: u32) -> i64 {
-    if fd < 0 {
+pub fn setsockopt_syscall(slot_id: i32, level: i32, optname: i32, val_ptr: u64, valen: u32) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // P5d (DECISION-096) + P6 (D11): 按 valen 全长 copy-in, 上限 20 字节 —— 覆盖
@@ -514,7 +524,7 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen
     // SAFETY: buf 为内核栈缓冲 (已 copy-in), sm_setsockopt 同步读取.
     let rc = unsafe {
         net_socket::sm_setsockopt(
-            fd,
+            slot_id,
             level,
             optname,
             buf.as_ptr(),
@@ -526,8 +536,14 @@ pub fn setsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, valen
 
 /// getsockopt — 获取 socket 选项 (按用户 *optlen 容量回填, 覆盖 i32 与 timeval 选项)
 #[must_use]
-pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, optlen_ptr: u64) -> i64 {
-    if fd < 0 {
+pub fn getsockopt_syscall(
+    slot_id: i32,
+    level: i32,
+    optname: i32,
+    val_ptr: u64,
+    optlen_ptr: u64,
+) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // P5d (DECISION-096): 长度感知 — 读用户 *optlen (socklen_t) 作缓冲容量, 上限
@@ -546,7 +562,7 @@ pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, optle
     // SAFETY: buf / out_len 均为内核栈缓冲, sm_getsockopt 同步读写.
     let rc = unsafe {
         net_socket::sm_getsockopt(
-            fd,
+            slot_id,
             level,
             optname,
             buf.as_mut_ptr(),
@@ -569,56 +585,58 @@ pub fn getsockopt_syscall(fd: i32, level: i32, optname: i32, val_ptr: u64, optle
 
 /// shutdown(fd, how) — 半关闭 socket (D7: 透传 how 到 `sm_shutdown`)
 #[must_use]
-pub fn shutdown_syscall(fd: i32, how: i32) -> i64 {
-    if fd < 0 {
+pub fn shutdown_syscall(slot_id: i32, how: i32) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    let rc = net_socket::sm_shutdown(fd, how);
+    let rc = net_socket::sm_shutdown(slot_id, how);
     i64::from(rc)
 }
 
 /// sendmsg(fd, msg, flags) — functions 层入口
 #[must_use]
-pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, _flags: i32) -> i64 {
-    if fd < 0 {
+pub fn sendmsg_syscall(slot_id: i32, msg_ptr: u64, flags: i32, blocking: bool) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // SAFETY: msg_ptr 为已校验的用户指针, sm 层按 msghdr 布局读取.
-    let rc = unsafe { net_socket::sm_sendmsg(fd, msg_ptr as *const u8, 0) };
+    let rc = unsafe { net_socket::sm_sendmsg(slot_id, msg_ptr as *const u8, flags, blocking) };
     i64::from(rc)
 }
 
 /// recvmsg(fd, msg, flags) — functions 层入口
 #[must_use]
-pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, _flags: i32) -> i64 {
-    if fd < 0 {
+pub fn recvmsg_syscall(slot_id: i32, msg_ptr: u64, flags: i32, blocking: bool) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // SAFETY: msg_ptr 为已校验的用户指针, sm 层按 msghdr 布局读写.
-    let rc = unsafe { net_socket::sm_recvmsg(fd, msg_ptr as *mut u8, 0) };
+    let rc = unsafe { net_socket::sm_recvmsg(slot_id, msg_ptr as *mut u8, flags, blocking) };
     i64::from(rc)
 }
 
 /// getsockname(fd, addr, addrlen) — 获取本端地址
 #[must_use]
-pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
-    if fd < 0 {
+pub fn getsockname_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // SAFETY: addr_ptr/addrlen_ptr 为已校验的用户指针 (可为 0), sm 层直接回写.
-    let rc =
-        unsafe { net_socket::sm_getsockname(fd, addr_ptr as *mut u8, addrlen_ptr as *mut u32) };
+    let rc = unsafe {
+        net_socket::sm_getsockname(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
+    };
     i64::from(rc)
 }
 
 /// getpeername(fd, addr, addrlen) — 获取对端地址
 #[must_use]
-pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
-    if fd < 0 {
+pub fn getpeername_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64 {
+    if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
     // SAFETY: addr_ptr/addrlen_ptr 为已校验的用户指针 (可为 0), sm 层直接回写.
-    let rc =
-        unsafe { net_socket::sm_getpeername(fd, addr_ptr as *mut u8, addrlen_ptr as *mut u32) };
+    let rc = unsafe {
+        net_socket::sm_getpeername(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
+    };
     i64::from(rc)
 }

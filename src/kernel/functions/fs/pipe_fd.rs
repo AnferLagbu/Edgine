@@ -179,6 +179,10 @@ impl File for PipeEndpointInode {
     fn as_inode(&self) -> Option<&dyn Inode> {
         Some(self)
     }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 /// 创建一对管道端点并分配用户 fd (读端, 写端).

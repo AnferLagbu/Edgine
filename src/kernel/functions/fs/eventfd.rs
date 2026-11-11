@@ -135,6 +135,10 @@ impl File for EventFdFile {
         // POSIX: eventfd 不可定位 (lseek → ESPIPE)
         true
     }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 /// `eventfd` / `eventfd2` 系统调用 — 创建 eventfd 对象并挂 per-process fd 表

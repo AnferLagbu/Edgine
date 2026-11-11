@@ -330,19 +330,11 @@ fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
 // 公开 API
 // ============================================================================
 
-/// 初始化 UDS 子系统: 惰性堆置两张表、重置编号并注册 `SO_PASSCRED` 钩子.
+/// 初始化 UDS 子系统: 惰性堆置两张表并重置编号.
 pub fn uds_init() {
     // 惰性堆置: 在堆就绪后填充 sockets/paths 两表 (与旧静态数组语义等价).
     UDS_STATE.with_mut(UdsState::allocate);
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
-    // 注册契约 (DECISION-K 统一模式: 机制 init 后注册策略, 第二十六批):
-    // privileged sm_setsockopt 的 SO_PASSCRED 路由经此钩子委托本模块,
-    // privileged 不再反向依赖 functions::net::unix. 重复注册 Err 忽略 (幂等).
-    // cfg 对齐 privileged::net::init 门控 (kernel_test 下 init FFI 层不存在).
-    #[cfg(not(feature = "kernel_test"))]
-    {
-        let _ = crate::privileged::net::init::register_uds_setsockopt_hook(uds_setsockopt);
-    }
 }
 
 /// 创建一个新的 UDS 套接字, 返回其 FD
@@ -1002,8 +994,9 @@ pub fn uds_unlink(path: &[u8]) -> Result<(), UdsError> {
 
 /// v2: `SO_PASSCRED` 选项 — 设置 socket 是否在 sendmsg 中附加 `SCM_CREDENTIALS`.
 ///
-/// 由 `privileged::net::init::sm_setsockopt` 路由 (`level=SOL_SOCKET`, `optname=SO_PASSCRED`).
-/// 仅对 UDS socket 生效, 其他 family 返 ENOPROTOOPT.
+/// 由 `functions::net::syscall::setsockopt_syscall` 在 `level=SOL_SOCKET` /
+/// `optname=SO_PASSCRED` 且 fd 属 UDS 段时分流至此. 仅对 UDS socket 生效,
+/// 其他 family 返 ENOPROTOOPT.
 pub fn uds_setsockopt(fd: i32, enable: bool) -> i32 {
     UDS_STATE.with_mut(|state| {
         let idx = match fd_to_idx(fd) {

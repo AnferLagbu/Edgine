@@ -22,6 +22,8 @@ pub mod netfilter;
 pub mod route;
 /// P2-I-44: 网络快照 (`net_save` / `net_restore` 完整实现)
 pub mod save;
+/// fd 对象模型阶段 3: smoltcp socket 内部槽位分配器 (非用户 fd).
+pub mod slots;
 #[cfg(not(feature = "kernel_test"))]
 pub mod smoltcp_impl;
 /// P2-I-41: Socket WaitQueue 基础设施

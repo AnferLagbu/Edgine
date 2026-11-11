@@ -10,11 +10,89 @@
 //!
 //! - [`mod@super::socket`] 强类型 API (Domain, `SockType`, `SockAddrIn`, `&[u8]`)
 //! - 本模块 syscall 入口 API (i32, u64 用户指针, u32 长度)
+//!
+//! ## fd 对象模型 (阶段 3 第 3 个迁移子系统)
+//!
+//! smoltcp socket fd 已由 [`SocketFile`] 对象承载并挂在 `OpenFileTable`:
+//! 用户 fd 经 per-process fd 表 → `handle_id` → 对象, 对象只持协议栈槽位编号.
+//! 本模块的每个 socket 系统调用经 `SocketFd::resolve` 快照 `(槽位, 非阻塞)`
+//! 并在调用期间以引用计数钉住对象 (槽位不会被并发 close 回收), 再以槽位编号
+//! 委托 privileged 入口. 阻塞语义由 `OpenFile::nonblock` + `MSG_DONTWAIT` 合成.
 
+use super::socket_file::SocketFile;
 use super::unix as uds;
+use crate::functions::fs::{OPEN_FILE_TABLE, vfs_get_fd_handle};
+use crate::functions::syscall::types::{SO_PASSCRED, SOL_SOCKET};
+use crate::privileged::net::socket_types::SOCK_NONBLOCK;
 use crate::privileged::net::syscall as fw;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
+
+/// `MSG_DONTWAIT` (Linux 0x40): 仅本次调用非阻塞, 不改变 socket 自身阻塞属性
+const MSG_DONTWAIT: i32 = 0x40;
+
+// ============================================================================
+// Smoltcp socket fd 解析守卫
+// ============================================================================
+
+/// 已解析的 smoltcp socket fd — 持有对象引用直至本次系统调用结束
+///
+/// `resolve` 在 `OpenFileTable` 锁内完成 `(槽位, 非阻塞)` 快照与 `inc_ref`,
+/// `Drop` 时 `dec_ref`: 并发 close 只会降引用计数, 槽位在本调用期间不被回收.
+struct SocketFd {
+    /// 对象在 `OpenFileTable` 的句柄
+    handle_id: u32,
+    /// 协议栈槽位编号
+    slot: i32,
+    /// fd 级非阻塞标志快照 (`OpenFile::nonblock`)
+    nonblock: bool,
+}
+
+impl SocketFd {
+    /// 由用户 fd 解析对象: fd 无效 → `EBADF`, 非 socket 对象 → `ENOTSOCK`
+    fn resolve(fd: i32) -> Result<Self, Errno> {
+        let fd_idx = usize::try_from(fd).map_err(|_| Errno::Ebadf)?;
+        let Some(handle_id) = vfs_get_fd_handle(fd_idx) else {
+            return Err(Errno::Ebadf);
+        };
+        let resolved = OPEN_FILE_TABLE.with_file(handle_id, |of| {
+            let socket = of.file().as_any().downcast_ref::<SocketFile>()?;
+            let slot = socket.slot();
+            let nonblock = of.is_nonblock();
+            of.inc_ref();
+            Some((slot, nonblock))
+        });
+        match resolved {
+            None => Err(Errno::Ebadf),
+            Some(None) => Err(Errno::Enotsock),
+            Some(Some((slot, nonblock))) => Ok(Self {
+                handle_id,
+                slot,
+                nonblock,
+            }),
+        }
+    }
+
+    /// 本次调用是否允许阻塞: 对象非阻塞位与 `MSG_DONTWAIT` 按与关系合成
+    fn blocks(&self, flags: i32) -> bool {
+        !self.nonblock && (flags & MSG_DONTWAIT) == 0
+    }
+}
+
+impl Drop for SocketFd {
+    fn drop(&mut self) {
+        OPEN_FILE_TABLE.dec_ref(self.handle_id);
+    }
+}
+
+/// privileged 原生返回值 (`i64`, 负值为 `-errno`) → `Result<usize, Errno>`
+fn ret_to_result(r: i64) -> Result<usize, Errno> {
+    if r < 0 {
+        Err(Errno::from_ret(r))
+    } else {
+        Ok(crate::functions::intcast::usize_from_i64(r))
+    }
+}
 
 // ============================================================================
 // 12 个 Socket Syscall 安全代理
@@ -27,7 +105,7 @@ use crate::privileged::syscall::api;
 /// # Errors
 ///
 /// 当 `AF_UNIX` 的 `sock_type` 非 Stream/Dgram 时返回 `Err(Errno::Einval)`; 不支持的协议族返回
-/// `Err(Errno::Eafnosupport)`; 底层创建失败时返回对应的 `Errno`。
+/// `Err(Errno::Eafnosupport)`; 底层创建失败时返回对应的 `Errno`; 对象或 fd 表耗尽返回 `Err(Errno::Emfile)`。
 pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usize, Errno> {
     // AF_UNIX 分流
     if domain == 1 {
@@ -40,13 +118,14 @@ pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usiz
             .map(crate::functions::intcast::usize_from_i32)
             .map_err(super::unix::UnixSocketError::to_errno);
     }
-    // AF_INET (smoltcp)
+    // AF_INET (smoltcp): privileged 返回槽位编号, fd 由本层分配
+    let nonblock = (sock_type & SOCK_NONBLOCK) != 0;
     let r = fw::socket_syscall(domain, sock_type, protocol);
     if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
+        return Err(Errno::from_ret(r));
     }
+    let slot = i32::try_from(r).map_err(|_| Errno::Einval)?;
+    SocketFile::create(slot, nonblock, false)
 }
 
 /// bind(fd, addr, addrlen)
@@ -56,7 +135,7 @@ pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usiz
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户地址不可读时返回 `Err(Errno::Efault)`; 不支持的协议族返回
-/// `Err(Errno::Eafnosupport)`; 底层 bind 失败时返回对应的 `Errno`。
+/// `Err(Errno::Eafnosupport)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`; 底层 bind 失败时返回对应的 `Errno`。
 pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -73,12 +152,8 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
         }
         2 | 10 => {
             // AF_INET / AF_INET6 (双栈, DECISION-032)
-            let r = fw::bind_syscall(fd, addr_ptr, addrlen);
-            if r < 0 {
-                Err(Errno::from_ret(r))
-            } else {
-                Ok(crate::functions::intcast::usize_from_i64(r))
-            }
+            let sock = SocketFd::resolve(fd)?;
+            ret_to_result(fw::bind_syscall(sock.slot, addr_ptr, addrlen))
         }
         _ => Err(Errno::Eafnosupport),
     }
@@ -91,7 +166,7 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 当 `backlog` 为负数时返回 `Err(Errno::Einval)`;
-/// 底层 listen 失败时返回对应的 `Errno`。
+/// fd 非 socket 时返回 `Err(Errno::Enotsock)`; 底层 listen 失败时返回对应的 `Errno`。
 pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -104,12 +179,8 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
             .map(|()| 0)
             .map_err(super::unix::UnixSocketError::to_errno);
     }
-    let r = fw::listen_syscall(fd, backlog);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::listen_syscall(sock.slot, backlog))
 }
 
 /// accept(fd, addr, addrlen)
@@ -118,7 +189,8 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 accept 失败 (如无待处理连接) 时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 accept 失败 (如无待处理连接) 时返回对应的 `Errno`。
 pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -128,12 +200,14 @@ pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize,
             .map(crate::functions::intcast::usize_from_i32)
             .map_err(super::unix::UnixSocketError::to_errno);
     }
-    let r = fw::accept_syscall(fd, addr_ptr, addrlen_ptr);
+    let sock = SocketFd::resolve(fd)?;
+    let r = fw::accept_syscall(sock.slot, addr_ptr, addrlen_ptr, !sock.nonblock);
     if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
+        return Err(Errno::from_ret(r));
     }
+    let slot = i32::try_from(r).map_err(|_| Errno::Einval)?;
+    // 新连接 fd 不继承监听端的 O_NONBLOCK 与 CLOEXEC (POSIX accept 语义)
+    SocketFile::create(slot, false, false)
 }
 
 /// connect(fd, addr, addrlen)
@@ -143,7 +217,7 @@ pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize,
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户地址不可读时返回 `Err(Errno::Efault)`; 不支持的协议族返回
-/// `Err(Errno::Eafnosupport)`; 底层 connect 失败时返回对应的 `Errno`。
+/// `Err(Errno::Eafnosupport)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`; 底层 connect 失败时返回对应的 `Errno`。
 pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -158,12 +232,13 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
         }
         2 | 10 => {
             // AF_INET / AF_INET6 (双栈, DECISION-032)
-            let r = fw::connect_syscall(fd, addr_ptr, addrlen);
-            if r < 0 {
-                Err(Errno::from_ret(r))
-            } else {
-                Ok(crate::functions::intcast::usize_from_i64(r))
-            }
+            let sock = SocketFd::resolve(fd)?;
+            ret_to_result(fw::connect_syscall(
+                sock.slot,
+                addr_ptr,
+                addrlen,
+                !sock.nonblock,
+            ))
         }
         _ => Err(Errno::Eafnosupport),
     }
@@ -176,7 +251,8 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; UDS 路径未提供目标地址时返回 `Err(Errno::Edestaddrreq)`;
-/// 用户缓冲区不可读时返回 `Err(Errno::Efault)`; 底层 sendto 失败时返回对应的 `Errno`。
+/// 用户缓冲区不可读时返回 `Err(Errno::Efault)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 sendto 失败时返回对应的 `Errno`。
 pub fn sendto_syscall(
     fd: i32,
     buf_ptr: u64,
@@ -198,12 +274,16 @@ pub fn sendto_syscall(
         let addr = fw::raw_read_sockaddr_un(dest_ptr, dest_len)?;
         return uds::sendto(fd, &data, &addr).map_err(super::unix::UnixSocketError::to_errno);
     }
-    let r = fw::sendto_syscall(fd, buf_ptr, len, flags, dest_ptr, dest_len);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::sendto_syscall(
+        sock.slot,
+        buf_ptr,
+        len,
+        flags,
+        dest_ptr,
+        dest_len,
+        sock.blocks(flags),
+    ))
 }
 
 /// `recvfrom` 系统调用 — 签名 `(fd, buf, len, flags, src_addr, addrlen)`
@@ -213,7 +293,7 @@ pub fn sendto_syscall(
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 用户缓冲区无效时返回 `Err(Errno::Efault)`;
-/// 底层 recvfrom 失败时返回对应的 `Errno`。
+/// fd 非 socket 时返回 `Err(Errno::Enotsock)`; 底层 recvfrom 失败时返回对应的 `Errno`。
 pub fn recvfrom_syscall(
     fd: i32,
     buf_ptr: u64,
@@ -247,19 +327,30 @@ pub fn recvfrom_syscall(
         let _ = (src_ptr, src_len_ptr);
         return Ok(n as usize);
     }
-    let r = fw::recvfrom_syscall(fd, buf_ptr, len, flags, src_ptr, src_len_ptr);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::recvfrom_syscall(
+        sock.slot,
+        buf_ptr,
+        len,
+        flags,
+        src_ptr,
+        src_len_ptr,
+        sock.blocks(flags),
+    ))
 }
 
 /// setsockopt(fd, level, optname, val, valen)
 ///
+/// `SOL_SOCKET/SO_PASSCRED` 是 UDS 专属选项, 由本层按 fd 分流到
+/// [`uds::uds_setsockopt`] (privileged 侧不再持有 UDS 策略钩子);
+/// 其余选项解析 socket 对象后按槽位委托 privileged.
+///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 setsockopt 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; `SO_PASSCRED` 的取值不可读时返回
+/// `Err(Errno::Efault)`、长度不足 4 字节返回 `Err(Errno::Einval)`、fd 非 UDS 时返回
+/// `Err(Errno::Ebadf)`; 其他选项在 fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 setsockopt 失败时返回对应的 `Errno`。
 pub fn setsockopt_syscall(
     fd: i32,
     level: i32,
@@ -270,19 +361,33 @@ pub fn setsockopt_syscall(
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let r = fw::setsockopt_syscall(fd, level, optname, val_ptr, valen);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
+    // v2 SO_PASSCRED 分流: 保持旧语义次序 — 先 copy-in (EFAULT), 再长度校验
+    // (EINVAL), 最后按 fd 归属分流 (非 UDS → EBADF)
+    if level == SOL_SOCKET && optname == SO_PASSCRED {
+        let len = (valen as usize).min(20);
+        let buf = fw::raw_copy_in(val_ptr, crate::functions::intcast::low_u32_from_usize(len))?;
+        if len < 4 {
+            return Err(Errno::Einval);
+        }
+        let enable = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) != 0;
+        if !uds::is_uds_fd(fd) {
+            return Err(Errno::Ebadf);
+        }
+        let rc = uds::uds_setsockopt(fd, enable);
+        return ret_to_result(i64::from(rc));
     }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::setsockopt_syscall(
+        sock.slot, level, optname, val_ptr, valen,
+    ))
 }
 
 /// getsockopt(fd, level, optname, val, valen)
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getsockopt 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 getsockopt 失败时返回对应的 `Errno`。
 pub fn getsockopt_syscall(
     fd: i32,
     level: i32,
@@ -293,63 +398,52 @@ pub fn getsockopt_syscall(
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let r = fw::getsockopt_syscall(fd, level, optname, val_ptr, valen_ptr);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::getsockopt_syscall(
+        sock.slot, level, optname, val_ptr, valen_ptr,
+    ))
 }
 
 /// getsockname(fd, addr, addrlen) — 获取本端地址
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getsockname 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 getsockname 失败时返回对应的 `Errno`。
 pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let r = fw::getsockname_syscall(fd, addr_ptr, addrlen_ptr);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::getsockname_syscall(sock.slot, addr_ptr, addrlen_ptr))
 }
 
 /// getpeername(fd, addr, addrlen) — 获取对端地址
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 getpeername 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 getpeername 失败时返回对应的 `Errno`。
 pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let r = fw::getpeername_syscall(fd, addr_ptr, addrlen_ptr);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::getpeername_syscall(sock.slot, addr_ptr, addrlen_ptr))
 }
 
 /// shutdown(fd, how)
 ///
 /// # Errors
 ///
-/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; 底层 shutdown 失败时返回对应的 `Errno`。
+/// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 shutdown 失败时返回对应的 `Errno`。
 pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let r = fw::shutdown_syscall(fd, how);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::shutdown_syscall(sock.slot, how))
 }
 
 /// sendmsg(fd, msg, flags) — 真实实现
@@ -360,7 +454,8 @@ pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::Efault)`;
-/// 参数不合法 (如 `iovlen` 为 0 或超过上限) 时返回 `Err(Errno::Einval)`; 底层 sendmsg 失败时返回对应的 `Errno`。
+/// 参数不合法 (如 `iovlen` 为 0 或超过上限) 时返回 `Err(Errno::Einval)`; fd 非 socket 时返回
+/// `Err(Errno::Enotsock)`; 底层 sendmsg 失败时返回对应的 `Errno`。
 pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -394,8 +489,8 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         if !api::validate_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
             return Err(Errno::Efault);
         }
-        // uds_getsockopt_passcred 内部已检查 fd family, 非 UDS 返 0/ENOPROTOOPT.
-        let local_passcred = super::unix::uds_getsockopt_passcred(fd) != 0;
+        // uds_getsockopt_passcred 对非 UDS fd 返 -EBADF, 故按 > 0 判定启用
+        let local_passcred = super::unix::uds_getsockopt_passcred(fd) > 0;
         if local_passcred {
             // 写 SCM_CREDENTIALS cmsghdr (28 字节) 到 msg_control:
             // [0-7]   cmsg_len = 28
@@ -439,12 +534,13 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         }
     }
 
-    let r = fw::sendmsg_syscall(fd, msg_ptr, flags);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::sendmsg_syscall(
+        sock.slot,
+        msg_ptr,
+        flags,
+        sock.blocks(flags),
+    ))
 }
 
 /// recvmsg(fd, msg, flags)
@@ -455,7 +551,8 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
 /// # Errors
 ///
 /// 当 `fd` 为负数时返回 `Err(Errno::Ebadf)`; `msg_ptr` 或 `iov` 等用户缓冲区无效时返回 `Err(Errno::Efault)`;
-/// 参数不合法时返回 `Err(Errno::Einval)`; 底层 recvmsg 失败时返回对应的 `Errno`。
+/// 参数不合法时返回 `Err(Errno::Einval)`; fd 非 socket 时返回 `Err(Errno::Enotsock)`;
+/// 底层 recvmsg 失败时返回对应的 `Errno`。
 pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
@@ -503,12 +600,13 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
             let _ = api::write_u64_to_user(msg_ptr + 40, 28u64);
         }
     }
-    let r = fw::recvmsg_syscall(fd, msg_ptr, flags);
-    if r < 0 {
-        Err(Errno::from_ret(r))
-    } else {
-        Ok(crate::functions::intcast::usize_from_i64(r))
-    }
+    let sock = SocketFd::resolve(fd)?;
+    ret_to_result(fw::recvmsg_syscall(
+        sock.slot,
+        msg_ptr,
+        flags,
+        sock.blocks(flags),
+    ))
 }
 
 // ============================================================================
