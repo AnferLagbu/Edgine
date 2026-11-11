@@ -61,7 +61,8 @@ fn test_timerfd_subsystem_in_fd_plan() {
 fn test_subsystem_local_fd_to_idx_no_base_arith() {
     // 每个子系统的本地 fd_to_idx / is_xxx_fd 必须不再使用 `*_FD_BASE + i32字面量` /
     // `*_FD_BASE - i32字面量` 算术 (赋值语句中的常量定义除外).
-    for path in &[TIMERFD, UNIX] {
+    // unix 已在 fd 对象模型阶段 3 迁出 (策略表只持槽位下标), 余 TIMERFD 一项.
+    for path in &[TIMERFD] {
         let src = read(path);
         // 抽取本地 fd_to_idx / is_xxx_fd 函数体
         // 简化: 全文搜索可疑算术, 排除 const 声明.
@@ -91,7 +92,8 @@ fn test_subsystem_local_fd_to_idx_no_base_arith() {
 #[test]
 fn test_subsystem_local_fd_to_idx_uses_idx_of() {
     // 反向验证: fd_to_idx 体内应出现 fd_alloc::idx_of 调用
-    for path in &[TIMERFD, UNIX] {
+    // unix 已在 fd 对象模型阶段 3 迁出, 余 TIMERFD 一项.
+    for path in &[TIMERFD] {
         let src = read(path);
         // 抽取 fn fd_to_idx(...) 函数体
         let needle = "fn fd_to_idx(fd: i32)";
@@ -125,6 +127,23 @@ fn test_subsystem_local_fd_to_idx_uses_idx_of() {
             "{path}: fd_to_idx 体内必须调用 idx_of (TD-15)"
         );
     }
+}
+
+#[test]
+fn test_unix_migrated_off_local_fd_translation() {
+    // fd 对象模型阶段 3 第 4 批: unix.rs 只暴露策略表槽位下标, 本地 fd 反查 /
+    // FD 编号区间 / 位图分配全部移除 (fd 由 per-process FdTable 管).
+    let src = read(UNIX);
+    for needle in ["fn fd_to_idx", "UDS_FD_BASE", "FdPlan", "fd_alloc::"] {
+        assert!(
+            !src.contains(needle),
+            "unix.rs 不得残留 `{needle}` (UDS 已迁至 fd 对象模型, TD-15)"
+        );
+    }
+    assert!(
+        src.contains("pub fn uds_alloc(sock_type: UnixSockType) -> Result<u8, UdsError>"),
+        "UDS 策略表必须只暴露槽位下标分配 (TD-15)"
+    );
 }
 
 #[test]

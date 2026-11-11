@@ -8,10 +8,17 @@
 //! 原属 privileged/net/unix.rs, 2026-06-16 提取到 functions.
 //! 纯策略代码 (socket CRUD + 路径绑定 + STREAM/DGRAM 数据传输), 0 unsafe.
 //! privileged 仅保留 re-export.
+//!
+//! ## fd 对象模型 (阶段 3)
+//!
+//! 本模块是**策略表**: 对外只暴露槽位下标 (`u8`), 不感知 fd 编号. 用户可见
+//! fd 由 `net::unix_socket_file::UnixSocketFile` 对象挂在全局 `OpenFileTable`
+//! 上分配; 槽位生灭由对象的 `release()` 驱动 ([`uds_free`]), 与 VFS / Smoltcp
+//! socket fd 同构. 编号区间 `[1000, 1016)` 与 `fd_alloc` 位图已退役.
 
 use alloc::vec::Vec;
 
-use crate::functions::proc::fd_alloc::{FdSubsystem, free_fd};
+use crate::functions::fs::file::PollEvents;
 use crate::privileged::sync::IrqSpinLock;
 use crate::privileged::syscall::Errno;
 
@@ -19,10 +26,7 @@ use crate::privileged::syscall::Errno;
 // 常量
 // ============================================================================
 
-/// FD 起点, 位于 smoltcp FD 空间 (`[0, 256)`) 之后, 与之不重叠.
-pub const UDS_FD_BASE: i32 = crate::privileged::proc::FdPlan::UDS.base;
-
-/// 最大 UDS socket 数量
+/// 最大 UDS socket 数量 (策略表槽位容量)
 pub const MAX_UDS_FD: usize = 16;
 
 /// POSIX `sun_path` 最大长度
@@ -270,16 +274,6 @@ impl UdsState {
         None
     }
 
-    /// 检查是否有空闲套接字槽位
-    fn has_free_socket(&self) -> bool {
-        self.find_free_socket().is_some()
-    }
-
-    /// 获取已使用的套接字数量
-    fn used_socket_count(&self) -> usize {
-        self.sockets.iter().filter(|s| s.id != 0).count()
-    }
-
     fn find_path(&self, path: &[u8]) -> Option<u8> {
         for (i, p) in self.paths.iter().enumerate() {
             if p.used && p.path_len as usize == path.len() && p.path[..path.len()] == *path {
@@ -315,15 +309,34 @@ fn alloc_socket_id() -> u32 {
     id
 }
 
-/// FD → 槽位索引反查 (V3: 使用 `idx_of`, FD 编号由 `fd_at` 计算)
+/// 槽位下标合法性检查: 越界或槽位空闲统一视为无效对象 (`BadFd`)
 #[inline]
-fn fd_to_idx(fd: i32) -> Result<u8, UdsError> {
-    match crate::privileged::proc::idx_of(fd) {
-        Some((crate::privileged::proc::FdSubsystem::Uds, slot)) => {
-            Ok(crate::functions::intcast::low_u8_from_usize(slot))
-        }
-        _ => Err(UdsError::BadFd),
+fn check_slot(state: &UdsState, idx: u8) -> Result<usize, UdsError> {
+    let i = idx as usize;
+    if i >= state.sockets.len() || state.sockets[i].id == 0 {
+        return Err(UdsError::BadFd);
     }
+    Ok(i)
+}
+
+/// 在锁内分配一个策略表槽位并初始化为指定类型的空闲 (Unbound) 状态
+fn alloc_socket_locked(state: &mut UdsState, sock_type: UnixSockType) -> Result<u8, UdsError> {
+    let idx = state.find_free_socket().ok_or(UdsError::NoMem)?;
+    let id = alloc_socket_id();
+    let s = &mut state.sockets[idx as usize];
+    s.id = id;
+    s.sock_type = sock_type;
+    s.state = UnixSockState::Unbound;
+    s.bound_path_len = 0;
+    s.listen_count = 0;
+    s.listen_head = 0;
+    s.listen_tail = 0;
+    s.peer = None;
+    s.stream_len = 0;
+    s.peer_closed = false;
+    s.dgram_len = 0;
+    s.dgram_pending = false;
+    Ok(idx)
 }
 
 // ============================================================================
@@ -337,51 +350,16 @@ pub fn uds_init() {
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
 }
 
-/// 创建一个新的 UDS 套接字, 返回其 FD
+/// 分配一个 UDS socket 策略槽位, 返回槽位下标
 ///
-/// 通过集中分配器申请 FD, 并初始化对应槽位为空闲 (Unbound) 状态。
+/// fd 对象 (`UnixSocketFile`) 持有该下标并独占槽位所有权; 对象 `release()`
+/// 经 [`uds_free`] 归还.
 ///
 /// # Errors
 ///
-/// 当无空闲套接字槽位或 FD 数量已达 `MAX_UDS_FD` 上限时返回 `Err(UdsError::NoMem)`。
-pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
-    UDS_STATE.with_mut(|state| {
-        // 检查是否有空闲套接字槽位
-        if !state.has_free_socket() {
-            return Err(UdsError::NoMem);
-        }
-
-        // 检查已使用套接字数量 (资源限制)
-        let used_count = state.used_socket_count();
-        if used_count >= MAX_UDS_FD {
-            return Err(UdsError::NoMem);
-        }
-
-        // V2: 使用集中分配器获取 FD, 再通过 idx_of 获取槽位索引
-        let fd = crate::functions::proc::fd_alloc::alloc_fd(
-            crate::functions::proc::fd_alloc::FdSubsystem::Uds,
-        )
-        .ok_or(UdsError::NoMem)?;
-
-        let (_sub, slot) = crate::functions::proc::fd_alloc::idx_of(fd).ok_or(UdsError::BadFd)?;
-
-        let idx = crate::functions::intcast::low_u8_from_usize(slot);
-        let id = alloc_socket_id();
-        let s = &mut state.sockets[idx as usize];
-        s.id = id;
-        s.sock_type = sock_type;
-        s.state = UnixSockState::Unbound;
-        s.bound_path_len = 0;
-        s.listen_count = 0;
-        s.listen_head = 0;
-        s.listen_tail = 0;
-        s.peer = None;
-        s.stream_len = 0;
-        s.peer_closed = false;
-        s.dgram_len = 0;
-        s.dgram_pending = false;
-        Ok(fd)
-    })
+/// 无空闲槽位 (`MAX_UDS_FD` 上限) 时返回 `Err(UdsError::NoMem)`。
+pub fn uds_alloc(sock_type: UnixSockType) -> Result<u8, UdsError> {
+    UDS_STATE.with_mut(|state| alloc_socket_locked(state, sock_type))
 }
 
 /// 创建一对互相连接的 UDS 套接字 (`socketpair` 机制核心)
@@ -390,21 +368,21 @@ pub fn uds_create(sock_type: UnixSockType) -> Result<i32, UdsError> {
 ///
 /// # Errors
 ///
-/// 无空闲槽位或 FD 达 `MAX_UDS_FD` 上限时返回 `Err(UdsError::NoMem)`; 第二端创建失败时
-/// 回滚关闭第一端; 槽位关联异常时返回 `Err(UdsError::BadFd)` 并回滚两端。
-pub fn uds_socketpair(sock_type: UnixSockType) -> Result<(i32, i32), UdsError> {
-    let fd0 = uds_create(sock_type)?;
-    let fd1 = match uds_create(sock_type) {
-        Ok(f) => f,
+/// 无空闲槽位或达 `MAX_UDS_FD` 上限时返回 `Err(UdsError::NoMem)`; 第二端创建失败时
+/// 回滚释放第一端; 槽位关联异常时返回 `Err(UdsError::BadFd)` 并回滚两端。
+pub fn uds_socketpair(sock_type: UnixSockType) -> Result<(u8, u8), UdsError> {
+    let idx0 = uds_alloc(sock_type)?;
+    let idx1 = match uds_alloc(sock_type) {
+        Ok(i) => i,
         Err(e) => {
-            let _ = uds_close(fd0);
+            let _ = uds_free(idx0);
             return Err(e);
         }
     };
     let linked = UDS_STATE.with_mut(|state| {
-        let slot0 = fd_to_idx(fd0)? as usize;
-        let slot1 = fd_to_idx(fd1)? as usize;
-        if state.sockets[slot0].id == 0 || state.sockets[slot1].id == 0 || slot0 == slot1 {
+        let slot0 = check_slot(state, idx0)?;
+        let slot1 = check_slot(state, idx1)?;
+        if slot0 == slot1 {
             return Err(UdsError::BadFd);
         }
         // 互设 peer 并置 Connected (参照 uds_connect Dgram 分支的双向 peer 模式)
@@ -415,25 +393,22 @@ pub fn uds_socketpair(sock_type: UnixSockType) -> Result<(i32, i32), UdsError> {
         Ok(())
     });
     if let Err(e) = linked {
-        let _ = uds_close(fd0);
-        let _ = uds_close(fd1);
+        let _ = uds_free(idx0);
+        let _ = uds_free(idx1);
         return Err(e);
     }
-    Ok((fd0, fd1))
+    Ok((idx0, idx1))
 }
 
-/// 查询 UDS 套接字类型 (`recvmmsg` 分流 Stream/Dgram 接收原语时使用)
+/// 查询 UDS 套接字类型 (`recvmmsg` / `read_at` 分流 Stream/Dgram 原语时使用)
 ///
 /// # Errors
 ///
-/// `fd` 无效 (非 UDS 或槽位为空) 时返回 `Err(UdsError::BadFd)`。
-pub fn uds_sock_type(fd: i32) -> Result<UnixSockType, UdsError> {
+/// `idx` 越界或槽位空闲时返回 `Err(UdsError::BadFd)`。
+pub fn uds_sock_type(idx: u8) -> Result<UnixSockType, UdsError> {
     UDS_STATE.with(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        if state.sockets[idx].id == 0 {
-            return Err(UdsError::BadFd);
-        }
-        Ok(state.sockets[idx].sock_type)
+        let i = check_slot(state, idx)?;
+        Ok(state.sockets[i].sock_type)
     })
 }
 
@@ -441,19 +416,16 @@ pub fn uds_sock_type(fd: i32) -> Result<UnixSockType, UdsError> {
 ///
 /// # Errors
 ///
-/// 当路径为空或超过 `UNIX_PATH_MAX` 时返回 `Err(UdsError::Invalid)`; `fd` 无效时返回 `Err(UdsError::BadFd)`;
+/// 当路径为空或超过 `UNIX_PATH_MAX` 时返回 `Err(UdsError::Invalid)`; `idx` 无效时返回 `Err(UdsError::BadFd)`;
 /// 套接字非 Unbound 状态时返回 `Err(UdsError::Invalid)`; 路径已被占用时返回 `Err(UdsError::AddrInUse)`;
 /// 路径表无空闲槽位时返回 `Err(UdsError::NoMem)`。
-pub fn uds_bind(fd: i32, path: &[u8]) -> Result<(), UdsError> {
+pub fn uds_bind(idx: u8, path: &[u8]) -> Result<(), UdsError> {
     if path.is_empty() || path.len() > UNIX_PATH_MAX {
         return Err(UdsError::Invalid);
     }
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &state.sockets[idx];
-        if s.id == 0 {
-            return Err(UdsError::BadFd);
-        }
+        let i = check_slot(state, idx)?;
+        let s = &state.sockets[i];
         if s.state != UnixSockState::Unbound {
             return Err(UdsError::Invalid);
         }
@@ -464,9 +436,9 @@ pub fn uds_bind(fd: i32, path: &[u8]) -> Result<(), UdsError> {
         let binding = &mut state.paths[pidx as usize];
         binding.path[..path.len()].copy_from_slice(path);
         binding.path_len = crate::functions::intcast::low_u16_from_usize(path.len());
-        binding.sock_idx = crate::functions::intcast::low_u8_from_usize(idx);
+        binding.sock_idx = crate::functions::intcast::low_u8_from_usize(i);
         binding.used = true;
-        let s = &mut state.sockets[idx];
+        let s = &mut state.sockets[i];
         s.bound_path[..path.len()].copy_from_slice(path);
         s.bound_path_len = crate::functions::intcast::low_u16_from_usize(path.len());
         s.state = UnixSockState::Bound;
@@ -478,51 +450,35 @@ pub fn uds_bind(fd: i32, path: &[u8]) -> Result<(), UdsError> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效时返回 `Err(UdsError::BadFd)`; 套接字非流式或未处于 Bound 状态时返回 `Err(UdsError::Invalid)`。
-pub fn uds_listen(fd: i32) -> Result<(), UdsError> {
+/// 当 `idx` 无效时返回 `Err(UdsError::BadFd)`; 套接字非流式或未处于 Bound 状态时返回 `Err(UdsError::Invalid)`。
+pub fn uds_listen(idx: u8) -> Result<(), UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &state.sockets[idx];
-        if s.id == 0 {
-            return Err(UdsError::BadFd);
-        }
+        let i = check_slot(state, idx)?;
+        let s = &state.sockets[i];
         if s.sock_type != UnixSockType::Stream {
             return Err(UdsError::Invalid);
         }
         if s.state != UnixSockState::Bound {
             return Err(UdsError::Invalid);
         }
-        state.sockets[idx].state = UnixSockState::Listening;
+        state.sockets[i].state = UnixSockState::Listening;
         Ok(())
     })
 }
 
-/// 从监听套接字的待连接队列中取出一个客户端连接, 返回新连接的 FD
+/// 从监听套接字的待连接队列中取出一个客户端连接, 返回新连接的槽位下标
+///
+/// 新槽位所有权移交调用方 (`UnixSocketFile`), 由对象 `release()` 归还.
 ///
 /// # Errors
 ///
-/// 当新 FD 分配失败时返回 `Err(UdsError::NoMem)`; `fd` 无效时返回 `Err(UdsError::BadFd)`;
-/// 套接字非流式或非 Listening 状态时返回 `Err(UdsError::Invalid)`; 待连接队列为空时返回 `Err(UdsError::Again)`。
-pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
-    // V2: 使用集中分配器获取新 FD
-    let new_fd = crate::functions::proc::fd_alloc::alloc_fd(
-        crate::functions::proc::fd_alloc::FdSubsystem::Uds,
-    )
-    .ok_or(UdsError::NoMem)?;
-
-    // UT-06 (2026-09-24): 预分配 FD 后所有失败路径必须回收, 否则位图泄漏
-    // (实测: 空队列 accept 每次调用泄漏 1 个 UDS FD, 累积至 16 后 alloc_fd 恒 None).
-    let Some((_, new_slot)) = crate::functions::proc::fd_alloc::idx_of(new_fd) else {
-        let _ = free_fd(FdSubsystem::Uds, new_fd);
-        return Err(UdsError::BadFd);
-    };
-
-    let accepted = UDS_STATE.with_mut(|state| {
-        let listen_idx = fd_to_idx(fd)? as usize;
-        let listen = &state.sockets[listen_idx];
-        if listen.id == 0 {
-            return Err(UdsError::BadFd);
-        }
+/// 当策略表无空闲槽位时返回 `Err(UdsError::NoMem)`; `listen_idx` 无效时返回
+/// `Err(UdsError::BadFd)`; 套接字非流式或非 Listening 状态时返回
+/// `Err(UdsError::Invalid)`; 待连接队列为空时返回 `Err(UdsError::Again)`。
+pub fn uds_accept(listen_idx: u8) -> Result<u8, UdsError> {
+    UDS_STATE.with_mut(|state| {
+        let listen_slot = check_slot(state, listen_idx)?;
+        let listen = &state.sockets[listen_slot];
         if listen.sock_type != UnixSockType::Stream {
             return Err(UdsError::Invalid);
         }
@@ -534,76 +490,68 @@ pub fn uds_accept(fd: i32) -> Result<i32, UdsError> {
         }
         let client_id = listen.listen_pending[listen.listen_head as usize];
         let client_idx = state.socket_idx_by_id(client_id).ok_or(UdsError::NoMem)? as usize;
-        let new_idx = new_slot;
+        let new_idx = state.find_free_socket().ok_or(UdsError::NoMem)?;
         let id = alloc_socket_id();
-        let ns = &mut state.sockets[new_idx];
+        let ns = &mut state.sockets[new_idx as usize];
         ns.id = id;
         ns.sock_type = UnixSockType::Stream;
         ns.state = UnixSockState::Connected;
         ns.peer = Some(client_id);
         ns.stream_len = 0;
         ns.peer_closed = false;
-        state.sockets[listen_idx].listen_head = (state.sockets[listen_idx].listen_head + 1)
+        state.sockets[listen_slot].listen_head = (state.sockets[listen_slot].listen_head + 1)
             % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
-        state.sockets[listen_idx].listen_count -= 1;
+        state.sockets[listen_slot].listen_count -= 1;
         state.sockets[client_idx].peer = Some(id);
-        Ok(new_fd)
-    });
-
-    if accepted.is_err() {
-        let _ = free_fd(FdSubsystem::Uds, new_fd);
-    }
-    accepted
+        Ok(new_idx)
+    })
 }
 
 /// 发起到指定路径 UDS 套接字的连接
 ///
 /// # Errors
 ///
-/// 当路径为空或过长时返回 `Err(UdsError::Invalid)`; `fd` 无效时返回 `Err(UdsError::BadFd)`;
+/// 当路径为空或过长时返回 `Err(UdsError::Invalid)`; `idx` 无效时返回 `Err(UdsError::BadFd)`;
 /// 套接字状态非法或两端类型不匹配时返回 `Err(UdsError::Invalid)`; 目标路径不存在时返回 `Err(UdsError::ConnRefused)`;
 /// 目标监听队列已满时返回 `Err(UdsError::Again)`。
-pub fn uds_connect(fd: i32, path: &[u8]) -> Result<(), UdsError> {
+pub fn uds_connect(idx: u8, path: &[u8]) -> Result<(), UdsError> {
     if path.is_empty() || path.len() > UNIX_PATH_MAX {
         return Err(UdsError::Invalid);
     }
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        if state.sockets[idx].id == 0 {
-            return Err(UdsError::BadFd);
-        }
-        let s = &state.sockets[idx];
+        let i = check_slot(state, idx)?;
+        let s = &state.sockets[i];
         if s.state != UnixSockState::Unbound && s.state != UnixSockState::Bound {
             return Err(UdsError::Invalid);
         }
         let pidx = state.find_path(path).ok_or(UdsError::ConnRefused)? as usize;
         let target_idx = state.paths[pidx].sock_idx as usize;
         let target = &state.sockets[target_idx];
-        if target.sock_type != state.sockets[idx].sock_type {
+        if target.sock_type != state.sockets[i].sock_type {
             return Err(UdsError::Invalid);
         }
-        match (state.sockets[idx].sock_type, target.state) {
+        match (state.sockets[i].sock_type, target.state) {
             (UnixSockType::Stream, UnixSockState::Listening) => {
                 if target.listen_count as usize >= UNIX_LISTEN_BACKLOG {
                     return Err(UdsError::Again);
                 }
                 let tail = target.listen_tail as usize;
-                let my_id = state.sockets[idx].id;
+                let my_id = state.sockets[i].id;
                 state.sockets[target_idx].listen_pending[tail] = my_id;
                 state.sockets[target_idx].listen_tail = (state.sockets[target_idx].listen_tail + 1)
                     % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
                 state.sockets[target_idx].listen_count += 1;
-                state.sockets[idx].state = UnixSockState::Connected;
-                state.sockets[idx].bound_path_len = 0;
+                state.sockets[i].state = UnixSockState::Connected;
+                state.sockets[i].bound_path_len = 0;
                 Ok(())
             }
             (UnixSockType::Dgram, _) => {
-                let my_id = state.sockets[idx].id;
+                let my_id = state.sockets[i].id;
                 let peer_id = target.id;
-                state.sockets[idx].peer = Some(peer_id);
+                state.sockets[i].peer = Some(peer_id);
                 state.sockets[target_idx].peer = Some(my_id);
-                state.sockets[idx].state = UnixSockState::Connected;
-                state.sockets[idx].bound_path_len = 0;
+                state.sockets[i].state = UnixSockState::Connected;
+                state.sockets[i].bound_path_len = 0;
                 Ok(())
             }
             _ => Err(UdsError::ConnRefused),
@@ -615,13 +563,13 @@ pub fn uds_connect(fd: i32, path: &[u8]) -> Result<(), UdsError> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效或非流式套接字时返回 `Err(UdsError::Invalid)`; 未连接或对端已关闭时返回 `Err(UdsError::NotFound)`;
+/// 当 `idx` 无效时返回 `Err(UdsError::BadFd)`; 非流式套接字时返回 `Err(UdsError::Invalid)`; 未连接或对端已关闭时返回 `Err(UdsError::NotFound)`;
 /// 对端缓冲区无剩余空间时返回 `Err(UdsError::Again)`。
-pub fn uds_send(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
+pub fn uds_send(idx: u8, data: &[u8]) -> Result<usize, UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &state.sockets[idx];
-        if s.id == 0 || s.sock_type != UnixSockType::Stream {
+        let i = check_slot(state, idx)?;
+        let s = &state.sockets[i];
+        if s.sock_type != UnixSockType::Stream {
             return Err(UdsError::Invalid);
         }
         if s.state != UnixSockState::Connected {
@@ -667,16 +615,16 @@ pub fn uds_send(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效或非流式套接字时返回 `Err(UdsError::Invalid)`; 对端已关闭时返回 `Err(UdsError::NotFound)`;
+/// 当 `idx` 无效时返回 `Err(UdsError::BadFd)`; 非流式套接字时返回 `Err(UdsError::Invalid)`; 对端已关闭时返回 `Err(UdsError::NotFound)`;
 /// 缓冲为空且对端未关闭时返回 `Err(UdsError::Again)`。
 pub fn uds_recv_with_creds(
-    fd: i32,
+    idx: u8,
     out: &mut [u8],
 ) -> Result<(usize, Option<ScmCredentials>), UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &mut state.sockets[idx];
-        if s.id == 0 || s.sock_type != UnixSockType::Stream {
+        let i = check_slot(state, idx)?;
+        let s = &mut state.sockets[i];
+        if s.sock_type != UnixSockType::Stream {
             return Err(UdsError::Invalid);
         }
         if s.stream_len == 0 {
@@ -723,13 +671,13 @@ pub fn uds_recv_with_creds(
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效或非流式套接字时返回 `Err(UdsError::Invalid)`; 套接字未连接时返回 `Err(UdsError::Invalid)`;
+/// 当 `idx` 无效时返回 `Err(UdsError::BadFd)`; 非流式套接字时返回 `Err(UdsError::Invalid)`; 套接字未连接时返回 `Err(UdsError::Invalid)`;
 /// 缓冲为空且对端未关闭时返回 `Err(UdsError::Again)` (对端已关闭时返回 `Ok(0)`)。
-pub fn uds_recv(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
+pub fn uds_recv(idx: u8, out: &mut [u8]) -> Result<usize, UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &mut state.sockets[idx];
-        if s.id == 0 || s.sock_type != UnixSockType::Stream {
+        let i = check_slot(state, idx)?;
+        let s = &mut state.sockets[i];
+        if s.sock_type != UnixSockType::Stream {
             return Err(UdsError::Invalid);
         }
         if s.state != UnixSockState::Connected {
@@ -758,7 +706,7 @@ pub fn uds_recv(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
 ///
 /// 当目标路径不存在时返回 `Err(UdsError::ConnRefused)`; 目标套接字非数据报类型时返回 `Err(UdsError::Invalid)`;
 /// 数据超过 `UNIX_DGRAM_MAX` 时返回 `Err(UdsError::Invalid)` (越界写防护)。
-pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsError> {
+pub fn uds_sendto(data: &[u8], dest_path: &[u8]) -> Result<usize, UdsError> {
     if data.len() > UNIX_DGRAM_MAX {
         return Err(UdsError::Invalid);
     }
@@ -802,19 +750,19 @@ pub fn uds_sendto(_fd: i32, data: &[u8], dest_path: &[u8]) -> Result<usize, UdsE
 ///
 /// # Errors
 ///
-/// `fd` 无效时返回 `Err(UdsError::BadFd)`; 未连接或对端已关闭时返回 `Err(UdsError::NotFound)`;
+/// `idx` 无效时返回 `Err(UdsError::BadFd)`; 未连接或对端已关闭时返回 `Err(UdsError::NotFound)`;
 /// 数据超过 `UNIX_DGRAM_MAX` 时返回 `Err(UdsError::Invalid)`; 对端已有在途数据报时返回
 /// `Err(UdsError::Again)`。
-pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
-    let sock_type = uds_sock_type(fd)?;
+pub fn uds_send_connected(idx: u8, data: &[u8]) -> Result<usize, UdsError> {
+    let sock_type = uds_sock_type(idx)?;
     match sock_type {
-        UnixSockType::Stream => uds_send(fd, data),
+        UnixSockType::Stream => uds_send(idx, data),
         UnixSockType::Dgram => UDS_STATE.with_mut(|state| {
-            let idx = fd_to_idx(fd)? as usize;
-            if state.sockets[idx].state != UnixSockState::Connected {
+            let i = check_slot(state, idx)?;
+            if state.sockets[i].state != UnixSockState::Connected {
                 return Err(UdsError::NotFound);
             }
-            let peer_id = state.sockets[idx].peer.ok_or(UdsError::NotFound)?;
+            let peer_id = state.sockets[i].peer.ok_or(UdsError::NotFound)?;
             let peer_idx = state.socket_idx_by_id(peer_id).ok_or(UdsError::NotFound)? as usize;
             let peer = &mut state.sockets[peer_idx];
             if peer.peer_closed {
@@ -852,10 +800,10 @@ pub fn uds_send_connected(fd: i32, data: &[u8]) -> Result<usize, UdsError> {
 ///
 /// # Errors
 ///
-/// 传播自 [`uds_recvfrom_with_creds`]: `fd` 无效或非数据报类型时返回 `Err(UdsError::Invalid)`;
+/// 传播自 [`uds_recvfrom_with_creds`]: `idx` 无效或非数据报类型时返回 `Err(UdsError::Invalid)`;
 /// 无待收数据时返回 `Err(UdsError::Again)`。
-pub fn uds_recvfrom(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
-    let (n, _cred) = uds_recvfrom_with_creds(fd, out)?;
+pub fn uds_recvfrom(idx: u8, out: &mut [u8]) -> Result<usize, UdsError> {
+    let (n, _cred) = uds_recvfrom_with_creds(idx, out)?;
     Ok(n)
 }
 
@@ -863,15 +811,15 @@ pub fn uds_recvfrom(fd: i32, out: &mut [u8]) -> Result<usize, UdsError> {
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效或非数据报类型时返回 `Err(UdsError::Invalid)`; 无待收数据时返回 `Err(UdsError::Again)`。
+/// 当 `idx` 无效或非数据报类型时返回 `Err(UdsError::Invalid)`; 无待收数据时返回 `Err(UdsError::Again)`。
 pub fn uds_recvfrom_with_creds(
-    fd: i32,
+    idx: u8,
     out: &mut [u8],
 ) -> Result<(usize, Option<ScmCredentials>), UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        let s = &mut state.sockets[idx];
-        if s.id == 0 || s.sock_type != UnixSockType::Dgram {
+        let i = check_slot(state, idx)?;
+        let s = &mut state.sockets[i];
+        if s.sock_type != UnixSockType::Dgram {
             return Err(UdsError::Invalid);
         }
         if !s.dgram_pending {
@@ -907,23 +855,24 @@ pub fn uds_recvfrom_with_creds(
     })
 }
 
-/// 关闭 UDS 套接字并清理其路径绑定、对端关系与 `fd_alloc` 位图位
+/// 释放 UDS 套接字槽位并清理其路径绑定与对端关系
+///
+/// 由 fd 对象的 `release()` 在最后一个引用关闭时调用, 因此槽位回收即对象
+/// 生命周期终点. 监听端关闭时**不回收**待连接客户端的槽位 (其所有权仍在
+/// 各自 fd 对象上), 只标记对端已关闭 — 避免槽位被新 socket 复用后, 陈旧
+/// 客户端的释放误伤新持有者.
 ///
 /// # Errors
 ///
-/// 当 `fd` 无效 (非 UDS 或槽位已释放) 时返回 `Err(UdsError::BadFd)`。
-pub fn uds_close(fd: i32) -> Result<(), UdsError> {
+/// 当 `idx` 越界或槽位已释放时返回 `Err(UdsError::BadFd)`。
+pub fn uds_free(idx: u8) -> Result<(), UdsError> {
     UDS_STATE.with_mut(|state| {
-        let idx = fd_to_idx(fd)? as usize;
-        if state.sockets[idx].id == 0 {
-            return Err(UdsError::BadFd);
-        }
-        let s = &state.sockets[idx];
-        let sock_type = s.sock_type;
-        let state_val = s.state;
-        let bound_path = s.bound_path;
-        let bound_path_len = s.bound_path_len;
-        let peer_id = s.peer;
+        let i = check_slot(state, idx)?;
+        let sock_type = state.sockets[i].sock_type;
+        let state_val = state.sockets[i].state;
+        let bound_path = state.sockets[i].bound_path;
+        let bound_path_len = state.sockets[i].bound_path_len;
+        let peer_id = state.sockets[i].peer;
 
         if sock_type == UnixSockType::Stream
             && state_val == UnixSockState::Connected
@@ -935,14 +884,15 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
         }
 
         if sock_type == UnixSockType::Stream && state_val == UnixSockState::Listening {
-            for i in 0..state.sockets[idx].listen_count {
-                let pos = (state.sockets[idx].listen_head + i)
-                    % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
-                let client_id = state.sockets[idx].listen_pending[pos as usize];
+            let head = state.sockets[i].listen_head;
+            let count = state.sockets[i].listen_count;
+            for k in 0..count {
+                let pos =
+                    (head + k) % crate::functions::intcast::low_u8_from_usize(UNIX_LISTEN_BACKLOG);
+                let client_id = state.sockets[i].listen_pending[pos as usize];
                 if let Some(ci) = state.socket_idx_by_id(client_id) {
-                    state.sockets[ci as usize] = UnixSocket::empty();
-                    // pending client 已分配的 fd_alloc 位同步回收 (fd = 基址 + 槽位)
-                    let _ = free_fd(FdSubsystem::Uds, UDS_FD_BASE + i32::from(ci));
+                    state.sockets[ci as usize].peer_closed = true;
+                    state.sockets[ci as usize].peer = None;
                 }
             }
         }
@@ -962,30 +912,56 @@ pub fn uds_close(fd: i32) -> Result<(), UdsError> {
             }
         }
 
-        state.sockets[idx] = UnixSocket::empty();
-        // fd_alloc 位图位回收 (对齐 pidfd close 释放模式; 预存泄漏修复)
-        let _ = free_fd(FdSubsystem::Uds, fd);
+        state.sockets[i] = UnixSocket::empty();
         Ok(())
     })
 }
 
-/// 取消指定路径的 UDS 绑定并释放对应套接字
+// ============================================================================
+// poll 就绪查询
+// ============================================================================
+
+/// 查询 UDS 套接字的就绪事件 (`File::poll` 的实现面, 非阻塞可重复调用)
 ///
-/// # Errors
-///
-/// 当路径为空或超过 `UNIX_PATH_MAX` 时返回 `Err(UdsError::Invalid)`; 路径不存在时返回 `Err(UdsError::NotFound)`。
-pub fn uds_unlink(path: &[u8]) -> Result<(), UdsError> {
-    if path.is_empty() || path.len() > UNIX_PATH_MAX {
-        return Err(UdsError::Invalid);
-    }
-    UDS_STATE.with_mut(|state| {
-        let pidx = state.find_path(path).ok_or(UdsError::NotFound)? as usize;
-        let sidx = state.paths[pidx].sock_idx as usize;
-        state.paths[pidx] = UnixPathBinding::empty();
-        state.sockets[sidx].bound_path_len = 0;
-        state.sockets[sidx].state = UnixSockState::Unbound;
-        Ok(())
-    })
+/// 返回请求位的子集, 可附加 `HUP` (对端已关闭). 槽位无效/已释放时返回空集
+/// — `File::poll` 契约不允许返回未请求的 `NVAL`.
+#[must_use]
+pub fn uds_poll(idx: u8, events: PollEvents) -> PollEvents {
+    let mut ready = PollEvents::empty();
+    UDS_STATE.with(|state| {
+        let Ok(i) = check_slot(state, idx) else {
+            return;
+        };
+        let s = &state.sockets[i];
+        match s.sock_type {
+            UnixSockType::Stream => {
+                if s.state == UnixSockState::Listening {
+                    if s.listen_count > 0 {
+                        ready |= PollEvents::IN;
+                    }
+                } else {
+                    if s.stream_len > 0 || s.peer_closed {
+                        ready |= PollEvents::IN;
+                    }
+                    if s.peer_closed {
+                        ready |= PollEvents::HUP;
+                    }
+                    if s.state == UnixSockState::Connected {
+                        ready |= PollEvents::OUT;
+                    }
+                }
+            }
+            UnixSockType::Dgram => {
+                if s.dgram_pending {
+                    ready |= PollEvents::IN;
+                }
+                if matches!(s.state, UnixSockState::Bound | UnixSockState::Connected) {
+                    ready |= PollEvents::OUT;
+                }
+            }
+        }
+    });
+    (ready & events) | (ready & (PollEvents::ERR | PollEvents::HUP))
 }
 
 // ============================================================================
@@ -995,39 +971,31 @@ pub fn uds_unlink(path: &[u8]) -> Result<(), UdsError> {
 /// v2: `SO_PASSCRED` 选项 — 设置 socket 是否在 sendmsg 中附加 `SCM_CREDENTIALS`.
 ///
 /// 由 `functions::net::syscall::setsockopt_syscall` 在 `level=SOL_SOCKET` /
-/// `optname=SO_PASSCRED` 且 fd 属 UDS 段时分流至此. 仅对 UDS socket 生效,
-/// 其他 family 返 ENOPROTOOPT.
-pub fn uds_setsockopt(fd: i32, enable: bool) -> i32 {
+/// `optname=SO_PASSCRED` 且 fd 对象为 `UnixSocketFile` 时分流至此. 仅对 UDS
+/// socket 生效, 其他 family 返 ENOPROTOOPT.
+pub fn uds_setsockopt(idx: u8, enable: bool) -> i32 {
     UDS_STATE.with_mut(|state| {
-        let idx = match fd_to_idx(fd) {
-            Ok(i) => i as usize,
-            Err(_) => return -9, // EBADF
-        };
-        if state.sockets[idx].id == 0 {
+        let Ok(i) = check_slot(state, idx) else {
             return -9; // EBADF
-        }
+        };
         if !matches!(
-            state.sockets[idx].sock_type,
+            state.sockets[i].sock_type,
             UnixSockType::Stream | UnixSockType::Dgram
         ) {
             return -92; // ENOPROTOOPT
         }
-        state.sockets[idx].passcred = enable;
+        state.sockets[i].passcred = enable;
         0
     })
 }
 
 /// v2: `SO_PASSCRED` 查询.
-pub fn uds_getsockopt_passcred(fd: i32) -> i32 {
+pub fn uds_getsockopt_passcred(idx: u8) -> i32 {
     UDS_STATE.with(|state| {
-        let idx = match fd_to_idx(fd) {
-            Ok(i) => i as usize,
-            Err(_) => return -9,
-        };
-        if state.sockets[idx].id == 0 {
+        let Ok(i) = check_slot(state, idx) else {
             return -9;
-        }
-        i32::from(state.sockets[idx].passcred)
+        };
+        i32::from(state.sockets[i].passcred)
     })
 }
 
@@ -1057,13 +1025,13 @@ fn current_scm_credentials() -> ScmCredentials {
 
 /// B07-02: 读取本端接收缓冲末尾 12 字节的发送方凭据 (不消费缓冲).
 ///
-/// 供 `recvmsg` 路径回写 `SCM_CREDENTIALS` cmsg 使用; 非 UDS / 未启用
+/// 供 `recvmsg` 路径回写 `SCM_CREDENTIALS` cmsg 使用; 槽位无效 / 未启用
 /// `SO_PASSCRED` / 缓冲不足 12 字节时返回 `None` (不伪造凭据).
-pub fn uds_peer_creds(fd: i32) -> Option<ScmCredentials> {
+pub fn uds_peer_creds(idx: u8) -> Option<ScmCredentials> {
     UDS_STATE.with(|state| {
-        let idx = fd_to_idx(fd).ok()? as usize;
-        let s = &state.sockets[idx];
-        if s.id == 0 || !s.passcred {
+        let i = check_slot(state, idx).ok()?;
+        let s = &state.sockets[i];
+        if !s.passcred {
             return None;
         }
         let (buf, total): (&[u8], usize) = if s.sock_type == UnixSockType::Stream {
@@ -1116,28 +1084,15 @@ pub fn uds_parse_path(path: &[u8]) -> Option<(&[u8], bool)> {
 /// 重置 UDS 子系统到初始态 (仅供测试使用).
 pub fn uds_reset_for_test() {
     // 惰性堆置等价语义: 直接重建两表 (保证已堆置且全部归零).
+    // fd 由 per-process `FdTable` 持有, 测试侧经 `uds_free` 归还槽位, 无需
+    // 再同步任何全局位图 (编号区间与 `fd_alloc` 位图已随对象模型退役).
     UDS_STATE.with_mut(UdsState::allocate);
     NEXT_SOCK_ID.with_mut(|id| *id = 1);
-    // UT-06 (2026-09-24): 同步归零本子系统 FD 位图. 此前仅清 UDS_STATE,
-    // 未回收 fd_alloc 位, 导致跨用例位图残留 (占满 16 槽后 alloc_fd 恒 None).
-    for i in 0..crate::functions::intcast::low_i32_from_usize(MAX_UDS_FD) {
-        let _ = free_fd(FdSubsystem::Uds, UDS_FD_BASE + i);
-    }
 }
 
 // ============================================================================
-// functions 层安全封装 (保持原有 API 兼容)
+// 错误映射
 // ============================================================================
-
-/// UDS FD 起点
-pub const FD_BASE: i32 = UDS_FD_BASE;
-/// UDS FD 上限 (不含)
-pub const FD_END: i32 = UDS_FD_BASE + crate::functions::intcast::low_i32_from_usize(MAX_UDS_FD);
-/// 路径最大长度
-pub const PATH_MAX: usize = UNIX_PATH_MAX;
-
-/// UDS socket 类型 (兼容旧名)
-pub use UnixSockType as SockType;
 
 /// UDS 错误 (functions 层映射)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1182,144 +1137,6 @@ impl From<crate::functions::error::KernelError> for UnixSocketError {
     }
 }
 
-/// UDS 层通用结果类型.
-pub type UnixResult<T> = Result<T, UnixSocketError>;
-
-/// `struct sockaddr_un` 包装
-///
-/// DECISION-J (2026-09-13): wire 类型迁回 `privileged::net::socket_types` —
-/// 由 privileged TCB raw 桥接 (`net/syscall.rs::raw_read/write_sockaddr_un`)
-/// 从用户内存构造, 属机制的安全导出面。此处 re-export 保持 API 兼容。
-pub use crate::privileged::net::socket_types::SockAddrUn;
-
-// ============================================================================
-// 安全封装 API (保持原有调用方兼容)
-// ============================================================================
-
-/// 安全封装: 创建 UDS 套接字, 委托给 [`uds_create`]
-///
-/// # Errors
-///
-/// 无空闲槽位或 FD 数量达上限时映射为 `Err(UnixSocketError)`。
-pub fn socket(sock_type: SockType) -> UnixResult<i32> {
-    uds_create(sock_type).map_err(Into::into)
-}
-
-/// 安全封装: 绑定 UDS 套接字, 委托给 [`uds_bind`]
-///
-/// # Errors
-///
-/// `fd` 无效、路径非法、已被占用或无空闲槽位时映射为对应的 `Err(UnixSocketError)`。
-pub fn bind(fd: i32, addr: &SockAddrUn) -> UnixResult<()> {
-    uds_bind(fd, addr.path_slice()).map_err(Into::into)
-}
-
-/// 安全封装: 置为监听状态, 委托给 [`uds_listen`]
-///
-/// # Errors
-///
-/// `fd` 无效或套接字非流式/未绑定时映射为 `Err(UnixSocketError)`。
-pub fn listen(fd: i32) -> UnixResult<()> {
-    uds_listen(fd).map_err(Into::into)
-}
-
-/// 安全封装: 接受连接, 委托给 [`uds_accept`]
-///
-/// # Errors
-///
-/// `fd` 无效、队列为空或新 FD 分配失败时映射为 `Err(UnixSocketError)`。
-pub fn accept(fd: i32) -> UnixResult<i32> {
-    uds_accept(fd).map_err(Into::into)
-}
-
-/// 安全封装: 发起连接, 委托给 [`uds_connect`]
-///
-/// # Errors
-///
-/// `fd` 无效、目标路径不存在或连接被拒绝时映射为 `Err(UnixSocketError)`。
-pub fn connect(fd: i32, addr: &SockAddrUn) -> UnixResult<()> {
-    uds_connect(fd, addr.path_slice()).map_err(Into::into)
-}
-
-/// 安全封装: 流式发送数据, 委托给 [`uds_send`]
-///
-/// # Errors
-///
-/// `fd` 无效、未连接或对端无空间时映射为 `Err(UnixSocketError)`。
-pub fn send(fd: i32, data: &[u8]) -> UnixResult<usize> {
-    uds_send(fd, data).map_err(Into::into)
-}
-
-/// 安全封装: 流式接收数据, 委托给 [`uds_recv`]
-///
-/// # Errors
-///
-/// `fd` 无效、未连接或无数据可读时映射为 `Err(UnixSocketError)`。
-pub fn recv(fd: i32, out: &mut [u8]) -> UnixResult<usize> {
-    uds_recv(fd, out).map_err(Into::into)
-}
-
-/// 安全封装: 数据报发送, 委托给 [`uds_sendto`]
-///
-/// # Errors
-///
-/// 目标路径不存在或目标非数据报套接字时映射为 `Err(UnixSocketError)`。
-pub fn sendto(fd: i32, data: &[u8], dest: &SockAddrUn) -> UnixResult<usize> {
-    uds_sendto(fd, data, dest.path_slice()).map_err(Into::into)
-}
-
-/// 安全封装: 创建一对互相连接的 UDS 套接字, 委托给 [`uds_socketpair`]
-///
-/// # Errors
-///
-/// 无空闲槽位或 FD 达上限时映射为 `Err(UnixSocketError)`。
-pub fn socketpair(sock_type: SockType) -> UnixResult<(i32, i32)> {
-    uds_socketpair(sock_type).map_err(Into::into)
-}
-
-/// 安全封装: 向已连接套接字发送数据, 委托给 [`uds_send_connected`]
-///
-/// # Errors
-///
-/// `fd` 无效、未连接、对端已关闭或对端在途数据报未收走时映射为 `Err(UnixSocketError)`。
-pub fn send_connected(fd: i32, data: &[u8]) -> UnixResult<usize> {
-    uds_send_connected(fd, data).map_err(Into::into)
-}
-
-/// 安全封装: 数据报接收, 委托给 [`uds_recvfrom`]
-///
-/// # Errors
-///
-/// `fd` 无效或无可读数据时映射为 `Err(UnixSocketError)`。
-pub fn recvfrom(fd: i32, out: &mut [u8]) -> UnixResult<usize> {
-    uds_recvfrom(fd, out).map_err(Into::into)
-}
-
-/// 安全封装: 关闭套接字, 委托给 [`uds_close`]
-///
-/// # Errors
-///
-/// `fd` 无效时映射为 `Err(UnixSocketError)`。
-pub fn close(fd: i32) -> UnixResult<()> {
-    uds_close(fd).map_err(Into::into)
-}
-
-/// 安全封装: 解除路径绑定, 委托给 [`uds_unlink`]
-///
-/// # Errors
-///
-/// 路径非法或不存在时映射为 `Err(UnixSocketError)`。
-pub fn unlink(addr: &SockAddrUn) -> UnixResult<()> {
-    uds_unlink(addr.path_slice()).map_err(Into::into)
-}
-
-/// 判断 FD 是否落在 UDS 子系统的编号区间内.
-#[inline]
-#[must_use]
-pub fn is_uds_fd(fd: i32) -> bool {
-    (FD_BASE..FD_END).contains(&fd)
-}
-
 // ============================================================================
 // 单元测试
 // ============================================================================
@@ -1330,8 +1147,8 @@ mod tests {
 
     /// 模块内用例的互斥锁.
     ///
-    /// 所有用例共享全局 `UDS_STATE` 与 UDS FD 位图, 且均以 `uds_reset_for_test()`
-    /// 开场; 并行 test runner 下重置会破坏其他用例正在使用的 socket, 故必须互斥
+    /// 所有用例共享全局 `UDS_STATE`, 且均以 `uds_reset_for_test()` 开场; 并行
+    /// test runner 下重置会破坏其他用例正在使用的 socket, 故必须互斥
     /// (2026-09-24 UT-06, 口径同 privileged/timer/tick.rs 的 FREQ_TEST_LOCK).
     static UDS_TEST_LOCK: IrqSpinLock<()> = IrqSpinLock::new(());
 
@@ -1339,8 +1156,8 @@ mod tests {
     fn stream_bind_listen_connect_accept_echo() {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
-        let srv = uds_create(UnixSockType::Stream).expect("srv create");
-        let cli = uds_create(UnixSockType::Stream).expect("cli create");
+        let srv = uds_alloc(UnixSockType::Stream).expect("srv alloc");
+        let cli = uds_alloc(UnixSockType::Stream).expect("cli alloc");
         uds_bind(srv, b"/tmp/test.sock").expect("srv bind");
         uds_listen(srv).expect("srv listen");
         uds_connect(cli, b"/tmp/test.sock").expect("cli connect");
@@ -1358,70 +1175,73 @@ mod tests {
         let p = uds_recv(cli, &mut buf2).expect("recv back");
         assert_eq!(p, 5);
         assert_eq!(&buf2[..5], b"world");
-        uds_close(cli).expect("cli close");
-        uds_close(accepted).expect("acc close");
-        uds_close(srv).expect("srv close");
+        uds_free(cli).expect("cli free");
+        uds_free(accepted).expect("acc free");
+        uds_free(srv).expect("srv free");
     }
 
     #[test]
     fn dgram_bind_connect_echo() {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
-        let rx = uds_create(UnixSockType::Dgram).expect("rx create");
-        let tx = uds_create(UnixSockType::Dgram).expect("tx create");
+        let rx = uds_alloc(UnixSockType::Dgram).expect("rx alloc");
+        let tx = uds_alloc(UnixSockType::Dgram).expect("tx alloc");
         uds_bind(rx, b"/tmp/rx.sock").expect("rx bind");
         uds_connect(tx, b"/tmp/rx.sock").expect("tx connect");
-        let n = uds_sendto(tx, b"datagram-payload", b"/tmp/rx.sock").expect("sendto");
+        let n = uds_sendto(b"datagram-payload", b"/tmp/rx.sock").expect("sendto");
         assert_eq!(n, 16);
         let mut buf = [0u8; 32];
         let m = uds_recvfrom(rx, &mut buf).expect("recvfrom");
         assert_eq!(m, 16);
         assert_eq!(&buf[..16], b"datagram-payload");
-        uds_close(tx).expect("close tx");
-        uds_close(rx).expect("close rx");
+        uds_free(tx).expect("free tx");
+        uds_free(rx).expect("free rx");
     }
 
     #[test]
     fn eaddrinuse_on_duplicate_bind() {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
-        let a = uds_create(UnixSockType::Stream).expect("a");
-        let b = uds_create(UnixSockType::Stream).expect("b");
+        let a = uds_alloc(UnixSockType::Stream).expect("a");
+        let b = uds_alloc(UnixSockType::Stream).expect("b");
         uds_bind(a, b"/tmp/dup.sock").expect("a bind");
         let r = uds_bind(b, b"/tmp/dup.sock");
         assert_eq!(r, Err(UdsError::AddrInUse));
-        uds_close(a).expect("close a");
-        uds_close(b).expect("close b");
+        uds_free(a).expect("free a");
+        uds_free(b).expect("free b");
     }
 
     #[test]
     fn eagain_on_empty_accept() {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
-        let s = uds_create(UnixSockType::Stream).expect("s");
+        let s = uds_alloc(UnixSockType::Stream).expect("s");
         uds_bind(s, b"/tmp/empty.sock").expect("bind");
         uds_listen(s).expect("listen");
         let r = uds_accept(s);
         assert_eq!(r, Err(UdsError::Again));
-        uds_close(s).expect("close");
+        uds_free(s).expect("free");
     }
 
     #[test]
-    fn close_listener_cancels_pending_clients() {
+    fn close_listener_keeps_client_slot_ownership() {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
-        let srv = uds_create(UnixSockType::Stream).expect("srv");
-        let cli1 = uds_create(UnixSockType::Stream).expect("c1");
-        let cli2 = uds_create(UnixSockType::Stream).expect("c2");
+        let srv = uds_alloc(UnixSockType::Stream).expect("srv");
+        let cli1 = uds_alloc(UnixSockType::Stream).expect("c1");
+        let cli2 = uds_alloc(UnixSockType::Stream).expect("c2");
         uds_bind(srv, b"/tmp/cancel.sock").expect("bind");
         uds_listen(srv).expect("listen");
         uds_connect(cli1, b"/tmp/cancel.sock").expect("c1 connect");
         uds_connect(cli2, b"/tmp/cancel.sock").expect("c2 connect");
-        uds_close(srv).expect("close srv");
-        let r1 = uds_close(cli1);
-        let r2 = uds_close(cli2);
-        assert_eq!(r1, Err(UdsError::BadFd));
-        assert_eq!(r2, Err(UdsError::BadFd));
+        uds_free(srv).expect("free srv");
+        // 待连接客户端槽位所有权仍在其 fd 对象上: 释放必须成功, 不得被
+        // 监听端回收后误判 BadFd; 对端已关闭 → 发失败 / 收 EOF.
+        assert_eq!(uds_send(cli1, b"x"), Err(UdsError::NotFound));
+        let mut buf = [0u8; 4];
+        assert_eq!(uds_recv(cli1, &mut buf), Ok(0));
+        uds_free(cli1).expect("free c1");
+        uds_free(cli2).expect("free c2");
     }
 
     #[test]
@@ -1442,8 +1262,8 @@ mod tests {
         let p = uds_recv(a, &mut buf2).expect("recv a");
         assert_eq!(p, 4);
         assert_eq!(&buf2[..4], b"pong");
-        uds_close(a).expect("close a");
-        uds_close(b).expect("close b");
+        uds_free(a).expect("free a");
+        uds_free(b).expect("free b");
     }
 
     #[test]
@@ -1462,8 +1282,8 @@ mod tests {
         let _ = uds_send_connected(a, b"first").expect("first");
         assert_eq!(uds_send_connected(a, b"second"), Err(UdsError::Again));
         let _ = uds_recvfrom(b, &mut buf).expect("drain");
-        uds_close(a).expect("close a");
-        uds_close(b).expect("close b");
+        uds_free(a).expect("free a");
+        uds_free(b).expect("free b");
     }
 
     #[test]
@@ -1471,15 +1291,49 @@ mod tests {
         let _lock = UDS_TEST_LOCK.lock();
         uds_reset_for_test();
         // 占满 MAX_UDS_FD - 1 个槽位, socketpair 需连续 2 个空槽 → 第二端 NoMem
-        let mut filled = 0usize;
-        let mut guard = [0i32; MAX_UDS_FD];
-        while filled < MAX_UDS_FD - 1 {
-            guard[filled] = uds_create(UnixSockType::Stream).expect("fill");
-            filled += 1;
+        let mut guard = [0u8; MAX_UDS_FD];
+        for slot in guard.iter_mut().take(MAX_UDS_FD - 1) {
+            *slot = uds_alloc(UnixSockType::Stream).expect("fill");
         }
         assert_eq!(uds_socketpair(UnixSockType::Stream), Err(UdsError::NoMem));
-        // 回滚验证: 第一端已被关闭释放槽位, 单个创建应成功
-        let one = uds_create(UnixSockType::Stream).expect("single after rollback");
-        let _ = one;
+        // 回滚验证: 第一端已被释放归还槽位, 单个分配应成功
+        let one = uds_alloc(UnixSockType::Stream).expect("single after rollback");
+        uds_free(one).expect("free one");
+    }
+
+    #[test]
+    fn poll_readiness_by_state() {
+        let _lock = UDS_TEST_LOCK.lock();
+        uds_reset_for_test();
+        let srv = uds_alloc(UnixSockType::Stream).expect("srv");
+        uds_bind(srv, b"/tmp/poll.sock").expect("bind");
+        uds_listen(srv).expect("listen");
+        // 空监听队列: 不可读
+        assert!(!uds_poll(srv, PollEvents::IN).contains(PollEvents::IN));
+        let cli = uds_alloc(UnixSockType::Stream).expect("cli");
+        uds_connect(cli, b"/tmp/poll.sock").expect("connect");
+        // 待连接 → 监听端可读
+        assert!(uds_poll(srv, PollEvents::IN).contains(PollEvents::IN));
+        let acc = uds_accept(srv).expect("accept");
+        // 已连接 → 两端可写
+        assert!(uds_poll(cli, PollEvents::OUT).contains(PollEvents::OUT));
+        assert!(uds_poll(acc, PollEvents::OUT).contains(PollEvents::OUT));
+        uds_send(cli, b"hi").expect("send");
+        assert!(uds_poll(acc, PollEvents::IN).contains(PollEvents::IN));
+        // 关闭一端 → 对端挂断 (HUP 不受请求位限制)
+        uds_free(cli).expect("free cli");
+        assert!(uds_poll(acc, PollEvents::empty()).contains(PollEvents::HUP));
+        uds_free(acc).expect("free acc");
+        uds_free(srv).expect("free srv");
+    }
+
+    #[test]
+    fn invalid_slot_is_rejected_not_panicking() {
+        let _lock = UDS_TEST_LOCK.lock();
+        uds_reset_for_test();
+        let bad = crate::functions::intcast::low_u8_from_usize(MAX_UDS_FD);
+        assert_eq!(uds_sock_type(bad), Err(UdsError::BadFd));
+        assert_eq!(uds_free(bad), Err(UdsError::BadFd));
+        assert_eq!(uds_poll(bad, PollEvents::IN), PollEvents::empty());
     }
 }

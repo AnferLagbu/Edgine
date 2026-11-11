@@ -140,19 +140,13 @@ fn test_fd_range_overlaps_helper() {
 #[test]
 fn test_v2_subsystems_reference_fdplan() {
     // TD-02 V2: 仍留在 FdPlan 的子系统 *FD_BASE 常量必须从 FdPlan 派生, 不再硬编码字面量
-    // (eventfd/signalfd 已在 fd 对象模型阶段 3 迁至 OpenFileTable, 无 *FD_BASE)
-    let cases: &[(&str, &str, &str)] = &[
-        (
-            "UDS_FD_BASE",
-            "src/kernel/functions/net/unix.rs",
-            "crate::privileged::proc::FdPlan::UDS.base",
-        ),
-        (
-            "INOTIFY_FD_BASE",
-            "src/kernel/functions/fs/inotify.rs",
-            "crate::privileged::proc::FdPlan::INOTIFY.base",
-        ),
-    ];
+    // (eventfd/signalfd 已在 fd 对象模型阶段 3 迁至 OpenFileTable; UDS 随阶段 3
+    // 第 4 批迁出, 策略表只持槽位下标 — 三者均无 *FD_BASE)
+    let cases: &[(&str, &str, &str)] = &[(
+        "INOTIFY_FD_BASE",
+        "src/kernel/functions/fs/inotify.rs",
+        "crate::privileged::proc::FdPlan::INOTIFY.base",
+    )];
     for (const_name, rel_path, expected_ref) in cases {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -204,14 +198,10 @@ fn test_v3_fd_at_helper_exposed() {
 
 #[test]
 fn test_v3_subsystems_use_fd_at_not_base_plus() {
-    // TD-02 V3: 各子系统的"base + i" 模式必须改走 fd_at(FdSubsystem::X, i)
-    // 2 个 FD 分配点 (eventfd/signalfd 已迁至 OpenFileTable, 不再走 FdPlan):
-    //   1. unix.rs idx_to_fd
-    //   2. inotify.rs InotifyInstance::fd (含通知循环 epoll_pwake)
-    let cases: &[(&str, &str)] = &[
-        ("src/kernel/functions/net/unix.rs", "fd_at"),
-        ("src/kernel/functions/fs/inotify.rs", "fd_at"),
-    ];
+    // TD-02 V3: 仍在 FdPlan 的子系统 "base + i" 模式必须改走 fd_at(FdSubsystem::X, i)
+    // (eventfd/signalfd/UDS 已迁至 OpenFileTable, 不再走 FdPlan):
+    //   inotify.rs InotifyInstance::fd (含通知循环 epoll_pwake)
+    let cases: &[(&str, &str)] = &[("src/kernel/functions/fs/inotify.rs", "fd_at")];
     for (path, expected) in cases {
         let p = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

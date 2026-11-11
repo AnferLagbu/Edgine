@@ -11,16 +11,18 @@
 //! - [`mod@super::socket`] 强类型 API (Domain, `SockType`, `SockAddrIn`, `&[u8]`)
 //! - 本模块 syscall 入口 API (i32, u64 用户指针, u32 长度)
 //!
-//! ## fd 对象模型 (阶段 3 第 3 个迁移子系统)
+//! ## fd 对象模型 (阶段 3 第 4 个迁移子系统)
 //!
-//! smoltcp socket fd 已由 [`SocketFile`] 对象承载并挂在 `OpenFileTable`:
-//! 用户 fd 经 per-process fd 表 → `handle_id` → 对象, 对象只持协议栈槽位编号.
-//! 本模块的每个 socket 系统调用经 `SocketFd::resolve` 快照 `(槽位, 非阻塞)`
-//! 并在调用期间以引用计数钉住对象 (槽位不会被并发 close 回收), 再以槽位编号
-//! 委托 privileged 入口. 阻塞语义由 `OpenFile::nonblock` + `MSG_DONTWAIT` 合成.
+//! smoltcp socket 与 `AF_UNIX` socket 均由 fd 对象承载并挂在 `OpenFileTable`:
+//! 用户 fd 经 per-process fd 表 → `handle_id` → 对象, 对象只持协议栈/策略表
+//! 槽位编号. 本模块的每个 socket 系统调用经 `SocketObject::resolve` 快照对象
+//! 类型与 `(槽位, 非阻塞)` 并在调用期间以引用计数钉住对象 (槽位不会被并发
+//! close 回收), 再按对象类型委托 privileged 入口或 functions UDS 策略.
+//! 阻塞语义由 `OpenFile::nonblock` + `MSG_DONTWAIT` 合成.
 
 use super::socket_file::SocketFile;
 use super::unix as uds;
+use super::unix_socket_file::UnixSocketFile;
 use crate::functions::fs::{OPEN_FILE_TABLE, vfs_get_fd_handle};
 use crate::functions::syscall::types::{SO_PASSCRED, SOL_SOCKET};
 use crate::privileged::net::socket_types::SOCK_NONBLOCK;
@@ -32,23 +34,35 @@ use crate::privileged::syscall::api;
 const MSG_DONTWAIT: i32 = 0x40;
 
 // ============================================================================
-// Smoltcp socket fd 解析守卫
+// socket fd 对象解析守卫
 // ============================================================================
 
-/// 已解析的 smoltcp socket fd — 持有对象引用直至本次系统调用结束
+/// 已解析的 socket fd 对象 — 持有对象引用直至本次系统调用结束
 ///
-/// `resolve` 在 `OpenFileTable` 锁内完成 `(槽位, 非阻塞)` 快照与 `inc_ref`,
-/// `Drop` 时 `dec_ref`: 并发 close 只会降引用计数, 槽位在本调用期间不被回收.
-struct SocketFd {
-    /// 对象在 `OpenFileTable` 的句柄
-    handle_id: u32,
-    /// 协议栈槽位编号
-    slot: i32,
-    /// fd 级非阻塞标志快照 (`OpenFile::nonblock`)
-    nonblock: bool,
+/// `resolve` 在 `OpenFileTable` 锁内完成对象下转型与 `inc_ref`, `Drop` 时
+/// `dec_ref`: 并发 close 只会降引用计数, 槽位在本调用期间不被回收.
+enum SocketObject {
+    /// smoltcp (`AF_INET` / `AF_INET6`) socket
+    Inet {
+        /// 对象在 `OpenFileTable` 的句柄
+        handle_id: u32,
+        /// 协议栈槽位编号
+        slot: i32,
+        /// fd 级非阻塞标志快照 (`OpenFile::nonblock`)
+        nonblock: bool,
+    },
+    /// `AF_UNIX` socket (functions 层策略表槽位)
+    Unix {
+        /// 对象在 `OpenFileTable` 的句柄
+        handle_id: u32,
+        /// 策略表槽位下标
+        idx: u8,
+        /// fd 级非阻塞标志快照 (`OpenFile::nonblock`)
+        nonblock: bool,
+    },
 }
 
-impl SocketFd {
+impl SocketObject {
     /// 由用户 fd 解析对象: fd 无效 → `EBADF`, 非 socket 对象 → `ENOTSOCK`
     fn resolve(fd: i32) -> Result<Self, Errno> {
         let fd_idx = usize::try_from(fd).map_err(|_| Errno::Ebadf)?;
@@ -56,32 +70,74 @@ impl SocketFd {
             return Err(Errno::Ebadf);
         };
         let resolved = OPEN_FILE_TABLE.with_file(handle_id, |of| {
-            let socket = of.file().as_any().downcast_ref::<SocketFile>()?;
-            let slot = socket.slot();
+            let file = of.file();
             let nonblock = of.is_nonblock();
-            of.inc_ref();
-            Some((slot, nonblock))
+            if let Some(socket) = file.as_any().downcast_ref::<SocketFile>() {
+                let slot = socket.slot();
+                of.inc_ref();
+                return Some(Self::Inet {
+                    handle_id,
+                    slot,
+                    nonblock,
+                });
+            }
+            if let Some(unix) = file.as_any().downcast_ref::<UnixSocketFile>() {
+                let idx = unix.idx();
+                of.inc_ref();
+                return Some(Self::Unix {
+                    handle_id,
+                    idx,
+                    nonblock,
+                });
+            }
+            None
         });
         match resolved {
             None => Err(Errno::Ebadf),
             Some(None) => Err(Errno::Enotsock),
-            Some(Some((slot, nonblock))) => Ok(Self {
-                handle_id,
-                slot,
-                nonblock,
-            }),
+            Some(Some(object)) => Ok(object),
+        }
+    }
+
+    /// fd 级非阻塞标志快照
+    fn nonblock(&self) -> bool {
+        match self {
+            Self::Inet { nonblock, .. } | Self::Unix { nonblock, .. } => *nonblock,
         }
     }
 
     /// 本次调用是否允许阻塞: 对象非阻塞位与 `MSG_DONTWAIT` 按与关系合成
     fn blocks(&self, flags: i32) -> bool {
-        !self.nonblock && (flags & MSG_DONTWAIT) == 0
+        !self.nonblock() && (flags & MSG_DONTWAIT) == 0
+    }
+
+    /// UDS 策略表槽位 (非 UDS 对象返回 `None`)
+    fn unix_idx(&self) -> Option<u8> {
+        match self {
+            Self::Unix { idx, .. } => Some(*idx),
+            Self::Inet { .. } => None,
+        }
+    }
+
+    /// smoltcp 协议栈槽位
+    // SIMPLIFIED: UDS 对象未实现 inet-only 操作面 (getsockopt/getsockname/
+    // getpeername/shutdown); 迁移前 UDS fd 不在 VFS 表, 同路径返 EBADF.
+    // 影响: 现以 ENOTSUP 区分"是 socket 但不支持该命令"; 何时需扩展: UDS 补齐
+    // 这些命令的语义时按对象类型分派到 UDS 策略.
+    fn inet_slot(&self) -> Result<i32, Errno> {
+        match self {
+            Self::Inet { slot, .. } => Ok(*slot),
+            Self::Unix { .. } => Err(Errno::Enotsup),
+        }
     }
 }
 
-impl Drop for SocketFd {
+impl Drop for SocketObject {
     fn drop(&mut self) {
-        OPEN_FILE_TABLE.dec_ref(self.handle_id);
+        let handle_id = match self {
+            Self::Inet { handle_id, .. } | Self::Unix { handle_id, .. } => *handle_id,
+        };
+        OPEN_FILE_TABLE.dec_ref(handle_id);
     }
 }
 
@@ -92,6 +148,11 @@ fn ret_to_result(r: i64) -> Result<usize, Errno> {
     } else {
         Ok(crate::functions::intcast::usize_from_i64(r))
     }
+}
+
+/// UDS 策略错误 → errno (`UnixSocketError` 为映射单一来源)
+fn uds_errno(e: uds::UdsError) -> Errno {
+    super::unix::UnixSocketError::from(e).to_errno()
 }
 
 // ============================================================================
@@ -107,19 +168,13 @@ fn ret_to_result(r: i64) -> Result<usize, Errno> {
 /// 当 `AF_UNIX` 的 `sock_type` 非 Stream/Dgram 时返回 `Err(Errno::Einval)`; 不支持的协议族返回
 /// `Err(Errno::Eafnosupport)`; 底层创建失败时返回对应的 `Errno`; 对象或 fd 表耗尽返回 `Err(Errno::Emfile)`。
 pub fn socket_syscall(domain: i32, sock_type: i32, protocol: i32) -> Result<usize, Errno> {
+    let nonblock = (sock_type & SOCK_NONBLOCK) != 0;
     // AF_UNIX 分流
     if domain == 1 {
-        let st = match sock_type {
-            1 => uds::SockType::Stream,
-            2 => uds::SockType::Dgram,
-            _ => return Err(Errno::Einval),
-        };
-        return uds::socket(st)
-            .map(crate::functions::intcast::usize_from_i32)
-            .map_err(super::unix::UnixSocketError::to_errno);
+        let st = uds::UnixSockType::from_i32(sock_type & !SOCK_NONBLOCK).ok_or(Errno::Einval)?;
+        return UnixSocketFile::create(st, nonblock, false);
     }
     // AF_INET (smoltcp): privileged 返回槽位编号, fd 由本层分配
-    let nonblock = (sock_type & SOCK_NONBLOCK) != 0;
     let r = fw::socket_syscall(domain, sock_type, protocol);
     if r < 0 {
         return Err(Errno::from_ret(r));
@@ -146,14 +201,16 @@ pub fn bind_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Errno
         1 => {
             // AF_UNIX
             let addr = fw::raw_read_sockaddr_un(addr_ptr, addrlen)?;
-            uds::bind(fd, &addr)
+            let obj = SocketObject::resolve(fd)?;
+            let idx = obj.unix_idx().ok_or(Errno::Einval)?;
+            uds::uds_bind(idx, addr.path_slice())
                 .map(|()| 0)
-                .map_err(super::unix::UnixSocketError::to_errno)
+                .map_err(uds_errno)
         }
         2 | 10 => {
             // AF_INET / AF_INET6 (双栈, DECISION-032)
-            let sock = SocketFd::resolve(fd)?;
-            ret_to_result(fw::bind_syscall(sock.slot, addr_ptr, addrlen))
+            let obj = SocketObject::resolve(fd)?;
+            ret_to_result(fw::bind_syscall(obj.inet_slot()?, addr_ptr, addrlen))
         }
         _ => Err(Errno::Eafnosupport),
     }
@@ -174,13 +231,11 @@ pub fn listen_syscall(fd: i32, backlog: i32) -> Result<usize, Errno> {
     if backlog < 0 {
         return Err(Errno::Einval);
     }
-    if uds::is_uds_fd(fd) {
-        return uds::listen(fd)
-            .map(|()| 0)
-            .map_err(super::unix::UnixSocketError::to_errno);
+    let obj = SocketObject::resolve(fd)?;
+    if let Some(idx) = obj.unix_idx() {
+        return uds::uds_listen(idx).map(|()| 0).map_err(uds_errno);
     }
-    let sock = SocketFd::resolve(fd)?;
-    ret_to_result(fw::listen_syscall(sock.slot, backlog))
+    ret_to_result(fw::listen_syscall(obj.inet_slot()?, backlog))
 }
 
 /// accept(fd, addr, addrlen)
@@ -195,13 +250,12 @@ pub fn accept_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<usize,
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    if uds::is_uds_fd(fd) {
-        return uds::accept(fd)
-            .map(crate::functions::intcast::usize_from_i32)
-            .map_err(super::unix::UnixSocketError::to_errno);
+    let obj = SocketObject::resolve(fd)?;
+    if let Some(idx) = obj.unix_idx() {
+        // 新连接 fd 不继承监听端的 O_NONBLOCK 与 CLOEXEC (POSIX accept 语义)
+        return UnixSocketFile::create_accepted(idx, false, false);
     }
-    let sock = SocketFd::resolve(fd)?;
-    let r = fw::accept_syscall(sock.slot, addr_ptr, addrlen_ptr, !sock.nonblock);
+    let r = fw::accept_syscall(obj.inet_slot()?, addr_ptr, addrlen_ptr, !obj.nonblock());
     if r < 0 {
         return Err(Errno::from_ret(r));
     }
@@ -226,18 +280,20 @@ pub fn connect_syscall(fd: i32, addr_ptr: u64, addrlen: u32) -> Result<usize, Er
     match family {
         1 => {
             let addr = fw::raw_read_sockaddr_un(addr_ptr, addrlen)?;
-            uds::connect(fd, &addr)
+            let obj = SocketObject::resolve(fd)?;
+            let idx = obj.unix_idx().ok_or(Errno::Einval)?;
+            uds::uds_connect(idx, addr.path_slice())
                 .map(|()| 0)
-                .map_err(super::unix::UnixSocketError::to_errno)
+                .map_err(uds_errno)
         }
         2 | 10 => {
             // AF_INET / AF_INET6 (双栈, DECISION-032)
-            let sock = SocketFd::resolve(fd)?;
+            let obj = SocketObject::resolve(fd)?;
             ret_to_result(fw::connect_syscall(
-                sock.slot,
+                obj.inet_slot()?,
                 addr_ptr,
                 addrlen,
-                !sock.nonblock,
+                !obj.nonblock(),
             ))
         }
         _ => Err(Errno::Eafnosupport),
@@ -264,7 +320,8 @@ pub fn sendto_syscall(
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    if uds::is_uds_fd(fd) {
+    let obj = SocketObject::resolve(fd)?;
+    if obj.unix_idx().is_some() {
         if dest_ptr == 0 {
             return Err(Errno::Edestaddrreq);
         }
@@ -272,17 +329,16 @@ pub fn sendto_syscall(
         let data = fw::raw_copy_in(buf_ptr, len)?;
         // 解析 sockaddr_un
         let addr = fw::raw_read_sockaddr_un(dest_ptr, dest_len)?;
-        return uds::sendto(fd, &data, &addr).map_err(super::unix::UnixSocketError::to_errno);
+        return uds::uds_sendto(&data, addr.path_slice()).map_err(uds_errno);
     }
-    let sock = SocketFd::resolve(fd)?;
     ret_to_result(fw::sendto_syscall(
-        sock.slot,
+        obj.inet_slot()?,
         buf_ptr,
         len,
         flags,
         dest_ptr,
         dest_len,
-        sock.blocks(flags),
+        obj.blocks(flags),
     ))
 }
 
@@ -308,14 +364,19 @@ pub fn recvfrom_syscall(
     if buf_ptr == 0 || len == 0 {
         return Err(Errno::Efault);
     }
-    if uds::is_uds_fd(fd) {
+    let obj = SocketObject::resolve(fd)?;
+    if let Some(idx) = obj.unix_idx() {
         if !api::validate_user_buf(buf_ptr, u64::from(len)) {
             return Err(Errno::Efault);
         }
         // 栈上缓冲接收, 再 copy-out (走 TCB raw_copy_out, 0 unsafe)
         let mut stack_buf = alloc::vec![0u8; len as usize];
-        let n =
-            uds::recvfrom(fd, &mut stack_buf).map_err(super::unix::UnixSocketError::to_errno)?;
+        let sock_type = uds::uds_sock_type(idx).map_err(uds_errno)?;
+        let n = match sock_type {
+            uds::UnixSockType::Stream => uds::uds_recv(idx, &mut stack_buf),
+            uds::UnixSockType::Dgram => uds::uds_recvfrom(idx, &mut stack_buf),
+        }
+        .map_err(uds_errno)?;
         if n > 0 {
             fw::raw_copy_out(
                 buf_ptr,
@@ -325,17 +386,16 @@ pub fn recvfrom_syscall(
         }
         // v1 简化: 不填 src_addr / addrlen (POSIX 允许)
         let _ = (src_ptr, src_len_ptr);
-        return Ok(n as usize);
+        return Ok(n);
     }
-    let sock = SocketFd::resolve(fd)?;
     ret_to_result(fw::recvfrom_syscall(
-        sock.slot,
+        obj.inet_slot()?,
         buf_ptr,
         len,
         flags,
         src_ptr,
         src_len_ptr,
-        sock.blocks(flags),
+        obj.blocks(flags),
     ))
 }
 
@@ -362,7 +422,7 @@ pub fn setsockopt_syscall(
         return Err(Errno::Ebadf);
     }
     // v2 SO_PASSCRED 分流: 保持旧语义次序 — 先 copy-in (EFAULT), 再长度校验
-    // (EINVAL), 最后按 fd 归属分流 (非 UDS → EBADF)
+    // (EINVAL), 最后按对象类型分流 (非 UDS socket → EBADF)
     if level == SOL_SOCKET && optname == SO_PASSCRED {
         let len = (valen as usize).min(20);
         let buf = fw::raw_copy_in(val_ptr, crate::functions::intcast::low_u32_from_usize(len))?;
@@ -370,15 +430,18 @@ pub fn setsockopt_syscall(
             return Err(Errno::Einval);
         }
         let enable = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) != 0;
-        if !uds::is_uds_fd(fd) {
-            return Err(Errno::Ebadf);
-        }
-        let rc = uds::uds_setsockopt(fd, enable);
+        let obj = SocketObject::resolve(fd)?;
+        let idx = obj.unix_idx().ok_or(Errno::Ebadf)?;
+        let rc = uds::uds_setsockopt(idx, enable);
         return ret_to_result(i64::from(rc));
     }
-    let sock = SocketFd::resolve(fd)?;
+    let obj = SocketObject::resolve(fd)?;
     ret_to_result(fw::setsockopt_syscall(
-        sock.slot, level, optname, val_ptr, valen,
+        obj.inet_slot()?,
+        level,
+        optname,
+        val_ptr,
+        valen,
     ))
 }
 
@@ -398,9 +461,13 @@ pub fn getsockopt_syscall(
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let sock = SocketFd::resolve(fd)?;
+    let obj = SocketObject::resolve(fd)?;
     ret_to_result(fw::getsockopt_syscall(
-        sock.slot, level, optname, val_ptr, valen_ptr,
+        obj.inet_slot()?,
+        level,
+        optname,
+        val_ptr,
+        valen_ptr,
     ))
 }
 
@@ -414,8 +481,12 @@ pub fn getsockname_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let sock = SocketFd::resolve(fd)?;
-    ret_to_result(fw::getsockname_syscall(sock.slot, addr_ptr, addrlen_ptr))
+    let obj = SocketObject::resolve(fd)?;
+    ret_to_result(fw::getsockname_syscall(
+        obj.inet_slot()?,
+        addr_ptr,
+        addrlen_ptr,
+    ))
 }
 
 /// getpeername(fd, addr, addrlen) — 获取对端地址
@@ -428,8 +499,12 @@ pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let sock = SocketFd::resolve(fd)?;
-    ret_to_result(fw::getpeername_syscall(sock.slot, addr_ptr, addrlen_ptr))
+    let obj = SocketObject::resolve(fd)?;
+    ret_to_result(fw::getpeername_syscall(
+        obj.inet_slot()?,
+        addr_ptr,
+        addrlen_ptr,
+    ))
 }
 
 /// shutdown(fd, how)
@@ -442,8 +517,8 @@ pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    let sock = SocketFd::resolve(fd)?;
-    ret_to_result(fw::shutdown_syscall(sock.slot, how))
+    let obj = SocketObject::resolve(fd)?;
+    ret_to_result(fw::shutdown_syscall(obj.inet_slot()?, how))
 }
 
 /// sendmsg(fd, msg, flags) — 真实实现
@@ -478,19 +553,22 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
-    // v2: UDS cmsg 处理 — 在 fw 调之前注入凭据 (如果对端 passcred)
+    // v2: UDS cmsg 处理 — 在发送前注入凭据 (如果对端 passcred)
     // cmsg 头格式: cmsghdr { cmsg_len: usize (8B), cmsg_level: i32 (4B), cmsg_type: i32 (4B) }
     // 总 16 字节头, 然后是 data (cmsg_len - 16 字节)
     let msg_control_ptr = api::read_u64_from_user(msg_ptr + 32).ok_or(Errno::Efault)?;
     let msg_controllen_raw = crate::functions::intcast::usize_from_u64(
         api::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
-    if msg_control_ptr != 0 && msg_controllen_raw >= 28 {
-        if !api::validate_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
-            return Err(Errno::Efault);
-        }
-        // uds_getsockopt_passcred 对非 UDS fd 返 -EBADF, 故按 > 0 判定启用
-        let local_passcred = super::unix::uds_getsockopt_passcred(fd) > 0;
+    let control_present = msg_control_ptr != 0 && msg_controllen_raw >= 28;
+    if control_present && !api::validate_user_buf(msg_control_ptr, msg_controllen_raw as u64) {
+        return Err(Errno::Efault);
+    }
+    let obj = SocketObject::resolve(fd)?;
+    let unix_idx = obj.unix_idx();
+    if control_present {
+        // SO_PASSCRED 仅 UDS 对象持有; 非 UDS 对象恒不注入
+        let local_passcred = unix_idx.is_some_and(|idx| uds::uds_getsockopt_passcred(idx) > 0);
         if local_passcred {
             // 写 SCM_CREDENTIALS cmsghdr (28 字节) 到 msg_control:
             // [0-7]   cmsg_len = 28
@@ -534,12 +612,14 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
         }
     }
 
-    let sock = SocketFd::resolve(fd)?;
+    if let Some(idx) = unix_idx {
+        return sendmmsg_uds_entry(idx, msg_ptr);
+    }
     ret_to_result(fw::sendmsg_syscall(
-        sock.slot,
+        obj.inet_slot()?,
         msg_ptr,
         flags,
-        sock.blocks(flags),
+        obj.blocks(flags),
     ))
 }
 
@@ -582,30 +662,35 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     let msg_controllen = crate::functions::intcast::usize_from_u64(
         api::read_u64_from_user(msg_ptr + 40).ok_or(Errno::Efault)?,
     );
-    if msg_control_ptr != 0 && msg_controllen >= 28 {
-        if !api::validate_user_buf(msg_control_ptr, msg_controllen as u64) {
-            return Err(Errno::Efault);
-        }
-        // B07-02: 从 UDS 接收缓冲反序列化真实发送方凭据; 非 UDS / 无凭据
-        // 时不伪造 root, 保持 msg_controllen 原样 (无凭据).
-        if let Some(cred) = uds::uds_peer_creds(fd) {
-            // 写回 SCM_CREDENTIALS cmsghdr + 12 字节凭据 (与 send 路径相同编码)
-            let _ = api::write_u64_to_user(msg_control_ptr, 28u64);
-            let _ = api::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
-            let _ = api::write_u64_to_user(
-                msg_control_ptr + 16,
-                (u64::from(cred.pid) << 32) | u64::from(cred.uid),
-            );
-            let _ = api::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
-            let _ = api::write_u64_to_user(msg_ptr + 40, 28u64);
-        }
+    let control_present = msg_control_ptr != 0 && msg_controllen >= 28;
+    if control_present && !api::validate_user_buf(msg_control_ptr, msg_controllen as u64) {
+        return Err(Errno::Efault);
     }
-    let sock = SocketFd::resolve(fd)?;
+    let obj = SocketObject::resolve(fd)?;
+    let unix_idx = obj.unix_idx();
+    if control_present
+        && let Some(idx) = unix_idx
+        && let Some(cred) = uds::uds_peer_creds(idx)
+    {
+        // 写回 SCM_CREDENTIALS cmsghdr + 12 字节凭据 (与 send 路径相同编码)
+        let _ = api::write_u64_to_user(msg_control_ptr, 28u64);
+        let _ = api::write_u64_to_user(msg_control_ptr + 8, (2u64 << 32) | 1u64);
+        let _ = api::write_u64_to_user(
+            msg_control_ptr + 16,
+            (u64::from(cred.pid) << 32) | u64::from(cred.uid),
+        );
+        let _ = api::write_u64_to_user(msg_control_ptr + 24, u64::from(cred.gid));
+        let _ = api::write_u64_to_user(msg_ptr + 40, 28u64);
+    }
+    if let Some(idx) = unix_idx {
+        let st = uds::uds_sock_type(idx).map_err(uds_errno)?;
+        return recvmmsg_uds_entry(idx, msg_ptr, st);
+    }
     ret_to_result(fw::recvmsg_syscall(
-        sock.slot,
+        obj.inet_slot()?,
         msg_ptr,
         flags,
-        sock.blocks(flags),
+        obj.blocks(flags),
     ))
 }
 
@@ -663,19 +748,20 @@ pub fn socketpair_syscall(
     if protocol != 0 {
         return Err(Errno::Eprotonosupport);
     }
-    let st = match sock_type {
-        1 => uds::SockType::Stream,
-        2 => uds::SockType::Dgram,
-        _ => return Err(Errno::Enotsup),
-    };
-    let (fd0, fd1) = uds::socketpair(st).map_err(super::unix::UnixSocketError::to_errno)?;
+    let st = uds::UnixSockType::from_i32(sock_type & !SOCK_NONBLOCK).ok_or(Errno::Enotsup)?;
+    let nonblock = (sock_type & SOCK_NONBLOCK) != 0;
+    let (fd0, fd1) = UnixSocketFile::create_pair(st, nonblock, false)?;
     // sv[0]=fd0, sv[1]=fd1: 拼为主机序 u64 一次写回 (低 4 字节落在 sv[0])
-    let packed =
-        (crate::functions::intcast::u64_from_i32(fd1) << 32) | u64::from(fd0.cast_unsigned());
+    let packed = (u64::from(crate::functions::intcast::low_u32_from_usize(fd1)) << 32)
+        | u64::from(crate::functions::intcast::low_u32_from_usize(fd0));
     if !api::write_u64_to_user(sv_ptr, packed) {
-        // 写回失败: 两端 FD 已无用户可见入口, 关闭回收
-        let _ = uds::close(fd0);
-        let _ = uds::close(fd1);
+        // 写回失败: 两端 FD 已无用户可见入口, 走 VFS 共享关闭链回收
+        let _ = crate::functions::fs::api::vfs_close_safe(
+            crate::functions::intcast::low_u32_from_usize(fd0),
+        );
+        let _ = crate::functions::fs::api::vfs_close_safe(
+            crate::functions::intcast::low_u32_from_usize(fd1),
+        );
         return Err(Errno::Efault);
     }
     Ok(0)
@@ -701,7 +787,8 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
     if u64::from(vlen) > UIO_MAXIOV {
         return Err(Errno::Einval);
     }
-    let uds_path = uds::is_uds_fd(fd);
+    let obj = SocketObject::resolve(fd)?;
+    let unix_idx = obj.unix_idx();
     let mut sent: usize = 0;
     for i in 0..u64::from(vlen) {
         let entry = msgvec_ptr + i * MMSGHDR_SIZE;
@@ -711,8 +798,8 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
             }
             return Err(Errno::Efault);
         }
-        let r = if uds_path {
-            sendmmsg_uds_entry(fd, entry)
+        let r = if let Some(idx) = unix_idx {
+            sendmmsg_uds_entry(idx, entry)
         } else {
             sendmsg_syscall(fd, entry, flags.cast_signed())
         };
@@ -744,10 +831,9 @@ pub fn sendmmsg_syscall(fd: i32, msgvec_ptr: u64, vlen: u32, flags: u32) -> Resu
 ///
 /// iov 参数非法时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回 `Err(Errno::Efault)`;
 /// 数据报超长时返回 `Err(Errno::Emsgsize)`; 底层 UDS 发送失败透传对应 `Errno`。
-fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
+fn sendmmsg_uds_entry(idx: u8, entry: u64) -> Result<usize, Errno> {
     let data = gather_entry_iov(entry)?;
-    let st =
-        uds::uds_sock_type(fd).map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?;
+    let st = uds::uds_sock_type(idx).map_err(uds_errno)?;
     let name_ptr = api::read_u64_from_user(entry + MSGHDR_NAME_OFF).ok_or(Errno::Efault)?;
     if name_ptr != 0 {
         // 有目标地址: 按路径发送, 目标为 Dgram, 数据超过单报上限拒绝
@@ -759,13 +845,13 @@ fn sendmmsg_uds_entry(fd: i32, entry: u64) -> Result<usize, Errno> {
             name_ptr,
             crate::functions::intcast::low_u32_from_u64(namelen),
         )?;
-        uds::sendto(fd, &data, &addr).map_err(super::unix::UnixSocketError::to_errno)
+        uds::uds_sendto(&data, addr.path_slice()).map_err(uds_errno)
     } else {
         // 无目标地址: 已连接发送; 已连接 Dgram 单报上限与路径发送一致
-        if st == uds::SockType::Dgram && data.len() > uds::UNIX_DGRAM_MAX {
+        if st == uds::UnixSockType::Dgram && data.len() > uds::UNIX_DGRAM_MAX {
             return Err(Errno::Emsgsize);
         }
-        uds::send_connected(fd, &data).map_err(super::unix::UnixSocketError::to_errno)
+        uds::uds_send_connected(idx, &data).map_err(uds_errno)
     }
 }
 
@@ -860,10 +946,10 @@ pub fn recvmmsg_syscall(
     let blocking = timeout_ptr != 0 && (flags & MSG_DONTWAIT_FLAG) == 0;
     let waitforone = (flags & MSG_WAITFORONE_FLAG) != 0;
     // UDS 接收分流: 套接字类型决定 Stream/Dgram 接收原语 (逐 entry 一致)
-    let st = if uds::is_uds_fd(fd) {
-        Some(uds::uds_sock_type(fd).map_err(|e| super::unix::UnixSocketError::from(e).to_errno())?)
-    } else {
-        None
+    let obj = SocketObject::resolve(fd)?;
+    let uds_target = match obj.unix_idx() {
+        Some(idx) => Some((idx, uds::uds_sock_type(idx).map_err(uds_errno)?)),
+        None => None,
     };
     let mut received: usize = 0;
     for i in 0..u64::from(vlen) {
@@ -876,8 +962,8 @@ pub fn recvmmsg_syscall(
         }
         // 单条接收, 空数据时按阻塞语义 yield 重试直至 deadline
         let r = loop {
-            let attempt = match st {
-                Some(t) => recvmmsg_uds_entry(fd, entry, t),
+            let attempt = match uds_target {
+                Some((idx, t)) => recvmmsg_uds_entry(idx, entry, t),
                 None => recvmsg_syscall(fd, entry, flags.cast_signed()),
             };
             match attempt {
@@ -926,22 +1012,18 @@ pub fn recvmmsg_syscall(
 ///
 /// iov 参数非法时返回 `Err(Errno::Einval)`; 用户缓冲无效时返回 `Err(Errno::Efault)`;
 /// 底层 UDS 接收失败透传对应 `Errno`。
-fn recvmmsg_uds_entry(fd: i32, entry: u64, st: uds::SockType) -> Result<usize, Errno> {
+fn recvmmsg_uds_entry(idx: u8, entry: u64, st: uds::UnixSockType) -> Result<usize, Errno> {
     let (iov_ptr, total_cap) = read_entry_iov_cap(entry)?;
     // 接收缓冲: 以 iov 总容量为上限, 封顶该类型单端缓冲大小
     let cap_limit = match st {
-        uds::SockType::Stream => uds::UNIX_STREAM_BUF,
-        uds::SockType::Dgram => uds::UNIX_DGRAM_MAX,
+        uds::UnixSockType::Stream => uds::UNIX_STREAM_BUF,
+        uds::UnixSockType::Dgram => uds::UNIX_DGRAM_MAX,
     };
     let cap = crate::functions::intcast::usize_from_u64(total_cap).min(cap_limit);
     let mut buf = alloc::vec![0u8; cap];
     let n = match st {
-        uds::SockType::Stream => {
-            uds::recv(fd, &mut buf).map_err(super::unix::UnixSocketError::to_errno)?
-        }
-        uds::SockType::Dgram => {
-            uds::recvfrom(fd, &mut buf).map_err(super::unix::UnixSocketError::to_errno)?
-        }
+        uds::UnixSockType::Stream => uds::uds_recv(idx, &mut buf).map_err(uds_errno)?,
+        uds::UnixSockType::Dgram => uds::uds_recvfrom(idx, &mut buf).map_err(uds_errno)?,
     };
     copy_out_to_entry_iov(iov_ptr, &buf[..n])?;
     // msg_flags 逐条写回: 收满缓冲视为可能截断

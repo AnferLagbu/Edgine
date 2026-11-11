@@ -87,8 +87,8 @@ fn syscall_uses_real_credentials() {
         "recvmsg_syscall 不得伪造 pid=1 (B07-02)"
     );
     assert!(
-        src.contains("uds_peer_creds(fd)"),
-        "recvmsg 必须从 UDS 接收缓冲取真实凭据 (B07-02)"
+        src.contains("uds_peer_creds(idx)"),
+        "recvmsg 必须从 UDS 接收缓冲取真实凭据 (B07-02; 阶段 3 后按策略槽位下标取)"
     );
 }
 

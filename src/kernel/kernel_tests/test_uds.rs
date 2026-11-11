@@ -5,23 +5,25 @@
 //! - 数据报套接字: 绑定 → 连接 → 发送/接收 → 关闭
 //! - 路径冲突 → EADDRINUSE
 //! - 接受空队列 → EAGAIN
-//! - 关闭 listener 同步取消 pending client
+//! - 关闭 listener 保留 pending client 槽位所有权 (只标记对端关闭)
 //!
-//! 所有测试在 UDS TCB 的全局表上操作, 顺序执行 (单核 + 启动期)
+//! fd 对象模型 (阶段 3) 后策略表只暴露槽位下标 (`u8`): `uds_alloc` 返回下标,
+//! `uds_free` 归还; fd/位图分配归 `UnixSocketFile` 对象与 `FdTable` 管.
+//! 所有测试在 UDS 策略表上操作, 顺序执行 (单核 + 启动期).
 use crate::functions::net::unix as uds;
 use crate::privileged::tests::{TestResult, runner};
 use crate::register_tests_inner;
 
 /// STREAM 完整生命周期
 fn test_uds_stream_echo() -> TestResult {
-    use uds::{UdsError, UnixSockType};
+    use uds::UnixSockType;
     uds::uds_reset_for_test();
 
-    let Ok(srv) = uds::uds_create(UnixSockType::Stream) else {
-        return TestResult::Fail("srv create failed");
+    let Ok(srv) = uds::uds_alloc(UnixSockType::Stream) else {
+        return TestResult::Fail("srv alloc failed");
     };
-    let Ok(cli) = uds::uds_create(UnixSockType::Stream) else {
-        return TestResult::Fail("cli create failed");
+    let Ok(cli) = uds::uds_alloc(UnixSockType::Stream) else {
+        return TestResult::Fail("cli alloc failed");
     };
 
     if uds::uds_bind(srv, b"/tmp/uds_test_stream.sock").is_err() {
@@ -37,7 +39,7 @@ fn test_uds_stream_echo() -> TestResult {
         return TestResult::Fail("accept failed");
     };
     if accepted == srv {
-        return TestResult::Fail("accept should return new FD");
+        return TestResult::Fail("accept should return new slot");
     }
 
     // cli → accepted
@@ -66,17 +68,16 @@ fn test_uds_stream_echo() -> TestResult {
         return TestResult::Fail("recv back data mismatch");
     }
 
-    // close
-    if uds::uds_close(cli).is_err() {
-        return TestResult::Fail("cli close failed");
+    // free
+    if uds::uds_free(cli).is_err() {
+        return TestResult::Fail("cli free failed");
     }
-    if uds::uds_close(accepted).is_err() {
-        return TestResult::Fail("accepted close failed");
+    if uds::uds_free(accepted).is_err() {
+        return TestResult::Fail("accepted free failed");
     }
-    if uds::uds_close(srv).is_err() {
-        return TestResult::Fail("srv close failed");
+    if uds::uds_free(srv).is_err() {
+        return TestResult::Fail("srv free failed");
     }
-    let _ = UdsError::BadFd; // 抑制未用警告
     TestResult::Pass
 }
 
@@ -85,15 +86,15 @@ fn test_uds_dgram_echo() -> TestResult {
     use uds::UnixSockType;
     uds::uds_reset_for_test();
 
-    let rx = uds::uds_create(UnixSockType::Dgram).unwrap();
-    let tx = uds::uds_create(UnixSockType::Dgram).unwrap();
+    let rx = uds::uds_alloc(UnixSockType::Dgram).unwrap();
+    let tx = uds::uds_alloc(UnixSockType::Dgram).unwrap();
     if uds::uds_bind(rx, b"/tmp/uds_test_dgram.sock").is_err() {
         return TestResult::Fail("rx bind failed");
     }
     if uds::uds_connect(tx, b"/tmp/uds_test_dgram.sock").is_err() {
         return TestResult::Fail("tx connect failed");
     }
-    let n = uds::uds_sendto(tx, b"datagram-payload", b"/tmp/uds_test_dgram.sock").unwrap();
+    let n = uds::uds_sendto(b"datagram-payload", b"/tmp/uds_test_dgram.sock").unwrap();
     if n != 16 {
         return TestResult::Fail("sendto returned wrong count");
     }
@@ -102,8 +103,8 @@ fn test_uds_dgram_echo() -> TestResult {
     if m != 16 || &buf[..16] != b"datagram-payload" {
         return TestResult::Fail("recvfrom data mismatch");
     }
-    uds::uds_close(tx).unwrap();
-    uds::uds_close(rx).unwrap();
+    uds::uds_free(tx).unwrap();
+    uds::uds_free(rx).unwrap();
     TestResult::Pass
 }
 
@@ -112,8 +113,8 @@ fn test_uds_eaddrinuse() -> TestResult {
     use uds::UnixSockType;
     uds::uds_reset_for_test();
 
-    let a = uds::uds_create(UnixSockType::Stream).unwrap();
-    let b = uds::uds_create(UnixSockType::Stream).unwrap();
+    let a = uds::uds_alloc(UnixSockType::Stream).unwrap();
+    let b = uds::uds_alloc(UnixSockType::Stream).unwrap();
     if uds::uds_bind(a, b"/tmp/uds_test_dup.sock").is_err() {
         return TestResult::Fail("a bind failed");
     }
@@ -121,8 +122,8 @@ fn test_uds_eaddrinuse() -> TestResult {
         Err(uds::UdsError::AddrInUse) => {}
         _ => return TestResult::Fail("expected AddrInUse"),
     }
-    uds::uds_close(a).unwrap();
-    uds::uds_close(b).unwrap();
+    uds::uds_free(a).unwrap();
+    uds::uds_free(b).unwrap();
     TestResult::Pass
 }
 
@@ -131,38 +132,51 @@ fn test_uds_eagain_accept() -> TestResult {
     use uds::UnixSockType;
     uds::uds_reset_for_test();
 
-    let s = uds::uds_create(UnixSockType::Stream).unwrap();
+    let s = uds::uds_alloc(UnixSockType::Stream).unwrap();
     uds::uds_bind(s, b"/tmp/uds_test_empty.sock").unwrap();
     uds::uds_listen(s).unwrap();
     match uds::uds_accept(s) {
         Err(uds::UdsError::Again) => {}
         _ => return TestResult::Fail("expected Again"),
     }
-    uds::uds_close(s).unwrap();
+    uds::uds_free(s).unwrap();
     TestResult::Pass
 }
 
-/// close listener 同步取消 pending client
-fn test_uds_close_listener_cancels() -> TestResult {
+/// close listener 保留 pending client 槽位所有权
+///
+/// 槽位下标可被新 socket 复用, 若监听端释放时直接清空客户端槽位, 陈旧客户端
+/// 的 `release()` 会误伤新持有者; 因此只标记对端关闭, 客户端槽位仍由各自
+/// fd 对象持有, 由对象释放时回收.
+fn test_uds_close_listener_keeps_client_slots() -> TestResult {
     use uds::UnixSockType;
     uds::uds_reset_for_test();
 
-    let srv = uds::uds_create(UnixSockType::Stream).unwrap();
-    let c1 = uds::uds_create(UnixSockType::Stream).unwrap();
-    let c2 = uds::uds_create(UnixSockType::Stream).unwrap();
+    let srv = uds::uds_alloc(UnixSockType::Stream).unwrap();
+    let c1 = uds::uds_alloc(UnixSockType::Stream).unwrap();
+    let c2 = uds::uds_alloc(UnixSockType::Stream).unwrap();
     uds::uds_bind(srv, b"/tmp/uds_test_cancel.sock").unwrap();
     uds::uds_listen(srv).unwrap();
     uds::uds_connect(c1, b"/tmp/uds_test_cancel.sock").unwrap();
     uds::uds_connect(c2, b"/tmp/uds_test_cancel.sock").unwrap();
-    uds::uds_close(srv).unwrap();
-    // pending client 槽位已被清空, 二次 close 返回 BadFd
-    match uds::uds_close(c1) {
-        Err(uds::UdsError::BadFd) => {}
-        _ => return TestResult::Fail("c1 should be BadFd after srv close"),
+    uds::uds_free(srv).unwrap();
+
+    // 客户端槽位仍存活: 发往已关闭对端 → NotFound, 读端 → Ok(0) (EOF)
+    match uds::uds_send(c1, b"x") {
+        Err(uds::UdsError::NotFound) => {}
+        _ => return TestResult::Fail("c1 send should be NotFound after srv free"),
     }
-    match uds::uds_close(c2) {
-        Err(uds::UdsError::BadFd) => {}
-        _ => return TestResult::Fail("c2 should be BadFd after srv close"),
+    let mut buf = [0u8; 4];
+    match uds::uds_recv(c1, &mut buf) {
+        Ok(0) => {}
+        _ => return TestResult::Fail("c1 recv should be EOF after srv free"),
+    }
+    // 客户端自行释放成功 (槽位未被监听端清空)
+    if uds::uds_free(c1).is_err() {
+        return TestResult::Fail("c1 free should succeed after srv free");
+    }
+    if uds::uds_free(c2).is_err() {
+        return TestResult::Fail("c2 free should succeed after srv free");
     }
     TestResult::Pass
 }
@@ -176,25 +190,9 @@ fn test_uds_err_mapping() -> TestResult {
     TestResult::Pass
 }
 
-/// 位图自清理: 释放全部 UDS `fd_alloc` 位图位
-///
-/// 防御性隔离: `uds_close` 已修复为回收 `fd_alloc` 位图 (对齐 pidfd close 模式),
-/// 正常用例结束后位图应为空; 此函数兜底清理失败用例残留 (`uds_reset_for_test`
-/// 后状态表已空, 不存在存活 UDS socket, 全量释放安全), 保证测试可复跑。
-fn release_all_uds_bitmap_bits() {
-    use crate::privileged::proc::fd_alloc::{FdSubsystem, free_fd};
-    for i in 0..uds::MAX_UDS_FD {
-        let _ = free_fd(
-            FdSubsystem::Uds,
-            uds::FD_BASE + crate::privileged::glue::low_i32_from_usize(i),
-        );
-    }
-}
-
 /// socketpair STREAM: 两端互连双向收发 (T1 G3)
 fn test_uds_socketpair_stream() -> TestResult {
     uds::uds_reset_for_test();
-    release_all_uds_bitmap_bits();
 
     let (a, b) = match uds::uds_socketpair(uds::UnixSockType::Stream) {
         Ok((x, y)) if x != y => (x, y),
@@ -220,16 +218,14 @@ fn test_uds_socketpair_stream() -> TestResult {
         Ok(4) if &buf2[..4] == b"pong" => {}
         _ => return TestResult::Fail("recv a data mismatch"),
     }
-    uds::uds_close(a).unwrap();
-    uds::uds_close(b).unwrap();
-    release_all_uds_bitmap_bits();
+    uds::uds_free(a).unwrap();
+    uds::uds_free(b).unwrap();
     TestResult::Pass
 }
 
 /// socketpair DGRAM: 已连接无路径发送 + 单条在途 EAGAIN (T1 G3)
 fn test_uds_socketpair_dgram() -> TestResult {
     uds::uds_reset_for_test();
-    release_all_uds_bitmap_bits();
 
     let (a, b) = match uds::uds_socketpair(uds::UnixSockType::Dgram) {
         Ok((x, y)) if x != y => (x, y),
@@ -251,54 +247,48 @@ fn test_uds_socketpair_dgram() -> TestResult {
         _ => return TestResult::Fail("expected Again on in-flight dgram"),
     }
     uds::uds_recvfrom(b, &mut buf).unwrap();
-    uds::uds_close(a).unwrap();
-    uds::uds_close(b).unwrap();
-    release_all_uds_bitmap_bits();
+    uds::uds_free(a).unwrap();
+    uds::uds_free(b).unwrap();
     TestResult::Pass
 }
 
 /// socketpair 第二端创建失败时回滚第一端 (T1 G3)
 fn test_uds_socketpair_rollback() -> TestResult {
     uds::uds_reset_for_test();
-    release_all_uds_bitmap_bits();
 
     // 占满 MAX_UDS_FD - 1 个槽位, socketpair 需连续 2 个空槽
-    let mut guard = [0i32; uds::MAX_UDS_FD];
+    let mut guard = [0u8; uds::MAX_UDS_FD];
     for slot in guard.iter_mut().take(uds::MAX_UDS_FD - 1) {
-        *slot = match uds::uds_create(uds::UnixSockType::Stream) {
-            Ok(fd) => fd,
-            Err(_) => return TestResult::Fail("fill create failed"),
+        *slot = match uds::uds_alloc(uds::UnixSockType::Stream) {
+            Ok(idx) => idx,
+            Err(_) => return TestResult::Fail("fill alloc failed"),
         };
     }
     match uds::uds_socketpair(uds::UnixSockType::Stream) {
         Err(uds::UdsError::NoMem) => {}
         _ => return TestResult::Fail("expected NoMem near capacity"),
     }
-    // 回滚验证: uds_socketpair 内部回滚经 uds_close 释放状态槽与 fd_alloc 位图位,
-    // 单个创建应成功
-    match uds::uds_create(uds::UnixSockType::Stream) {
+    // 回滚验证: uds_socketpair 内部经 uds_free 释放第一端槽位, 单个分配应成功
+    match uds::uds_alloc(uds::UnixSockType::Stream) {
         Ok(_) => {}
         Err(_) => return TestResult::Fail("rollback did not release slot"),
     }
-    release_all_uds_bitmap_bits();
     TestResult::Pass
 }
 
-/// 回归: `uds_close` 回收 `fd_alloc` 位图 (预存泄漏修复)
+/// 回归: `uds_free` 回收策略槽位 (预存 fd 位图泄漏修复的槽位面)
 ///
-/// 泄漏行为下第 17 次 create 即 `NoMem` (位图 16 位被前 16 次创建永久占用);
-/// 修复后 create + close 可循环超过容量上限。
-fn test_uds_close_releases_bitmap() -> TestResult {
+/// 槽位未回收时第 `MAX_UDS_FD + 1` 次分配即 `NoMem`; 回收后可循环超过容量上限.
+fn test_uds_free_releases_slot() -> TestResult {
     use uds::UnixSockType;
     uds::uds_reset_for_test();
-    release_all_uds_bitmap_bits();
 
     for _ in 0..uds::MAX_UDS_FD + 2 {
-        let Ok(fd) = uds::uds_create(UnixSockType::Dgram) else {
-            return TestResult::Fail("create failed before exhaustion");
+        let Ok(idx) = uds::uds_alloc(UnixSockType::Dgram) else {
+            return TestResult::Fail("alloc failed before exhaustion");
         };
-        if uds::uds_close(fd).is_err() {
-            return TestResult::Fail("close failed");
+        if uds::uds_free(idx).is_err() {
+            return TestResult::Fail("free failed");
         }
     }
     TestResult::Pass
@@ -311,21 +301,19 @@ fn test_uds_sendto_oversize() -> TestResult {
 
     use uds::UnixSockType;
     uds::uds_reset_for_test();
-    release_all_uds_bitmap_bits();
 
-    let Ok(srv) = uds::uds_create(UnixSockType::Dgram) else {
-        return TestResult::Fail("create failed");
+    let Ok(srv) = uds::uds_alloc(UnixSockType::Dgram) else {
+        return TestResult::Fail("alloc failed");
     };
     if uds::uds_bind(srv, b"/tmp/uds_test_ovs.sock").is_err() {
         return TestResult::Fail("bind failed");
     }
-    // sendto 首参 fd 未使用 (路径发送), 传 0 仅占位
-    match uds::uds_sendto(0, &BIG, b"/tmp/uds_test_ovs.sock") {
+    match uds::uds_sendto(&BIG, b"/tmp/uds_test_ovs.sock") {
         Err(uds::UdsError::Invalid) => {}
         _ => return TestResult::Fail("expected Invalid on oversize sendto"),
     }
     // 防护未破坏正常路径: 超限拒绝后短消息仍可送达
-    if uds::uds_sendto(0, b"ok", b"/tmp/uds_test_ovs.sock").is_err() {
+    if uds::uds_sendto(b"ok", b"/tmp/uds_test_ovs.sock").is_err() {
         return TestResult::Fail("normal sendto after oversize failed");
     }
     let mut buf = [0u8; 8];
@@ -333,7 +321,7 @@ fn test_uds_sendto_oversize() -> TestResult {
         Ok(2) if &buf[..2] == b"ok" => {}
         _ => return TestResult::Fail("recvfrom after oversize mismatch"),
     }
-    uds::uds_close(srv).unwrap();
+    uds::uds_free(srv).unwrap();
     TestResult::Pass
 }
 
@@ -345,12 +333,12 @@ pub fn register_uds_tests() {
             "dgram_echo": test_uds_dgram_echo,
             "eaddrinuse": test_uds_eaddrinuse,
             "eagain_accept": test_uds_eagain_accept,
-            "close_listener_cancels": test_uds_close_listener_cancels,
+            "close_listener_keeps_client_slots": test_uds_close_listener_keeps_client_slots,
             "err_mapping": test_uds_err_mapping,
             "socketpair_stream": test_uds_socketpair_stream,
             "socketpair_dgram": test_uds_socketpair_dgram,
             "socketpair_rollback": test_uds_socketpair_rollback,
-            "close_releases_bitmap": test_uds_close_releases_bitmap,
+            "free_releases_slot": test_uds_free_releases_slot,
             "sendto_oversize": test_uds_sendto_oversize,
         }
     }

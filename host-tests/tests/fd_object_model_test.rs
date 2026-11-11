@@ -997,7 +997,7 @@ fn socket_dispatch_sites_resolve_object_and_pass_slot() {
         "socket syscall 必须以用户 fd 解析对象"
     );
     assert!(
-        sys.contains("of.file().as_any().downcast_ref::<SocketFile>()"),
+        sys.contains("file.as_any().downcast_ref::<SocketFile>()"),
         "解析必须经 as_any 下转型到 SocketFile"
     );
     assert!(
@@ -1005,22 +1005,22 @@ fn socket_dispatch_sites_resolve_object_and_pass_slot() {
         "阻塞语义必须由对象非阻塞位与 MSG_DONTWAIT 合成"
     );
     assert!(
-        sys.contains("impl Drop for SocketFd"),
+        sys.contains("impl Drop for SocketObject"),
         "系统调用结束必须释放对象引用 (槽位不被并发 close 回收)"
     );
 
-    // UDS 专属选项 (SO_PASSCRED) 先于 socket 对象解析: UDS fd 不挂 OpenFileTable.
+    // UDS 专属选项 (SO_PASSCRED) 在对象解析后按对象类型分流 (阶段 3).
     let so = sys.find("fn setsockopt_syscall").expect("setsockopt 入口");
     let body = &sys[so..];
-    let uds_at = body
-        .find("uds::is_uds_fd(fd)")
-        .expect("SO_PASSCRED 必须按 UDS 分流");
     let resolve_at = body
-        .find("SocketFd::resolve(fd)")
-        .expect("非 UDS 选项必须解析 socket 对象");
+        .find("SocketObject::resolve(fd)")
+        .expect("setsockopt 必须解析 socket 对象");
+    let uds_at = body
+        .find("obj.unix_idx()")
+        .expect("SO_PASSCRED 必须按 UDS 对象分流");
     assert!(
-        uds_at < resolve_at,
-        "SO_PASSCRED 的 UDS 分流必须先于 socket 对象解析"
+        resolve_at < uds_at,
+        "SO_PASSCRED 的 UDS 分流必须建立在 socket 对象解析之上"
     );
 
     // privileged 入口参数域为槽位编号, 且不再持有 per-slot 阻塞标志.
@@ -1060,5 +1060,83 @@ fn socket_dispatch_sites_resolve_object_and_pass_slot() {
     assert!(
         !io.contains("Smoltcp") && !io.contains("SMOLTCP"),
         "io.rs 不得残留 socket 数值特判"
+    );
+}
+
+// ============================================================================
+// 阶段 3 第 4 个迁移子系统: UDS (AF_UNIX) — 行为面与源码形状锁
+// ============================================================================
+
+#[test]
+fn unix_socket_object_implements_file_contract() {
+    use edgine::kernel::functions::net::unix_socket_file::UnixSocketFile;
+
+    // 槽位下标不触碰 UDS 策略表 (read/poll 会访问, 此处仅验证纯对象面)
+    let uf = UnixSocketFile::new(3);
+    assert_eq!(uf.idx(), 3, "策略表槽位下标原样保存");
+    assert!(uf.stream(), "socket 不可定位 (lseek → ESPIPE)");
+    assert!(uf.as_inode().is_none(), "UDS socket 非 inode 承载");
+    assert!(uf.mmap_backing().is_none(), "UDS socket 不可作 mmap 后端");
+    assert!(
+        uf.inode_namespace_id().is_none(),
+        "UDS socket 不属于 inode 命名空间"
+    );
+    assert_eq!(uf.file_type(), VfsFileType::File);
+    assert_eq!(
+        uf.io_control(0x1234_5678, 0),
+        Err(KernelError::NotSupported),
+        "UDS 对象不处理通用 ioctl (回落默认策略)"
+    );
+
+    let of = OpenFile::from_file(Arc::new(UnixSocketFile::new(3)), 0, 0);
+    let recovered = of
+        .file()
+        .as_any()
+        .downcast_ref::<UnixSocketFile>()
+        .expect("UnixSocketFile 必须可下转型");
+    assert_eq!(recovered.idx(), 3);
+    assert!(!of.is_nonblock(), "OpenFile 缺省阻塞");
+    of.set_nonblock(true);
+    assert!(
+        of.is_nonblock(),
+        "F_SETFL 的非阻塞位由 OpenFile 单点承载 (UDS 对象不另存)"
+    );
+}
+
+#[test]
+fn unix_socket_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/net/unix_socket_file.rs");
+    for needle in [
+        "impl File for UnixSocketFile",
+        "OpenFile::from_file",
+        "OPEN_FILE_TABLE.alloc",
+        "t.alloc_fd(handle_id, cloexec)",
+        "OPEN_FILE_TABLE.close(handle_id)",
+        "uds::uds_free(self.idx)",
+        "uds::uds_free(idx)",
+    ] {
+        assert!(src.contains(needle), "UDS 创建/释放路径必须含: {needle}");
+    }
+    assert!(
+        !src.contains("FdPlan") && !src.contains("fd_alloc::"),
+        "迁移后不得引用全局 FD 编号区间 / fd_alloc 位图"
+    );
+
+    let policy = read_file("functions/net/unix.rs");
+    assert!(
+        !policy.contains("UDS_FD_BASE")
+            && !policy.contains("FdPlan")
+            && !policy.contains("fd_alloc::"),
+        "UDS 策略表只暴露槽位下标, 不得残留 FD 编号区间 / 位图分配"
+    );
+
+    let sys = read_file("functions/net/syscall.rs");
+    assert!(
+        sys.contains("Self::Unix {") && sys.contains("fn unix_idx(&self) -> Option<u8>"),
+        "socket syscall 层必须把 UDS 对象纳入统一解析与按类型分流"
+    );
+    assert!(
+        !sys.contains("is_uds_fd") && !sys.contains("uds::uds_create"),
+        "socket syscall 层不得残留 UDS 数值 fd 分流"
     );
 }

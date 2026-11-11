@@ -91,6 +91,7 @@ pub mod syscall;
 /// T6-9: 网络子系统公共类型 (原 privileged/net/types.rs)
 pub mod types;
 pub mod unix;
+pub mod unix_socket_file;
 /// T6-9: Socket 等待队列 (原 `privileged/net/wait_queue.rs`)
 pub mod wait_queue;
 
@@ -98,13 +99,6 @@ pub use socket::{
     Domain, SockAddrIn, SockType, SocketError, SocketHandle, SocketResult, accept, bind, close,
     connect, endpoint_from_str, getsockopt, listen, parse_ipv4, poll_all, recv, recvfrom, send,
     sendto, setsockopt, socket,
-};
-
-pub use unix::{
-    FD_BASE as UNIX_FD_BASE, PATH_MAX as UNIX_PATH_MAX, SockAddrUn, UnixResult, UnixSocketError,
-    accept as unix_accept, bind as unix_bind, close as unix_close, connect as unix_connect,
-    is_uds_fd, listen as unix_listen, recv as unix_recv, recvfrom as unix_recvfrom,
-    send as unix_send, sendto as unix_sendto, socket as unix_socket, unlink as unix_unlink,
 };
 
 // ============================================================================
