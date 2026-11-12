@@ -19,8 +19,8 @@
 //! - 调用深度限制防止栈溢出
 //! - 除以零和溢出均返回 Trap
 
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -39,7 +39,10 @@ use super::types::{
 // ============================================================================
 
 /// 宿主函数签名: 接收解释器可变引用, 返回执行结果
-pub type HostFunction = Box<dyn Fn(&mut Interpreter) -> Result<(), WasmError>>;
+///
+/// 用 `Rc` 而非 `Box`: 宿主调用期间允许闭包被多处共享持有 (例如
+/// `WasmInstance` 与已装配的调用表), 不再需要把闭包从调用表里临时取出。
+pub type HostFunction = Rc<dyn Fn(&mut Interpreter) -> Result<(), WasmError>>;
 
 /// WASM 解释器 — 字节码执行引擎实例
 pub struct Interpreter {
@@ -60,8 +63,8 @@ pub struct Interpreter {
     globals: Vec<Value>,
     /// 函数表: `None` = 未初始化 (null funcref)
     tables: Vec<Vec<Option<u32>>>,
-    /// 名称索引的 host function: (module, name) → index
-    named_host_functions: BTreeMap<(String, String), usize>,
+    /// 名称索引的 host function: (module, name) → 已注册闭包
+    named_host_functions: BTreeMap<(String, String), HostFunction>,
 }
 
 impl Interpreter {
@@ -238,43 +241,44 @@ impl Interpreter {
 
     /// 注册名称匹配的 host function
     ///
-    /// 注册后，`auto_register_wasi` 可根据 WASM import section 的 module/name
-    /// 自动查找并注册到正确的 index 位置。
+    /// 注册后，`auto_register_wasi` 根据 WASM import section 的 module/name
+    /// 把闭包装配到 `host_functions` 的对应 index 位置。
     pub fn register_named_host_function(&mut self, module: &str, name: &str, f: HostFunction) {
-        let idx = self.host_functions.len();
-        self.host_functions.push(f);
         self.named_host_functions
-            .insert((String::from(module), String::from(name)), idx);
+            .insert((String::from(module), String::from(name)), f);
     }
 
     /// 自动注册 WASI 函数 (根据 WASM 模块 import section)
     ///
-    /// 遍历 `module.imports`，对每个 `(module="wasi_snapshot_preview1", desc=Function)` 的 import，
-    /// 根据 `name` 查找已注册的 named host function，将其移动到正确的 index 位置。
+    /// 按 import section 的声明顺序重建 `host_functions`: 每个函数 import 占一个槽位，
+    /// 命中 `named_host_functions` 的用已注册闭包，其余（未知模块 / 未注册名称）
+    /// 填无操作闭包。乱序、重复与未知 import 均按声明位置正确映射。
     ///
     /// 调用顺序: 先通过 `register_named_host_function` 注册所有 WASI 函数，
     /// 再调用本方法完成 import section 到 `host_functions` 的映射。
     pub fn auto_register_wasi(&mut self) {
+        let mut ordered: Vec<HostFunction> = Vec::with_capacity(self.module.imports.len());
         let mut func_idx = 0u32;
         for import in &self.module.imports {
             if let ImportKind::Function(_) = import.desc {
                 let module_name = core::str::from_utf8(&import.module).unwrap_or("");
                 let func_name = core::str::from_utf8(&import.name).unwrap_or("");
-                if module_name == "wasi_snapshot_preview1"
-                    && let Some(&idx) = self
-                        .named_host_functions
+                let registered = if module_name == "wasi_snapshot_preview1" {
+                    self.named_host_functions
                         .get(&(String::from(module_name), String::from(func_name)))
-                {
-                    // 确保 host_functions 数组足够大
-                    while self.host_functions.len() <= func_idx as usize {
-                        self.host_functions.push(Box::new(|_| Ok(())));
-                    }
-                    // 交换到正确位置
-                    self.host_functions.swap(func_idx as usize, idx);
-                }
+                        .cloned()
+                } else {
+                    None
+                };
+                let host: HostFunction = match registered {
+                    Some(f) => f,
+                    None => Rc::new(|_: &mut Interpreter| Ok(())),
+                };
+                ordered.push(host);
                 func_idx += 1;
             }
         }
+        self.host_functions = ordered;
         self.import_func_count = func_idx;
     }
 
@@ -348,19 +352,14 @@ impl Interpreter {
         if func_idx < self.import_func_count {
             let func_type = self.get_func_type(func_idx)?.clone();
             let param_count = func_type.params.len();
-            for (i, arg) in args.iter().enumerate() {
-                if i < param_count {
-                    self.stack.push(*arg)?;
-                }
+            // 宿主函数先弹 arg0 (WASI 约定) ⇒ 逆序压栈使 arg0 位于栈顶
+            for arg in args.iter().take(param_count).rev() {
+                self.stack.push(*arg)?;
             }
 
             let host_idx = func_idx as usize;
-            if host_idx < self.host_functions.len() {
-                let f =
-                    core::mem::replace(&mut self.host_functions[host_idx], Box::new(|_| Ok(())));
-                let result = f(self);
-                self.host_functions[host_idx] = f;
-                result?;
+            if let Some(f) = self.host_functions.get(host_idx).cloned() {
+                f(self)?;
             }
 
             let result_count = func_type.results.len();
@@ -1165,17 +1164,14 @@ impl Interpreter {
         self.stack.drain_to(stack_len - param_count);
 
         if func_idx < self.import_func_count {
-            for arg in &args {
+            // 宿主函数先弹 arg0 (WASI 约定) ⇒ 逆序压栈使 arg0 位于栈顶
+            for arg in args.iter().rev() {
                 self.stack.push(*arg)?;
             }
 
             let host_idx = func_idx as usize;
-            if host_idx < self.host_functions.len() {
-                let f =
-                    core::mem::replace(&mut self.host_functions[host_idx], Box::new(|_| Ok(())));
-                let result = f(self);
-                self.host_functions[host_idx] = f;
-                result?;
+            if let Some(f) = self.host_functions.get(host_idx).cloned() {
+                f(self)?;
             }
             return Ok(());
         }
@@ -1689,8 +1685,8 @@ pub fn instantiate(bytes: &[u8], config: InterpreterConfig) -> Result<Interprete
 mod tests {
     use super::*;
     use crate::functions::wasm::types::{
-        ElementSegment, ExportDesc, FuncType, FunctionBody, Limits, MemoryType, RefType, TableType,
-        ValueType, WasmModule,
+        ElementSegment, ExportDesc, FuncType, FunctionBody, ImportDesc, ImportKind, Limits,
+        MemoryType, RefType, TableType, ValueType, WasmModule,
     };
 
     /// 构造单函数模块: 导出 "f", 参数/结果均为 i32.
@@ -2186,6 +2182,88 @@ mod tests {
         assert_eq!(
             run_module(module(body, Vec::new(), 0, 1), &[]),
             Err(WasmError::Unsupported)
+        );
+    }
+
+    fn import_only_module(names: &[(&str, &str)], params: usize) -> WasmModule {
+        WasmModule {
+            types: vec![FuncType {
+                params: vec![ValueType::I32; params],
+                results: vec![ValueType::I32],
+            }],
+            imports: names
+                .iter()
+                .map(|(module_name, func_name)| ImportDesc {
+                    module: module_name.as_bytes().to_vec(),
+                    name: func_name.as_bytes().to_vec(),
+                    desc: ImportKind::Function(0),
+                })
+                .collect(),
+            functions: Vec::new(),
+            tables: Vec::new(),
+            memories: Vec::new(),
+            globals: Vec::new(),
+            exports: Vec::new(),
+            start_section: None,
+            elements: Vec::new(),
+            code: Vec::new(),
+            data: Vec::new(),
+        }
+    }
+
+    /// 装配按 import 声明顺序: 乱序 + 重复 + 未知模块均按下标对齐, 且可重复调用
+    #[test]
+    fn auto_register_wasi_follows_import_order_and_duplicates() {
+        let m = import_only_module(
+            &[
+                ("wasi_snapshot_preview1", "b"),
+                ("wasi_snapshot_preview1", "a"),
+                ("wasi_snapshot_preview1", "a"),
+                ("env", "unknown"),
+            ],
+            0,
+        );
+        let mut interp = Interpreter::new(m, InterpreterConfig::default());
+        let host_a: HostFunction = Rc::new(|i: &mut Interpreter| {
+            i.stack.push(Value::I32(11))?;
+            Ok(())
+        });
+        let host_b: HostFunction = Rc::new(|i: &mut Interpreter| {
+            i.stack.push(Value::I32(22))?;
+            Ok(())
+        });
+        interp.register_named_host_function("wasi_snapshot_preview1", "a", host_a);
+        interp.register_named_host_function("wasi_snapshot_preview1", "b", host_b);
+        interp.auto_register_wasi();
+
+        assert_eq!(interp.call_func(0, &[]), Ok(Some(Value::I32(22))));
+        assert_eq!(interp.call_func(1, &[]), Ok(Some(Value::I32(11))));
+        assert_eq!(interp.call_func(2, &[]), Ok(Some(Value::I32(11))));
+        assert_eq!(interp.host_functions.len(), 4);
+        assert_eq!(interp.import_func_count, 4);
+
+        // 幂等: 再次装配不改变映射
+        interp.auto_register_wasi();
+        assert_eq!(interp.call_func(0, &[]), Ok(Some(Value::I32(22))));
+        assert_eq!(interp.call_func(1, &[]), Ok(Some(Value::I32(11))));
+    }
+
+    /// 入口直调 (`call_func`) 的宿主实参序: arg0 位于栈顶, 先被弹出
+    #[test]
+    fn host_call_func_pops_arg0_first() {
+        let m = import_only_module(&[("wasi_snapshot_preview1", "first")], 2);
+        let mut interp = Interpreter::new(m, InterpreterConfig::default());
+        let host: HostFunction = Rc::new(|i: &mut Interpreter| {
+            let first = i.stack.pop_i32()?;
+            let _second = i.stack.pop_i32()?;
+            i.stack.push(Value::I32(first))?;
+            Ok(())
+        });
+        interp.register_named_host_function("wasi_snapshot_preview1", "first", host);
+        interp.auto_register_wasi();
+        assert_eq!(
+            interp.call_func(0, &[Value::I32(7), Value::I32(9)]),
+            Ok(Some(Value::I32(7)))
         );
     }
 }

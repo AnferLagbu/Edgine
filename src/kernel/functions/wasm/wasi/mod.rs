@@ -27,6 +27,7 @@ pub mod fd_table;
 mod clock_random;
 mod env_args;
 pub mod fd_ops;
+pub mod inject;
 pub mod path_ops;
 mod process;
 pub mod sock;

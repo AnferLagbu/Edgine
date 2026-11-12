@@ -57,12 +57,12 @@
 - **W-5 WASI 注入通路打通**：`wasi_function_table` → 实例，含上下文归属与参数序。
   - 描述：F7 是当前最硬的功能断层——36 个 WASI 函数写好了却没有任何机制把它们挂进解释器，`auto_register_wasi` 只从 `named_host_functions` 查表而该表永不被填。连带问题：host 调用的**实参弹出顺序**与注册序反（先弹即末参），`WasiContext{fd_table,args,env}` 无落脚处。
   - 方案：加适配层把 `(name, WasiFunc)` 包成解释器可调用的 host 闭包；`WasiContext` 与实例同生命周期归属（倾向新建 `WasmInstance{interp, ctx}` 而非让 `Interpreter` 直接持 ctx，避免 runtime 反向依赖 WASI）；修正参数序并为此写**能捕获该 bug 的**单测（当前 `wasi_test.rs` 抓不到，因为它不执行）。依赖 `functions::{fs,net,...}` 的部分触 `ALLOWED_INTER_DEPS`（§4 第 5 条）。
-  - 状态：[ ]（依 W-4）
+  - 状态：[X]（2026-11-12 收口。**注入通路**：新增 `wasi/inject.rs` 的 `register_wasi_functions`，把 `wasi_function_table()` 全部条目按 `(module="wasi_snapshot_preview1", name)` 包装为 `Rc<dyn Fn(&mut Interpreter)>` 闭包（闭包内借出上下文后调原 `WasiFunc`）并登记到解释器名称表。**装配修正**：`HostFunction` 由 `Box` 改 `Rc`（调用期不再 `mem::replace` 取出/放回），`named_host_functions` 由 `(module,name)→index` 改为直接存闭包；`auto_register_wasi` 重写为按 import section 声明顺序重建 `host_functions`——乱序、重复与未知（非 WASI / 未注册名）import 均按下标对齐（未知填无操作闭包），可重复调用且不改映射（旧 swap 算法在乱序 / 重复 import 下会错位）。**参数序**：两处宿主调用点（`call_func` 入口与 `call_function` 的嵌套 `call`）改为逆序压栈，使 arg0 位于栈顶先被弹出（原正序压栈使首参被读成末参）。**上下文归属**：新增 `WasmInstance{interp, ctx}`（`instance.rs`），`ctx` 为 `Rc<RefCell<WasiContext>>` 并与宿主闭包共享——解释器本身不依赖 WASI，上下文随实例生命周期结束，`with_context` / `with_context_mut` 提供访问面。**回归锁 4 例**：执行型端到端 `environ_sizes_get(0, 4)`（env 两项 ⇒ 计数写 `[0]=2`、buf 大小写 `[4]=8`；若参数序回退即红，已做负控制——恢复正序压栈后该例转红）、import 乱序+重复+未知模块的装配顺序、`call_func` 入口 arg0 先弹、上下文跨调用存活；wasm 目录内联测试 **56 → 60**。范围纪律：W-6 的 stdio/preopen 与 W-7/W-8 不动，`WasiFdTable` 初值不变。）
 
 - **W-6 fd 表与 stdio / preopen**：WASI 侧的文件描述符语义接进内核 fd 表。
   - 描述：`wasi/fd_table.rs:88` 的 `new()` 不预置 fd 0/1/2，现有单测反而**断言** `get(0/1/2)` 皆 err（`wasi_test.rs:37-41`）——即"无 stdin/stdout/preopen"是被测试固化的当前行为，接线时要一并改判据。P-33 裁定里的"WASI fd 表接进 UNKFS"落在此条。
   - 方案：fd 表初值挂 stdio 与 preopen 根；`fd_write` / `path_open` 等改走真 VFS（这些实现已存在并调 `fs`/`net`，只是无可达路径）；回归锁覆盖"模块写 stdout 得到字节"。
-  - 状态：[ ]（依 W-5）
+  - 状态：[ ]（W-5 已收口）
 
 - **W-7 装载格式派发抽象**：按 magic 选 loader（ELF vs `\0asm`）。
   - 描述：F11 的硬编码使"能装载 wasm"必须先动 exec 路径。落点选择（在 functions 侧做派发 vs 在 privileged 侧扩 loader 钩子）影响 TCB 边界，属 §9.1 灰色地带。
@@ -77,7 +77,7 @@
 - **W-9 测试门槛**：内核内 `mod tests` + `host-tests` 集成 + 回归锁。
   - 描述：F9——wasm 目录零内联测试，唯一外部测试不执行模块。按 `docs/explain/spec-engineering.md` 的"公共 API 须单测 / 跨模块接口须集成测试"，"相对完整"路径下这条是硬门槛而非可选项。
   - 方案：(a) `functions/wasm/` 各文件补 `#[cfg(test)]`，端到端用例 = 一段手写最小 wasm 字节序列（含 block / br / 内存读写 / host 调用）跑通并断言结果；(b) 畸形输入矩阵（W-2 的截断/越界/非法 opcode）断言返错不 panic；(c) `host-tests` 加集成用例覆盖 syscall 号→dispatch→wasm 的跨模块链；(d) 每条 bug 修复附 issue 引用（§8）。
-  - 状态：[ ]（依 W-2 起，与实装同批推进。**已部分推进**：(b) 的畸形输入矩阵随 W-2 落地并随 P-42 根治扩充——[module.rs](../../src/kernel/functions/wasm/module.rs) 的 `#[cfg(test)] mod tests` 计 **24** 例、[leb128.rs](../../src/kernel/functions/wasm/leb128.rs) 的 `#[cfg(test)] mod tests` 计 **6** 例（末字节越界载荷的畸形侧与极值合法侧两侧同钉），wasm 目录内联测试数由 **0 → 24 → 30**（F9 的"零内联测试"对这两个文件已失效），并含全前缀 / 全单字节突变两条穷举式全函数性证明；W-3 收口后 [interpreter.rs](../../src/kernel/functions/wasm/interpreter.rs) 补 **13** 例控制流用例（wasm 目录合计 **43** 例），覆盖嵌套 block / 跨层 br / loop 早退 / if-else / br_table / 非法深度与块类型，端到端 `call()` 断言返回值；(a) 的端到端执行用例（需 W-3/W-4 的块结构与表调用先就位）、(c) 的 syscall→dispatch→wasm 集成链（需 W-8）均未开工；(d) 随 P-42 结案已补一条 bug 修复的回归引用面（`leb128.rs` 测试模块的文档注释直引 P-42 与改造前实测读数），后续仍以逐条引用为准）
+  - 状态：[ ]（依 W-2 起，与实装同批推进。**已部分推进**：(b) 的畸形输入矩阵随 W-2 落地并随 P-42 根治扩充——[module.rs](../../src/kernel/functions/wasm/module.rs) 的 `#[cfg(test)] mod tests` 计 **24** 例、[leb128.rs](../../src/kernel/functions/wasm/leb128.rs) 的 `#[cfg(test)] mod tests` 计 **6** 例（末字节越界载荷的畸形侧与极值合法侧两侧同钉），wasm 目录内联测试数由 **0 → 24 → 30**（F9 的"零内联测试"对这两个文件已失效），并含全前缀 / 全单字节突变两条穷举式全函数性证明；W-3 收口后 [interpreter.rs](../../src/kernel/functions/wasm/interpreter.rs) 补 **13** 例控制流用例（wasm 目录合计 **43** 例），覆盖嵌套 block / 跨层 br / loop 早退 / if-else / br_table / 非法深度与块类型，端到端 `call()` 断言返回值；W-4 的 call_indirect 与缺失 opcode 收口再补至 **56** 例（表调用 / funcref 元素段 / 类型不匹配 / 下标越界 / 未初始化槽位）；W-5 的 WASI 注入通路再补至 **60** 例（import 声明序装配含重复与未知 / 宿主 arg0 弹栈序 / [inject.rs](../../src/kernel/functions/wasm/wasi/inject.rs) 端到端 `environ_sizes_get` 写内存断言参数位置 / [instance.rs](../../src/kernel/functions/wasm/instance.rs) 上下文跨调用存活）；(a) 的端到端执行用例（需 W-3/W-4 的块结构与表调用先就位）、(c) 的 syscall→dispatch→wasm 集成链（需 W-8）均未开工；(d) 随 P-42 结案已补一条 bug 修复的回归引用面（`leb128.rs` 测试模块的文档注释直引 P-42 与改造前实测读数），后续仍以逐条引用为准）
 
 - **W-10 文档归位**：explain 说明 + design 立场。
   - 描述：`docs/explain/` 与 `docs/design/` 无一处 wasm（§1 既有立场项），接线后属"落地后稳定内容迁入 explain"（§6）；同时 wasm 的能力边界（支持哪些 opcode / WASI 子集、不做什么）值得写成设计立场文档，避免下一轮再次误读成"已实装"。

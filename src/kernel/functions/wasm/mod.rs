@@ -12,6 +12,8 @@
 //!
 //! `privileged/wasm/` 目录已在 T6-9 迁移时删除, 本目录即 WASM 的唯一实现位置 (无 re-export shim).
 
+/// WASM 实例: 解释器与 WASI 上下文的生命周期归属 (W-5)
+pub mod instance;
 /// T6-9: WASM 解释器 (原 privileged/wasm/interpreter.rs)
 pub mod interpreter;
 /// T6-9: LEB128 编解码器 (原 privileged/wasm/leb128.rs)
