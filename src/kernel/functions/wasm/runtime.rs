@@ -403,3 +403,117 @@ impl Default for InterpreterConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// `ValueStack` 容量上限: 4096 满, 第 4097 压入返 `StackOverflow`.
+    #[test]
+    fn value_stack_overflow_at_capacity() {
+        let mut stack = ValueStack::new();
+        for _ in 0..4096 {
+            stack.push(Value::I32(0)).expect("4096 内压入应成功");
+        }
+        assert_eq!(stack.len(), 4096);
+        assert_eq!(stack.push(Value::I32(0)), Err(WasmError::StackOverflow));
+    }
+
+    /// `ValueStack` 空栈下溢与 i32/i64 类型不匹配.
+    #[test]
+    fn value_stack_underflow_and_type_mismatch() {
+        let mut stack = ValueStack::new();
+        assert_eq!(stack.pop(), Err(WasmError::StackUnderflow));
+        assert_eq!(stack.pop_i32(), Err(WasmError::StackUnderflow));
+        stack.push(Value::I64(7)).expect("压入 i64");
+        assert_eq!(stack.pop_i32(), Err(WasmError::TypeMismatch));
+        stack.push(Value::I32(7)).expect("压入 i32");
+        assert_eq!(stack.pop_i64(), Err(WasmError::TypeMismatch));
+    }
+
+    /// `ValueStack` peek 不弹栈, drain_to 截断, clear 清空.
+    #[test]
+    fn value_stack_peek_drain_clear() {
+        let mut stack = ValueStack::new();
+        assert!(stack.is_empty());
+        stack.push(Value::I32(1)).expect("压入 1");
+        stack.push(Value::I32(2)).expect("压入 2");
+        stack.push(Value::I32(3)).expect("压入 3");
+        assert_eq!(stack.peek(), Some(&Value::I32(3)));
+        assert_eq!(stack.len(), 3, "peek 不改变栈深");
+        stack.drain_to(1);
+        assert_eq!(stack.len(), 1);
+        assert_eq!(stack.peek(), Some(&Value::I32(1)));
+        stack.clear();
+        assert!(stack.is_empty());
+    }
+
+    /// `LinearMemory` grow: 正常增长返回旧页数; 超上限与页数回绕返 `u32::MAX`.
+    #[test]
+    fn linear_memory_grow_bounds() {
+        let mut mem = LinearMemory::new(1, Some(4));
+        assert_eq!(mem.pages(), 1);
+        assert_eq!(mem.grow(1), 1, "增长 1 页返回旧页数 1");
+        assert_eq!(mem.pages(), 2);
+        assert_eq!(mem.grow(0), 2, "增长 0 页返回当前页数");
+        assert_eq!(mem.grow(3), u32::MAX, "超出上限 4 应失败");
+        assert_eq!(mem.pages(), 2, "失败后页数不变");
+        // checked_add 回绕: 当前 2 页 + u32::MAX 溢出 ⇒ 失败.
+        assert_eq!(mem.grow(u32::MAX), u32::MAX, "页数回绕应失败");
+    }
+
+    /// `LinearMemory` 越界读写返 `MemoryOutOfBounds`; 边界内正常.
+    #[test]
+    fn linear_memory_out_of_bounds() {
+        let mut mem = LinearMemory::new(1, None); // 65536 字节
+        assert_eq!(mem.read_u8(65535), Ok(0), "末字节可读");
+        assert_eq!(mem.read_u8(65536), Err(WasmError::MemoryOutOfBounds));
+        assert_eq!(mem.read_u32(65534), Err(WasmError::MemoryOutOfBounds));
+        assert_eq!(mem.write_u8(65536, 1), Err(WasmError::MemoryOutOfBounds));
+        assert!(mem.get_slice(65536, 1).is_err());
+        assert!(mem.get_slice_mut(0, 65537).is_err());
+        assert_eq!(mem.get_slice(0, 65536).expect("整页切片").len(), 65536);
+    }
+
+    /// `LinearMemory` 小端序读写往返 (u16/u32/u64).
+    #[test]
+    fn linear_memory_le_roundtrip() {
+        let mut mem = LinearMemory::new(1, None);
+        mem.write_u16(0, 0x1234).expect("写 u16");
+        assert_eq!(mem.read_u16(0), Ok(0x1234));
+        assert_eq!(
+            mem.get_slice(0, 2).expect("切片"),
+            [0x34u8, 0x12].as_slice()
+        );
+        mem.write_u32(4, 0x1234_5678).expect("写 u32");
+        assert_eq!(mem.read_u32(4), Ok(0x1234_5678));
+        assert_eq!(
+            mem.get_slice(4, 4).expect("切片"),
+            [0x78u8, 0x56, 0x34, 0x12].as_slice()
+        );
+        mem.write_u64(8, 0x0123_4567_89AB_CDEF).expect("写 u64");
+        assert_eq!(mem.read_u64(8), Ok(0x0123_4567_89AB_CDEF));
+    }
+
+    /// `CallFrame::read_u8`: pc 在界内取字节, 越界返 None.
+    #[test]
+    fn call_frame_read_u8_bounds() {
+        let mut frame = CallFrame {
+            func_idx: 0,
+            locals: Vec::new(),
+            pc: 0,
+            code: vec![0x41, 0x00],
+            arity: 0,
+            return_pc: 0,
+            stack_base: 0,
+            labels: Vec::new(),
+        };
+        assert_eq!(frame.read_u8(), Some(0x41));
+        frame.pc = 1;
+        assert_eq!(frame.read_u8(), Some(0x00));
+        frame.pc = 2;
+        assert_eq!(frame.read_u8(), None);
+    }
+}

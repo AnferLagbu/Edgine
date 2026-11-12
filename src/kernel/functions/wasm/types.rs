@@ -788,3 +788,65 @@ impl From<WasmError> for crate::privileged::syscall::Errno {
 
 /// 空块类型的编码 (`-64`, 即 LEB128 的 `0x40`)。
 pub const BLOCK_TYPE_EMPTY: i32 = -64;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::privileged::syscall::Errno;
+
+    /// `WasmError` → `Errno` 全变体映射穷举 (纯函数, 34 个变体逐一钉死).
+    ///
+    /// 分区口径与 `From` 实现同源: 镜像结构类 → `Enoexec`; 运行期 trap 类 →
+    /// `Einval`; 除零 → `Edom`; 内存越界 → `Efault`; 分配/深度上限 → `Enomem`;
+    /// gas 耗尽 → `Etime`; 未实现合法结构 → `Enosys`; 内部不变量 → `Eio`;
+    /// `Terminated` 正常终态 → `Eintr`.
+    #[test]
+    fn wasm_error_maps_to_errno_exhaustive() {
+        let cases: [(WasmError, Errno); 34] = [
+            (WasmError::InvalidMagic, Errno::Enoexec),
+            (WasmError::InvalidVersion, Errno::Enoexec),
+            (WasmError::Truncated, Errno::Enoexec),
+            (WasmError::Leb128Overflow, Errno::Enoexec),
+            (WasmError::SectionSizeMismatch, Errno::Enoexec),
+            (
+                WasmError::TooManyEntries {
+                    declared: 0,
+                    available: 0,
+                },
+                Errno::Enoexec,
+            ),
+            (WasmError::BadValueType(0), Errno::Enoexec),
+            (WasmError::BadFuncTypeTag(0), Errno::Enoexec),
+            (WasmError::UnknownSection(0), Errno::Enoexec),
+            (WasmError::UnknownOpcode(0), Errno::Enoexec),
+            (WasmError::TypeMismatch, Errno::Einval),
+            (WasmError::StackUnderflow, Errno::Einval),
+            (WasmError::StackOverflow, Errno::Enomem),
+            (WasmError::DivisionByZero, Errno::Edom),
+            (WasmError::IntegerOverflow, Errno::Einval),
+            (WasmError::MemoryOutOfBounds, Errno::Efault),
+            (WasmError::MemoryGrowFailed, Errno::Enomem),
+            (WasmError::CallDepthExceeded, Errno::Enomem),
+            (WasmError::GasExhausted, Errno::Etime),
+            (WasmError::Unreachable, Errno::Einval),
+            (WasmError::BadExport, Errno::Einval),
+            (WasmError::BadImport, Errno::Einval),
+            (WasmError::FunctionNotFound, Errno::Einval),
+            (WasmError::BadTypeIndex(0), Errno::Einval),
+            (WasmError::BadFuncIndex(0), Errno::Einval),
+            (WasmError::InternalError, Errno::Eio),
+            (WasmError::Unsupported, Errno::Enosys),
+            (WasmError::BadTableElementType(0), Errno::Enoexec),
+            (WasmError::TableIndexOutOfBounds(0), Errno::Einval),
+            (WasmError::UninitializedElement(0), Errno::Einval),
+            (WasmError::IndirectCallTypeMismatch, Errno::Einval),
+            (WasmError::BadLabelDepth(0), Errno::Einval),
+            (WasmError::BadBlockStructure(0), Errno::Einval),
+            (WasmError::Terminated, Errno::Eintr),
+        ];
+        for (error, expected) in cases {
+            let mapped = Errno::from(error.clone());
+            assert_eq!(mapped, expected, "{error:?} 映射错误");
+        }
+    }
+}
