@@ -9,8 +9,8 @@
 //
 // 该测试为 I-51/TD-01/TD-02 V4 验收的强化版.
 // fd 对象模型阶段 3 (2026-11-10): eventfd / signalfd / unix / inotify / timerfd
-// / pidfd 已迁至 OpenFileTable 挂表, 不再有本地 fd_to_idx; FdPlan / FdSubsystem
-// 条目保留至阶段 4 一并退役.
+// / pidfd / userfaultfd 已迁至 OpenFileTable 挂表, 不再有本地 fd_to_idx;
+// FdPlan / FdSubsystem 条目保留至阶段 4 一并退役.
 
 use std::fs;
 use std::path::Path;
@@ -20,6 +20,8 @@ const TIMERFD: &str = "src/kernel/privileged/syscall/timerfd.rs";
 const UNIX: &str = "src/kernel/functions/net/unix.rs";
 const INOTIFY: &str = "src/kernel/functions/fs/inotify.rs";
 const PIDFD: &str = "src/kernel/functions/proc/pidfd.rs";
+const UFFD_FUNC: &str = "src/kernel/functions/fs/uffd.rs";
+const UFFD_MECH: &str = "src/kernel/privileged/mm/uffd.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -148,6 +150,34 @@ fn test_pidfd_migrated_off_numeric_fd_space() {
     assert!(
         src.contains("pub struct PidFdFile"),
         "pidfd 必须暴露 PidFdFile 对象 (fd 对象模型)"
+    );
+}
+
+#[test]
+fn test_uffd_migrated_off_numeric_fd_space() {
+    // fd 对象模型阶段 3 第 8 批: userfaultfd 对象挂 OpenFileTable, 实例表退为
+    // 槽位索引域; 数值 fd 反查 / 分配器依赖 / USERFAULT_FD 区间消费全部移除.
+    for (path, src) in [(UFFD_FUNC, read(UFFD_FUNC)), (UFFD_MECH, read(UFFD_MECH))] {
+        for needle in [
+            "USERFAULT_FD",
+            "FdSubsystem",
+            "fd_alloc::",
+            "is_uffd_fd",
+            "fn instance_index",
+        ] {
+            assert!(
+                !src.contains(needle),
+                "{path} 不得残留 `{needle}` (UserFaultFd 已迁至 fd 对象模型, TD-15)"
+            );
+        }
+    }
+    assert!(
+        read(UFFD_FUNC).contains("pub struct UserFaultFdFile"),
+        "userfaultfd 必须暴露 UserFaultFdFile 对象 (fd 对象模型)"
+    );
+    assert!(
+        read(UFFD_MECH).contains("owner_tgid"),
+        "缺页归属判据必须按创建者 tgid 匹配 (跨进程同 VA 不互相劫持)"
     );
 }
 

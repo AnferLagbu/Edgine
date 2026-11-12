@@ -1202,7 +1202,7 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_GETCPU => crate::functions::mm::numa::sys_getcpu(),
 
         // userfaultfd (T1 G4 实装): 用户态缺页处理 fd (ioctl/read 由 fd 路由分发)
-        SYS_USERFAULTFD => crate::functions::mm::uffd::userfaultfd_syscall(
+        SYS_USERFAULTFD => crate::functions::fs::uffd::userfaultfd_syscall(
             crate::functions::intcast::low_u32_from_u64(a0),
         ),
 

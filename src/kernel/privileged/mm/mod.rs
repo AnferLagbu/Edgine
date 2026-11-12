@@ -201,11 +201,12 @@ pub use page_fault_policy::{
 // `frame_ref_count`), 原 `cow_inc_ref` / `cow_dec_ref` / `cow_init` / `cow_ref_count`
 // re-export 随 `COW_REFS` 一并删除 (见 docs/plan/archive/cr3-lifetime-ownership.md §8.1)
 
-// uffd 公共接口 re-export — T1 G4 userfaultfd 机制 (functions 侧 ABI 层消费)
+// uffd 公共接口 re-export — userfaultfd 槽位机制 (functions 侧 fd 对象消费).
+// fd 对象模型阶段 3 起机制面以槽位下标为键, fd 编号归 per-process FdTable.
 pub use uffd::{
     UffdFaultOutcome, UffdIoApi, UffdIoCopy, UffdIoRange, UffdIoRegister, UffdIoZeropage,
     UffdMsgPagefault, api_negotiate, clear_reader, create as uffd_create, fault_notify,
-    fill_provided_page, is_active as uffd_is_active, is_open as uffd_is_open, is_uffd_fd,
+    fill_provided_page, is_active as uffd_is_active, is_open as uffd_is_open, poll_ready,
     pop_event, provide_page, register as uffd_register, release as uffd_release, set_reader,
     unregister as uffd_unregister, wake as uffd_wake,
 };

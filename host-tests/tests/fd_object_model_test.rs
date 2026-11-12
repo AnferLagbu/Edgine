@@ -327,6 +327,7 @@ fn inode_namespace_key_is_object_declared() {
         "functions/fs/inotify.rs",
         "functions/fs/timerfd.rs",
         "functions/proc/pidfd.rs",
+        "functions/fs/uffd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn inode_namespace_id"),
@@ -396,6 +397,7 @@ fn mmap_requires_object_declared_backing() {
         "functions/fs/inotify.rs",
         "functions/fs/timerfd.rs",
         "functions/proc/pidfd.rs",
+        "functions/fs/uffd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn mmap_backing"),
@@ -1574,5 +1576,84 @@ fn pidfd_dispatch_sites_use_vfs_object_path() {
     assert!(
         epoll.contains("fd_poll_special"),
         "epoll 就绪计算必须含对象级 poll 分发"
+    );
+}
+
+#[test]
+fn uffd_object_implements_file_contract() {
+    let src = read_file("functions/fs/uffd.rs");
+    for needle in [
+        "pub struct UserFaultFdFile",
+        "impl File for UserFaultFdFile",
+        "fn read_at(",
+        "fn write_at(",
+        "fn poll(",
+        "fn release(",
+        "fn as_any(",
+    ] {
+        assert!(src.contains(needle), "UserFaultFdFile 契约缺: {needle}");
+    }
+    assert!(
+        !src.contains("impl Inode for UserFaultFdFile"),
+        "uffd 不实现 Inode (非 inode 特殊对象判据)"
+    );
+}
+
+#[test]
+fn uffd_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/fs/uffd.rs");
+    for needle in [
+        "impl File for UserFaultFdFile",
+        "OpenFile::from_file",
+        "OPEN_FILE_TABLE.alloc",
+        "t.alloc_fd(handle_id, cloexec)",
+        "OPEN_FILE_TABLE.close(handle_id)",
+        "uffd_create",
+        "uffd_release",
+    ] {
+        assert!(src.contains(needle), "uffd 创建/释放路径必须含: {needle}");
+    }
+    for needle in [
+        "USERFAULT_FD",
+        "FdSubsystem",
+        "fd_alloc::",
+        "is_uffd_fd",
+        "fn instance_index",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "迁移后不得引用全局 FD 编号区间 / 数值反查: {needle}"
+        );
+    }
+}
+
+#[test]
+fn uffd_dispatch_sites_use_object_path() {
+    // 阻塞 read / ioctl 在 syscall 层按对象类型路由 (不在 OFT 锁内睡眠)
+    let io = read_file("functions/fs/io.rs");
+    assert!(
+        !io.contains("is_uffd_fd") && io.contains("resolve_uffd"),
+        "read 路由必须经 uffd 对象解析 (数值特判退场)"
+    );
+    let file_ops = read_file("functions/fs/file_ops.rs");
+    assert!(
+        !file_ops.contains("is_uffd_fd") && file_ops.contains("resolve_uffd"),
+        "ioctl 路由必须经 uffd 对象解析"
+    );
+    // close 统一走 VFS 引用回收 (release → uffd_release)
+    let open = read_file("functions/fs/open.rs");
+    assert!(
+        !open.contains("is_uffd_fd") && !open.contains("uffd_release"),
+        "close 必须统一走 VFS 关闭链 (uffd 特判已退场)"
+    );
+    // 机制面: 槽位索引域 + 缺页归属按 tgid 匹配
+    let mech = read_file("privileged/mm/uffd.rs");
+    assert!(
+        !mech.contains("is_uffd_fd") && !mech.contains("fd_alloc::"),
+        "privileged 机制不得残留数值 fd 反查 / 分配器依赖"
+    );
+    assert!(
+        mech.contains("owner_tgid"),
+        "缺页归属判据必须按创建者 tgid 匹配"
     );
 }

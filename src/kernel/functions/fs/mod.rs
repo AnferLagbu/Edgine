@@ -74,6 +74,8 @@ pub mod systree;
 pub mod timerfd;
 /// tmpfs 临时文件系统 (基于 ramfs 的内存文件系统)
 pub mod tmpfs;
+/// fd 对象模型: userfaultfd 对象与 `UFFDIO_*` ABI 策略
+pub mod uffd;
 /// VFS 管理器 (挂载表 + FD 表 + 路径解析)
 pub mod vfs_manager;
 /// VFS 挂载/生命周期/同步/格式化 (原 privileged/fs/vfs/mount.rs 下沉)

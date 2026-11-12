@@ -19,6 +19,7 @@ pub mod test_pwm;
 pub mod test_signalfd;
 pub mod test_timerfd;
 pub mod test_uds;
+pub mod test_uffd;
 
 /// FS 全局单例初始化 — 测试模式下注册前必须调用.
 ///
@@ -46,6 +47,8 @@ pub fn register_upper_tests() {
     test_timerfd::register_timerfd_tests();
     #[cfg(feature = "kernel_test")]
     test_pidfd::register_pidfd_tests();
+    #[cfg(feature = "kernel_test")]
+    test_uffd::register_uffd_tests();
     #[cfg(target_arch = "x86_64")]
     sys::register_tests();
 }

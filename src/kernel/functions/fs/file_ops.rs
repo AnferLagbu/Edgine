@@ -22,16 +22,17 @@ const TCGETS: u64 = 0x5401;
 
 /// ioctl(fd, request, arg) 策略
 ///
-/// fd 路由: userfaultfd (1200 段) → `functions::mm::uffd` 的 `UFFDIO_*` 处理;
+/// fd 路由: userfaultfd **对象** → `functions::fs::uffd` 的 `UFFDIO_*` 处理;
 /// 其余走终端/设备策略.
 #[must_use]
 pub fn ioctl_syscall(fd: i32, request: u64, arg: u64) -> i64 {
     if arg == 0 {
         return Errno::Einval.as_ret();
     }
-    // T1 G4: userfaultfd fd 类型路由 (Linux 语义: uffd 的 ioctl 只认 UFFDIO_*)
-    if crate::privileged::mm::is_uffd_fd(fd) {
-        return crate::functions::mm::uffd::ioctl_uffd(fd, request, arg);
+    // userfaultfd ioctl: 对象类型路由 (Linux 语义: uffd 的 ioctl 只认 UFFDIO_*).
+    // 在 OFT 锁外执行, 避免 UFFDIO_COPY / ZEROPAGE 的用户拷贝与页供给落入临界区.
+    if let Some((idx, _nonblock)) = super::uffd::resolve_uffd(fd) {
+        return super::uffd::ioctl_uffd(idx, request, arg);
     }
     // VFS fd: 交给对象 io_control; 对象未实现 (NotSupported / 无对象) 时
     // 回落终端/默认策略, 保持 stdio 与常规文件既有 ENOTTY 语义.

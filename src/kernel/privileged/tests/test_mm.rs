@@ -219,22 +219,21 @@ fn test_uffd_instance_lifecycle() -> TestResult {
         UFFD_API, UFFDIO_COPY, UFFDIO_REGISTER, UFFDIO_UNREGISTER, UFFDIO_WAKE, UFFDIO_ZEROPAGE,
     };
     use crate::privileged::mm::{
-        api_negotiate, is_uffd_fd, uffd_create, uffd_is_active, uffd_is_open, uffd_release,
+        api_negotiate, uffd_create, uffd_is_active, uffd_is_open, uffd_release,
     };
 
-    let Some(fd) = uffd_create(4242) else {
+    let Some(idx) = uffd_create(4242) else {
         return TestResult::Fail("uffd_create failed");
     };
-    check!(is_uffd_fd(fd), "created fd should be recognised as uffd");
-    check!(uffd_is_open(fd), "new instance should be open");
-    check!(!uffd_is_active(fd), "should be inactive before UFFDIO_API");
+    check!(uffd_is_open(idx), "new instance should be open");
+    check!(!uffd_is_active(idx), "should be inactive before UFFDIO_API");
 
     // 版本校验: 不支持的 api 值 → EINVAL
     check!(
-        api_negotiate(fd, UFFD_API + 1, 0).is_err(),
+        api_negotiate(idx, UFFD_API + 1, 0).is_err(),
         "unsupported api version should fail"
     );
-    match api_negotiate(fd, UFFD_API, 0) {
+    match api_negotiate(idx, UFFD_API, 0) {
         Ok(out) => {
             check!(out.api == UFFD_API, "api echo mismatch");
             // SIMPLIFIED: features 恒为 0 (仅支持 MISSING 模式, 见 privileged/mm/uffd.rs)
@@ -246,10 +245,9 @@ fn test_uffd_instance_lifecycle() -> TestResult {
         Err(_) => return TestResult::Fail("UFFDIO_API handshake failed"),
     }
 
-    check!(uffd_release(fd), "release should succeed");
-    check!(!uffd_is_open(fd), "released instance should be closed");
-    check!(!uffd_release(fd), "double release should fail");
-    check!(!is_uffd_fd(1), "smoltcp fd must not be recognised as uffd");
+    check!(uffd_release(idx), "release should succeed");
+    check!(!uffd_is_open(idx), "released instance should be closed");
+    check!(!uffd_release(idx), "double release should fail");
     TestResult::Pass
 }
 
@@ -261,63 +259,63 @@ fn test_uffd_register_arg_validation() -> TestResult {
         uffd_wake,
     };
 
-    let Some(fd) = uffd_create(1) else {
+    let Some(idx) = uffd_create(1) else {
         return TestResult::Fail("uffd_create failed");
     };
-    check!(api_negotiate(fd, UFFD_API, 0).is_ok(), "handshake failed");
+    check!(api_negotiate(idx, UFFD_API, 0).is_ok(), "handshake failed");
 
     let mode = UFFDIO_REGISTER_MODE_MISSING;
     check!(
-        uffd_register(fd, 0x40_0000, 0, mode).is_err(),
+        uffd_register(idx, 0x40_0000, 0, mode).is_err(),
         "zero length should fail"
     );
     check!(
-        uffd_register(fd, 0x40_0001, PAGE_SIZE, mode).is_err(),
+        uffd_register(idx, 0x40_0001, PAGE_SIZE, mode).is_err(),
         "unaligned start should fail"
     );
     check!(
-        uffd_register(fd, 0x40_0000, PAGE_SIZE + 1, mode).is_err(),
+        uffd_register(idx, 0x40_0000, PAGE_SIZE + 1, mode).is_err(),
         "unaligned len should fail"
     );
     check!(
-        uffd_register(fd, 0x40_0000, PAGE_SIZE, 0).is_err(),
+        uffd_register(idx, 0x40_0000, PAGE_SIZE, 0).is_err(),
         "empty mode should fail"
     );
     check!(
-        uffd_register(fd, 0x40_0000, PAGE_SIZE, 2).is_err(),
+        uffd_register(idx, 0x40_0000, PAGE_SIZE, 2).is_err(),
         "mode without MISSING should fail"
     );
     check!(
-        uffd_register(5, 0x40_0000, PAGE_SIZE, mode).is_err(),
-        "non-uffd fd should fail"
+        uffd_register(999, 0x40_0000, PAGE_SIZE, mode).is_err(),
+        "out-of-range slot should fail"
     );
 
     // 无匹配注册区间 → EINVAL
     check!(
-        uffd_unregister(fd, 0x40_0000, PAGE_SIZE).is_err(),
+        uffd_unregister(idx, 0x40_0000, PAGE_SIZE).is_err(),
         "unregister without match should fail"
     );
     // 无挂起缺页 → 唤醒为空操作 (Ok(false))
-    match uffd_wake(fd, 0x40_0000, PAGE_SIZE) {
+    match uffd_wake(idx, 0x40_0000, PAGE_SIZE) {
         Ok(woken) => check!(!woken, "wake without pending fault should be no-op"),
         Err(_) => return TestResult::Fail("wake should not fail"),
     }
 
     let full_page = [0u8; crate::privileged::glue::usize_from_u64(PAGE_SIZE)];
     check!(
-        provide_page(fd, 0x40_0001, None).is_err(),
+        provide_page(idx, 0x40_0001, None).is_err(),
         "unaligned page should fail"
     );
     check!(
-        provide_page(fd, 0x40_0000, Some(&[0u8; 8][..])).is_err(),
+        provide_page(idx, 0x40_0000, Some(&[0u8; 8][..])).is_err(),
         "short data should fail"
     );
     check!(
-        provide_page(fd, 0x40_0000, Some(&full_page[..])).is_err(),
+        provide_page(idx, 0x40_0000, Some(&full_page[..])).is_err(),
         "provide without pending fault should fail"
     );
 
-    check!(uffd_release(fd), "release should succeed");
+    check!(uffd_release(idx), "release should succeed");
     TestResult::Pass
 }
 
@@ -428,9 +426,6 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
 
     const BASE: u64 = 0x40_0000;
 
-    let Some(fd) = uffd_create(1) else {
-        return TestResult::Fail("uffd_create failed");
-    };
     let mm = MmStruct::new();
     let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
     let vma = Vma::new(
@@ -443,7 +438,8 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
         return TestResult::Fail("insert_vma failed");
     }
 
-    // 临时安装测试地址空间 (测试运行器全程关中断, 无并发切换风险)
+    // 临时安装测试地址空间 (测试运行器全程关中断, 无并发切换风险).
+    // 实例按创建者 tgid 归属缺页, 故须先安装当前任务再创建实例.
     let prev_current = Scheduler::current();
     let Some(pid) = PROCESS_TABLE.allocate_pid() else {
         return TestResult::Fail("no free PID for uffd flow");
@@ -456,7 +452,16 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     }
     Scheduler::set_current(pid);
     vma_set_current_mm(core::ptr::from_ref(&mm));
-    let result = uffd_flow_body(fd);
+    let Some(idx) = uffd_create(crate::privileged::proc::process_get_current_tgid()) else {
+        // 无条件拆除现场
+        vma_set_current_mm(core::ptr::null());
+        Scheduler::set_current(prev_current.unwrap_or(0));
+        let _ = PROCESS_TABLE.remove(pid);
+        raw::drop_boxed_process(proc_ptr);
+        PROCESS_TABLE.free_pid(pid);
+        return TestResult::Fail("uffd_create failed");
+    };
+    let result = uffd_flow_body(idx);
     // 无条件拆除: 先摘挂载, 再恢复调度器当前进程, 最后摘表释放描述符.
     vma_set_current_mm(core::ptr::null());
     Scheduler::set_current(prev_current.unwrap_or(0));
@@ -464,14 +469,14 @@ fn test_uffd_register_and_fault_flow() -> TestResult {
     raw::drop_boxed_process(proc_ptr);
     PROCESS_TABLE.free_pid(pid);
 
-    if !uffd_release(fd) {
+    if !uffd_release(idx) {
         return TestResult::Fail("release should succeed");
     }
     result
 }
 
 #[cfg(not(feature = "host-test"))]
-fn uffd_flow_body(fd: i32) -> TestResult {
+fn uffd_flow_body(idx: usize) -> TestResult {
     use crate::privileged::mm::uffd::{
         UFFD_API, UFFD_EVENT_PAGEFAULT, UFFD_PAGEFAULT_FLAG_WRITE, UFFDIO_REGISTER_MODE_MISSING,
     };
@@ -485,25 +490,25 @@ fn uffd_flow_body(fd: i32) -> TestResult {
     const BASE: u64 = 0x40_0000;
     const MODE: u64 = UFFDIO_REGISTER_MODE_MISSING;
 
-    check!(api_negotiate(fd, UFFD_API, 0).is_ok(), "handshake failed");
+    check!(api_negotiate(idx, UFFD_API, 0).is_ok(), "handshake failed");
     // 未被 VMA 覆盖的区间 → EFAULT
     check!(
-        uffd_register(fd, 0x60_0000, PAGE_SIZE, MODE).is_err(),
+        uffd_register(idx, 0x60_0000, PAGE_SIZE, MODE).is_err(),
         "unmapped range should fail"
     );
     // 同一区间重复注册至容量上限, 再注册 → ENOSPC
     for _ in 0..MAX_RANGES {
         check!(
-            uffd_register(fd, BASE, PAGE_SIZE, MODE).is_ok(),
+            uffd_register(idx, BASE, PAGE_SIZE, MODE).is_ok(),
             "register within capacity failed"
         );
     }
     check!(
-        uffd_register(fd, BASE, PAGE_SIZE, MODE).is_err(),
+        uffd_register(idx, BASE, PAGE_SIZE, MODE).is_err(),
         "exceeding MAX_RANGES should fail"
     );
     check!(
-        uffd_is_active(fd),
+        uffd_is_active(idx),
         "instance should be active after register"
     );
 
@@ -518,7 +523,7 @@ fn uffd_flow_body(fd: i32) -> TestResult {
         fault_notify(BASE, UFFD_PAGEFAULT_FLAG_WRITE) == UffdFaultOutcome::Waiting,
         "registered page fault should wait for user data"
     );
-    match pop_event(fd) {
+    match pop_event(idx) {
         Some(ev) => {
             check!(ev.event == UFFD_EVENT_PAGEFAULT, "event code mismatch");
             check!(ev.address == BASE, "fault address mismatch");
@@ -532,13 +537,13 @@ fn uffd_flow_body(fd: i32) -> TestResult {
 
     // 非挂起页 / 无挂起缺页 → EINVAL
     check!(
-        provide_page(fd, BASE + PAGE_SIZE, None).is_err(),
+        provide_page(idx, BASE + PAGE_SIZE, None).is_err(),
         "providing a non-pending page should fail"
     );
     // SIMPLIFIED: 单挂起页模型 — 服务线程只能填充当前挂起页
     let filled = [0x5Au8; crate::privileged::glue::usize_from_u64(PAGE_SIZE)];
     check!(
-        provide_page(fd, BASE, Some(&filled[..])).is_ok(),
+        provide_page(idx, BASE, Some(&filled[..])).is_ok(),
         "provide pending page failed"
     );
     check!(
@@ -570,14 +575,14 @@ fn uffd_flow_body(fd: i32) -> TestResult {
     check!(ok, "fill_provided_page should succeed");
     check!(content_ok, "provided page content mismatch");
     check!(
-        provide_page(fd, BASE, None).is_err(),
+        provide_page(idx, BASE, None).is_err(),
         "provide after mapping should fail (state reset)"
     );
 
     // 注销全部区间后 → 交回内核 demand paging
     for _ in 0..MAX_RANGES {
         check!(
-            uffd_unregister(fd, BASE, PAGE_SIZE).is_ok(),
+            uffd_unregister(idx, BASE, PAGE_SIZE).is_ok(),
             "unregister failed"
         );
     }

@@ -175,10 +175,8 @@ pub struct UffdMsgPagefault {
 const MAX_RANGES: usize = 4;
 /// 每实例事件队列容量
 const MAX_EVENTS: usize = 16;
-/// 实例数 = `USERFAULT_FD` 范围容量 (16)
-const MAX_INSTANCES: usize = crate::privileged::proc::fd_alloc::max_slots(
-    crate::privileged::proc::fd_alloc::FdSubsystem::UserFaultFd,
-);
+/// 实例槽位容量 (fd 对象模型阶段 3 起为独立槽位域, 与 TFD 同构取 16)
+const MAX_INSTANCES: usize = 16;
 
 /// 已注册区间
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -203,8 +201,8 @@ enum PendingState {
 struct UffdInstance {
     /// 是否已分配
     used: bool,
-    /// 创建者 pid
-    owner_pid: u32,
+    /// 创建者线程组 tgid (缺页归属判据; 同组线程共享 mm 与注册区间)
+    owner_tgid: u32,
     /// 是否完成 `UFFDIO_API` 握手
     api_negotiated: bool,
     /// 阻塞在 `read()` 的服务线程 pid (0 = 无)
@@ -236,7 +234,7 @@ impl UffdInstance {
     const fn empty() -> Self {
         Self {
             used: false,
-            owner_pid: 0,
+            owner_tgid: 0,
             api_negotiated: false,
             reader_pid: 0,
             fault_pid: 0,
@@ -290,55 +288,35 @@ fn uffd_table() -> &'static IrqSpinLock<Box<[UffdInstance]>> {
     })
 }
 
-/// 实例下标 (非 uffd fd 返回 `None`)
-fn instance_index(fd: i32) -> Option<usize> {
-    use crate::privileged::proc::fd_alloc::{FdSubsystem, idx_of};
-    match idx_of(fd) {
-        Some((FdSubsystem::UserFaultFd, slot)) => Some(slot),
-        _ => None,
-    }
-}
-
-/// 是否为 userfaultfd
-#[must_use]
-pub fn is_uffd_fd(fd: i32) -> bool {
-    instance_index(fd).is_some()
-}
-
 // ============================================================================
 // 生命周期
 // ============================================================================
 
-/// 创建 userfaultfd 实例 (成功返回 fd)
+/// 创建 userfaultfd 实例 (成功返回槽位下标)
 #[must_use]
-pub fn create(owner_pid: u32) -> Option<i32> {
-    use crate::privileged::proc::fd_alloc::{FdSubsystem, alloc_fd};
-    let fd = alloc_fd(FdSubsystem::UserFaultFd)?;
-    let Some(idx) = instance_index(fd) else {
-        let _ = crate::privileged::proc::fd_alloc::free_fd(FdSubsystem::UserFaultFd, fd);
-        return None;
-    };
+pub fn create(owner_tgid: u32) -> Option<usize> {
     let mut t = uffd_table().lock();
+    let idx = t.iter().position(|inst| !inst.used)?;
     t[idx] = UffdInstance::empty();
     t[idx].used = true;
-    t[idx].owner_pid = owner_pid;
-    Some(fd)
+    t[idx].owner_tgid = owner_tgid;
+    Some(idx)
 }
 
 /// 释放 userfaultfd 实例 (唤醒所有等待者), 返回是否成功释放
 #[must_use]
-pub fn release(fd: i32) -> bool {
-    let Some(idx) = instance_index(fd) else {
-        return false;
-    };
+pub fn release(idx: usize) -> bool {
     let (fault_pid, reader_pid) = {
         let mut t = uffd_table().lock();
-        if !t[idx].used {
+        let Some(inst) = t.get_mut(idx) else {
+            return false;
+        };
+        if !inst.used {
             return false;
         }
-        let fp = t[idx].fault_pid;
-        let rp = t[idx].reader_pid;
-        t[idx] = UffdInstance::empty();
+        let fp = inst.fault_pid;
+        let rp = inst.reader_pid;
+        *inst = UffdInstance::empty();
         (fp, rp)
     };
     // 唤醒等待者, 避免进程永久阻塞 (close 语义: 等待者应收到错误并重新尝试)
@@ -348,10 +326,7 @@ pub fn release(fd: i32) -> bool {
     if reader_pid != 0 {
         crate::privileged::proc::scheduler_unblock(reader_pid);
     }
-    crate::privileged::proc::fd_alloc::free_fd(
-        crate::privileged::proc::fd_alloc::FdSubsystem::UserFaultFd,
-        fd,
-    )
+    true
 }
 
 // ============================================================================
@@ -363,22 +338,22 @@ pub fn release(fd: i32) -> bool {
 /// # Errors
 /// `api != UFFD_API` 时返回 `EINVAL` (Linux 语义: 不支持的 API 版本).
 pub fn api_negotiate(
-    fd: i32,
+    idx: usize,
     api: u64,
     features: u64,
 ) -> Result<UffdIoApi, crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
-    let Some(idx) = instance_index(fd) else {
-        return Err(Errno::Ebadf);
-    };
     if api != UFFD_API {
         return Err(Errno::Einval);
     }
     let mut t = uffd_table().lock();
-    if !t[idx].used {
+    let Some(inst) = t.get_mut(idx) else {
+        return Err(Errno::Ebadf);
+    };
+    if !inst.used {
         return Err(Errno::Ebadf);
     }
-    t[idx].api_negotiated = true;
+    inst.api_negotiated = true;
     // SIMPLIFIED: 未实装 WP/MINOR 与 fork/remap/remove, 请求特性一律忽略 (Linux 会清零
     // 不支持的位并要求调用方复核). 影响: 调用方拿到 features=0 即知内核只支持 MISSING.
     let _ = features;
@@ -400,15 +375,12 @@ pub fn api_negotiate(
 /// - `len == 0` / 非页对齐 / 模式不含 MISSING → `EINVAL`
 /// - 区间未被完整映射 → `EFAULT`; 注册区间数超限 → `ENOSPC`
 pub fn register(
-    fd: i32,
+    idx: usize,
     start: u64,
     len: u64,
     mode: u64,
 ) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
-    let Some(idx) = instance_index(fd) else {
-        return Err(Errno::Ebadf);
-    };
     if len == 0 || !start.is_multiple_of(PAGE_SIZE) || !len.is_multiple_of(PAGE_SIZE) {
         return Err(Errno::Einval);
     }
@@ -426,18 +398,21 @@ pub fn register(
     }
 
     let mut t = uffd_table().lock();
-    if !t[idx].used {
+    let Some(inst) = t.get_mut(idx) else {
+        return Err(Errno::Ebadf);
+    };
+    if !inst.used {
         return Err(Errno::Ebadf);
     }
-    if !t[idx].api_negotiated {
+    if !inst.api_negotiated {
         return Err(Errno::Einval);
     }
-    if t[idx].range_count >= MAX_RANGES {
+    if inst.range_count >= MAX_RANGES {
         return Err(Errno::Enospc);
     }
-    let n = t[idx].range_count;
-    t[idx].ranges[n] = UffdRange { start, end, mode };
-    t[idx].range_count = n + 1;
+    let n = inst.range_count;
+    inst.ranges[n] = UffdRange { start, end, mode };
+    inst.range_count = n + 1;
     Ok(())
 }
 
@@ -445,18 +420,22 @@ pub fn register(
 ///
 /// # Errors
 /// fd 无效 → `EBADF`; 无匹配区间 → `EINVAL`.
-pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::privileged::syscall::Errno> {
+pub fn unregister(
+    idx: usize,
+    start: u64,
+    len: u64,
+) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
-    let Some(idx) = instance_index(fd) else {
-        return Err(Errno::Ebadf);
-    };
     let end = start.checked_add(len).ok_or(Errno::Einval)?;
     let mut t = uffd_table().lock();
-    if !t[idx].used {
+    let Some(inst) = t.get_mut(idx) else {
+        return Err(Errno::Ebadf);
+    };
+    if !inst.used {
         return Err(Errno::Ebadf);
     }
     let mut found = None;
-    for (i, range) in t[idx].ranges[..t[idx].range_count].iter().enumerate() {
+    for (i, range) in inst.ranges[..inst.range_count].iter().enumerate() {
         if range.start == start && range.end == end {
             found = Some(i);
             break;
@@ -466,13 +445,13 @@ pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::privileged
         return Err(Errno::Einval);
     };
     // 紧凑删除
-    let n = t[idx].range_count;
+    let n = inst.range_count;
     for j in i..n - 1 {
-        let next = t[idx].ranges[j + 1];
-        t[idx].ranges[j] = next;
+        let next = inst.ranges[j + 1];
+        inst.ranges[j] = next;
     }
-    t[idx].range_count = n - 1;
-    t[idx].ranges[n - 1] = UffdRange::default();
+    inst.range_count = n - 1;
+    inst.ranges[n - 1] = UffdRange::default();
     Ok(())
 }
 
@@ -484,25 +463,25 @@ pub fn unregister(fd: i32, start: u64, len: u64) -> Result<(), crate::privileged
 /// # Errors
 /// - fd 无效 → `EBADF`
 /// - `start + len` 溢出 → `EINVAL`
-pub fn wake(fd: i32, start: u64, len: u64) -> Result<bool, crate::privileged::syscall::Errno> {
+pub fn wake(idx: usize, start: u64, len: u64) -> Result<bool, crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
-    let Some(idx) = instance_index(fd) else {
-        return Err(Errno::Ebadf);
-    };
     let end = start.checked_add(len).ok_or(Errno::Einval)?;
     let pid = {
         let mut t = uffd_table().lock();
-        if !t[idx].used {
+        let Some(inst) = t.get_mut(idx) else {
+            return Err(Errno::Ebadf);
+        };
+        if !inst.used {
             return Err(Errno::Ebadf);
         }
-        let page = t[idx].fault_page;
-        if t[idx].page_state == PendingState::Idle || page < start || page >= end {
+        let page = inst.fault_page;
+        if inst.page_state == PendingState::Idle || page < start || page >= end {
             0
         } else {
-            let pid = t[idx].fault_pid;
-            t[idx].page_state = PendingState::Idle;
-            t[idx].fault_page = 0;
-            t[idx].fault_pid = 0;
+            let pid = inst.fault_pid;
+            inst.page_state = PendingState::Idle;
+            inst.fault_page = 0;
+            inst.fault_pid = 0;
             pid
         }
     };
@@ -526,14 +505,11 @@ pub fn wake(fd: i32, start: u64, len: u64) -> Result<bool, crate::privileged::sy
 /// - fd 无效 → `EBADF`; `page_addr` 非页对齐 → `EINVAL`
 /// - 无挂起缺页 / 页不匹配 / 已有数据待映射 / 数据长度不为整页 → `EINVAL`
 pub fn provide_page(
-    fd: i32,
+    idx: usize,
     page_addr: u64,
     data: Option<&[u8]>,
 ) -> Result<(), crate::privileged::syscall::Errno> {
     use crate::privileged::syscall::Errno;
-    let Some(idx) = instance_index(fd) else {
-        return Err(Errno::Ebadf);
-    };
     if !page_addr.is_multiple_of(PAGE_SIZE) {
         return Err(Errno::Einval);
     }
@@ -544,20 +520,23 @@ pub fn provide_page(
     }
     let pid = {
         let mut t = uffd_table().lock();
-        if !t[idx].used {
+        let Some(inst) = t.get_mut(idx) else {
+            return Err(Errno::Ebadf);
+        };
+        if !inst.used {
             return Err(Errno::Ebadf);
         }
-        if t[idx].page_state != PendingState::Waiting || t[idx].fault_page != page_addr {
+        if inst.page_state != PendingState::Waiting || inst.fault_page != page_addr {
             return Err(Errno::Einval);
         }
         if let Some(d) = data {
-            t[idx].staged.copy_from_slice(d);
-            t[idx].staged_zero = false;
+            inst.staged.copy_from_slice(d);
+            inst.staged_zero = false;
         } else {
-            t[idx].staged_zero = true;
+            inst.staged_zero = true;
         }
-        t[idx].page_state = PendingState::Provided;
-        t[idx].fault_pid
+        inst.page_state = PendingState::Provided;
+        inst.fault_pid
     };
     if pid != 0 {
         crate::privileged::proc::scheduler_unblock(pid);
@@ -587,13 +566,16 @@ pub enum UffdFaultOutcome {
 #[must_use]
 pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
     let pid = crate::privileged::proc::process_get_current_pid();
+    let tgid = crate::privileged::proc::process_get_current_tgid();
     let mut wake_reader = 0u32;
 
     let outcome = {
         let mut t = uffd_table().lock();
         let mut found = None;
         for i in 0..MAX_INSTANCES {
-            if t[i].used && t[i].covers(page_addr) {
+            // 归属判据: 只有创建者线程组 (同组线程共享 mm/区间) 的缺页才命中,
+            // 避免不同进程同 VA 区间互相劫持事件/暂存页.
+            if t[i].used && t[i].owner_tgid == tgid && t[i].covers(page_addr) {
                 found = Some(i);
                 break;
             }
@@ -646,10 +628,11 @@ pub fn fault_notify(page_addr: u64, flags: u64) -> UffdFaultOutcome {
 /// 成功后复位挂起状态; 返回是否填充成功 (状态不匹配返回 false).
 #[must_use]
 pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
+    let tgid = crate::privileged::proc::process_get_current_tgid();
     let mut t = uffd_table().lock();
     let mut found = None;
     for i in 0..MAX_INSTANCES {
-        if t[i].used && t[i].covers(page_addr) {
+        if t[i].used && t[i].owner_tgid == tgid && t[i].covers(page_addr) {
             found = Some(i);
             break;
         }
@@ -688,59 +671,62 @@ pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
 // 事件读取 (服务线程侧)
 // ============================================================================
 
-/// 弹出队首事件 (非阻塞)
+/// 弹出队首事件 (非阻塞; 槽位无效返回 `None`)
 #[must_use]
-pub fn pop_event(fd: i32) -> Option<UffdMsgPagefault> {
-    let idx = instance_index(fd)?;
+pub fn pop_event(idx: usize) -> Option<UffdMsgPagefault> {
     let mut t = uffd_table().lock();
-    if !t[idx].used || t[idx].ev_count == 0 {
+    let inst = t.get_mut(idx)?;
+    if !inst.used || inst.ev_count == 0 {
         return None;
     }
-    let head = t[idx].ev_head;
-    let ev = t[idx].events[head];
-    t[idx].events[head] = UffdMsgPagefault::default();
-    t[idx].ev_head = (head + 1) % MAX_EVENTS;
-    t[idx].ev_count -= 1;
+    let head = inst.ev_head;
+    let ev = inst.events[head];
+    inst.events[head] = UffdMsgPagefault::default();
+    inst.ev_head = (head + 1) % MAX_EVENTS;
+    inst.ev_count -= 1;
     Some(ev)
 }
 
 /// 登记 `read()` 阻塞的线程 pid (供 `fault_notify` 唤醒)
-pub fn set_reader(fd: i32, pid: u32) {
-    if let Some(idx) = instance_index(fd) {
-        let mut t = uffd_table().lock();
-        if t[idx].used {
-            t[idx].reader_pid = pid;
-        }
+pub fn set_reader(idx: usize, pid: u32) {
+    let mut t = uffd_table().lock();
+    if let Some(inst) = t.get_mut(idx)
+        && inst.used
+    {
+        inst.reader_pid = pid;
     }
 }
 
 /// 注销 `read()` 阻塞的线程 pid
-pub fn clear_reader(fd: i32, pid: u32) {
-    if let Some(idx) = instance_index(fd) {
-        let mut t = uffd_table().lock();
-        if t[idx].used && t[idx].reader_pid == pid {
-            t[idx].reader_pid = 0;
-        }
+pub fn clear_reader(idx: usize, pid: u32) {
+    let mut t = uffd_table().lock();
+    if let Some(inst) = t.get_mut(idx)
+        && inst.used
+        && inst.reader_pid == pid
+    {
+        inst.reader_pid = 0;
     }
 }
 
 /// 实例是否仍处于打开状态 (用于 `read()` 阻塞后被 close 唤醒时提前返回)
 #[must_use]
-pub fn is_open(fd: i32) -> bool {
-    match instance_index(fd) {
-        Some(idx) => uffd_table().lock()[idx].used,
-        None => false,
-    }
+pub fn is_open(idx: usize) -> bool {
+    uffd_table().lock().get(idx).is_some_and(|inst| inst.used)
+}
+
+/// 事件队列是否有待读事件 (槽位无效返回 `None`)
+#[must_use]
+pub fn poll_ready(idx: usize) -> Option<bool> {
+    let t = uffd_table().lock();
+    let inst = t.get(idx)?;
+    inst.used.then_some(inst.ev_count > 0)
 }
 
 /// 实例是否已握手 `UFFDIO_API` 且有注册区间 (供测试/诊断)
 #[must_use]
-pub fn is_active(fd: i32) -> bool {
-    match instance_index(fd) {
-        Some(idx) => {
-            let t = uffd_table().lock();
-            t[idx].used && t[idx].api_negotiated && t[idx].range_count > 0
-        }
-        None => false,
-    }
+pub fn is_active(idx: usize) -> bool {
+    uffd_table()
+        .lock()
+        .get(idx)
+        .is_some_and(|inst| inst.used && inst.api_negotiated && inst.range_count > 0)
 }

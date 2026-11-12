@@ -95,9 +95,10 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
         }
         return Ok(0);
     }
-    // T1 G4: userfaultfd 事件读取 (无事件时阻塞等待缺页通知)
-    if crate::privileged::mm::is_uffd_fd(fd) {
-        return crate::functions::mm::uffd::read_event(fd, buf, count);
+    // userfaultfd 事件读取: 对象解析在 syscall 层完成 (`File::read_at` 在
+    // OpenFileTable 自旋锁内执行, 不可睡眠); 无事件时按 O_NONBLOCK 阻塞/立即返回.
+    if let Some((idx, nonblock)) = super::uffd::resolve_uffd(fd) {
+        return super::uffd::read_event(idx, buf, count, !nonblock);
     }
     // 常规 VFS 读 (vfs_read 将数据写入调用方地址空间的 buf).
     //

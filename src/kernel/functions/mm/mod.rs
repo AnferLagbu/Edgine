@@ -29,9 +29,6 @@ pub mod slab_policy;
 pub mod swap;
 /// T2-4: Swap 策略 (LRU 管理/回收决策/kswapd 触发) — functions 层
 pub mod swap_policy;
-/// T1 G4: userfaultfd 系统调用/ioctl ABI 层
-pub mod uffd;
-
 // memory_pressure 公共接口 re-export — T-02 策略-机制分离
 pub use memory_pressure::{PressureAwareAllocPolicy, register_pressure_aware_policy};
 
