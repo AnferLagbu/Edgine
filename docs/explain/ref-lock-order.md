@@ -39,7 +39,8 @@
   SWAP.lock
 
 层级 7: Process Table（进程表）
-  PROCESS_TABLE.processes, PROC_SNAPSHOT
+  PROCESS_TABLE.processes, PROC_SNAPSHOT, WASI_CTX（进程级 wasm 载体的 WASI 上下文；先取本锁再取 VFS/网络为升序）,
+  WASM_REGISTRY（进程级 wasm 实例注册表；与进程表同层, 运行期不在持锁中执行解释器）
 
 层级 8: Scheduler（调度器）
   eevdf_rq（per-CPU 运行队列锁；跨核搬动按 cpu index 升序取两把）

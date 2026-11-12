@@ -20,6 +20,8 @@ pub mod interpreter;
 pub mod leb128;
 /// T6-9: WASM 二进制格式解析器 (原 privileged/wasm/module.rs)
 pub mod module;
+/// 进程级 wasm 运行时注册表与 `EG_WASM_*` syscall 入口 (W-7)
+pub mod registry;
 /// T6-9: 运行时数据结构 (原 privileged/wasm/runtime.rs)
 pub mod runtime;
 /// T6-9: WASM 类型定义 (原 privileged/wasm/types.rs)

@@ -168,6 +168,7 @@ name = "kernel-functions"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
+ "edgine-abi",
  "kernel-privileged",
  "smoltcp",
  "zerocopy",

@@ -45,6 +45,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -211,9 +212,18 @@ def test_lock_order_self_reconcile() -> bool:
     ok = _check("真序表三方对账零违规", not issues,
                 f"实测违规 {[i['message'] for i in issues][:3]}")
     line = summary[0] if summary else ""
+    # 判据语义 = 「序表 lockdep 类数 == 代码具名类数」; 两计数从摘要实读,
+    # 不写死快照值 —— 新增锁类 (如 W-7 的 WASI_CTX / WASM_REGISTRY) 时
+    # 该自测不应失效 (写死值会让每次锁类扩容都误红).
+    lockdep_count = re.search(r"lockdep 类 (\d+)", line)
+    code_count = re.search(r"代码具名类 (\d+)", line)
     counts_ok = _check(
-        "摘要报出序表 lockdep 类与代码具名类等量 (16 / 16)",
-        "lockdep 类 16" in line and "代码具名类 16" in line, line)
+        "摘要报出序表 lockdep 类与代码具名类等量",
+        lockdep_count is not None
+        and code_count is not None
+        and int(lockdep_count.group(1)) == int(code_count.group(1))
+        and int(code_count.group(1)) > 0,
+        line)
     # 容量读数必须由 limits.rs 实值拼出 (自测复用检测器同一个读数函数, 不抄数):
     # 上限一改, 摘要与判据同源跟随 —— 本断言因此不会挡住「提高上限」那次改动.
     limits = detector.read_capacity_limits()

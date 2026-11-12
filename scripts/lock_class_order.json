@@ -52,6 +52,8 @@
     { "level": 6, "name": "SWAP", "anchor": "symbol", "doc_token": "SWAP.lock" },
     { "level": 7, "name": "PROCESS_TABLE.processes", "anchor": "lockdep" },
     { "level": 7, "name": "PROC_SNAPSHOT", "anchor": "symbol" },
+    { "level": 7, "name": "WASI_CTX", "anchor": "lockdep" },
+    { "level": 7, "name": "WASM_REGISTRY", "anchor": "lockdep", "note": "进程级 wasm 实例注册表 (IrqSpinLock::named_lazy); 先取本锁再取进程表为同层, 不在执行期持锁 (运行前取出实例)" },
     { "level": 8, "name": "eevdf_rq", "anchor": "lockdep", "note": "per-CPU 运行队列锁; 跨核搬动按 cpu index 升序取两把" },
     { "level": 9, "name": "sigaction_table", "anchor": "symbol" },
     { "level": 9, "name": "rlimit_table", "anchor": "symbol" },

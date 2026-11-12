@@ -778,6 +778,18 @@ pub const EG_GET_CANARY: u64 = 747;
 // 解除进程级所有锁定 (munlockall)
 // 查询每页驻留性 (mincore)
 
+// ---------- 766-779: WASM 运行时 (Edgine 私有段) ----------
+// 加载 wasm 模块到当前进程 / 运行 / 查询实例信息 / 卸载.
+// Linux 无对应语义, 故不占 0-299 段; 单一权威源 `edgine_abi::wasm`.
+/// `EG_WASM_LOAD` — 加载 wasm 模块到当前进程 (返回非 0 句柄)
+pub const EG_WASM_LOAD: u64 = edgine_abi::wasm::EG_WASM_LOAD;
+/// `EG_WASM_RUN` — 运行已加载实例 (按 gas 上限执行到结束)
+pub const EG_WASM_RUN: u64 = edgine_abi::wasm::EG_WASM_RUN;
+/// `EG_WASM_GET_INFO` — 查询实例状态 / 退出码 / gas 消耗
+pub const EG_WASM_GET_INFO: u64 = edgine_abi::wasm::EG_WASM_GET_INFO;
+/// `EG_WASM_UNLOAD` — 卸载当前进程的 wasm 实例
+pub const EG_WASM_UNLOAD: u64 = edgine_abi::wasm::EG_WASM_UNLOAD;
+
 // ---------- 800-809: 内核调试 / 跟踪 (ftrace / KGDB) ----------
 /// 启用 ftrace 全局开关
 pub const EG_FTRACE_ENABLE: u64 = 800;

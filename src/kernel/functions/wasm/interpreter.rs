@@ -20,8 +20,8 @@
 //! - 除以零和溢出均返回 Trap
 
 use alloc::collections::BTreeMap;
-use alloc::rc::Rc;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -40,9 +40,13 @@ use super::types::{
 
 /// 宿主函数签名: 接收解释器可变引用, 返回执行结果
 ///
-/// 用 `Rc` 而非 `Box`: 宿主调用期间允许闭包被多处共享持有 (例如
+/// 用 `Arc` 而非 `Box`: 宿主调用期间允许闭包被多处共享持有 (例如
 /// `WasmInstance` 与已装配的调用表), 不再需要把闭包从调用表里临时取出。
-pub type HostFunction = Rc<dyn Fn(&mut Interpreter) -> Result<(), WasmError>>;
+///
+/// `Send + Sync` 是进程级 wasm 载体把实例放进全局注册表的前提 (W-7):
+/// 实例整体跨线程共享时, 宿主闭包必须可发送; 解释器本身不跨线程并发执行,
+/// 共享仅用于"取出一段执行后再放回"的串行化模型.
+pub type HostFunction = Arc<dyn Fn(&mut Interpreter) -> Result<(), WasmError> + Send + Sync>;
 
 /// WASM 解释器 — 字节码执行引擎实例
 pub struct Interpreter {
@@ -272,7 +276,7 @@ impl Interpreter {
                 };
                 let host: HostFunction = match registered {
                     Some(f) => f,
-                    None => Rc::new(|_: &mut Interpreter| Ok(())),
+                    None => Arc::new(|_: &mut Interpreter| Ok(())),
                 };
                 ordered.push(host);
                 func_idx += 1;
@@ -2224,11 +2228,11 @@ mod tests {
             0,
         );
         let mut interp = Interpreter::new(m, InterpreterConfig::default());
-        let host_a: HostFunction = Rc::new(|i: &mut Interpreter| {
+        let host_a: HostFunction = Arc::new(|i: &mut Interpreter| {
             i.stack.push(Value::I32(11))?;
             Ok(())
         });
-        let host_b: HostFunction = Rc::new(|i: &mut Interpreter| {
+        let host_b: HostFunction = Arc::new(|i: &mut Interpreter| {
             i.stack.push(Value::I32(22))?;
             Ok(())
         });
@@ -2253,7 +2257,7 @@ mod tests {
     fn host_call_func_pops_arg0_first() {
         let m = import_only_module(&[("wasi_snapshot_preview1", "first")], 2);
         let mut interp = Interpreter::new(m, InterpreterConfig::default());
-        let host: HostFunction = Rc::new(|i: &mut Interpreter| {
+        let host: HostFunction = Arc::new(|i: &mut Interpreter| {
             let first = i.stack.pop_i32()?;
             let _second = i.stack.pop_i32()?;
             i.stack.push(Value::I32(first))?;

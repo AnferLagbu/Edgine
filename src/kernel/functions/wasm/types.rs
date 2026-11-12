@@ -736,5 +736,55 @@ pub enum WasmError {
     Terminated,
 }
 
+impl From<WasmError> for crate::privileged::syscall::Errno {
+    /// 把解释器/解析器的错误映射为用户态可判别的 POSIX 错误码 (W-7).
+    ///
+    /// 分区口径: **镜像结构**类 (畸形字节码 / 段边界 / 类型字节) → `ENOEXEC`;
+    /// **运行期 trap** 类 (操作数 / 表 / 分支结构) → `EINVAL`; 内存越界 →
+    /// `EFAULT`; 分配与深度上限 → `ENOMEM`; gas 耗尽 → `ETIME`; 未实现的合法
+    /// 结构 → `ENOSYS`; 解释器内部不变量破坏 → `EIO`。`Terminated` 是
+    /// `proc_exit` 的正常终态, 由 `registry::run_syscall` 在映射前截获, 此处
+    /// 保留 `EINTR` 仅为全函数性。
+    fn from(error: WasmError) -> Self {
+        use crate::privileged::syscall::Errno;
+        match error {
+            WasmError::InvalidMagic
+            | WasmError::InvalidVersion
+            | WasmError::Truncated
+            | WasmError::Leb128Overflow
+            | WasmError::SectionSizeMismatch
+            | WasmError::TooManyEntries { .. }
+            | WasmError::BadValueType(_)
+            | WasmError::BadFuncTypeTag(_)
+            | WasmError::UnknownSection(_)
+            | WasmError::BadTableElementType(_)
+            | WasmError::UnknownOpcode(_) => Errno::Enoexec,
+            WasmError::TypeMismatch
+            | WasmError::StackUnderflow
+            | WasmError::IntegerOverflow
+            | WasmError::Unreachable
+            | WasmError::BadExport
+            | WasmError::BadImport
+            | WasmError::FunctionNotFound
+            | WasmError::BadTypeIndex(_)
+            | WasmError::BadFuncIndex(_)
+            | WasmError::TableIndexOutOfBounds(_)
+            | WasmError::UninitializedElement(_)
+            | WasmError::IndirectCallTypeMismatch
+            | WasmError::BadLabelDepth(_)
+            | WasmError::BadBlockStructure(_) => Errno::Einval,
+            WasmError::DivisionByZero => Errno::Edom,
+            WasmError::MemoryOutOfBounds => Errno::Efault,
+            WasmError::StackOverflow
+            | WasmError::MemoryGrowFailed
+            | WasmError::CallDepthExceeded => Errno::Enomem,
+            WasmError::GasExhausted => Errno::Etime,
+            WasmError::Unsupported => Errno::Enosys,
+            WasmError::InternalError => Errno::Eio,
+            WasmError::Terminated => Errno::Eintr,
+        }
+    }
+}
+
 /// 空块类型的编码 (`-64`, 即 LEB128 的 `0x40`)。
 pub const BLOCK_TYPE_EMPTY: i32 = -64;

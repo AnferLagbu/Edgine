@@ -6,26 +6,27 @@
 //! 闭包并登记到解释器名称表; 下标装配由 `Interpreter::auto_register_wasi`
 //! 按模块 import section 的声明顺序完成。
 //!
-//! 上下文归属: 每个闭包与 [`WasmInstance`] 共享同一个
-//! `Rc<RefCell<WasiContext>>` — 解释器本身不依赖 WASI, 上下文随实例生命周期结束。
+//! 上下文归属: 每个闭包与 [`WasmInstance`] 共享同一个 `Arc<Mutex<WasiContext>>`
+//! — 解释器本身不依赖 WASI, 上下文随实例生命周期结束。`Mutex` 是 W-7 进程级
+//! 载体把实例放进全局注册表的前提 (实例需 `Send`), 临界区只在单次宿主调用内。
 //!
 //! [`WasmInstance`]: crate::functions::wasm::instance::WasmInstance
 
-use alloc::rc::Rc;
-use core::cell::RefCell;
+use alloc::sync::Arc;
 
 use super::{WasiContext, wasi_function_table};
 use crate::functions::wasm::interpreter::{HostFunction, Interpreter};
+use crate::privileged::sync::Mutex;
 
 /// 把全部 WASI 函数按名称注册进解释器
 ///
 /// 必须在 `Interpreter::auto_register_wasi` 之前调用; 本函数只登记名称,
 /// 不决定 import 下标, 因此重复调用以最后一次注册为准。
-pub fn register_wasi_functions(interp: &mut Interpreter, ctx: &Rc<RefCell<WasiContext>>) {
+pub fn register_wasi_functions(interp: &mut Interpreter, ctx: &Arc<Mutex<WasiContext>>) {
     for &(name, func) in wasi_function_table() {
-        let ctx = Rc::clone(ctx);
-        let host: HostFunction = Rc::new(move |interp: &mut Interpreter| {
-            let mut context = ctx.borrow_mut();
+        let ctx = Arc::clone(ctx);
+        let host: HostFunction = Arc::new(move |interp: &mut Interpreter| {
+            let mut context = ctx.lock();
             func(&mut context, interp)
         });
         interp.register_named_host_function("wasi_snapshot_preview1", name, host);

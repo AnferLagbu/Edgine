@@ -14,6 +14,8 @@ path = "mod.rs"
 
 [dependencies]
 kernel-privileged = { path = "../privileged" }
+# syscall ABI 常量与结构单一权威源 (wasm 私有段 766-779 等), 与 privileged 同源.
+edgine-abi = { path = "../../rust/edgine-abi" }
 bitflags = "2.4"
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 smoltcp = { path = "net/smoltcp", default-features = false, features = [

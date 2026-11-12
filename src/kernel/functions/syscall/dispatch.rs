@@ -73,6 +73,9 @@ impl SyscallDispatch for FunctionsSyscallDispatch {
         if let Some(ret) = dispatch_mm(num, args) {
             return ret;
         }
+        if let Some(ret) = dispatch_wasm(num, args) {
+            return ret;
+        }
         if let Some(ret) = dispatch_sync(num, args) {
             return ret;
         }
@@ -1206,6 +1209,22 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a0),
         ),
 
+        _ => return None,
+    })
+}
+
+/// wasm 运行时私有 syscall (W-7: 766-779 段; 单一权威源 `edgine_abi::wasm`).
+fn dispatch_wasm(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{
+        EG_WASM_GET_INFO, EG_WASM_LOAD, EG_WASM_RUN, EG_WASM_UNLOAD,
+    };
+    let [a0, a1, a2, _, _, _] = args;
+
+    Some(match num {
+        EG_WASM_LOAD => as_ret(crate::functions::wasm::registry::load_syscall(a0, a1, a2)),
+        EG_WASM_RUN => as_ret(crate::functions::wasm::registry::run_syscall(a0)),
+        EG_WASM_GET_INFO => as_ret(crate::functions::wasm::registry::get_info_syscall(a0, a1)),
+        EG_WASM_UNLOAD => as_ret(crate::functions::wasm::registry::unload_syscall(a0)),
         _ => return None,
     })
 }

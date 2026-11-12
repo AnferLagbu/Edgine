@@ -193,6 +193,13 @@ pub struct Process {
     pub kstack_pages: AtomicU32,
     /// 用户栈顶虚拟地址 (fork/exec 初始化时使用).
     pub user_stack: AtomicU64,
+    /// 本进程已加载的 wasm 运行时句柄; 0 表示未加载.
+    ///
+    /// 载体标记: `EG_WASM_LOAD` 置位, `EG_WASM_UNLOAD` / exec 清零; fork 不继承
+    /// (子进程经 `Process::new` 从 0 开始). wasm 实例本体在 functions 侧注册表中,
+    /// 本字段只做归属校验 —— `RUN` / `GET_INFO` / `UNLOAD` 要求实参句柄与本字段
+    /// 一致, 未加载的进程无法借用或猜测他进程实例.
+    pub wasm_handle: AtomicU32,
 
     /// 退出码 (由 `wait4` 报告给父进程).
     pub exit_code: AtomicU32,
@@ -471,6 +478,7 @@ impl Process {
             kernel_stack: AtomicU64::new(0),
             kstack_pages: AtomicU32::new(0),
             user_stack: AtomicU64::new(0),
+            wasm_handle: AtomicU32::new(0),
             exit_code: AtomicU32::new(0),
             cpu_time: AtomicU64::new(0),
             user_time: AtomicU64::new(0),

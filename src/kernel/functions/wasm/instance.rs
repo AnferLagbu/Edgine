@@ -3,23 +3,27 @@
 //! WASM 实例 — 解释器与 WASI 上下文的生命周期归属
 //!
 //! 解释器 (`Interpreter`) 只认识 host 闭包, 不认识 WASI; `WasiContext`
-//! 与宿主闭包通过 `Rc<RefCell<WasiContext>>` 共享, 由本结构持有并随实例释放。
+//! 与宿主闭包通过 `Arc<Mutex<WasiContext>>` 共享, 由本结构持有并随实例释放。
 //! 这样 runtime 不反向依赖 WASI, 而 WASI 的 fd 表 / 参数 / 环境变量仍有
 //! 明确的落点 (W-6 起由装载路径填充)。
+//!
+//! `Arc<Mutex>` 而非 `Rc<RefCell>`: W-7 的进程级载体把实例放进 functions 侧
+//! 全局注册表 (需 `Send`), 宿主调用期间以锁保护上下文; 实例本身被"取出执行、
+//! 执行完放回", 同一实例不会并发执行。
 
-use alloc::rc::Rc;
-use core::cell::RefCell;
+use alloc::sync::Arc;
 
 use super::interpreter::Interpreter;
 use super::runtime::InterpreterConfig;
 use super::types::{Value, WasmError, WasmModule};
 use super::wasi::WasiContext;
 use super::wasi::inject::register_wasi_functions;
+use crate::privileged::sync::Mutex;
 
 /// 单个 WASM 实例: 解释器 + 本实例独占的 WASI 上下文
 pub struct WasmInstance {
     interp: Interpreter,
-    ctx: Rc<RefCell<WasiContext>>,
+    ctx: Arc<Mutex<WasiContext>>,
 }
 
 impl WasmInstance {
@@ -28,7 +32,7 @@ impl WasmInstance {
     /// `ctx` 随实例生命周期结束; 之后的调用与上下文的交互都经过同一句柄。
     #[must_use]
     pub fn new(module: WasmModule, config: InterpreterConfig, ctx: WasiContext) -> Self {
-        let ctx = Rc::new(RefCell::new(ctx));
+        let ctx = Arc::new(Mutex::named("WASI_CTX", ctx));
         let mut interp = Interpreter::new(module, config);
         register_wasi_functions(&mut interp, &ctx);
         interp.auto_register_wasi();
@@ -52,12 +56,12 @@ impl WasmInstance {
 
     /// 只读访问本实例的 WASI 上下文
     pub fn with_context<R>(&self, f: impl FnOnce(&WasiContext) -> R) -> R {
-        f(&self.ctx.borrow())
+        f(&self.ctx.lock())
     }
 
     /// 可变访问本实例的 WASI 上下文
     pub fn with_context_mut<R>(&mut self, f: impl FnOnce(&mut WasiContext) -> R) -> R {
-        f(&mut self.ctx.borrow_mut())
+        f(&mut self.ctx.lock())
     }
 }
 

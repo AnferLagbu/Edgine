@@ -653,6 +653,12 @@ pub use edgine_abi::thread::{
     SYS_FUTEX, SYS_GETTID, SYS_KILL, SYS_TGKILL,
 };
 
+/// wasm 运行时私有 syscall 编号、实例状态与信息结构 — 单一权威源 `edgine-abi`.
+pub use edgine_abi::wasm::{
+    EG_WASM_GET_INFO, EG_WASM_LOAD, EG_WASM_RUN, EG_WASM_STATUS_FINISHED, EG_WASM_STATUS_READY,
+    EG_WASM_STATUS_TRAPPED, EG_WASM_UNLOAD, EgWasmInfo,
+};
+
 #[repr(C)]
 pub struct Timespec {
     pub tv_sec: i64,
