@@ -47,7 +47,7 @@
 - **W-3 结构化控制流**：block / loop / if 的标签栈与 `br*` 的正确 unwind。
   - 描述：F5 使分支回溯落到调用帧级，真实模块（几乎所有 `wat` 编译产物都含块结构）必然得到错误结果或直接 trap。这不是"新特性"而是**修正现有实现的语义错误**。
   - 方案：引入 per-frame block 标签栈（记录 block 起点 pc 与 arity），`br/br_if/br_table` 改为弹标签而非弹调用帧；`Block`/`Loop` 的块类型字节（含 `0x40`）必须消费而非回落到 opcode 解释；`If`/`Else`/`End` 与已有 `execute_if` 对齐。配 host 单测覆盖"嵌套 block + 跨层 br + loop 早退"。
-  - 状态：[ ]（依 W-2（**已闭** ⇒ 本条解锁，但 §3 戊 裁定本轮不推，留待第二轮）；block 类型字节的消费缺口须在 W-2 的段边界之上做，否则标签栈本身不可信）
+  - 状态：[X]（2026-11-12 收口。`runtime.rs` 新增 `LabelKind` / `ControlLabel` 与 `CallFrame.labels`：每帧块标签栈记录 arity、进入栈高、loop 回边 `start_pc`、匹配 `end_pc` 与 if `else_pc`。`interpreter.rs` 重写控制流：`Block`/`Loop`/`If` 显式解码块类型字节（`0x40` 空块 / `0x7F` i32 / `0x7E` i64；浮点与多值类型索引返 `Unsupported`，其余非法字节 `BadValueType`），并以逐指令扫描器（按 opcode 跳过立即数）求匹配 `end`/`else` 落点；`br`/`br_if`/`br_table` 改为按块标签深度 unwind——`depth == labels.len()` 等价函数返回、越界 `BadLabelDepth`，loop 回边保留标签、block/if 前向退出弹标签并按 `stack_height + arity` 归一化分支值；`End` 仅在标签栈空时结束函数，`Else` 只接受 `if` 标签。**同时修正函数返回值回溯**：原 `call_func` 在 `End` 已弹帧后再 pop 一次，返回值恒丢；现按声明 arity 从栈取回并按帧基准截断。新增错误变体 `Unsupported` / `BadLabelDepth(usize)` / `BadBlockStructure(u8)`（均有构造点）。回归锁 13 例：块结果落穿、`0x40` 不被误当 `memory.grow`、嵌套 block 跨层 br、loop 早退、if 真/假分支与无 else 跳过、br_table 默认目标、br 到函数深度、return 指令、超深 br / 浮点块类型 / 无 if 的 else / 未终止块；解释器内联测试 **0 → 13**（wasm 目录合计 30 → 43）。范围纪律：不触发表调用（W-4）、WASI（W-5+），线性内存 `.get()` 检查按 §3 乙 保留。）
 
 - **W-4 `call_indirect` 与缺失 opcode**：表调用 + i64 / 位运算族收口。
   - 描述：F4 的 `Unreachable` 使函数指针表调用整体不可用；types.rs 已声明但主循环不处理（落 `_ =>` trap）的有 I64 比较 / `I64Eqz` / `I64Load*` / `I64Store8/16/32` / `I32Rotl` / `I32Rotr` / `I32WrapI64` / `I64Extend*`。
@@ -77,7 +77,7 @@
 - **W-9 测试门槛**：内核内 `mod tests` + `host-tests` 集成 + 回归锁。
   - 描述：F9——wasm 目录零内联测试，唯一外部测试不执行模块。按 `docs/explain/spec-engineering.md` 的"公共 API 须单测 / 跨模块接口须集成测试"，"相对完整"路径下这条是硬门槛而非可选项。
   - 方案：(a) `functions/wasm/` 各文件补 `#[cfg(test)]`，端到端用例 = 一段手写最小 wasm 字节序列（含 block / br / 内存读写 / host 调用）跑通并断言结果；(b) 畸形输入矩阵（W-2 的截断/越界/非法 opcode）断言返错不 panic；(c) `host-tests` 加集成用例覆盖 syscall 号→dispatch→wasm 的跨模块链；(d) 每条 bug 修复附 issue 引用（§8）。
-  - 状态：[ ]（依 W-2 起，与实装同批推进。**已部分推进**：(b) 的畸形输入矩阵随 W-2 落地并随 P-42 根治扩充——[module.rs](../../src/kernel/functions/wasm/module.rs) 的 `#[cfg(test)] mod tests` 计 **24** 例、[leb128.rs](../../src/kernel/functions/wasm/leb128.rs) 的 `#[cfg(test)] mod tests` 计 **6** 例（末字节越界载荷的畸形侧与极值合法侧两侧同钉），wasm 目录内联测试数由 **0 → 24 → 30**（F9 的"零内联测试"对这两个文件已失效），并含全前缀 / 全单字节突变两条穷举式全函数性证明；(a) 的端到端执行用例（需 W-3/W-4 的块结构与表调用先就位）、(c) 的 syscall→dispatch→wasm 集成链（需 W-8）均未开工；(d) 随 P-42 结案已补一条 bug 修复的回归引用面（`leb128.rs` 测试模块的文档注释直引 P-42 与改造前实测读数），后续仍以逐条引用为准）
+  - 状态：[ ]（依 W-2 起，与实装同批推进。**已部分推进**：(b) 的畸形输入矩阵随 W-2 落地并随 P-42 根治扩充——[module.rs](../../src/kernel/functions/wasm/module.rs) 的 `#[cfg(test)] mod tests` 计 **24** 例、[leb128.rs](../../src/kernel/functions/wasm/leb128.rs) 的 `#[cfg(test)] mod tests` 计 **6** 例（末字节越界载荷的畸形侧与极值合法侧两侧同钉），wasm 目录内联测试数由 **0 → 24 → 30**（F9 的"零内联测试"对这两个文件已失效），并含全前缀 / 全单字节突变两条穷举式全函数性证明；W-3 收口后 [interpreter.rs](../../src/kernel/functions/wasm/interpreter.rs) 补 **13** 例控制流用例（wasm 目录合计 **43** 例），覆盖嵌套 block / 跨层 br / loop 早退 / if-else / br_table / 非法深度与块类型，端到端 `call()` 断言返回值；(a) 的端到端执行用例（需 W-3/W-4 的块结构与表调用先就位）、(c) 的 syscall→dispatch→wasm 集成链（需 W-8）均未开工；(d) 随 P-42 结案已补一条 bug 修复的回归引用面（`leb128.rs` 测试模块的文档注释直引 P-42 与改造前实测读数），后续仍以逐条引用为准）
 
 - **W-10 文档归位**：explain 说明 + design 立场。
   - 描述：`docs/explain/` 与 `docs/design/` 无一处 wasm（§1 既有立场项），接线后属"落地后稳定内容迁入 explain"（§6）；同时 wasm 的能力边界（支持哪些 opcode / WASI 子集、不做什么）值得写成设计立场文档，避免下一轮再次误读成"已实装"。

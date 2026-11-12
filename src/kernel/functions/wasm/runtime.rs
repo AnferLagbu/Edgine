@@ -126,6 +126,38 @@ impl Default for ValueStack {
 // 调用帧
 // ============================================================================
 
+/// 控制标签种类 — `block` / `loop` / `if` 的 br 目标语义不同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelKind {
+    /// `block`: br 跳到块尾 (前向退出)。
+    Block,
+    /// `loop`: br 跳到块首 (回边, 标签保持)。
+    Loop,
+    /// `if`: br 跳到 if 的匹配 `end` 之后 (前向退出)。
+    If,
+}
+
+/// 块标签 — 每次进入 `block` / `loop` / `if` 压入一帧标签栈条目。
+///
+/// 记录进入时的操作数栈高度与块结果 arity, 供 `br*` / `end` / `else` 做
+/// 值保留 + 栈截断归一化; `end_pc` 为匹配 `end` 之后的位置 (block/if 的 br
+/// 目标), `start_pc` 为块体首指令 (loop 的回边目标)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlLabel {
+    /// 标签种类
+    pub kind: LabelKind,
+    /// 块结果 arity (MVP 仅 0/1)
+    pub arity: usize,
+    /// 进入块时的操作数栈高度 (不含块结果)
+    pub stack_height: usize,
+    /// 块体首指令位置 (loop 回边目标)
+    pub start_pc: usize,
+    /// 匹配 `end` 之后的位置 (block/if 前向跳转目标)
+    pub end_pc: usize,
+    /// `if` 的 `else` 之后位置 (无 `else` 为 `None`)
+    pub else_pc: Option<usize>,
+}
+
 /// 函数调用帧 (记录一次 WASM 函数调用的执行上下文)
 pub struct CallFrame {
     /// 被调函数在模块函数表中的索引
@@ -142,6 +174,8 @@ pub struct CallFrame {
     pub return_pc: usize,
     /// 该帧在值栈中的基准位置
     pub stack_base: usize,
+    /// 本帧的块标签栈 (最内层在末尾; 函数体本身不占标签)
+    pub labels: Vec<ControlLabel>,
 }
 
 impl CallFrame {

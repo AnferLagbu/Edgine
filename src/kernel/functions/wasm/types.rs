@@ -699,6 +699,12 @@ pub enum WasmError {
     BadFuncIndex(usize),
     /// 解释器内部不变量被破坏。
     InternalError,
+    /// 当前实现明确不支持的合法 wasm 结构 (浮点 / 多值块类型等)
+    Unsupported,
+    /// `br` / `br_if` / `br_table` 深度超出当前块标签栈
+    BadLabelDepth(usize),
+    /// 块结构畸形 (`else` 不在 `if` 内 / 重复 `else` 等), 记录现场字节
+    BadBlockStructure(u8),
     /// WASI `proc_exit` 触发的实例终止
     Terminated,
 }

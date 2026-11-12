@@ -27,7 +27,9 @@ use alloc::vec::Vec;
 
 use super::leb128::{read_leb128_i32, read_leb128_i64, read_leb128_u32};
 use super::module::parse_wasm;
-use super::runtime::{CallFrame, InterpreterConfig, LinearMemory, ValueStack};
+use super::runtime::{
+    CallFrame, ControlLabel, InterpreterConfig, LabelKind, LinearMemory, ValueStack,
+};
 use super::types::{
     ExportKind, FuncType, FunctionBody, ImportKind, Opcode, Value, WasmError, WasmModule,
 };
@@ -406,24 +408,23 @@ impl Interpreter {
             arity: func_type.results.len(),
             return_pc: 0,
             stack_base,
+            labels: Vec::new(),
         };
 
         self.call_stack.push(frame);
         self.execute_call_stack()?;
 
-        if let Some(_frame) = self.call_stack.pop() {
-            let actual_results = self.stack.len() - stack_base;
-            if func_type.results.len() == 1 && actual_results >= 1 {
-                let result = self.stack.pop()?;
-                self.stack.drain_to(stack_base);
-                Ok(Some(result))
-            } else {
-                self.stack.drain_to(stack_base);
-                Ok(None)
-            }
+        // 函数帧在 End (标签栈空) 时已由执行循环弹出; 结果值留在栈上,
+        // 此处按声明 arity 取回并按帧基准截断 (原实现在此处二次 pop 帧,
+        // 导致返回值恒丢).
+        let actual_results = self.stack.len() - stack_base;
+        let result = if func_type.results.len() == 1 && actual_results >= 1 {
+            Some(self.stack.pop()?)
         } else {
-            Ok(None)
-        }
+            None
+        };
+        self.stack.drain_to(stack_base);
+        Ok(result)
     }
 
     /// 执行调用栈直至全部帧结束: 取指令 → 计量 gas → 分派单条指令
@@ -475,15 +476,14 @@ impl Interpreter {
     fn execute_control_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
         match op {
             Opcode::Unreachable | Opcode::CallIndirect => Some(Err(WasmError::Unreachable)),
-            Opcode::Nop | Opcode::Block | Opcode::Loop => {
+            Opcode::Nop => {
                 self.advance_pc(1);
                 Some(Ok(()))
             }
+            Opcode::Block => Some(self.execute_block(LabelKind::Block)),
+            Opcode::Loop => Some(self.execute_block(LabelKind::Loop)),
             Opcode::End => Some(self.execute_end()),
-            Opcode::Return => {
-                self.execute_return();
-                Some(Ok(()))
-            }
+            Opcode::Return => Some(self.execute_return()),
             Opcode::If => Some(self.execute_if()),
             Opcode::Else => Some(self.execute_else()),
             Opcode::Br => Some(self.execute_br()),
@@ -634,95 +634,353 @@ impl Interpreter {
 
     // --- 控制流 ---
 
-    fn execute_end(&mut self) -> Result<(), WasmError> {
-        let frame = self.call_stack.pop().ok_or(WasmError::InternalError)?;
-        let arity = frame.arity;
-
-        if arity == 1 {
-            let stack_len = self.stack.len();
-            let frame2 = self.current_frame_mut()?;
-            frame2.stack_base = stack_len;
-            let _ = frame2;
+    /// 读取块类型字节, 返回 `(结果 arity, 块体首指令位置)`.
+    ///
+    /// 支持空块 `0x40` 与单值 i32/i64; 浮点与多值块类型是本实现的明确
+    /// 范围边界 (返 `Unsupported`), 其余非法字节返 `BadValueType`.
+    fn read_block_type(code: &[u8], pc: usize) -> Result<(usize, usize), WasmError> {
+        let byte = *code.get(pc).ok_or(WasmError::Truncated)?;
+        match byte {
+            0x40 => Ok((0, pc + 1)),
+            0x7F | 0x7E => Ok((1, pc + 1)),
+            0x7D | 0x7C | 0x7B | 0x70 | 0x6F => Err(WasmError::Unsupported),
+            _ => {
+                // s33 类型索引 (多值块): 先按 LEB 解码确认位置, 再判不支持 —
+                // 直接把类型索引字节当指令继续消费会错位.
+                let mut next = pc;
+                let value = read_leb128_i32(code, &mut next)?;
+                if value >= 0 {
+                    Err(WasmError::Unsupported)
+                } else {
+                    Err(WasmError::BadValueType(byte))
+                }
+            }
         }
+    }
 
+    /// 跳过块类型字节 (结构扫描用; 允许浮点等本实现不执行的类型).
+    fn skip_block_type(code: &[u8], pc: usize) -> Result<usize, WasmError> {
+        match code.get(pc) {
+            Some(0x40 | 0x7D | 0x7C | 0x7F | 0x7E | 0x7B | 0x70 | 0x6F) => Ok(pc + 1),
+            Some(_) => {
+                let mut next = pc;
+                let _ = read_leb128_i32(code, &mut next)?;
+                Ok(next)
+            }
+            None => Err(WasmError::Truncated),
+        }
+    }
+
+    /// 扫描块体结构: 返回 `(else 落点, 匹配 end 之后位置)`.
+    ///
+    /// 逐指令跳过立即数, 不把立即数/嵌套块类型字节误判为块标签.
+    fn scan_block_layout(code: &[u8], body_pc: usize) -> Result<(Option<usize>, usize), WasmError> {
+        let mut depth = 0usize;
+        let mut else_pc = None;
+        let mut pc = body_pc;
+        loop {
+            let byte = *code.get(pc).ok_or(WasmError::Truncated)?;
+            match byte {
+                0x02..=0x04 => {
+                    depth += 1;
+                    pc = Self::skip_block_type(code, pc + 1)?;
+                }
+                0x0B => {
+                    if depth == 0 {
+                        return Ok((else_pc, pc + 1));
+                    }
+                    depth -= 1;
+                    pc += 1;
+                }
+                0x05 => {
+                    if depth == 0 {
+                        if else_pc.is_some() {
+                            return Err(WasmError::BadBlockStructure(byte));
+                        }
+                        else_pc = Some(pc + 1);
+                    }
+                    pc += 1;
+                }
+                _ => pc = Self::skip_instruction(code, pc)?,
+            }
+        }
+    }
+
+    /// 跳过一个指令 (含立即数); 未知/未支持 opcode 返错.
+    fn skip_instruction(code: &[u8], pc: usize) -> Result<usize, WasmError> {
+        let byte = *code.get(pc).ok_or(WasmError::Truncated)?;
+        let after = pc + 1;
+        match byte {
+            0x02..=0x04 => Self::skip_block_type(code, after),
+            0x0C | 0x0D | 0x10 | 0x20 | 0x21 | 0x22 | 0x23 | 0x24 => {
+                Self::skip_leb_u32(code, after)
+            }
+            0x0E => {
+                let mut next = after;
+                let count = read_leb128_u32(code, &mut next)? as usize;
+                // 每个目标至少 1 字节: 以上界先于循环/分配
+                if count + 1 > code.len().saturating_sub(next) {
+                    return Err(WasmError::Truncated);
+                }
+                for _ in 0..=count {
+                    next = Self::skip_leb_u32(code, next)?;
+                }
+                Ok(next)
+            }
+            // call_indirect (类型索引 + 表索引) 与内存访问 (align + offset):
+            // 均为两个 LEB 立即数
+            0x11 | 0x28..=0x3E => {
+                let next = Self::skip_leb_u32(code, after)?;
+                Self::skip_leb_u32(code, next)
+            }
+            // memory.size / memory.grow: 保留内存索引字节 (恒 0x00)
+            0x3F | 0x40 => {
+                if after < code.len() {
+                    Ok(after + 1)
+                } else {
+                    Err(WasmError::Truncated)
+                }
+            }
+            0x41 => {
+                let mut next = after;
+                let _ = read_leb128_i32(code, &mut next)?;
+                Ok(next)
+            }
+            0x42 => {
+                let mut next = after;
+                let _ = read_leb128_i64(code, &mut next)?;
+                Ok(next)
+            }
+            _ => {
+                // 其余已声明 opcode 无立即数; 未声明字节按未知 opcode 处理
+                Opcode::from_byte(byte).ok_or(WasmError::UnknownOpcode(byte))?;
+                Ok(after)
+            }
+        }
+    }
+
+    fn skip_leb_u32(code: &[u8], pc: usize) -> Result<usize, WasmError> {
+        let mut next = pc;
+        let _ = read_leb128_u32(code, &mut next)?;
+        Ok(next)
+    }
+
+    /// 弹出栈顶 `arity` 个分支值 (保持原始顺序).
+    fn take_values(&mut self, arity: usize) -> Result<Vec<Value>, WasmError> {
+        let mut values = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            values.push(self.stack.pop()?);
+        }
+        values.reverse();
+        Ok(values)
+    }
+
+    /// 截断到 `height` 后压回分支值 (块归一化).
+    fn normalize_stack(&mut self, height: usize, values: Vec<Value>) -> Result<(), WasmError> {
+        self.stack.drain_to(height);
+        for value in values {
+            self.stack.push(value)?;
+        }
         Ok(())
     }
 
-    fn execute_return(&mut self) {
-        while let Some(frame) = self.call_stack.pop() {
-            let arity = frame.arity;
-            if arity == 0 {
-                break;
-            }
+    /// 进入 block/loop: 消费块类型字节并压入标签.
+    fn execute_block(&mut self, kind: LabelKind) -> Result<(), WasmError> {
+        let (arity, body_pc, else_pc, end_pc) = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            let (arity, body_pc) = Self::read_block_type(&frame.code, frame.pc)?;
+            let (else_pc, end_pc) = Self::scan_block_layout(&frame.code, body_pc)?;
+            (arity, body_pc, else_pc, end_pc)
+        };
+        if else_pc.is_some() {
+            // else 只允许出现在 if 内
+            return Err(WasmError::BadBlockStructure(0x05));
         }
+        let label = ControlLabel {
+            kind,
+            arity,
+            stack_height: self.stack.len(),
+            start_pc: body_pc,
+            end_pc,
+            else_pc: None,
+        };
+        let frame = self.current_frame_mut()?;
+        frame.labels.push(label);
+        frame.pc = body_pc;
+        Ok(())
+    }
+
+    /// 函数返回: 保留结果 arity、截断到帧基准并弹出当前帧.
+    fn return_from_function(&mut self) -> Result<(), WasmError> {
+        let (stack_base, arity) = {
+            let frame = self.call_stack.last().ok_or(WasmError::InternalError)?;
+            (frame.stack_base, frame.arity)
+        };
+        let values = self.take_values(arity)?;
+        self.normalize_stack(stack_base, values)?;
+        let _ = self.call_stack.pop();
+        Ok(())
+    }
+
+    fn execute_end(&mut self) -> Result<(), WasmError> {
+        let maybe_label = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            frame.labels.pop()
+        };
+        if let Some(label) = maybe_label {
+            let values = self.take_values(label.arity)?;
+            self.normalize_stack(label.stack_height, values)
+        } else {
+            // 标签栈为空 ⇒ 函数体 end
+            self.return_from_function()
+        }
+    }
+
+    fn execute_return(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        self.return_from_function()
     }
 
     fn execute_if(&mut self) -> Result<(), WasmError> {
         let cond = self.stack.pop_i32()?;
+        let (arity, body_pc, else_pc, end_pc) = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            let (arity, body_pc) = Self::read_block_type(&frame.code, frame.pc)?;
+            let (else_pc, end_pc) = Self::scan_block_layout(&frame.code, body_pc)?;
+            (arity, body_pc, else_pc, end_pc)
+        };
+        let stack_height = self.stack.len();
+        let label = ControlLabel {
+            kind: LabelKind::If,
+            arity,
+            stack_height,
+            start_pc: body_pc,
+            end_pc,
+            else_pc,
+        };
         let frame = self.current_frame_mut()?;
-        frame.pc += 1;
-        if cond == 0 {
-            let byte = frame.code[frame.pc];
-            frame.pc += 1;
-            if byte == 0x40 {
-                let pos = Self::skip_block(&frame.code, frame.pc);
-                frame.pc = pos;
-            } else {
-                let pos = Self::skip_to_else_or_end(&frame.code, frame.pc - 1);
-                frame.pc = pos;
-            }
+        if cond != 0 {
+            frame.labels.push(label);
+            frame.pc = body_pc;
+        } else if let Some(else_start) = else_pc {
+            frame.labels.push(label);
+            frame.pc = else_start;
         } else {
-            let byte = frame.code[frame.pc];
-            frame.pc += 1;
-            if byte == 0x40 {}
+            // 无 else: 假分支直接落到 end 之后; 结果 arity 必须为 0
+            frame.pc = end_pc;
+            self.stack.drain_to(stack_height);
         }
         Ok(())
     }
 
     fn execute_else(&mut self) -> Result<(), WasmError> {
+        let label = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            let Some(label) = frame.labels.last().copied() else {
+                return Err(WasmError::BadBlockStructure(0x05));
+            };
+            label
+        };
+        if label.kind != LabelKind::If {
+            return Err(WasmError::BadBlockStructure(0x05));
+        }
+        // 真分支正常完成: 跳到匹配 end 之后并弹出 if 标签
         let frame = self.current_frame_mut()?;
-        let pos = Self::skip_to_end(&frame.code, frame.pc);
-        frame.pc = pos;
+        frame.labels.pop();
+        frame.pc = label.end_pc;
+        let values = self.take_values(label.arity)?;
+        self.normalize_stack(label.stack_height, values)
+    }
+
+    /// br 系列公共落点: `depth` 为标签深度 (0 = 最内层; `labels.len()` = 函数返回).
+    fn branch_to(&mut self, depth: usize) -> Result<(), WasmError> {
+        let labels_len = self
+            .call_stack
+            .last()
+            .ok_or(WasmError::InternalError)?
+            .labels
+            .len();
+        if depth == labels_len {
+            return self.return_from_function();
+        }
+        if depth > labels_len {
+            return Err(WasmError::BadLabelDepth(depth));
+        }
+        let target_idx = labels_len - 1 - depth;
+        let label = {
+            let frame = self.current_frame_mut()?;
+            frame.labels[target_idx]
+        };
+        let values = self.take_values(label.arity)?;
+        if label.kind == LabelKind::Loop {
+            // 回边: 保留 loop 标签, 截断到入口高度后回到块体首指令
+            self.normalize_stack(label.stack_height, values)?;
+            let frame = self.current_frame_mut()?;
+            frame.labels.truncate(target_idx + 1);
+            frame.pc = label.start_pc;
+        } else {
+            // 前向退出: 弹出目标及其内层标签, 跳到匹配 end 之后
+            self.normalize_stack(label.stack_height, values)?;
+            let frame = self.current_frame_mut()?;
+            frame.labels.truncate(target_idx);
+            frame.pc = label.end_pc;
+        }
         Ok(())
     }
 
     fn execute_br(&mut self) -> Result<(), WasmError> {
-        let frame = self.current_frame_mut()?;
-        frame.pc += 1;
-        let depth = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
-        self.unwind_to(depth);
-        Ok(())
+        let depth = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            read_leb128_u32(&frame.code, &mut frame.pc)? as usize
+        };
+        self.branch_to(depth)
     }
 
     fn execute_br_if(&mut self) -> Result<(), WasmError> {
         let cond = self.stack.pop_i32()?;
-        let frame = self.current_frame_mut()?;
-        frame.pc += 1;
-        let depth = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+        let depth = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            read_leb128_u32(&frame.code, &mut frame.pc)? as usize
+        };
         if cond != 0 {
-            self.unwind_to(depth);
+            self.branch_to(depth)?;
         }
         Ok(())
     }
 
     fn execute_br_table(&mut self) -> Result<(), WasmError> {
         let index = self.stack.pop_i32()?;
-        let frame = self.current_frame_mut()?;
-        frame.pc += 1;
-        let n = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
-        let mut targets = alloc::vec![0usize; n + 1];
-        for slot in targets.iter_mut().take(n) {
-            *slot = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
-        }
-        targets[n] = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
-        let _ = frame;
-        let depth = if index >= 0 && crate::functions::intcast::usize_from_i32(index) < n {
-            targets[crate::functions::intcast::usize_from_i32(index)]
-        } else {
-            targets[n]
+        let depth = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            let count = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+            // 每个目标至少 1 字节: 先做上界校验, 防止恶意计数造成长循环
+            if count + 1 > frame.code.len().saturating_sub(frame.pc) {
+                return Err(WasmError::Truncated);
+            }
+            let index_usize = if index >= 0 {
+                Some(crate::functions::intcast::usize_from_i32(index))
+            } else {
+                None
+            };
+            let mut depth = 0usize;
+            let mut picked = false;
+            for i in 0..=count {
+                let target = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+                if !picked && (i == count || index_usize == Some(i)) {
+                    depth = target;
+                    picked = true;
+                }
+            }
+            depth
         };
-        self.unwind_to(depth);
-        Ok(())
+        self.branch_to(depth)
     }
 
     fn execute_call(&mut self) -> Result<(), WasmError> {
@@ -796,6 +1054,7 @@ impl Interpreter {
             }
         }
 
+        let stack_base = self.stack.len();
         let frame = CallFrame {
             func_idx,
             locals,
@@ -803,88 +1062,12 @@ impl Interpreter {
             code: body.code.clone(),
             arity: func_type.results.len(),
             return_pc: 0,
-            stack_base: self.stack.len(),
+            stack_base,
+            labels: Vec::new(),
         };
 
         self.call_stack.push(frame);
         Ok(())
-    }
-
-    fn unwind_to(&mut self, depth: usize) {
-        let target = self.call_stack.len().saturating_sub(depth + 1);
-        while self.call_stack.len() > target {
-            self.call_stack.pop();
-        }
-    }
-
-    fn skip_block(code: &[u8], mut pc: usize) -> usize {
-        let mut depth = 1;
-        while pc < code.len() && depth > 0 {
-            let b = code[pc];
-            pc += 1;
-            match b {
-                0x02..=0x04 => depth += 1,
-                0x0B => depth -= 1,
-                0x10 => {
-                    pc += 1;
-                }
-                0x11 => {
-                    pc += 2;
-                }
-                _ => {}
-            }
-        }
-        pc
-    }
-
-    fn skip_to_else_or_end(code: &[u8], mut pc: usize) -> usize {
-        let mut depth = 1;
-        while pc < code.len() && depth > 0 {
-            let b = code[pc];
-            pc += 1;
-            match b {
-                0x02..=0x04 => depth += 1,
-                0x0B => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return pc;
-                    }
-                }
-                0x05 => {
-                    if depth == 1 {
-                        return pc;
-                    }
-                }
-                0x10 => {
-                    pc += 1;
-                }
-                0x11 => {
-                    pc += 2;
-                }
-                _ => {}
-            }
-        }
-        pc
-    }
-
-    fn skip_to_end(code: &[u8], mut pc: usize) -> usize {
-        let mut depth = 1;
-        while pc < code.len() && depth > 0 {
-            let b = code[pc];
-            pc += 1;
-            match b {
-                0x02..=0x04 => depth += 1,
-                0x0B => depth -= 1,
-                0x10 => {
-                    pc += 1;
-                }
-                0x11 => {
-                    pc += 2;
-                }
-                _ => {}
-            }
-        }
-        pc
     }
 
     // --- 局部变量 ---
@@ -1220,4 +1403,164 @@ impl Interpreter {
 pub fn instantiate(bytes: &[u8], config: InterpreterConfig) -> Result<Interpreter, WasmError> {
     let module = parse_wasm(bytes)?;
     Ok(Interpreter::new(module, config))
+}
+
+// ============================================================================
+// W-3 结构化控制流回归锁 (host-side)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::functions::wasm::types::{
+        ExportDesc, FuncType, FunctionBody, ValueType, WasmModule,
+    };
+
+    /// 构造单函数模块: 导出 "f", 参数/结果均为 i32.
+    fn module(
+        body: Vec<u8>,
+        locals: Vec<(u32, ValueType)>,
+        params: usize,
+        results: usize,
+    ) -> WasmModule {
+        let param_types: Vec<ValueType> = (0..params).map(|_| ValueType::I32).collect();
+        let result_types: Vec<ValueType> = (0..results).map(|_| ValueType::I32).collect();
+        WasmModule {
+            types: vec![FuncType {
+                params: param_types,
+                results: result_types,
+            }],
+            imports: Vec::new(),
+            functions: vec![0],
+            tables: Vec::new(),
+            memories: Vec::new(),
+            globals: Vec::new(),
+            exports: vec![ExportDesc {
+                name: b"f".to_vec(),
+                kind: ExportKind::Function,
+                index: 0,
+            }],
+            start_section: None,
+            elements: Vec::new(),
+            code: vec![FunctionBody { locals, code: body }],
+            data: Vec::new(),
+        }
+    }
+
+    fn run(body: Vec<u8>, locals: Vec<(u32, ValueType)>) -> Result<Option<Value>, WasmError> {
+        let mut interp = Interpreter::new(module(body, locals, 0, 1), InterpreterConfig::default());
+        interp.call("f", &[])
+    }
+
+    #[test]
+    fn block_result_falls_through_and_normalizes() {
+        // i32.const 7; block (result i32) { i32.const 42 } end; end
+        // 块结果落穿: 块入口高度以上的 7 被截断, 只留 42.
+        let body = vec![0x41, 0x07, 0x02, 0x7F, 0x41, 0x2A, 0x0B, 0x0B];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(42))));
+    }
+
+    #[test]
+    fn empty_block_type_is_consumed_not_memory_grow() {
+        // 0x40 在旧实现中会被当 memory.grow 执行 (空栈即下溢);
+        // W-3 必须把 0x40 消费为块类型. 块体留空, 常量在块后取值.
+        let body = vec![0x02, 0x40, 0x0B, 0x41, 0x03, 0x0B];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(3))));
+    }
+
+    #[test]
+    fn nested_block_cross_level_br_unwinds_labels_not_frames() {
+        // const 1; block(i32){ block(i32){ const 5; br 1 } const 9 } end
+        // br 1 命中外层 block (而非调用帧): 5 落穿, 9 不执行.
+        let body = vec![
+            0x41, 0x01, 0x02, 0x7F, 0x02, 0x7F, 0x41, 0x05, 0x0C, 0x01, 0x41, 0x09, 0x0B, 0x0B,
+            0x0B,
+        ];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(5))));
+    }
+
+    #[test]
+    fn loop_early_exit_via_br_if_to_outer_block() {
+        // block { loop { local0 += 1; if local0 >= 3 { br_if 1 } ; br 0 } } ; local0
+        // 校验 loop 回边 + 跨层前向退出 + 栈清零.
+        let body = vec![
+            0x02, 0x40, 0x03, 0x40, 0x20, 0x00, 0x41, 0x01, 0x6A, 0x22, 0x00, 0x41, 0x03, 0x4E,
+            0x0D, 0x01, 0x0C, 0x00, 0x0B, 0x0B, 0x20, 0x00, 0x0B,
+        ];
+        assert_eq!(
+            run(body, alloc::vec![(1, ValueType::I32)]),
+            Ok(Some(Value::I32(3)))
+        );
+    }
+
+    #[test]
+    fn if_then_and_else_paths() {
+        let then_body = vec![
+            0x41, 0x01, 0x04, 0x7F, 0x41, 0x0A, 0x05, 0x41, 0x14, 0x0B, 0x0B,
+        ];
+        assert_eq!(run(then_body, Vec::new()), Ok(Some(Value::I32(10))));
+        let else_body = vec![
+            0x41, 0x00, 0x04, 0x7F, 0x41, 0x0A, 0x05, 0x41, 0x14, 0x0B, 0x0B,
+        ];
+        assert_eq!(run(else_body, Vec::new()), Ok(Some(Value::I32(20))));
+    }
+
+    #[test]
+    fn if_without_else_skips_body_when_false() {
+        // cond 0; if { i32.const 9 }; i32.const 3; end → 3 (9 被跳过)
+        let body = vec![0x41, 0x00, 0x04, 0x40, 0x41, 0x09, 0x0B, 0x41, 0x03, 0x0B];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(3))));
+    }
+
+    #[test]
+    fn br_table_default_target_with_value() {
+        // block(i32){ block(i32){ const 7; const 5(index); br_table [0,1] default 1 } }
+        // index 5 >= 2 ⇒ default 深度 1 (外层), 分支值 7 落穿.
+        let body = vec![
+            0x02, 0x7F, 0x02, 0x7F, 0x41, 0x07, 0x41, 0x05, 0x0E, 0x02, 0x00, 0x01, 0x01, 0x41,
+            0x09, 0x0B, 0x0B, 0x0B,
+        ];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(7))));
+    }
+
+    #[test]
+    fn br_to_function_depth_returns_value() {
+        // block { const 6; br 1 (= 函数深度, 与 return 同义); const 9 } end
+        let body = vec![0x02, 0x40, 0x41, 0x06, 0x0C, 0x01, 0x41, 0x09, 0x0B, 0x0B];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(6))));
+    }
+
+    #[test]
+    fn return_opcode_returns_value() {
+        let body = vec![0x41, 0x04, 0x0F, 0x41, 0x09, 0x0B];
+        assert_eq!(run(body, Vec::new()), Ok(Some(Value::I32(4))));
+    }
+
+    #[test]
+    fn excessive_branch_depth_is_error() {
+        let body = vec![0x0C, 0x05, 0x0B];
+        assert_eq!(run(body, Vec::new()), Err(WasmError::BadLabelDepth(5)));
+    }
+
+    #[test]
+    fn unsupported_block_type_is_error() {
+        // f32 块类型: 明确不支持 (§3 甲 浮点不纳入)
+        let body = vec![0x02, 0x7D, 0x0B, 0x0B];
+        assert_eq!(run(body, Vec::new()), Err(WasmError::Unsupported));
+    }
+
+    #[test]
+    fn else_without_if_is_error() {
+        let body = vec![0x05, 0x0B];
+        assert_eq!(
+            run(body, Vec::new()),
+            Err(WasmError::BadBlockStructure(0x05))
+        );
+    }
+
+    #[test]
+    fn unterminated_block_is_truncated_error() {
+        let body = vec![0x02, 0x40, 0x41, 0x01];
+        assert_eq!(run(body, Vec::new()), Err(WasmError::Truncated));
+    }
 }
