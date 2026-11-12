@@ -33,36 +33,57 @@ fn entry(inner_fd: i32) -> WasiFdEntry {
 #[test]
 fn test_fd_table_create() {
     let mut table = WasiFdTable::new(16);
-    // fd 0-2 保留 (stdin/stdout/stderr): 未分配 → get 返回 Badf
-    assert!(table.get(0).is_err());
-    assert!(table.get(1).is_err());
-    assert!(table.get(2).is_err());
-    // fd < 3 的 close 同样拒绝
+    // fd 0-2 预置为标准流: 与进程 VFS 同号 fd 一一对应
+    for fd in [0u32, 1, 2] {
+        let entry = table.get(fd).unwrap();
+        assert_eq!(entry.file_type, WasiFileType::CharacterDevice);
+        assert_eq!(
+            entry.inner_fd,
+            i32::try_from(fd).expect("预置 fd 应可由 i32 表示")
+        );
+        assert!(entry.path.is_none());
+    }
+    // fd 3 预置为根 preopen
+    let preopen = table.get(3).unwrap();
+    assert_eq!(preopen.file_type, WasiFileType::Directory);
+    assert_eq!(preopen.inner_fd, -1);
+    assert_eq!(preopen.path.as_deref(), Some("/"));
+    // fd < 3 的 close 仍拒绝 (标准流不可经 WASI 关闭)
     assert!(table.close(0).is_err());
     assert!(table.close(2).is_err());
 }
 
 #[test]
+fn test_fd_table_small_capacity_presets() {
+    // 容量 2: 只预置 fd 0/1, 不 panic; 无动态分配槽位
+    let mut table = WasiFdTable::new(2);
+    assert!(table.get(0).is_ok());
+    assert!(table.get(1).is_ok());
+    assert!(table.get(2).is_err());
+    assert!(table.get(3).is_err());
+    assert!(table.alloc(entry(10)).is_err());
+}
+
+#[test]
 fn test_fd_table_alloc_close() {
     let mut table = WasiFdTable::new(16);
-    // 分配 fd 3 (从 3 起找空槽)
+    // 分配 fd 4 (0-3 已被标准流与 preopen 预置)
     let fd = table.alloc(entry(10)).unwrap();
-    assert_eq!(fd, 3);
-    assert_eq!(table.get(3).unwrap().inner_fd, 10);
-    // 关闭 fd 3
-    let closed = table.close(3).unwrap();
+    assert_eq!(fd, 4);
+    assert_eq!(table.get(4).unwrap().inner_fd, 10);
+    // 关闭 fd 4
+    let closed = table.close(4).unwrap();
     assert_eq!(closed.inner_fd, 10);
-    assert!(table.get(3).is_err());
+    assert!(table.get(4).is_err());
 }
 
 #[test]
 fn test_fd_table_overflow() {
     let mut table = WasiFdTable::new(5);
-    // 填满 fd 3, 4
+    // 预置 0-3 后仅剩 fd 4 可分配
     table.alloc(entry(10)).unwrap();
-    table.alloc(entry(20)).unwrap();
     // 无空槽 → alloc 返回 Badf
-    assert!(table.alloc(entry(30)).is_err());
+    assert!(table.alloc(entry(20)).is_err());
     // 重复 close 空槽也返回 Badf
     assert!(table.close(5).is_err());
 }
@@ -70,9 +91,9 @@ fn test_fd_table_overflow() {
 #[test]
 fn test_fd_table_renumber() {
     let mut table = WasiFdTable::new(16);
-    table.alloc(entry(10)).unwrap(); // fd 3
-    table.renumber(3, 10).unwrap();
-    assert!(table.get(3).is_err());
+    table.alloc(entry(10)).unwrap(); // fd 4
+    table.renumber(4, 10).unwrap();
+    assert!(table.get(4).is_err());
     assert_eq!(table.get(10).unwrap().inner_fd, 10);
     // 越界 renumber 返回 Badf
     assert!(table.renumber(10, 20).is_err());

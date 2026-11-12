@@ -104,12 +104,46 @@ pub struct WasiFdTable {
 }
 
 impl WasiFdTable {
-    /// 创建容量为 `max_fds` 的空 fd 表 (0/1/2 预留给标准流)
+    /// 创建容量为 `max_fds` 的 fd 表
+    ///
+    /// 预置标准流 fd 0/1/2 (与进程 VFS 同号 fd 一一对应, 宿主 I/O 直接落
+    /// VFS) 与根 preopen fd 3 (`"/"`, 供 `path_open` 等相对路径解析);
+    /// 容量不足 4 时只预置能容纳的槽位。
     #[must_use]
     pub fn new(max_fds: u32) -> Self {
         let mut entries = Vec::with_capacity(max_fds as usize);
         entries.resize_with(max_fds as usize, || None);
-        Self { entries, max_fds }
+        let mut table = Self { entries, max_fds };
+
+        // 标准流: WASI fd N 映射进程 VFS fd N, `fd_read` / `fd_write` 据此落真实 VFS.
+        for (fd, inner_fd) in [(WASI_STDIN, 0i32), (WASI_STDOUT, 1i32), (WASI_STDERR, 2i32)] {
+            if let Some(slot) = table.entries.get_mut(fd as usize) {
+                *slot = Some(WasiFdEntry {
+                    file_type: WasiFileType::CharacterDevice,
+                    rights: WasiRights::ALL,
+                    inner_fd,
+                    socket: None,
+                    path: None,
+                });
+            }
+        }
+
+        // SIMPLIFIED: 根 preopen 只承载路径解析 (`resolve_path` 读 `path` 字段),
+        // 不预开目录 VFS fd (inner_fd = -1); 影响面: 直接以 preopen fd 做
+        // `fd_readdir` / `fd_stat_get` 会返错, 经 `path_*` 打开子路径不受影响;
+        // 何时需扩展: 需要遍历 preopen 目录的 WASI 程序接入时, 在实例构造期
+        // `vfs_open("/", O_DIRECTORY)` 并回填 inner_fd.
+        if let Some(slot) = table.entries.get_mut(3) {
+            *slot = Some(WasiFdEntry {
+                file_type: WasiFileType::Directory,
+                rights: WasiRights::DIRECTORY,
+                inner_fd: -1,
+                socket: None,
+                path: Some(alloc::string::String::from("/")),
+            });
+        }
+
+        table
     }
 
     /// 分配一个新的 fd，返回 fd 编号
@@ -277,4 +311,51 @@ pub fn read_bytes_from_memory(
         buf.push(byte);
     }
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_entry() -> WasiFdEntry {
+        WasiFdEntry {
+            file_type: WasiFileType::RegularFile,
+            rights: WasiRights::FILE,
+            inner_fd: 10,
+            socket: None,
+            path: None,
+        }
+    }
+
+    /// 预置标准流与根 preopen: 类型 / 后端 fd / 路径三面固定
+    #[test]
+    fn new_presets_stdio_and_preopen_root() {
+        let mut table = WasiFdTable::new(16);
+        for (fd, inner_fd) in [(WASI_STDIN, 0), (WASI_STDOUT, 1), (WASI_STDERR, 2)] {
+            let entry = table.get(fd).unwrap();
+            assert_eq!(entry.file_type, WasiFileType::CharacterDevice);
+            assert_eq!(entry.inner_fd, inner_fd);
+            assert!(entry.path.is_none());
+        }
+
+        let preopen = table.get(3).unwrap();
+        assert_eq!(preopen.file_type, WasiFileType::Directory);
+        assert_eq!(preopen.inner_fd, -1);
+        assert_eq!(preopen.path.as_deref(), Some("/"));
+
+        // 首个动态分配落在 preopen 之后, 不覆盖任何预置槽位.
+        assert_eq!(table.alloc(file_entry()).unwrap(), 4);
+        assert_eq!(table.get(4).unwrap().inner_fd, 10);
+    }
+
+    /// 容量不足 4 时预置按槽位截断, 不 panic 且不越界写
+    #[test]
+    fn presets_fit_small_capacity() {
+        let mut table = WasiFdTable::new(2);
+        assert!(table.get(WASI_STDIN).is_ok());
+        assert!(table.get(WASI_STDOUT).is_ok());
+        assert!(table.get(WASI_STDERR).is_err());
+        assert!(table.get(3).is_err());
+        assert!(table.alloc(file_entry()).is_err());
+    }
 }
