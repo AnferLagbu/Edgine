@@ -730,6 +730,15 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] execve 探针未呈现无载体第三态 (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # W-7: wasm 探针载荷 /bin/hello.wasm 只来自 initramfs cpio; 默认启动
+            # 的空 ramfs 下必须呈显式 SKIP (与 A-14 的 exec 探针同口径), 且 FAIL
+            # 缺席. 端到端 PASS 由 initramfs 载体腿断言.
+            if grep -aq "\[WASM\] SKIP:" "$X64_LOG" && ! grep -aq "\[WASM\] FAIL" "$X64_LOG"; then
+                ok "[x86_64] wasm 探针无载体呈显式 SKIP 且无 FAIL 噪声 (W-7)"
+            else
+                warn "[x86_64] wasm 探针未呈现无载体第三态 (W-7)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
             # 任务发起, 故每核有界打印 `[SMP] EL0 pid=N cpu=M` 中出现 cpu=0 与 cpu=1
             # 即成对证明两核各自有用户任务运行于 EL0. 缺失即成对判据失败 (fail-closed).
@@ -934,6 +943,13 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] execve 探针无载体呈显式 SKIP 且无 FAIL 噪声 (A-14)"
             else
                 warn "[aarch64] execve 探针未呈现无载体第三态 (A-14)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # W-7: wasm 探针无载体第三态 (与 x86_64 分支同断言, 载体链路与架构无关).
+            if grep -aq "\[WASM\] SKIP:" "$A64_LOG" && ! grep -aq "\[WASM\] FAIL" "$A64_LOG"; then
+                ok "[aarch64] wasm 探针无载体呈显式 SKIP 且无 FAIL 噪声 (W-7)"
+            else
+                warn "[aarch64] wasm 探针未呈现无载体第三态 (W-7)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).

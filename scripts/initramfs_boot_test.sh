@@ -116,6 +116,9 @@ boot_and_check() {
     # `[EXEC] PASS` —— 载荷每腿都会打印 `[EXEC] PASS: <腿> argv+envp+cwd`,
     # 首腿通过即会让轮询提前收尾, root 腿与聚合行随之被切掉 (假绿).
     local marker_exec="\[EXEC\] PASS: cwd+root"
+    # W-7: 载体下 wasm 端到端 —— init fork + exec /bin/hello.wasm, 内核按 \0asm
+    # 分派装载用户态桩, 桩经 EG_WASM_LOAD/RUN 跑完模块, wstatus 0 才打印 PASS.
+    local marker_wasm="\[WASM\] PASS:"
     # K-07b 批3: 载体 init 在睡醒后触发 EEVDF 观测导出, 命中 END 行且账目
     # 守恒即证明观测面在载体装载路径下同样可达.
     local marker_snap="\[SCHED\] SNAP END"
@@ -180,6 +183,16 @@ boot_and_check() {
         return 1
     fi
     ok "[$arch] execve 运行时判据: $(grep -a "$marker_exec" "$log" | tail -1)"
+
+    if ! grep -aq "$marker_wasm" "$log"; then
+        err "[$arch] wasm 载体探针未通过 '$marker_wasm' (日志: $log)"
+        return 1
+    fi
+    if grep -aq "\[WASM\] FAIL" "$log"; then
+        err "[$arch] wasm 载体探针失败: $(grep -a "\[WASM\] FAIL" "$log" | tail -1)"
+        return 1
+    fi
+    ok "[$arch] wasm 进程级载体端到端通过 (W-7)"
 
     return "$rc"
 }

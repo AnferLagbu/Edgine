@@ -81,6 +81,8 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/install", "file", "install.bin"),
     ("bin/fbterm", "file", "fbterm.bin"),
     ("bin/httpsrv", "file", "httpsrv.bin"),
+    ("bin/wasmstub", "file", "wasmstub.bin"),
+    ("bin/hello.wasm", "file", "hello.wasm"),
 )
 # 必需条目 (源文件缺失即失败)
 REQUIRED_SRC = "init.bin"

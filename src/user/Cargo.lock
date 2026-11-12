@@ -61,3 +61,10 @@ version = "0.1.0"
 dependencies = [
  "edgine-abi",
 ]
+
+[[package]]
+name = "wasmstub"
+version = "0.1.0"
+dependencies = [
+ "userlib",
+]

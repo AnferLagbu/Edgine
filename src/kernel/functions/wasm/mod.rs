@@ -24,6 +24,8 @@ pub mod module;
 pub mod registry;
 /// T6-9: 运行时数据结构 (原 privileged/wasm/runtime.rs)
 pub mod runtime;
+/// 内嵌 wasm 用户态入口桩镜像与魔数判定 (W-7 批次 B)
+pub mod stub;
 /// T6-9: WASM 类型定义 (原 privileged/wasm/types.rs)
 pub mod types;
 /// WASI snapshot_preview1 适配层

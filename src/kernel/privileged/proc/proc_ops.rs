@@ -807,9 +807,14 @@ pub extern "C" fn proc_exec_replace(
         PROCESS_TABLE.with_process_mut(current_pid, |p| p.fs_context = new_fs);
     }
 
+    // 5a3. W-7: 换映像后不再持有 wasm 运行时句柄 —— 实例本体由 functions 侧
+    // 注册表的失效回收处置; 新映像 (无论 ELF 还是 wasm 桩) 从 0 开始.
+    PROCESS_TABLE.with_process(current_pid, |p| {
+        p.wasm_handle.store(0, Ordering::Release);
+    });
+
     // 5b. POSIX close-on-exec: 关闭所有标记 CLOEXEC 的 fd
     crate::privileged::fs::current_vfs_ops().close_cloexec_fds();
-
     // 5c. execve 后旧映像的 TLS 基址不保留: 新映像从 0 开始,
     // 硬件寄存器同步清除 (随后经 `user_proc_enter_by_pid` 的入口参数再次装载).
     let _ = PROCESS_TABLE.with_process(current_pid, |p| {

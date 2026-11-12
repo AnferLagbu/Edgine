@@ -97,21 +97,30 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
 
     // 阶段 4b: ELF 文件 I/O 下沉 functions — 读取字节 + PT_INTERP 改写,
     // 再交 privileged 纯机制 (进程替换/页表切换).
-    let Some(mut elf) =
+    let Some(mut image) =
         crate::functions::fs::api::read_file_to_vec(path as *const u8, current_pwm, ELF_MAX_SIZE)
     else {
         return Err(Errno::Enoent);
     };
-    crate::privileged::proc::elf::prepare_elf_image(&mut elf);
+
+    // §3 丙 裁定: 单点按 magic 的 match, 不抽 ImageLoader trait.
+    // - ELF: 走既有 PT_INTERP 改写 + 进程替换;
+    // - wasm (`\0asm`): 装载内嵌用户态入口桩, 模块路径随 argv[0] 交给桩,
+    //   桩再经 `EG_WASM_LOAD` 让内核读模块 (W-7).
+    let (image_ptr, image_len) = if crate::functions::wasm::stub::is_wasm_image(&image) {
+        let stub = crate::functions::wasm::stub::stub_image();
+        if stub.is_empty() {
+            return Err(Errno::Enoexec);
+        }
+        (stub.as_ptr() as u64, stub.len() as u64)
+    } else {
+        crate::privileged::proc::elf::prepare_elf_image(&mut image);
+        (image.as_ptr() as u64, image.len() as u64)
+    };
 
     // 进程替换 (privileged 机制: ELF 加载 + 地址空间切换 + 新栈 argv/envp)
     let result = crate::privileged::proc::proc_exec_replace(
-        elf.as_ptr() as u64,
-        elf.len() as u64,
-        argv,
-        arg_count,
-        envp,
-        env_count,
+        image_ptr, image_len, argv, arg_count, envp, env_count,
     );
     if result < 0 {
         Err(Errno::Enoent)

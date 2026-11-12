@@ -196,8 +196,19 @@ fn test_execve_passes_envp_to_privileged() {
     let flat = norm(&code);
     assert_contains(
         &flat,
-        "crate::privileged::proc::proc_exec_replace( elf.as_ptr() as u64, elf.len() as u64, argv, arg_count, envp, env_count,",
+        "crate::privileged::proc::proc_exec_replace( image_ptr, image_len, argv, arg_count, envp, env_count,",
         "functions 必须把 envp/env_count 一并下传 (6 参 FFI)",
+    );
+    // W-7 批次 B: 单点按 magic 分派 —— wasm 装载用户态桩, ELF 走既有路径.
+    assert_contains(
+        &flat,
+        "crate::functions::wasm::stub::is_wasm_image(&image)",
+        "exec 必须按 \\0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
+    );
+    assert_contains(
+        &flat,
+        "crate::functions::wasm::stub::stub_image()",
+        "wasm 分支必须装载内嵌用户态入口桩",
     );
 }
 
@@ -449,10 +460,16 @@ fn test_init_exec_probe_runs_both_path_resolution_legs() {
     let carrier = fn_body(&code, "fn carrier_present() -> bool");
     assert_contains(
         &carrier,
-        "fs_open(b\"/bin/exectest\\0\", O_RDONLY, 0)",
-        "载体自检用 open 而非 stat: 用户态无 stat 包装, 且 open 与两腿同走一套路径解析",
+        "file_present(b\"/bin/exectest\\0\")",
+        "载体自检走统一 file_present (open 路径解析, 非 stat)",
     );
-    assert_contains(&carrier, "let _ = fs_close(fd);", "探针不得泄漏 fd");
+    let present = fn_body(&code, "fn file_present(path: &[u8]) -> bool");
+    assert_contains(
+        &present,
+        "fs_open(path, O_RDONLY, 0)",
+        "载体自检用 open 而非 stat: 用户态无 stat 包装, 且 open 与 exec 两腿同走一套路径解析",
+    );
+    assert_contains(&present, "let _ = fs_close(fd);", "探针不得泄漏 fd");
 }
 
 // ── 5b. A-14: chdir 与 chroot 的存在性校验不对称 (探针两腿红点位置的成因) ──

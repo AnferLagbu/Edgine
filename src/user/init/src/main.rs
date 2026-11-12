@@ -123,6 +123,12 @@ pub extern "C" fn _start() -> ! {
     // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
     exec_probe();
 
+    // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
+    // 自写最小 wasm 模块 → fork → execve 该路径 (命中 `\0asm` 分派, 改装用户态
+    // 桩) → 父进程按 wstatus == 0 判定 (模块 `_start` 正常返回 0). 不依赖
+    // initramfs 载体, 默认启动与载体启动都会跑; 失败打印 `[WASM] FAIL` 并继续.
+    wasm_probe();
+
     // ── #108 丙: aarch64 缺页 / COW 恢复路径真链探针 ─────────────────────
     // 必须在 busy 忙等子进程 fork 之前同步完成: 三腿都靠父进程 wait4 收割子进程,
     // 且 `reuse` 腿要求子进程页表**已拆除** (持有计数回到 1) 才成立.
@@ -1125,12 +1131,7 @@ fn exec_probe() {
 /// 坏时本函数判「有载体」, 两腿照样打印 `[EXEC] FAIL` (失败信号仍会暴露);
 /// 何时需扩展: 需要区分 ENOENT 与 EACCES 两类载体故障时给用户态补 stat 包装.
 fn carrier_present() -> bool {
-    let fd = fs_open(b"/bin/exectest\0", O_RDONLY, 0);
-    if fd < 0 {
-        return false;
-    }
-    let _ = fs_close(fd);
-    true
+    file_present(b"/bin/exectest\0")
 }
 
 /// 单腿: fork → 子进程切换 FS 视图并 exec → 父进程收割按 `wstatus` 判定.
@@ -1145,6 +1146,51 @@ fn exec_leg(leg: &'static [u8]) -> bool {
     let mut status = 0i32;
     let reaped = wait_pid_status(pid, &mut status);
     reaped == i64::from(pid) && status == 0
+}
+
+/// W-7 探针载荷路径: 只来自 initramfs cpio (`bin/hello.wasm`)。
+const WASM_PROBE_PATH: &[u8] = b"/bin/hello.wasm\0";
+
+/// W-7 进程级 wasm 载体端到端探针: fork → execve(/bin/hello.wasm) → 父进程收割.
+///
+/// 判据 = 子进程 `wstatus == 0`: 只有 exec 识别 `\0asm` 并装载用户态桩、桩经
+/// `EG_WASM_LOAD/RUN` 把模块跑到正常结束, 退出码才为 0. 任一环节断裂都会落到
+/// 非 0 (子进程侧 exec 失败统一 `proc_exit(3)`, 桩失败 `proc_exit(1)`).
+///
+/// A-14 同口径: 载荷只来自 initramfs 载体, 默认启动的空 ramfs 下自检后打印
+/// `[WASM] SKIP: no carrier`, 避免「无载体导致的预期失败」与真回归同形。
+fn wasm_probe() {
+    if !file_present(WASM_PROBE_PATH) {
+        println("[WASM] SKIP: no carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [WASM_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let _ = proc_exec(WASM_PROBE_PATH, &argv, &[]);
+        proc_exit(3);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[WASM] FAIL: fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) && status == 0 {
+        println("[WASM] PASS: exec+run");
+    } else {
+        println("[WASM] FAIL: status");
+    }
+}
+
+/// 载体自检: 能否只读打开给定路径.
+fn file_present(path: &[u8]) -> bool {
+    let fd = fs_open(path, O_RDONLY, 0);
+    if fd < 0 {
+        return false;
+    }
+    let _ = fs_close(fd);
+    true
 }
 
 /// 子进程侧: 按腿切换视图 → `execve(exectest, argv, envp)`; exec 失败不返回.

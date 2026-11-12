@@ -51,6 +51,13 @@ fn main() {
             .join(&target_arch)
             .join("user/init.bin");
         require_exists(&init_bin);
+        // W-7: wasm 用户态入口桩按架构嵌入 (函数侧 `wasm/stub.rs` 的
+        // include_bytes! 同源); 缺失即报错, 不生成占位符.
+        let wasm_stub = base
+            .join("other/build")
+            .join(&target_arch)
+            .join("user/wasmstub.bin");
+        require_exists(&wasm_stub);
         // S-6 防线③附带: rerun-if-changed 必须给**绝对路径**. cargo 对相对路径以
         // 包根 (CARGO_MANIFEST_DIR = src/kernel) 为基准解析, 而 include_bytes! 以
         // 源文件为基准 —— 旧写法 `other/build/user/init.bin` 实际指向不存在的
@@ -62,6 +69,7 @@ fn main() {
             println!("cargo:rerun-if-changed={}", stage1.display());
         }
         println!("cargo:rerun-if-changed={}", init_bin.display());
+        println!("cargo:rerun-if-changed={}", wasm_stub.display());
         // K-07b: initramfs 载体归档按**本架构**目录检查, 与 `functions/init.rs` 的
         // `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
         // 仅在 feature 点亮时要求: 默认构建不嵌归档, 不该被它的存在性绑住.
