@@ -107,13 +107,11 @@ fn socket_wait_queue_table_sized_by_max_sm_fd() {
     // slots 16..255 唤醒静默失效的潜伏 bug); 不得回退为硬编码小常量.
     assert!(
         src.contains("queues: [SocketWaitQueue; MAX_SM_FD]"),
-        "P5a/D10: SocketWaitQueueTable 必须按 MAX_SM_FD 定长, 与 FdPlan::SMOLTCP 对齐"
+        "P5a/D10: SocketWaitQueueTable 必须按 MAX_SM_FD 定长, 与槽位容量单源对齐"
     );
     assert!(
-        src.contains(
-            "const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
-        ),
-        "P5a/D10: MAX_SM_FD 须与 FdPlan::SMOLTCP.capacity 同源 (免 init↔wait_queue 循环依赖)"
+        src.contains("const MAX_SM_FD: usize = crate::privileged::net::slots::MAX_SLOTS;"),
+        "P5a/D10: MAX_SM_FD 须与 net::slots::MAX_SLOTS 同源 (免 init↔wait_queue 循环依赖)"
     );
     assert!(
         !src.contains("[SocketWaitQueue; 16]"),

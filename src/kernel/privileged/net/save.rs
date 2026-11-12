@@ -39,13 +39,13 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;
 /// 快照版本
 pub const NET_SNAPSHOT_VERSION: u32 = 1;
-/// 快照槽位表长度: 与 smoltcp 槽位上限 (`FdPlan::SMOLTCP.capacity`) **单一来源**
-/// 同源, 与 `net/init.rs` 的 `MAX_SM_FD` 恒等 (二者皆从 `FdRange::capacity` 派生).
+/// 快照槽位表长度: 与 smoltcp 槽位上限 (`net::slots::MAX_SLOTS`) **单一来源**,
+/// 与 `net/init.rs` 的 `MAX_SM_FD` 恒等.
 /// `net_save` / `net_restore` 按 `0..MAX_SM_FD` 读写本数组, 若本长度短于
 /// `MAX_SM_FD` 会越界 panic (TD-02 曾将 `MAX_SM_FD` 重基为 256 而此处滞留 16 即
-/// 为潜伏崩溃); 故此处不得硬编码, 必须复用 `FdPlan` 单一来源.
+/// 为潜伏崩溃); 故此处不得硬编码, 必须复用槽位容量单源.
 /// 不引用 `net::init::MAX_SM_FD` 别名, 避免 `init ↔ save` 循环依赖 (与 `wait_queue` 同法).
-pub const SNAPSHOT_FD_COUNT: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
+pub const SNAPSHOT_FD_COUNT: usize = crate::privileged::net::slots::MAX_SLOTS;
 /// DNS 槽数
 pub const SNAPSHOT_DNS_COUNT: usize = 4;
 

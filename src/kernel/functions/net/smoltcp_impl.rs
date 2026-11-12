@@ -77,7 +77,7 @@ pub const MAX_SOCKETS: usize = 32;
 /// - `None` = 句柄槽位空闲
 ///
 /// P-18 之前槽位由 `SmoltcpNetStack` 专属段隐式换算 (slot = base + i), 与
-/// privileged `idx_of` 的基址换算叠加后偏移错位, 且 `accept` 产出的槽位无法
+/// privileged 的全局基址反查叠加后偏移错位, 且 `accept` 产出的槽位无法
 /// 反查句柄. 现在槽位直接登记在句柄槽位内, 单次换算.
 type HandleSlot = Option<(u32, i32)>;
 

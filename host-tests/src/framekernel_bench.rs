@@ -524,8 +524,8 @@ pub fn bitmap_scan_bench(iters: u64) -> u128 {
 // 全部同步原语由内核实现承担 (host-test 下 `IrqSpinLock` 的禁中断为 no-op).
 
 /// bench 工作集 fd 数: 16 — 仅为延迟测量选定的小工作集 (cache 友好, 轮询
-/// `mark_waiting→try_wake`), **不等于** 内核 Smoltcp 段 FD 容量 (生产宽度为
-/// `FdPlan::SMOLTCP.capacity` = 256). 本 bench 不依赖内核 fd 空间, 自持固定队列数.
+/// `mark_waiting→try_wake`), **不等于** 内核 Smoltcp 槽位容量 (生产宽度为
+/// `net::slots::MAX_SLOTS` = 256). 本 bench 不依赖内核 fd 空间, 自持固定队列数.
 const BENCH_FD_WORKING_SET: usize = 16;
 
 /// bench: Socket 等待队列 mark/wake 吞吐量 (单操作皮秒数)

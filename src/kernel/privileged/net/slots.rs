@@ -7,14 +7,14 @@
 //! 对象; 对象私有状态只保存本模块分配的槽位号. 槽位号不跨进程、不暴露给
 //! 用户态, 仅作为 `NET_STATE` 内各 per-slot 表的索引.
 //!
-//! 本模块是槽位空间的唯一分配者 (替代原 `FdPlan::SMOLTCP` 段位图), 只依赖
-//! `core` 原子与 `FdPlan` 容量常量, 不引用 `net::init` — 供 `init` /
-//! `wait_queue` / `save` 共用而不形成模块环.
+//! 本模块是槽位空间的唯一分配者, 只依赖 `core` 原子与本模块自有容量常量,
+//! 不引用 `net::init` — 供 `init` / `wait_queue` / `save` 共用而不形成模块环.
 //!
 //! ## 容量单源
 //!
-//! `MAX_SLOTS` 在过渡期继续从 `FdPlan::SMOLTCP.capacity` 派生 (与 `init.rs`
-//! 的 `MAX_SM_FD` 恒等), 阶段 4 退役 `FdPlan` 时改为本模块自有常量.
+//! `MAX_SLOTS` 是 socket 槽位容量的唯一真源 (fd 对象模型阶段 4 起不再经
+//! 全局 FD 编号规划派生); `init.rs` 的 `MAX_SM_FD`、`wait_queue.rs` 与
+//! `save.rs` 均引用本常量.
 //!
 //! ## 并发
 //!
@@ -26,8 +26,11 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// Socket 槽位上限 (与 `FdPlan::SMOLTCP.capacity` 同源, 过渡期口径).
-pub const MAX_SLOTS: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
+/// Socket 槽位上限 — 容量唯一真源.
+///
+/// 与 `net/init/sockets.rs` 的 `MAX_SOCKETS` 恒等 (256); 调整本值须同步
+/// `MAX_SOCKETS` 与 `SOCKET_STORAGE` / TCP/UDP 缓冲静态表尺寸.
+pub const MAX_SLOTS: usize = 256;
 
 /// 位图字数 (`MAX_SLOTS <= WORDS * 64`).
 const WORDS: usize = MAX_SLOTS.div_ceil(64);

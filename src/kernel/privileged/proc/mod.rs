@@ -47,8 +47,6 @@ pub mod domain;
 pub mod eevdf;
 pub mod elf;
 /// D2: cgroup 资源控制器
-/// TD-02: 全局统一 FD 分配器与基址规划
-pub mod fd_alloc;
 pub mod fd_table;
 /// 进程文件系统上下文 (cwd / 根前缀 / umask, K-03)
 pub mod fs_context;
@@ -114,9 +112,6 @@ pub use sched_ops::*;
 
 // raw 公共接口 re-export — 避免跨子系统直接访问 proc::proc_ops::raw 内部
 pub use proc_ops::raw;
-
-// fd_alloc 公共接口 re-export — 避免跨子系统直接访问 proc::fd_alloc 内部
-pub use fd_alloc::{FdPlan, FdSubsystem, alloc_fd, fd_at, free_fd, idx_of};
 
 // fs_context 公共接口 re-export — functions 侧路径解析经此取类型/上限
 pub use fs_context::{DEFAULT_UMASK, FS_MAX_PATH, FsContext};

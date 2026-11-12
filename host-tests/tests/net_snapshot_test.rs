@@ -216,13 +216,11 @@ fn unit_tests_count() {
 fn snapshot_fd_count_sized_by_fdplan_capacity() {
     let src = read_src("src/kernel/privileged/net/save.rs");
     // 根治: SNAPSHOT_FD_COUNT 不得硬编码, 必须与 net/init.rs 的 MAX_SM_FD 复用
-    // 同一单一来源 (FdPlan::SMOLTCP.capacity). net_save / net_restore 按
+    // 同一单一来源 (`net::slots::MAX_SLOTS`). net_save / net_restore 按
     // 0..MAX_SM_FD 读写本数组, 若滞留旧值 16 (< 现容量 256) 会越界 panic.
     assert!(
-        src.contains(
-            "SNAPSHOT_FD_COUNT: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
-        ),
-        "P2-I-44/根治: SNAPSHOT_FD_COUNT 必须从 FdPlan::SMOLTCP.capacity 单一来源派生 (与 MAX_SM_FD 恒等)"
+        src.contains("SNAPSHOT_FD_COUNT: usize = crate::privileged::net::slots::MAX_SLOTS"),
+        "P2-I-44/根治: SNAPSHOT_FD_COUNT 必须从 net::slots::MAX_SLOTS 单一来源派生 (与 MAX_SM_FD 恒等)"
     );
     assert!(
         !src.contains("SNAPSHOT_FD_COUNT: usize = 16"),
@@ -240,9 +238,7 @@ fn snapshot_fd_count_sized_by_fdplan_capacity() {
     // 长度恒等由单一来源保证 — 回归防线.
     let init_src = read_src("src/kernel/privileged/net/init.rs");
     assert!(
-        init_src.contains(
-            "const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize"
-        ),
-        "根治: MAX_SM_FD 与 SNAPSHOT_FD_COUNT 必须共用 FdPlan::SMOLTCP.capacity 单一来源"
+        init_src.contains("const MAX_SM_FD: usize = crate::privileged::net::slots::MAX_SLOTS;"),
+        "根治: MAX_SM_FD 与 SNAPSHOT_FD_COUNT 必须共用 net::slots::MAX_SLOTS 单一来源"
     );
 }

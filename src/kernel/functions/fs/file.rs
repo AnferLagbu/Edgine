@@ -10,8 +10,8 @@
 //! 桥接, `Inode` 保持文件系统中心语义 (readdir/truncate/chmod 等目录与
 //! 元数据操作经 `File::as_inode` 回到 Inode).
 //!
-//! 阶段 2 范围: 抽象落地 (VFS 单分发点). 8 个非 VFS 子系统迁移归阶段 3,
-//! `FdPlan`/`subsystem_of`/`sm_slot` 退役归阶段 4. 详见
+//! 阶段 2 收口: 抽象落地 (VFS 单分发点); 阶段 3 收口 8 个非 VFS 子系统迁移;
+//! 阶段 4 收口: 全局 FD 编号规划层与 fd→槽位换算适配层已整体退役. 详见
 //! `docs/design/fd-object-model-design.md`.
 
 use alloc::sync::Arc;

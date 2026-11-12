@@ -18,8 +18,6 @@ pub mod coredump;
 pub mod elf;
 /// execve 系统调用策略 — 指针校验 / argv 扫描 / SUID 提权
 pub mod exec;
-/// TD-02: 全局统一 FD 分配器 (范围规划 + 分配/释放/反查)
-pub mod fd_alloc;
 /// D8: FD Table 分配策略 (first-fit, 上限 64)
 pub mod fd_table;
 pub mod info;

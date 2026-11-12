@@ -53,9 +53,9 @@
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-/// smoltcp 槽位上限 (与 `FdPlan::SMOLTCP.capacity` 同源; 不引用 `net::init` 的
-/// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖). 权威定义见 `net/init.rs`.
-const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
+/// smoltcp 槽位上限 (容量单源 = `net::slots::MAX_SLOTS`; 不引用 `net::init` 的
+/// `MAX_SM_FD` 别名, 避免 `init ↔ wait_queue` 循环依赖).
+const MAX_SM_FD: usize = crate::privileged::net::slots::MAX_SLOTS;
 
 /// per-fd 等待者槽上限 (定长, `no_std` 无堆分配, 可进自旋锁临界区).
 ///

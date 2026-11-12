@@ -812,8 +812,8 @@ fn net_tx_softirq_handler() {
 // ============================================================================
 
 // I-47: 槽位表容量 (每个槽位对应一个 smoltcp socket).
-// TD-02: 基址与容量改由 `privileged::proc::FdPlan::SMOLTCP` 单一来源; 容量现从 FdRange.capacity 派生.
-const MAX_SM_FD: usize = crate::privileged::proc::FdPlan::SMOLTCP.capacity as usize;
+// 容量单源 = `privileged::net::slots::MAX_SLOTS` (阶段 4 起不再经全局编号规划派生).
+const MAX_SM_FD: usize = crate::privileged::net::slots::MAX_SLOTS;
 const TCP_BUF_SIZE: usize = 4096;
 const UDP_BUF_SIZE: usize = 2048;
 const UDP_META_COUNT: usize = 4;

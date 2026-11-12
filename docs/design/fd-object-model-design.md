@@ -60,8 +60,8 @@ fd (per-process, u32)
 
 要点：
 
-- **per-process fd 空间统一**。全部对象共用 `FdTable`，fd 数值只在所属进程内有意义；`FdPlan`/`FdSubsystem`/`subsystem_of`/`idx_of` 及 `sm_slot` 类适配层整体退役。全局位图分配器随最后一个非 VFS 子系统迁移后删除。
-- **对象索引不再编码进 fd 数值**。socket 的内部槽位（smoltcp `SocketSet` 索引等）是对象自身的私有状态，由 `SocketFile` 结构体持有（`Arc<SocketFile { slot: usize, ... }>`），syscall 层永远看不到槽位。方案 C 引入的 `sm_slot()` 单点换算正是这一迁移的过渡桥：槽位空间已经收敛到单函数，退役它只需替换该函数。
+- **per-process fd 空间统一**。全部对象共用 `FdTable`，fd 数值只在所属进程内有意义；`FdPlan`/`FdSubsystem`/`subsystem_of`/`idx_of` 及 `sm_slot` 类适配层已整体退役（全局位图分配器随最后一个非 VFS 子系统迁移一并删除，`FdTable` 是唯一 fd 分配者）。
+- **对象索引不再编码进 fd 数值**。socket 的内部槽位（smoltcp `SocketSet` 索引等）是对象自身的私有状态，由 `SocketFile` 结构体持有（`Arc<SocketFile { slot: usize, ... }>`），syscall 层永远看不到槽位。方案 C 引入的 `sm_slot()` 单点换算正是这一迁移的过渡桥（已随全局编号层一并退役）；槽位空间现由对象私有字段与 `net::slots` 分配器直接承载。
 - **`file_type` 由对象提供**（`file_type()` 方法派生），不再由分配点手写常量；`fstat` 对全部 fd 类型统一可用（socket/事件对象给出合法的 `S_IFSOCK`/`S_IFCHR` 形态）。
 - **cloexec / dup / fork 矩阵**：
 
