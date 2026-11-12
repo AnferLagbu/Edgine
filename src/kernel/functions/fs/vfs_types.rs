@@ -66,7 +66,12 @@ pub const VFS_PERM_W: u16 = 0x02;
 pub const VFS_PERM_X: u16 = 0x01;
 
 bitflags::bitflags! {
-    /// 打开文件标志位 (与 Linux `O_*` 数值对齐)
+    /// 打开文件标志位 — VFS **内部编码**, 非 Linux `O_*` 数值。
+    ///
+    /// accmode 为独立位 (RDONLY/WRONLY/RDWR = 1/2/4), `CREAT`=0x0100, 与 Linux
+    /// 的 2 位 accmode 字段 (0/1/2) 及 `O_CREAT`=0o100 不同。用户态 syscall 边界
+    /// 由 `fs::open::linux_o_flags_to_vfs` 翻译; 内核内部调用方直接产出本编码。
+    /// `TRUNC`/`APPEND`/`CLOEXEC` 恰与 Linux 同值, 其余位不得假设与 Linux 对齐。
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct VfsOpenFlags: u32 {
         /// 只读打开

@@ -81,6 +81,43 @@ fn validate_flags(flags: i32) -> Result<(), Errno> {
     Ok(())
 }
 
+/// Linux `O_*` → VFS `VfsOpenFlags` 编码翻译 (用户态 open/openat/creat 边界).
+///
+/// VFS 内部层 (persist / coredump / WASI / pipe / ramfs 等) 一律使用
+/// [`VfsOpenFlags`](super::vfs_types::VfsOpenFlags) 编码; 用户态 syscall 传入的
+/// 却是 Linux `O_*` 数值。两者 accmode 与 `CREAT` 位不同: Linux accmode 是 2 位
+/// 字段 (RDONLY/WRONLY/RDWR = 0/1/2), VFS 是独立位 (1/2/4); Linux `O_CREAT`=0o100,
+/// VFS `CREAT`=0x0100。故必须在本边界翻译, 否则 `O_CREAT` 恒不命中 (创建不存在
+/// 文件恒得 `ENOENT`)、accmode 被误读 (`O_WRONLY`→RDONLY、`O_RDWR`→WRONLY)。
+///
+/// `O_TRUNC` / `O_APPEND` / `O_CLOEXEC` 两侧数值本就一致, 仍显式经 `VfsOpenFlags`
+/// 常量重建以保持单源。`O_EXCL` / `O_DIRECTORY` / `O_NOFOLLOW` 在 VFS 无对应位,
+/// 不翻译 (VFS 尚未实装其语义, 与翻译前被忽略的行为一致)。
+// SIMPLIFIED: O_EXCL 未翻译 (VFS fs_create 无存在性检查, 不保证独占创建);
+// 影响面: 依赖 O_EXCL 原子独占创建的程序 (部分 mkstemp/锁文件实现) 语义不闭合;
+// 何时需扩展: VFS fs_create 支持 "已存在即 EEXIST" 后在翻译里补 EXCL 位并下传。
+fn linux_o_flags_to_vfs(flags: i32) -> u32 {
+    use super::vfs_types::VfsOpenFlags;
+    let mut out = match flags & 0o3 {
+        O_WRONLY => VfsOpenFlags::WRONLY.bits(),
+        O_RDWR => VfsOpenFlags::RDWR.bits(),
+        _ => VfsOpenFlags::RDONLY.bits(),
+    };
+    if flags & O_CREAT != 0 {
+        out |= VfsOpenFlags::CREAT.bits();
+    }
+    if flags & O_TRUNC != 0 {
+        out |= VfsOpenFlags::TRUNC.bits();
+    }
+    if flags & O_APPEND != 0 {
+        out |= VfsOpenFlags::APPEND.bits();
+    }
+    if flags & O_CLOEXEC != 0 {
+        out |= VfsOpenFlags::CLOEXEC.bits();
+    }
+    out
+}
+
 // ============================================================================
 // open
 // ============================================================================
@@ -108,7 +145,7 @@ pub fn open_syscall(path_ptr: u64, flags: i32, mode: i32) -> Result<usize, Errno
         return Err(Errno::Einval);
     }
     let pwm = current_pwm();
-    let r = fw::vfs_open(path_ptr as *const u8, flags.cast_unsigned(), pwm);
+    let r = fw::vfs_open(path_ptr as *const u8, linux_o_flags_to_vfs(flags), pwm);
     if r < 0 {
         Err(Errno::from_ret(i64::from(r)))
     } else {
@@ -146,5 +183,65 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
         Err(Errno::from_ret(i64::from(r)))
     } else {
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::functions::fs::vfs_types::VfsOpenFlags;
+
+    /// accmode 三态必须逐一映射到 VFS 独立位 (Linux 2 位字段 → VFS 1/2/4).
+    #[test]
+    fn accmode_maps_to_vfs_independent_bits() {
+        assert_eq!(linux_o_flags_to_vfs(O_RDONLY), VfsOpenFlags::RDONLY.bits());
+        assert_eq!(linux_o_flags_to_vfs(O_WRONLY), VfsOpenFlags::WRONLY.bits());
+        assert_eq!(linux_o_flags_to_vfs(O_RDWR), VfsOpenFlags::RDWR.bits());
+    }
+
+    /// headline 回归: Linux `O_CREAT`(0o100) 必须翻译成 VFS `CREAT`(0x0100).
+    /// 修复前直传原始 flags, 0o100 恒不命中 0x0100 ⇒ 创建不存在文件恒 ENOENT.
+    #[test]
+    fn linux_o_creat_hits_vfs_creat_bit() {
+        let out = linux_o_flags_to_vfs(O_CREAT | O_WRONLY);
+        assert_ne!(
+            out & VfsOpenFlags::CREAT.bits(),
+            0,
+            "O_CREAT 必须命中 VFS CREAT 位"
+        );
+        assert_ne!(out & VfsOpenFlags::WRONLY.bits(), 0);
+        // 负控制: 不带 O_CREAT 时 CREAT 位不得被置起.
+        assert_eq!(
+            linux_o_flags_to_vfs(O_WRONLY) & VfsOpenFlags::CREAT.bits(),
+            0
+        );
+    }
+
+    /// TRUNC / APPEND / CLOEXEC 两侧同值, 翻译后仍须置起对应 VFS 位.
+    #[test]
+    fn trunc_append_cloexec_pass_through() {
+        let out = linux_o_flags_to_vfs(O_RDWR | O_TRUNC | O_APPEND | O_CLOEXEC);
+        assert_ne!(out & VfsOpenFlags::TRUNC.bits(), 0);
+        assert_ne!(out & VfsOpenFlags::APPEND.bits(), 0);
+        assert_ne!(out & VfsOpenFlags::CLOEXEC.bits(), 0);
+        assert_ne!(out & VfsOpenFlags::RDWR.bits(), 0);
+    }
+
+    /// 组合 flags 全量重建: creat 语义 (O_WRONLY|O_CREAT|O_TRUNC) 的翻译结果.
+    #[test]
+    fn creat_combination_rebuilds_all_bits() {
+        let out = linux_o_flags_to_vfs(O_WRONLY | O_CREAT | O_TRUNC);
+        let expect =
+            VfsOpenFlags::WRONLY.bits() | VfsOpenFlags::CREAT.bits() | VfsOpenFlags::TRUNC.bits();
+        assert_eq!(out, expect);
+    }
+
+    /// VFS 无对应位的 Linux 专属位 (O_EXCL/O_DIRECTORY/O_NOFOLLOW) 不翻译,
+    /// 与翻译前被忽略的行为一致 (不得凭空造出 VFS 位).
+    #[test]
+    fn linux_only_bits_are_dropped() {
+        let base = linux_o_flags_to_vfs(O_RDONLY);
+        let with_extras = linux_o_flags_to_vfs(O_RDONLY | O_EXCL | O_DIRECTORY | O_NOFOLLOW);
+        assert_eq!(with_extras, base);
     }
 }
