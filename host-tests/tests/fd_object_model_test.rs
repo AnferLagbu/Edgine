@@ -326,6 +326,7 @@ fn inode_namespace_key_is_object_declared() {
         "functions/fs/signalfd.rs",
         "functions/fs/inotify.rs",
         "functions/fs/timerfd.rs",
+        "functions/proc/pidfd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn inode_namespace_id"),
@@ -394,6 +395,7 @@ fn mmap_requires_object_declared_backing() {
         "functions/fs/signalfd.rs",
         "functions/fs/inotify.rs",
         "functions/fs/timerfd.rs",
+        "functions/proc/pidfd.rs",
     ] {
         assert!(
             !read_file(special).contains("fn mmap_backing"),
@@ -1499,5 +1501,78 @@ fn stale_hrtimer_callbacks_are_gated_by_activation_generation() {
     assert!(
         hrtimer.contains("if timer.state() == HrTimerState::Running"),
         "OneShot 收敛不得覆盖回调内自行重挂的 Pending"
+    );
+}
+
+#[test]
+fn pidfd_object_implements_file_contract() {
+    let src = read_file("functions/proc/pidfd.rs");
+    for needle in [
+        "pub struct PidFdFile",
+        "impl File for PidFdFile",
+        "fn read_at(",
+        "fn write_at(",
+        "fn poll(",
+        "fn release(",
+        "fn as_any(",
+    ] {
+        assert!(src.contains(needle), "PidFdFile 契约缺: {needle}");
+    }
+    assert!(
+        !src.contains("impl Inode for PidFdFile"),
+        "pidfd 不实现 Inode (非 inode 特殊对象判据)"
+    );
+}
+
+#[test]
+fn pidfd_created_via_open_file_table_not_fdplan() {
+    let src = read_file("functions/proc/pidfd.rs");
+    for needle in [
+        "impl File for PidFdFile",
+        "OpenFile::from_file",
+        "OPEN_FILE_TABLE.alloc",
+        "t.alloc_fd(handle_id, false)",
+        "OPEN_FILE_TABLE.close(handle_id)",
+        "try_inc_ref",
+        "dec_ref_and_maybe_free",
+    ] {
+        assert!(src.contains(needle), "pidfd 创建/释放路径必须含: {needle}");
+    }
+    for needle in [
+        "PID_FD",
+        "FdSubsystem",
+        "fd_alloc::",
+        "pidfd_map",
+        "is_pidfd_fd",
+        "free_entry",
+        "PidFdEntry",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "迁移后不得引用全局 FD 编号区间 / fd->pid 映射表: {needle}"
+        );
+    }
+}
+
+#[test]
+fn pidfd_dispatch_sites_use_vfs_object_path() {
+    // close 统一走 VFS 引用回收 (不得残留 pidfd 数值特判)
+    let open = read_file("functions/fs/open.rs");
+    assert!(
+        !open.contains("is_pidfd_fd") && !open.contains("pidfd::free_entry"),
+        "close 必须统一走 VFS 关闭链 (pidfd 特判已退场)"
+    );
+    // syscall 分发路由对象实现
+    let dispatch = read_file("functions/syscall/dispatch.rs");
+    assert!(
+        dispatch.contains("functions::proc::pidfd::pidfd_open")
+            && dispatch.contains("pidfd::pidfd_send_signal"),
+        "dispatch 必须路由 pidfd 对象实现"
+    );
+    // epoll 就绪经对象 poll (fd_poll_special) 分发
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    assert!(
+        epoll.contains("fd_poll_special"),
+        "epoll 就绪计算必须含对象级 poll 分发"
     );
 }

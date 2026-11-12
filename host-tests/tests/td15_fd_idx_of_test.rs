@@ -9,8 +9,8 @@
 //
 // 该测试为 I-51/TD-01/TD-02 V4 验收的强化版.
 // fd 对象模型阶段 3 (2026-11-10): eventfd / signalfd / unix / inotify / timerfd
-// 已迁至 OpenFileTable 挂表, 不再有本地 fd_to_idx; FdPlan / FdSubsystem 条目
-// 保留至阶段 4 一并退役.
+// / pidfd 已迁至 OpenFileTable 挂表, 不再有本地 fd_to_idx; FdPlan / FdSubsystem
+// 条目保留至阶段 4 一并退役.
 
 use std::fs;
 use std::path::Path;
@@ -19,6 +19,7 @@ const FD_ALLOC: &str = "src/kernel/privileged/proc/fd_alloc.rs";
 const TIMERFD: &str = "src/kernel/privileged/syscall/timerfd.rs";
 const UNIX: &str = "src/kernel/functions/net/unix.rs";
 const INOTIFY: &str = "src/kernel/functions/fs/inotify.rs";
+const PIDFD: &str = "src/kernel/functions/proc/pidfd.rs";
 
 fn read(p: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -122,6 +123,31 @@ fn test_inotify_migrated_off_numeric_fd_space() {
     assert!(
         src.contains("pub struct InotifyFile"),
         "inotify 必须暴露 InotifyFile 对象 (fd 对象模型)"
+    );
+}
+
+#[test]
+fn test_pidfd_migrated_off_numeric_fd_space() {
+    // fd 对象模型阶段 3 第 7 批: pidfd 对象挂 OpenFileTable, fd 由
+    // per-process FdTable 管; 全局 fd→pid 映射表与 PID_FD 区间消费全部移除.
+    let src = read(PIDFD);
+    for needle in [
+        "PID_FD",
+        "FdSubsystem",
+        "fd_alloc::",
+        "pidfd_map",
+        "fn pid_of_fd",
+        "fn is_pidfd_fd",
+        "fn free_entry",
+    ] {
+        assert!(
+            !src.contains(needle),
+            "pidfd.rs 不得残留 `{needle}` (PidFd 已迁至 fd 对象模型, TD-15)"
+        );
+    }
+    assert!(
+        src.contains("pub struct PidFdFile"),
+        "pidfd 必须暴露 PidFdFile 对象 (fd 对象模型)"
     );
 }
 

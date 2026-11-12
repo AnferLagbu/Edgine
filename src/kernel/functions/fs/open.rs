@@ -141,13 +141,6 @@ pub fn close_syscall(fd: i32) -> Result<usize, Errno> {
     if fd < 0 {
         return Err(Errno::Ebadf);
     }
-    // pidfd 不经过 VFS fd_table, 由 pidfd 子系统自行关闭.
-    if crate::functions::proc::pidfd::is_pidfd_fd(fd) {
-        if crate::functions::proc::pidfd::free_entry(fd) {
-            return Ok(0);
-        }
-        return Err(Errno::Ebadf);
-    }
     // T1 G4: userfaultfd 不经过 VFS fd_table, 由 uffd 机制自行回收
     // (并唤醒阻塞在该 fd 上的缺页进程 / read() 线程).
     if crate::privileged::mm::is_uffd_fd(fd) {

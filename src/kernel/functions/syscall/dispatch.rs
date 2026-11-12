@@ -978,13 +978,13 @@ fn dispatch_proc_misc(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a1),
         )),
         SYS_PIDFD_SEND_SIGNAL => as_ret(crate::functions::proc::pidfd::pidfd_send_signal(
-            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a0),
             crate::functions::intcast::low_i32_from_u64(a1),
             a2,
             crate::functions::intcast::low_u32_from_u64(a3),
         )),
         SYS_PIDFD_GETFD => as_ret(crate::functions::proc::pidfd::pidfd_getfd(
-            crate::functions::intcast::low_u32_from_u64(a0),
+            crate::functions::intcast::low_i32_from_u64(a0),
             crate::functions::intcast::low_u32_from_u64(a1),
             crate::functions::intcast::low_u32_from_u64(a2),
         )),

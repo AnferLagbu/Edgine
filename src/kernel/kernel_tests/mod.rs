@@ -14,6 +14,7 @@ pub mod test_inotify;
 pub mod test_ipc;
 #[cfg(test)]
 pub mod test_ipc_inline;
+pub mod test_pidfd;
 pub mod test_pwm;
 pub mod test_signalfd;
 pub mod test_timerfd;
@@ -43,6 +44,8 @@ pub fn register_upper_tests() {
     test_signalfd::register_signalfd_tests();
     #[cfg(feature = "kernel_test")]
     test_timerfd::register_timerfd_tests();
+    #[cfg(feature = "kernel_test")]
+    test_pidfd::register_pidfd_tests();
     #[cfg(target_arch = "x86_64")]
     sys::register_tests();
 }

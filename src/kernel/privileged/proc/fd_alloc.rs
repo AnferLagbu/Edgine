@@ -32,7 +32,7 @@
 //! | SignalFd| 1120 | SFD 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | Inotify | 1140 | INOTIFY 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | TimerFd | 1160 | `TIMER_FD` 范围 | 16 | `privileged/syscall/timerfd.rs` |
-//! | PidFd   | 1180 | `PID_FD` 范围 | 16 | `functions/proc/pidfd.rs` |
+//! | PidFd   | 1180 | `PID_FD` 范围 | 16 | 已迁出 (fd 对象模型阶段 3; 段保留至阶段 4 退役) |
 //! | UserFaultFd | 1200 | `USERFAULT_FD` 范围 | 16 | `privileged/mm/uffd.rs` |
 //!
 //! **不包含** (这些是内部抽象, 不暴露给用户态, 不存在重叠问题):
@@ -381,7 +381,8 @@ pub const fn max_slots(sub: FdSubsystem) -> usize {
 ///
 /// V4 替代各子系统的本地 `fd_to_idx` 函数 (`signalfd` / `timerfd` / `unix`),
 /// 集中表达式. 子系统本地不再持有 `*_FD_BASE` 字面量 + 减法边界检查.
-/// `EventFd` / `Inotify` 已迁出数值 FD 空间 (fd 对象模型阶段 3), 不再消费本函数.
+/// `EventFd` / `SignalFd` / `Inotify` / `TimerFd` / `PidFd` 已迁出数值 FD 空间
+/// (fd 对象模型阶段 3), 不再消费本函数.
 ///
 /// 返回 `Some((sub, slot))` 当 `fd ∈ FdPlan::range_for(sub)` 时, 否则 `None`.
 ///

@@ -183,8 +183,10 @@ class BaselineTest(unittest.TestCase):
                       [k for k, _, _ in over])
 
     def test_debt_reduction_still_requires_baseline_update(self):
+        # 取任一现存条目而非硬编码具体文件: 具体债项可被合法迁移消解并随
+        # --update-baseline 移出快照, 硬编码会让本锁随一次合法重录 KeyError 失效.
         actual = Counter(self.baseline)
-        key = ("src/kernel/functions/proc/pidfd.rs", "PROCESS_TABLE")
+        key = next(iter(self.baseline))
         del actual[key]
         _, under = aid.diff_baseline(actual, self.baseline)
         self.assertIn(key, [k for k, _, _ in under])
