@@ -34,10 +34,10 @@ use alloc::vec::Vec;
 use super::leb128::{read_leb128_i32, read_leb128_i64, read_leb128_u32, read_name};
 use super::types::{
     DataSegment, ElementSegment, ExportDesc, ExportKind, FuncType, FunctionBody, GlobalType,
-    ImportDesc, ImportKind, Limits, MemoryType, SECTION_CODE, SECTION_DATA, SECTION_ELEMENT,
-    SECTION_EXPORT, SECTION_FUNCTION, SECTION_GLOBAL, SECTION_IMPORT, SECTION_MEMORY,
-    SECTION_START, SECTION_TABLE, SECTION_TYPE, TableType, ValueType, WASM_MAGIC, WASM_VERSION,
-    WasmError, WasmModule,
+    ImportDesc, ImportKind, Limits, MemoryType, RefType, SECTION_CODE, SECTION_DATA,
+    SECTION_ELEMENT, SECTION_EXPORT, SECTION_FUNCTION, SECTION_GLOBAL, SECTION_IMPORT,
+    SECTION_MEMORY, SECTION_START, SECTION_TABLE, SECTION_TYPE, TableType, ValueType, WASM_MAGIC,
+    WASM_VERSION, WasmError, WasmModule,
 };
 
 // ============================================================================
@@ -64,6 +64,12 @@ fn take_byte(bytes: &[u8], pos: &mut usize) -> Result<u8, WasmError> {
 fn take_value_type(bytes: &[u8], pos: &mut usize) -> Result<ValueType, WasmError> {
     let byte = take_byte(bytes, pos)?;
     ValueType::from_byte(byte).ok_or(WasmError::BadValueType(byte))
+}
+
+/// 读取表引用类型字节 (0x70 funcref); 其余字节返 `BadTableElementType`.
+fn take_ref_type(bytes: &[u8], pos: &mut usize) -> Result<RefType, WasmError> {
+    let byte = take_byte(bytes, pos)?;
+    RefType::from_byte(byte).ok_or(WasmError::BadTableElementType(byte))
 }
 
 /// 读取"条目数"前缀, 并以段内剩余字节数为其上界。
@@ -262,7 +268,7 @@ fn parse_import_section(bytes: &[u8]) -> Result<Vec<ImportDesc>, WasmError> {
                 ImportKind::Function(type_idx)
             }
             0x01 => {
-                let element_type = take_value_type(bytes, &mut pos)?;
+                let element_type = take_ref_type(bytes, &mut pos)?;
                 let limits = parse_limits(bytes, &mut pos)?;
                 ImportKind::Table(TableType {
                     element_type,
@@ -327,7 +333,7 @@ fn parse_table_section(bytes: &[u8]) -> Result<Vec<TableType>, WasmError> {
     let count = take_entry_count(bytes, &mut pos)?;
     let mut tables = Vec::with_capacity(count);
     for _ in 0..count {
-        let element_type = take_value_type(bytes, &mut pos)?;
+        let element_type = take_ref_type(bytes, &mut pos)?;
         let limits = parse_limits(bytes, &mut pos)?;
         tables.push(TableType {
             element_type,
@@ -1042,5 +1048,41 @@ mod tests {
             let module = parse_wasm(&bytes).expect("零长未知段应被跳过");
             assert!(module.types.is_empty());
         }
+    }
+
+    #[test]
+    fn test_table_section_accepts_funcref() {
+        // F13 收口: 表元素类型按段语义接受 0x70 funcref (原 ValueType 解析路径拒绝).
+        let content = {
+            let mut c = leb(1);
+            c.push(0x70);
+            c.push(0x00);
+            c.extend_from_slice(&leb(2));
+            c
+        };
+        let mut bytes = header();
+        bytes.extend_from_slice(&section(SECTION_TABLE, &content));
+        let module = parse_wasm(&bytes).expect("funcref 表段应解析成功");
+        assert_eq!(module.tables.len(), 1);
+        assert_eq!(module.tables[0].element_type, RefType::FuncRef);
+        assert_eq!(module.tables[0].limits.min, 2);
+    }
+
+    #[test]
+    fn test_table_section_rejects_non_funcref() {
+        // 0x7F (i32) 是合法值类型但不是合法表元素类型 ⇒ BadTableElementType.
+        let content = {
+            let mut c = leb(1);
+            c.push(0x7F);
+            c.push(0x00);
+            c.extend_from_slice(&leb(1));
+            c
+        };
+        let mut bytes = header();
+        bytes.extend_from_slice(&section(SECTION_TABLE, &content));
+        assert!(matches!(
+            parse_wasm(&bytes),
+            Err(WasmError::BadTableElementType(0x7F))
+        ));
     }
 }

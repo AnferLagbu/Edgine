@@ -58,7 +58,8 @@ pub struct Interpreter {
     host_functions: Vec<HostFunction>,
     import_func_count: u32,
     globals: Vec<Value>,
-    tables: Vec<Vec<u32>>,
+    /// 函数表: `None` = 未初始化 (null funcref)
+    tables: Vec<Vec<Option<u32>>>,
     /// 名称索引的 host function: (module, name) → index
     named_host_functions: BTreeMap<(String, String), usize>,
 }
@@ -125,15 +126,15 @@ impl Interpreter {
             .filter(|i| matches!(i.desc, ImportKind::Table(_)))
             .count();
 
-        let mut tables: Vec<Vec<u32>> =
+        let mut tables: Vec<Vec<Option<u32>>> =
             Vec::with_capacity(import_table_count + module.tables.len());
         for imp in &module.imports {
             if let ImportKind::Table(ref tt) = imp.desc {
-                tables.push(vec![0u32; tt.limits.min as usize]);
+                tables.push(vec![None; tt.limits.min as usize]);
             }
         }
         for tt in &module.tables {
-            tables.push(vec![0u32; tt.limits.min as usize]);
+            tables.push(vec![None; tt.limits.min as usize]);
         }
 
         let mut interp = Self {
@@ -223,7 +224,7 @@ impl Interpreter {
                 for (i, &func_idx) in seg.func_indices.iter().enumerate() {
                     let target = base + i;
                     if target < table_len {
-                        self.tables[table_idx][target] = func_idx;
+                        self.tables[table_idx][target] = Some(func_idx);
                     }
                 }
             }
@@ -430,7 +431,14 @@ impl Interpreter {
     /// 执行调用栈直至全部帧结束: 取指令 → 计量 gas → 分派单条指令
     fn execute_call_stack(&mut self) -> Result<(), WasmError> {
         while let Some(opcode) = self.fetch_opcode() {
-            let op = Opcode::from_byte(opcode).ok_or(WasmError::UnknownOpcode(opcode))?;
+            let Some(op) = Opcode::from_byte(opcode) else {
+                // 浮点族字节未进 Opcode 枚举 (甲 裁定不纳入): 明确报 Unsupported
+                return Err(if Self::is_float_opcode(opcode) {
+                    WasmError::Unsupported
+                } else {
+                    WasmError::UnknownOpcode(opcode)
+                });
+            };
             self.gas_used += 1;
             if self.gas_used > self.config.gas {
                 return Err(WasmError::GasExhausted);
@@ -469,13 +477,23 @@ impl Interpreter {
         if let Some(result) = self.execute_i64_op(op) {
             return result;
         }
+        if Self::is_float_opcode(opcode) {
+            // §3 甲 裁定: 浮点明确不纳入, 遇浮点 opcode 返 Unsupported
+            return Err(WasmError::Unsupported);
+        }
         Err(WasmError::UnknownOpcode(opcode))
+    }
+
+    /// 是否为 WASM 1.0 浮点族 opcode (本实现明确不支持).
+    fn is_float_opcode(byte: u8) -> bool {
+        matches!(byte, 0x2A | 0x2B | 0x38 | 0x39 | 0x43 | 0x44 | 0x8B..=0xBF)
     }
 
     /// 控制流指令组 (`None` = 不属本组)
     fn execute_control_op(&mut self, op: Opcode) -> Option<Result<(), WasmError>> {
         match op {
-            Opcode::Unreachable | Opcode::CallIndirect => Some(Err(WasmError::Unreachable)),
+            Opcode::Unreachable => Some(Err(WasmError::Unreachable)),
+            Opcode::CallIndirect => Some(self.execute_call_indirect()),
             Opcode::Nop => {
                 self.advance_pc(1);
                 Some(Ok(()))
@@ -529,10 +547,19 @@ impl Interpreter {
             Opcode::I32Load8U => Some(self.execute_memory_load_ext(1, false)),
             Opcode::I32Load16S => Some(self.execute_memory_load_ext(2, true)),
             Opcode::I32Load16U => Some(self.execute_memory_load_ext(2, false)),
+            Opcode::I64Load8S => Some(self.execute_memory_load_64_ext(1, true)),
+            Opcode::I64Load8U => Some(self.execute_memory_load_64_ext(1, false)),
+            Opcode::I64Load16S => Some(self.execute_memory_load_64_ext(2, true)),
+            Opcode::I64Load16U => Some(self.execute_memory_load_64_ext(2, false)),
+            Opcode::I64Load32S => Some(self.execute_memory_load_64_ext(4, true)),
+            Opcode::I64Load32U => Some(self.execute_memory_load_64_ext(4, false)),
             Opcode::I32Store => Some(self.execute_memory_store(4)),
             Opcode::I64Store => Some(self.execute_memory_store_64()),
             Opcode::I32Store8 => Some(self.execute_memory_store_n(1)),
             Opcode::I32Store16 => Some(self.execute_memory_store_n(2)),
+            Opcode::I64Store8 => Some(self.execute_memory_store_64_n(1)),
+            Opcode::I64Store16 => Some(self.execute_memory_store_64_n(2)),
+            Opcode::I64Store32 => Some(self.execute_memory_store_64_n(4)),
             Opcode::MemorySize => {
                 self.advance_pc(1);
                 let pages = self
@@ -604,8 +631,25 @@ impl Interpreter {
                     .wrapping_shr(b.cast_unsigned())
                     .cast_signed()
             })),
+            Opcode::I32Rotl => {
+                Some(self.execute_i32_binop(|a, b| a.rotate_left(b.cast_unsigned())))
+            }
+            Opcode::I32Rotr => {
+                Some(self.execute_i32_binop(|a, b| a.rotate_right(b.cast_unsigned())))
+            }
+            Opcode::I32WrapI64 => Some(self.execute_i32_wrap_i64()),
             _ => None,
         }
+    }
+
+    /// `i32.wrap_i64`: 取 i64 低 32 位
+    fn execute_i32_wrap_i64(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let value = self.stack.pop_i64()?;
+        self.stack
+            .push(Value::I32(crate::functions::intcast::low_i32_from_i64(
+                value,
+            )))
     }
 
     /// 64 位整数常量/算术指令组 (`None` = 不属本组)
@@ -618,8 +662,78 @@ impl Interpreter {
             Opcode::I64DivS => Some(self.execute_i64_div_s()),
             Opcode::I64And => Some(self.execute_i64_binop(|a, b| a & b)),
             Opcode::I64Or => Some(self.execute_i64_binop(|a, b| a | b)),
+
+            Opcode::I64Eqz => Some(self.execute_i64_eqz()),
+            Opcode::I64Eq => Some(self.execute_i64_cmp(|a, b| i32::from(a == b))),
+            Opcode::I64Ne => Some(self.execute_i64_cmp(|a, b| i32::from(a != b))),
+            Opcode::I64LtS => Some(self.execute_i64_cmp(|a, b| i32::from(a < b))),
+            Opcode::I64LtU => {
+                Some(self.execute_i64_cmp(|a, b| i32::from(a.cast_unsigned() < b.cast_unsigned())))
+            }
+            Opcode::I64GtS => Some(self.execute_i64_cmp(|a, b| i32::from(a > b))),
+            Opcode::I64GtU => {
+                Some(self.execute_i64_cmp(|a, b| i32::from(a.cast_unsigned() > b.cast_unsigned())))
+            }
+            Opcode::I64LeS => Some(self.execute_i64_cmp(|a, b| i32::from(a <= b))),
+            Opcode::I64LeU => {
+                Some(self.execute_i64_cmp(|a, b| i32::from(a.cast_unsigned() <= b.cast_unsigned())))
+            }
+            Opcode::I64GeS => Some(self.execute_i64_cmp(|a, b| i32::from(a >= b))),
+            Opcode::I64GeU => {
+                Some(self.execute_i64_cmp(|a, b| i32::from(a.cast_unsigned() >= b.cast_unsigned())))
+            }
+
+            Opcode::I64DivU => Some(self.execute_i64_div_u()),
+            Opcode::I64RemS => Some(self.execute_i64_rem_s()),
+            Opcode::I64RemU => Some(self.execute_i64_rem_u()),
+            Opcode::I64Xor => Some(self.execute_i64_binop(|a, b| a ^ b)),
+            Opcode::I64Shl => Some(self.execute_i64_binop(|a, b| {
+                a.wrapping_shl(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            })),
+            Opcode::I64ShrS => Some(self.execute_i64_binop(|a, b| {
+                a.wrapping_shr(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            })),
+            Opcode::I64ShrU => Some(self.execute_i64_binop(|a, b| {
+                a.cast_unsigned()
+                    .wrapping_shr(crate::functions::intcast::low_u32_from_u64(
+                        b.cast_unsigned(),
+                    ))
+                    .cast_signed()
+            })),
+            Opcode::I64Rotl => Some(self.execute_i64_binop(|a, b| {
+                a.rotate_left(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            })),
+            Opcode::I64Rotr => Some(self.execute_i64_binop(|a, b| {
+                a.rotate_right(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            })),
+
+            Opcode::I64ExtendI32S => Some(self.execute_i64_extend_i32(true)),
+            Opcode::I64ExtendI32U => Some(self.execute_i64_extend_i32(false)),
             _ => None,
         }
+    }
+
+    /// `i64.eqz`: 消费一个 i64, 推 i32 布尔结果.
+    fn execute_i64_eqz(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let a = self.stack.pop_i64()?;
+        self.stack.push(Value::I32(i32::from(a == 0)))
+    }
+
+    /// `i64` 比较族: 消费两个 i64, 推 i32 布尔结果.
+    fn execute_i64_cmp<F: FnOnce(i64, i64) -> i32>(&mut self, f: F) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let b = self.stack.pop_i64()?;
+        let a = self.stack.pop_i64()?;
+        self.stack.push(Value::I32(f(a, b)))
     }
 
     fn advance_pc(&mut self, amount: usize) {
@@ -753,6 +867,9 @@ impl Interpreter {
             }
             _ => {
                 // 其余已声明 opcode 无立即数; 未声明字节按未知 opcode 处理
+                if Self::is_float_opcode(byte) {
+                    return Err(WasmError::Unsupported);
+                }
                 Opcode::from_byte(byte).ok_or(WasmError::UnknownOpcode(byte))?;
                 Ok(after)
             }
@@ -984,41 +1101,67 @@ impl Interpreter {
     }
 
     fn execute_call(&mut self) -> Result<(), WasmError> {
-        let frame = self.current_frame_mut()?;
-        frame.pc += 1;
-        let func_idx = read_leb128_u32(&frame.code, &mut frame.pc)?;
-        let _ = frame;
+        let func_idx = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            read_leb128_u32(&frame.code, &mut frame.pc)?
+        };
+        self.call_function(func_idx)
+    }
 
+    /// `call_indirect`: 经表取出函数索引, 做越界/空元素/签名校验后调用.
+    ///
+    /// 越界与未初始化元素、类型不符分别返回不同错误 (W-4 判据).
+    fn execute_call_indirect(&mut self) -> Result<(), WasmError> {
+        let (type_idx, table_idx) = {
+            let frame = self.current_frame_mut()?;
+            frame.pc += 1;
+            let type_idx = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+            let table_idx = read_leb128_u32(&frame.code, &mut frame.pc)? as usize;
+            (type_idx, table_idx)
+        };
+        let element_index = self.stack.pop_i32()?;
+        if element_index < 0 {
+            return Err(WasmError::TableIndexOutOfBounds(
+                crate::functions::intcast::usize_from_i32(element_index),
+            ));
+        }
+        let elem_idx = crate::functions::intcast::usize_from_i32(element_index);
+        let table = self
+            .tables
+            .get(table_idx)
+            .ok_or(WasmError::TableIndexOutOfBounds(table_idx))?;
+        let Some(entry) = table.get(elem_idx) else {
+            return Err(WasmError::TableIndexOutOfBounds(elem_idx));
+        };
+        let Some(func_idx) = *entry else {
+            return Err(WasmError::UninitializedElement(elem_idx));
+        };
+        let expected = self
+            .module
+            .types
+            .get(type_idx)
+            .cloned()
+            .ok_or(WasmError::BadTypeIndex(type_idx))?;
+        let actual = self.get_func_type(func_idx)?.clone();
+        if expected != actual {
+            return Err(WasmError::IndirectCallTypeMismatch);
+        }
+        self.call_function(func_idx)
+    }
+
+    /// 按函数索引调用 (直接 `call` 与 `call_indirect` 共用).
+    fn call_function(&mut self, func_idx: u32) -> Result<(), WasmError> {
         let func_type = self.get_func_type(func_idx)?.clone();
         let param_count = func_type.params.len();
         let stack_len = self.stack.len();
-
-        let mut args = Vec::new();
-        for _ in 0..param_count {
-            if self.stack.len() > stack_len - param_count + args.len() {
-                break;
-            }
-        }
-        for i in 0..param_count {
-            if stack_len >= param_count - i {
-                let idx = stack_len - param_count + i;
-                if idx < self.stack.len() {
-                    args.push(self.stack.data[idx]);
-                }
-            }
+        if stack_len < param_count {
+            return Err(WasmError::StackUnderflow);
         }
 
         let args: Vec<Value> = (0..param_count)
-            .map(|i| {
-                let idx = stack_len - param_count + i;
-                if idx < self.stack.len() {
-                    self.stack.data[idx]
-                } else {
-                    Value::I32(0)
-                }
-            })
+            .map(|i| self.stack.data[stack_len - param_count + i])
             .collect();
-
         self.stack.drain_to(stack_len - param_count);
 
         if func_idx < self.import_func_count {
@@ -1034,11 +1177,7 @@ impl Interpreter {
                 self.host_functions[host_idx] = f;
                 result?;
             }
-
-            let result_count = func_type.results.len();
-            if result_count <= 1 {
-                return Ok(());
-            }
+            return Ok(());
         }
 
         let body = self.get_func_body(func_idx)?;
@@ -1243,6 +1382,58 @@ impl Interpreter {
         Ok(())
     }
 
+    fn execute_i64_div_u(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let b = self.stack.pop_i64()?;
+        let a = self.stack.pop_i64()?;
+        if b == 0 {
+            return Err(WasmError::DivisionByZero);
+        }
+        self.stack.push(Value::I64(
+            (a.cast_unsigned().wrapping_div(b.cast_unsigned())).cast_signed(),
+        ))?;
+        Ok(())
+    }
+
+    fn execute_i64_rem_s(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let b = self.stack.pop_i64()?;
+        let a = self.stack.pop_i64()?;
+        if b == 0 {
+            return Err(WasmError::DivisionByZero);
+        }
+        if a == i64::MIN && b == -1 {
+            return Err(WasmError::IntegerOverflow);
+        }
+        self.stack.push(Value::I64(a.wrapping_rem(b)))?;
+        Ok(())
+    }
+
+    fn execute_i64_rem_u(&mut self) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let b = self.stack.pop_i64()?;
+        let a = self.stack.pop_i64()?;
+        if b == 0 {
+            return Err(WasmError::DivisionByZero);
+        }
+        self.stack.push(Value::I64(
+            (a.cast_unsigned().wrapping_rem(b.cast_unsigned())).cast_signed(),
+        ))?;
+        Ok(())
+    }
+
+    /// `i64.extend_i32_s/u`: 符号/零扩展 i32 到 i64
+    fn execute_i64_extend_i32(&mut self, signed: bool) -> Result<(), WasmError> {
+        self.advance_pc(1);
+        let value = self.stack.pop_i32()?;
+        let extended = if signed {
+            i64::from(value)
+        } else {
+            i64::from(value.cast_unsigned())
+        };
+        self.stack.push(Value::I64(extended))
+    }
+
     // --- 内存操作 ---
 
     fn execute_memory_load(&mut self, size: u32) -> Result<(), WasmError> {
@@ -1322,6 +1513,52 @@ impl Interpreter {
         Ok(())
     }
 
+    /// i64 窄加载 (`i64.load8_s/u` / `load16_s/u` / `load32_s/u`): 读取后
+    /// 按符号/零扩展为 i64.
+    fn execute_memory_load_64_ext(&mut self, size: u32, signed: bool) -> Result<(), WasmError> {
+        let frame = self.current_frame_mut()?;
+        frame.pc += 1;
+        let _align = read_leb128_u32(&frame.code, &mut frame.pc)?;
+        let mem_offset = read_leb128_u32(&frame.code, &mut frame.pc)?;
+        let _ = frame;
+
+        let base = self.stack.pop_i32()?.cast_unsigned();
+        let addr = base
+            .checked_add(mem_offset)
+            .ok_or(WasmError::MemoryOutOfBounds)?;
+
+        let mem = self.memory.as_ref().ok_or(WasmError::MemoryOutOfBounds)?;
+        let value = match size {
+            1 => {
+                let v = mem.read_u8(addr)?;
+                if signed {
+                    i64::from(v.cast_signed())
+                } else {
+                    i64::from(v)
+                }
+            }
+            2 => {
+                let v = mem.read_u16(addr)?;
+                if signed {
+                    i64::from(v.cast_signed())
+                } else {
+                    i64::from(v)
+                }
+            }
+            4 => {
+                let v = mem.read_u32(addr)?;
+                if signed {
+                    i64::from(v.cast_signed())
+                } else {
+                    i64::from(v)
+                }
+            }
+            _ => return Err(WasmError::InternalError),
+        };
+        self.stack.push(Value::I64(value))?;
+        Ok(())
+    }
+
     fn execute_memory_store(&mut self, size: u32) -> Result<(), WasmError> {
         let frame = self.current_frame_mut()?;
         frame.pc += 1;
@@ -1388,6 +1625,45 @@ impl Interpreter {
         }
         Ok(())
     }
+
+    /// i64 窄存储 (`i64.store8/16/32`): 写 i64 的低 8/16/32 位.
+    fn execute_memory_store_64_n(&mut self, size: u32) -> Result<(), WasmError> {
+        let frame = self.current_frame_mut()?;
+        frame.pc += 1;
+        let _align = read_leb128_u32(&frame.code, &mut frame.pc)?;
+        let mem_offset = read_leb128_u32(&frame.code, &mut frame.pc)?;
+        let _ = frame;
+
+        let value = self.stack.pop_i64()?;
+        let base = self.stack.pop_i32()?.cast_unsigned();
+        let addr = base
+            .checked_add(mem_offset)
+            .ok_or(WasmError::MemoryOutOfBounds)?;
+
+        let mem = self.memory.as_mut().ok_or(WasmError::MemoryOutOfBounds)?;
+        match size {
+            1 => {
+                mem.write_u8(
+                    addr,
+                    crate::functions::intcast::low_u8_from_u64(value.cast_unsigned()),
+                )?;
+            }
+            2 => {
+                mem.write_u16(
+                    addr,
+                    crate::functions::intcast::low_u16_from_u64(value.cast_unsigned()),
+                )?;
+            }
+            4 => {
+                mem.write_u32(
+                    addr,
+                    crate::functions::intcast::low_u32_from_u64(value.cast_unsigned()),
+                )?;
+            }
+            _ => return Err(WasmError::InternalError),
+        }
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -1413,7 +1689,8 @@ pub fn instantiate(bytes: &[u8], config: InterpreterConfig) -> Result<Interprete
 mod tests {
     use super::*;
     use crate::functions::wasm::types::{
-        ExportDesc, FuncType, FunctionBody, ValueType, WasmModule,
+        ElementSegment, ExportDesc, FuncType, FunctionBody, Limits, MemoryType, RefType, TableType,
+        ValueType, WasmModule,
     };
 
     /// 构造单函数模块: 导出 "f", 参数/结果均为 i32.
@@ -1562,5 +1839,353 @@ mod tests {
     fn unterminated_block_is_truncated_error() {
         let body = vec![0x02, 0x40, 0x41, 0x01];
         assert_eq!(run(body, Vec::new()), Err(WasmError::Truncated));
+    }
+
+    // ========================================================================
+    // W-4 回归锁: call_indirect / 缺失 opcode / F13 funcref 类型建模
+    // ========================================================================
+
+    fn run_module(m: WasmModule, args: &[Value]) -> Result<Option<Value>, WasmError> {
+        let mut interp = Interpreter::new(m, InterpreterConfig::default());
+        interp.call("f", args)
+    }
+
+    fn build_module(
+        types: Vec<FuncType>,
+        function_types: Vec<u32>,
+        code: Vec<FunctionBody>,
+        export: (&str, u32),
+        tables: Vec<TableType>,
+        elements: Vec<ElementSegment>,
+        memories: Vec<MemoryType>,
+    ) -> WasmModule {
+        WasmModule {
+            types,
+            imports: Vec::new(),
+            functions: function_types,
+            tables,
+            memories,
+            globals: Vec::new(),
+            exports: vec![ExportDesc {
+                name: export.0.as_bytes().to_vec(),
+                kind: ExportKind::Function,
+                index: export.1,
+            }],
+            start_section: None,
+            elements,
+            code,
+            data: Vec::new(),
+        }
+    }
+
+    fn unary_module(op: u8, input: ValueType, output: ValueType) -> WasmModule {
+        build_module(
+            vec![FuncType {
+                params: vec![input],
+                results: vec![output],
+            }],
+            vec![0],
+            vec![FunctionBody {
+                locals: Vec::new(),
+                code: vec![0x20, 0x00, op, 0x0B],
+            }],
+            ("f", 0),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn binary_module(op: u8, input: ValueType, output: ValueType) -> WasmModule {
+        build_module(
+            vec![FuncType {
+                params: vec![input, input],
+                results: vec![output],
+            }],
+            vec![0],
+            vec![FunctionBody {
+                locals: Vec::new(),
+                code: vec![0x20, 0x00, 0x20, 0x01, op, 0x0B],
+            }],
+            ("f", 0),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn memory_module(body: Vec<u8>) -> WasmModule {
+        build_module(
+            vec![FuncType {
+                params: Vec::new(),
+                results: vec![ValueType::I64],
+            }],
+            vec![0],
+            vec![FunctionBody {
+                locals: Vec::new(),
+                code: body,
+            }],
+            ("f", 0),
+            Vec::new(),
+            Vec::new(),
+            vec![MemoryType {
+                limits: Limits { min: 1, max: None },
+            }],
+        )
+    }
+
+    /// 构造带单表两函数模块: func0 ()->i32 返回值 42; func1 为导出 "f",
+    /// 其函数体由调用方给出 (含 call_indirect 立即数与元素索引压栈).
+    fn indirect_module(
+        caller_body: Vec<u8>,
+        table_min: u32,
+        element_indices: Vec<u32>,
+    ) -> WasmModule {
+        let types = vec![
+            FuncType {
+                params: Vec::new(),
+                results: vec![ValueType::I32],
+            },
+            FuncType {
+                params: vec![ValueType::I32],
+                results: vec![ValueType::I32],
+            },
+        ];
+        let code = vec![
+            FunctionBody {
+                locals: Vec::new(),
+                code: vec![0x41, 0x2A, 0x0B],
+            },
+            FunctionBody {
+                locals: Vec::new(),
+                code: caller_body,
+            },
+        ];
+        build_module(
+            types,
+            vec![0, 0],
+            code,
+            ("f", 1),
+            vec![TableType {
+                element_type: RefType::FuncRef,
+                limits: Limits {
+                    min: table_min,
+                    max: None,
+                },
+            }],
+            vec![ElementSegment {
+                table_index: 0,
+                offset: vec![0x41, 0x00, 0x0B],
+                func_indices: element_indices,
+            }],
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn call_indirect_dispatches_via_table() {
+        // const 0 (元素下标); call_indirect type0 table0
+        let body = vec![0x41, 0x00, 0x11, 0x00, 0x00, 0x0B];
+        let m = indirect_module(body, 2, vec![0]);
+        assert_eq!(run_module(m, &[]), Ok(Some(Value::I32(42))));
+    }
+
+    #[test]
+    fn call_indirect_type_mismatch_is_error() {
+        // 声明 type1 (i32->i32) 但表中函数为 type0 ()->i32
+        let body = vec![0x41, 0x00, 0x11, 0x01, 0x00, 0x0B];
+        let m = indirect_module(body, 2, vec![0]);
+        assert_eq!(run_module(m, &[]), Err(WasmError::IndirectCallTypeMismatch));
+    }
+
+    #[test]
+    fn call_indirect_element_out_of_bounds() {
+        let body = vec![0x41, 0x05, 0x11, 0x00, 0x00, 0x0B];
+        let m = indirect_module(body, 2, vec![0]);
+        assert_eq!(run_module(m, &[]), Err(WasmError::TableIndexOutOfBounds(5)));
+    }
+
+    #[test]
+    fn call_indirect_uninitialized_element() {
+        // 表容量 2, 元素段只填下标 0; 下标 1 为 null funcref
+        let body = vec![0x41, 0x01, 0x11, 0x00, 0x00, 0x0B];
+        let m = indirect_module(body, 2, vec![0]);
+        assert_eq!(run_module(m, &[]), Err(WasmError::UninitializedElement(1)));
+    }
+
+    #[test]
+    fn call_indirect_table_index_out_of_bounds() {
+        let body = vec![0x41, 0x00, 0x11, 0x00, 0x01, 0x0B];
+        let m = indirect_module(body, 2, vec![0]);
+        assert_eq!(run_module(m, &[]), Err(WasmError::TableIndexOutOfBounds(1)));
+    }
+
+    #[test]
+    fn call_indirect_bad_function_index_in_table() {
+        // 表元素指向不存在的函数索引 9
+        let body = vec![0x41, 0x00, 0x11, 0x00, 0x00, 0x0B];
+        let m = indirect_module(body, 2, vec![9]);
+        assert_eq!(run_module(m, &[]), Err(WasmError::BadFuncIndex(9)));
+    }
+
+    #[test]
+    fn i64_eqz_and_comparisons_cover_all_variants() {
+        for (input, expect) in [(0i64, 1i32), (7, 0)] {
+            let m = unary_module(0x50, ValueType::I64, ValueType::I32);
+            assert_eq!(
+                run_module(m, &[Value::I64(input)]),
+                Ok(Some(Value::I32(expect)))
+            );
+        }
+
+        let cases: [(u8, fn(i64, i64) -> bool); 10] = [
+            (0x51, |a, b| a == b),
+            (0x52, |a, b| a != b),
+            (0x53, |a, b| a < b),
+            (0x54, |a, b| a.cast_unsigned() < b.cast_unsigned()),
+            (0x55, |a, b| a > b),
+            (0x56, |a, b| a.cast_unsigned() > b.cast_unsigned()),
+            (0x57, |a, b| a <= b),
+            (0x58, |a, b| a.cast_unsigned() <= b.cast_unsigned()),
+            (0x59, |a, b| a >= b),
+            (0x5A, |a, b| a.cast_unsigned() >= b.cast_unsigned()),
+        ];
+        for (op, pred) in cases {
+            for (a, b) in [(5i64, 7i64), (-1, 0)] {
+                let m = binary_module(op, ValueType::I64, ValueType::I32);
+                assert_eq!(
+                    run_module(m, &[Value::I64(a), Value::I64(b)]),
+                    Ok(Some(Value::I32(i32::from(pred(a, b))))),
+                    "i64 比较 opcode 0x{op:02X} ({a},{b})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn i64_arithmetic_bitwise_shift_rotate_cover_all_variants() {
+        let cases: [(u8, fn(i64, i64) -> i64); 11] = [
+            (0x80, |a, b| {
+                a.cast_unsigned()
+                    .wrapping_div(b.cast_unsigned())
+                    .cast_signed()
+            }),
+            (0x81, |a, b| a.wrapping_rem(b)),
+            (0x82, |a, b| {
+                a.cast_unsigned()
+                    .wrapping_rem(b.cast_unsigned())
+                    .cast_signed()
+            }),
+            (0x83, |a, b| a & b),
+            (0x84, |a, b| a | b),
+            (0x85, |a, b| a ^ b),
+            (0x86, |a, b| {
+                a.wrapping_shl(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            }),
+            (0x87, |a, b| {
+                a.wrapping_shr(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            }),
+            (0x88, |a, b| {
+                a.cast_unsigned()
+                    .wrapping_shr(crate::functions::intcast::low_u32_from_u64(
+                        b.cast_unsigned(),
+                    ))
+                    .cast_signed()
+            }),
+            (0x89, |a, b| {
+                a.rotate_left(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            }),
+            (0x8A, |a, b| {
+                a.rotate_right(crate::functions::intcast::low_u32_from_u64(
+                    b.cast_unsigned(),
+                ))
+            }),
+        ];
+        let (a, b) = (0x0F0F_i64, 4i64);
+        for (op, f) in cases {
+            let m = binary_module(op, ValueType::I64, ValueType::I64);
+            assert_eq!(
+                run_module(m, &[Value::I64(a), Value::I64(b)]),
+                Ok(Some(Value::I64(f(a, b)))),
+                "i64 运算 opcode 0x{op:02X}"
+            );
+        }
+
+        // 除零 trap
+        let m = binary_module(0x80, ValueType::I64, ValueType::I64);
+        assert_eq!(
+            run_module(m, &[Value::I64(1), Value::I64(0)]),
+            Err(WasmError::DivisionByZero)
+        );
+    }
+
+    #[test]
+    fn i32_rotations_wrap_and_extend() {
+        let rotl = binary_module(0x77, ValueType::I32, ValueType::I32);
+        assert_eq!(
+            run_module(rotl, &[Value::I32(1), Value::I32(1)]),
+            Ok(Some(Value::I32(2)))
+        );
+        let rotr = binary_module(0x78, ValueType::I32, ValueType::I32);
+        assert_eq!(
+            run_module(rotr, &[Value::I32(1), Value::I32(1)]),
+            Ok(Some(Value::I32(1i32.rotate_right(1))))
+        );
+
+        let wrap = unary_module(0xA7, ValueType::I64, ValueType::I32);
+        assert_eq!(run_module(wrap, &[Value::I64(7)]), Ok(Some(Value::I32(7))));
+
+        let extend_s = unary_module(0xAC, ValueType::I32, ValueType::I64);
+        assert_eq!(
+            run_module(extend_s, &[Value::I32(-1)]),
+            Ok(Some(Value::I64(-1)))
+        );
+        let extend_u = unary_module(0xAD, ValueType::I32, ValueType::I64);
+        assert_eq!(
+            run_module(extend_u, &[Value::I32(-1)]),
+            Ok(Some(Value::I64(4_294_967_295)))
+        );
+    }
+
+    #[test]
+    fn i64_memory_narrow_load_store() {
+        // (store 立即数, load 立即数, 期望值): 覆盖 i64 store8/16/32 与 load8_s/u、16_s/u、32_s/u
+        let cases: [(Vec<u8>, u8, i64); 8] = [
+            (vec![0x3E, 0x00, 0x00], 0x30, -1),
+            (vec![0x3E, 0x00, 0x00], 0x31, 255),
+            (vec![0x3E, 0x00, 0x00], 0x32, -1),
+            (vec![0x3E, 0x00, 0x00], 0x33, 65_535),
+            (vec![0x3E, 0x00, 0x00], 0x34, -1),
+            (vec![0x3E, 0x00, 0x00], 0x35, 4_294_967_295),
+            (vec![0x3C, 0x00, 0x00], 0x30, -1),
+            (vec![0x3D, 0x00, 0x00], 0x32, -1),
+        ];
+        for (store, load, expect) in cases {
+            let mut body = vec![0x41, 0x00, 0x42, 0x7F];
+            body.extend_from_slice(&store);
+            body.extend_from_slice(&[0x41, 0x00, load, 0x00, 0x00, 0x0B]);
+            let m = memory_module(body);
+            assert_eq!(
+                run_module(m, &[]),
+                Ok(Some(Value::I64(expect))),
+                "i64 store/load 组合 {store:02X?} / 0x{load:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn float_opcode_is_unsupported() {
+        // f32.const (0x43) 属浮点族: 明确 Unsupported (非 UnknownOpcode)
+        let body = vec![0x43, 0x0B];
+        assert_eq!(
+            run_module(module(body, Vec::new(), 0, 1), &[]),
+            Err(WasmError::Unsupported)
+        );
     }
 }

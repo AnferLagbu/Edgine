@@ -139,11 +139,30 @@ pub enum ImportKind {
     Global(GlobalType),
 }
 
+/// 表元素引用类型 — WASM 1.0 仅 `funcref` (编码 `0x70`)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RefType {
+    /// 函数引用 (编码 `0x70`)。
+    FuncRef = 0x70,
+}
+
+impl RefType {
+    /// 按类型标签字节解析引用类型; 非法字节返回 `None`。
+    #[must_use]
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0x70 => Some(Self::FuncRef),
+            _ => None,
+        }
+    }
+}
+
 /// 表类型 — 元素类型与尺寸限制。
 #[derive(Debug, Clone)]
 pub struct TableType {
     /// 表元素类型 (WASM 1.0 只允许 `funcref`)。
-    pub element_type: ValueType,
+    pub element_type: RefType,
     /// 表的初始/最大元素数限制。
     pub limits: Limits,
 }
@@ -701,6 +720,14 @@ pub enum WasmError {
     InternalError,
     /// 当前实现明确不支持的合法 wasm 结构 (浮点 / 多值块类型等)
     Unsupported,
+    /// 表元素类型字节非法 (WASM 1.0 仅 `0x70` funcref)
+    BadTableElementType(u8),
+    /// 表索引或表元素下标越界
+    TableIndexOutOfBounds(usize),
+    /// `call_indirect` 命中未初始化 (null) 表元素
+    UninitializedElement(usize),
+    /// `call_indirect` 目标函数签名与指令声明类型不符
+    IndirectCallTypeMismatch,
     /// `br` / `br_if` / `br_table` 深度超出当前块标签栈
     BadLabelDepth(usize),
     /// 块结构畸形 (`else` 不在 `if` 内 / 重复 `else` 等), 记录现场字节
