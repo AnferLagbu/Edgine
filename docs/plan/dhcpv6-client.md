@@ -138,8 +138,13 @@ InfoBound → (refresh 定时器) → InfoRequesting
   - `state.rs`: 事件驱动状态机 — `handle_packet(&[u8])` / `tick(now_ms)` 产生输出指令 (`tx_packets` / `apply_addr` / `apply_options` / `state`). 有状态 SARR + Renew/Rebind/Release; 无状态 Information-Request.
   - `policy.rs`: 纯函数 `decide(state, retry_count, elapsed_ms, lease_ms, cfg) -> Dhcpv6Action` (仿 `dhcp_policy.rs`), 决定重传/续约/退避/放弃. T1=50% / T2=87.5% (RFC 8415).
   - `mod.rs`: 编排 + 公共 API (`Dhcpv6Client::new/poll`), 输出指令交 privileged 执行.
-- **状态**: []
+- **状态**: [X]
 - **详情**: 状态机与策略分离 (机制 vs 策略), 均 0 unsafe 纯逻辑. ServerID 匹配分支 / lease 到期 / 重传上限必须有用例. 与 SLAAC 协同: 有状态地址与 SLAAC 地址共存于 `update_ip_addrs` (注意 addr-count-4 预算).
+  - **已落地**: `functions/net/dhcpv6/policy.rs` (359 行含 11 内联测试) + `state.rs` (1177 行含 17 内联测试) + `mod.rs` 挂载 `pub mod policy` / `pub mod state`.
+    - **policy**: 纯函数 `decide(state, retry_count, elapsed_ms, lease_ms, cfg) -> Dhcpv6Action` (Continue / Renew / Rebind / Restart / GiveUp) + `retransmit_timeout_ms` (RT = IRT × 2^retry 封顶 MAX_RT, retry ≥ 64 早返防溢) + `apply_jitter` (±10% 整数域确定性) + `t1_ms` / `t2_ms` (万分比). `Dhcpv6PolicyConfig` 取 RFC 8415 §15 默认 (SOL 1s/120s, REQ 1s/30s, REN/REB 10s/600s, INF 1s/120s, REL 1s, max_retries 8, T1 50% / T2 87.5%).
+    - **state**: 事件驱动 `Dhcpv6Client` — `new` / `start_stateful` / `start_stateless` / `handle_packet(buf, src, now)` / `tick(now)` / `release(now)` / `state()`, 输出 `Output { tx_packets, apply_addr, apply_options, state }` 指令交 privileged 执行. 有状态 SARR (Solicit → Advertise → Selecting → Request → Reply → Bound) + T1 Renew / T2 Rebind / lease 到期自主重启 + Release; 无状态 Information-Request → InfoBound + 刷新间隔. ServerID 匹配 / 事务标识校验 / Preference 选择 / StatusCode 非零重启 / 不可信输入静默忽略均闭合. 机制委派 `wire` 编解码 + `policy` 决策, 0 unsafe.
+    - **API 细化**: 草图 `poll` 拆为 `handle_packet` (事件) + `tick` (定时器), 便于 privileged 驱动. 抖动种子取 `retry_count` (functions 层无 RNG, 确定性); 真随机熵留 Phase 4 由 privileged 供给.
+    - **七门槛全绿**: 双架构 `build.sh all` (两架构 link 过) / clippy pedantic 双架构 / fmt 0 漂移; kernel-host 三成员 1311 过 (kernel 12 + functions 777 含 +28 dhcpv6 + privileged 522); host-tests 178 过; audit full 未执行腿 0, 审计腿 19/19 + 存量 10/10, smoltcp_purity / QEMU 2/2 + feature 运行维 4/4 / lockbud 4/4 零发现 / lockdep 构建面双架构; rustdoc 双架构.
 
 ### Phase 4: privileged 封装 + poll 接线
 
