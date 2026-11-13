@@ -83,7 +83,7 @@ pub mod dhcp_policy;
 pub mod netfilter;
 pub mod route;
 /// REVAL-W 第 6 组 W3.2 (2026-06-24): NetStack trait 的 smoltcp 实现
-/// 设计: docs/plan/smoltcp-framekernel-wrapper.md §3.2
+/// 设计: docs/plan/archive/smoltcp-framekernel-wrapper.md §3.2
 pub mod smoltcp_impl;
 pub mod socket;
 pub mod socket_file;

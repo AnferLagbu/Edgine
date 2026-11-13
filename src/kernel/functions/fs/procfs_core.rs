@@ -301,7 +301,7 @@ impl ProcfsData {
                 Self::write_str(buf, &mut pos, info.brand_name());
                 Self::write_str(buf, &mut pos, "\nstepping\t: 10\nmicrocode\t: 0xf0\n");
                 Self::write_str(buf, &mut pos, "cpu MHz\t\t: ");
-                // 整数商余 (两位小数), 消除内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
+                // 整数商余 (两位小数), 消除内核侧浮点 (见 docs/plan/archive/aarch64-kernel-fp-free.md)
                 // 频率取单一时基的登记值 (privileged 顶层公共 API; 旧形态读
                 // `CpuInfo` 里的厂商硬编码估计字段, 该字段已随 P-7 删除).
                 let hz = crate::privileged::timer::hw_counter_frequency_hz().unwrap_or(0);

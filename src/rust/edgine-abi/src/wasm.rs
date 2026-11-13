@@ -2,7 +2,7 @@
 //!
 //! 值域为 Edgine 私有功能段 `766-779`：Linux 没有"进程内加载并执行 wasm"
 //! 的系统调用，占用 0-299 的 Linux 号位既无兼容收益，又破坏"0-299 == Linux"
-//! 的承重不变式，故按 `docs/plan/wasm-runtime-wiring.md` §3 丁 取私有段。
+//! 的承重不变式，故按 `docs/plan/archive/wasm-runtime-wiring.md` §3 丁 取私有段。
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`functions::wasm::registry`
 //! 的策略实现与用户态入口桩（`src/user/wasmstub`）均引用本模块，结构上避免

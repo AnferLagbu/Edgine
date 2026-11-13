@@ -8,7 +8,7 @@
 //! 纯解析算法 (WASM 二进制格式解析), 0 unsafe, 0 外部依赖.
 //! privileged 仅保留 re-export.
 //!
-//! ## W-2 全函数化改造 (docs/plan/wasm-runtime-wiring.md)
+//! ## W-2 全函数化改造 (docs/plan/archive/wasm-runtime-wiring.md)
 //!
 //! 改造前本解析器**不是全函数**: 段内取字节直接 `bytes[pos]` 索引, 段边界仅靠
 //! 调用方传入的 `end` 参数约束 (多数子解析器忽略该参数), 条目数前缀未设上界.
@@ -504,7 +504,7 @@ fn read_init_expr(bytes: &[u8], pos: &mut usize) -> Result<Vec<u8>, WasmError> {
 }
 
 // ============================================================================
-// 回归锁: 畸形输入矩阵 (docs/plan/wasm-runtime-wiring.md W-2 / W-9(b))
+// 回归锁: 畸形输入矩阵 (docs/plan/archive/wasm-runtime-wiring.md W-2 / W-9(b))
 // ============================================================================
 
 #[cfg(test)]

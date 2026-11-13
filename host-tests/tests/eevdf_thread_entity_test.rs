@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! E-08 线程维度语义对齐回归锁.
 //!
-//! 口径来源: `docs/plan/eevdf-scheduler.md` E-08 与多线程工程 D7
+//! 口径来源: `docs/plan/archive/eevdf-scheduler.md` E-08 与多线程工程 D7
 //! (`Process` = 每线程 TCB, `ThreadGroup` 只承载组身份/生命周期/共享资源).
 //!
 //! 本文件锁定:

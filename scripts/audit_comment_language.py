@@ -2,7 +2,7 @@
 """
 注释语言一致性 audit (TD-22)
 
-目标: 按 [maintenance-2026-06-11.md 注释规范](../../docs/plan/maintenance-2026-06-11.md) 检测
+目标: 按 [maintenance-2026-06-11.md 注释规范](../../docs/plan/archive/maintenance-2026-06-11.md) 检测
 Rust 注释中残留的英文段落式注释 (// 或 /// 或 /* */ 或 // SAFETY: / // TODO:).
 
 设计契约:

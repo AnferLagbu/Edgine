@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# 整机 liveness 量化探针 (lockdep-observer-liveness-metric.md D-1)
+# 整机 liveness 量化探针 (docs/plan/archive/lockdep-observer-liveness-metric.md D-1)
 #
 # 用途: 把 P-30 一次性 soak 里的判冻逻辑固化为**可复用、可入 CI** 的 liveness
 #   度量. 在生产 (非 lockdep) 镜像上, 用持续高压 TCP 负载 + 采样窗, 输出机器

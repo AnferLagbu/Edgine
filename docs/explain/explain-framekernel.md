@@ -123,7 +123,7 @@ Soundness/Expressiveness/Minimalism/Efficiency。通过评审再合并。
 
 ### 依赖清单
 
-5 个依赖源：docs/README.md §6 explain 文档格式（写本文所遵循的格式规范）/ src/kernel/privileged/mod.rs（privileged 子树入口，含完整模块清单与 SAFETY 注释规范）/ src/kernel/functions/mod.rs（functions 子树入口，包含 #![deny(unsafe_code)] 与 Safe Rust 契约）/ scripts/audit_functions_boundary.py（TCB 公开 API 白名单 + 内部模块黑名单）/ framekernel-compliance.md（框内核合规工程书）。
+5 个依赖源：docs/README.md §6 explain 文档格式（写本文所遵循的格式规范）/ src/kernel/privileged/mod.rs（privileged 子树入口，含完整模块清单与 SAFETY 注释规范）/ src/kernel/functions/mod.rs（functions 子树入口，包含 #![deny(unsafe_code)] 与 Safe Rust 契约）/ scripts/audit_functions_boundary.py（TCB 公开 API 白名单 + 内部模块黑名单）/ docs/plan/archive/framekernel-compliance.md（框内核合规工程书）。
 
 ### 被引用清单
 

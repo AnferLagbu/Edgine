@@ -2,7 +2,7 @@
 """
 B01-24 返工: audit 脚本统一自测.
 
-按 docs/plan/audit-fix-01-audit-scripts.md §B01-24 复核要求:
+按 docs/plan/archive/audit-fix-01-audit-scripts.md §B01-24 复核要求:
 - 落地 fixture + CI 断言
 - 至少覆盖 functions_boundary / deadlock_matrix /
   block_registration / audit_unsafe / coupling 五脚本
@@ -870,7 +870,7 @@ def test_vacuous_needle() -> bool:
 
 def main() -> int:
     print("=" * 60)
-    print("B01-24 audit 脚本自测 (按 docs/plan/audit-fix-01 §B01-24)")
+    print("B01-24 audit 脚本自测 (按 docs/plan/archive/audit-fix-01-audit-scripts.md §B01-24)")
     print("=" * 60)
 
     results = [

@@ -5,7 +5,7 @@
 //!
 //! 本文件定义 `NetStack` trait 作为 **framekernel 网络协议栈的安全抽象层**,
 //! 隔离 smoltcp 第三方类型 (Interface / SocketHandle / SocketSet) 与 functions
-//! 层业务逻辑. 完整设计见 [docs/plan/smoltcp-framekernel-wrapper.md].
+//! 层业务逻辑. 完整设计见 [docs/plan/archive/smoltcp-framekernel-wrapper.md].
 //!
 //! ## 核心原则 (ASTD 四准则, framekernel-nature.md §2)
 //!

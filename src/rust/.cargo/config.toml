@@ -12,7 +12,7 @@ rustflags = [
 
 # 内核 aarch64 专用目标 (等效 -neon, 使 EL1 零 FP/SIMD, 与 +neon 版本仅差
 # target-feature 一项). rustflags 必须与 aarch64-unknown-none 保持一致.
-# 详见 docs/plan/aarch64-kernel-fp-free.md.
+# 详见 docs/plan/archive/aarch64-kernel-fp-free.md.
 [target.aarch64-unknown-none-softfloat]
 rustflags = [
     "-C", "relocation-model=static",

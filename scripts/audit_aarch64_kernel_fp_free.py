@@ -6,7 +6,7 @@ audit_aarch64_kernel_fp_free.py — aarch64 内核「零 FP/SIMD」反汇编审�
 EL1 不应再执行任何浮点/NEON 指令. 但「零 FP/SIMD」若只依赖编译 flag 就不可验证:
 任何源码或汇编层面的回退 (新增 asm 块 / 手写 `.arch_extension fp` 等) 都没有
 拦截点. 本脚本把该判据变为可 CI 强制的确定性检查
-(见 docs/plan/aarch64-kernel-fp-free.md 的 FP-06).
+(见 docs/plan/archive/aarch64-kernel-fp-free.md 的 FP-06).
 
 检查对象: `other/build/aarch64/kernel.bin` (aarch64 内核 ELF, 由 `make ARCH=aarch64`
 链接产出; P-10 后内核产物按架构分目录, 与 x86_64 镜像不共用路径).

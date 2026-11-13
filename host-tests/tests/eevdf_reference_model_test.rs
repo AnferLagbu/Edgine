@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! E-01 EEVDF 参考模型对拍: Q16.16 口径 + 账目对账 + 三段入队语义.
 //!
-//! 追踪: `docs/plan/eevdf-scheduler.md` E-01 (§3.3 公式 / §3.8 开放议题).
+//! 追踪: `docs/plan/archive/eevdf-scheduler.md` E-01 (§3.3 公式 / §3.8 开放议题).
 //!
 //! 验收点:
 //! - 常量与内核单源一致; nice -20..19 全 40 档 `Δvr` 随权重严格递减 (不再全为 1)

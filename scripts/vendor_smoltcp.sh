@@ -17,12 +17,12 @@
 #   scripts/vendor_smoltcp.sh status                # 显示当前版本与上游对比
 #   scripts/vendor_smoltcp.sh sync <tag>            # 升级到新 tag (危险, 需用户确认)
 #
-# 关联: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
+# 关联: docs/plan/archive/smoltcp-framekernel-wrapper.md §同步机制
 
 set -euo pipefail
 
 # ============================================================================
-# 常量 (避免硬编码, 与 smoltcp-framekernel-wrapper.md 保持单一来源)
+# 常量 (避免硬编码, 与 docs/plan/archive/smoltcp-framekernel-wrapper.md 保持单一来源)
 # ============================================================================
 SMOLTCP_VENDORED="src/kernel/functions/net/smoltcp"
 SMOLTCP_LOCKFILE="src/kernel/functions/net/smoltcp.versions"
@@ -212,7 +212,7 @@ cmd_lock() {
 # 由 scripts/vendor_smoltcp.sh lock 自动生成
 # 用于 CI 验证 vendored 源与上游 byte-level 一致 (排除本地化部分)
 #
-# 关联: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
+# 关联: docs/plan/archive/smoltcp-framekernel-wrapper.md §同步机制
 # 模式: $lock_mode
 
 # 上游 tag (semver, 形如 v0.13.1)

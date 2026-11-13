@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! E-03 EEVDF 队列机制对拍: 纯函数 / 树账+运行账 / 合格前缀选择 / 迁移守恒.
 //!
-//! 口径来源: `docs/plan/eevdf-scheduler.md` E-03 与 E-01 冻结的
+//! 口径来源: `docs/plan/archive/eevdf-scheduler.md` E-03 与 E-01 冻结的
 //! `host-tests/src/eevdf_model.rs`. 本文件只测队列**行为**与参考模型的一致性;
 //! 生产接线的源码形状由 `eevdf_single_time_base_test.rs` /
 //! `smp_rq_migration_test.rs` 的既有契约覆盖.

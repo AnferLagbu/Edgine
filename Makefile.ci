@@ -182,7 +182,7 @@ ci-bench-record:
 	@echo "PASS: baseline.json 已更新 (读数 + 预算同源重算)"
 
 # ── liveness 探针: 可选/定期腿 (D-3) ────────────────────────────
-# 判据与用法见 docs/plan/lockdep-observer-liveness-metric.md D-1/D-3. 本目标只
+# 判据与用法见 docs/plan/archive/lockdep-observer-liveness-metric.md D-1/D-3. 本目标只
 # 委派 scripts/qemu_liveness_probe.sh: 读**预构建**镜像 (不重建), 单 boot 采样判
 # ALIVE/FROZEN. 退出码 0=全 ALIVE / 1=出现 FROZEN / 2=环境或镜像错误, 或 tick
 # 读数不可得 (测不出不判冻).
@@ -191,7 +191,7 @@ ci-bench-record:
 # `make -f Makefile.ci ci-liveness BOOTS=6 SMP=4 HAMMER_S=12`).
 # SMP 默认取 2, 与 §2.3 门槛的 QEMU 启动配置一致; 探针自身默认 4. x86_64 的
 # -smp 4 目前会暴露一个与本腿无关的线程退出重现签名 (登记在
-# docs/plan/aarch64-reap-timeout-rootcause.md §1), 修复前不宜作定期读数基线.
+# docs/plan/archive/aarch64-reap-timeout-rootcause.md §1), 修复前不宜作定期读数基线.
 ci-liveness:
 	@echo "[+] 整机 liveness 探针 (可选/定期腿, 非门禁)..."
 	@mkdir -p $(LOG_DIR)

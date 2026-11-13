@@ -94,7 +94,7 @@ impl PmmPolicy for FallbackPmmPolicy {
         if ctx.total_pages == 0 {
             return 0;
         }
-        // 千分比整数运算 (0..=1000), 避免内核侧浮点 (见 docs/plan/aarch64-kernel-fp-free.md)
+        // 千分比整数运算 (0..=1000), 避免内核侧浮点 (见 docs/plan/archive/aarch64-kernel-fp-free.md)
         let free_permille = ctx.free_pages * 1000 / ctx.total_pages;
         let fail_permille = (ctx.failed_allocs * 1000)
             .checked_div(ctx.total_allocs)

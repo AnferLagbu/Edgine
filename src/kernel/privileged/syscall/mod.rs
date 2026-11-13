@@ -20,7 +20,7 @@ pub mod timerfd;
 ///
 /// 0-299 直接走 Linux ABI, 无翻译层. 500+ 与 Linux 错开, 避免与未来 Linux 新增 syscall 冲突.
 ///
-/// # 双层分发契约 (B09-18, docs/plan/syscall-dispatch-cleanup.md)
+/// # 双层分发契约 (B09-18, docs/plan/archive/syscall-dispatch-cleanup.md)
 ///
 /// 调用链: 中断入口 → functions 策略分发 (优先) → 返回 ENOSYS 时 privileged 回退层兜底.
 ///

@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicBool, AtomicIsize, AtomicPtr, AtomicU32, AtomicU6
 //
 // D8: FdTable 分配策略 (first-fit, 上限 64) 经 DECISION-J (2026-09-13) 反转
 // 迁回 privileged/proc/fd_table.rs (Process 机制字段归 privileged).
-// 详见 [docs/plan/maintenance-2026-06-11.md] (P1-I-01).
+// 详见 [docs/plan/archive/maintenance-2026-06-11.md] (P1-I-01).
 pub use crate::privileged::proc::fd_table::{FdTable, MAX_FDS_PER_PROCESS};
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致

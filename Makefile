@@ -44,7 +44,7 @@ ifeq ($(ARCH),aarch64)
     OBJCOPY = aarch64-linux-gnu-objcopy
     RUST_TARGET = aarch64-unknown-none
     # 内核与用户态目标分离: 内核走 softfloat (等效 -neon, 使 EL1 零 FP/SIMD,
-    # 见 docs/plan/aarch64-kernel-fp-free.md); 用户态保持 +neon (用户程序可用 FP/SIMD).
+    # 见 docs/plan/archive/aarch64-kernel-fp-free.md); 用户态保持 +neon (用户程序可用 FP/SIMD).
     RUST_TARGET_KERNEL = aarch64-unknown-none-softfloat
     QEMU = qemu-system-aarch64
     QEMU_MACHINE = virt

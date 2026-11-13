@@ -186,7 +186,7 @@ pub unsafe fn init() {
 /// (`0xFFFF_0000_401B_F000` 解析到 PA `0x1BF000` 而非 `0x401BF000`), 导致
 /// `VBAR_EL1` 指向的异常向量表不可取指 —— 内核从未进入过任何异常/中断处理
 /// (串口日志中 `TIMER IRQ` 恒为 0 次)。归因与验证见
-/// docs/plan/kpti-complete-project.md。
+/// docs/plan/archive/kpti-complete-project.md。
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn init_kernel_ttbr1() {
     unsafe {

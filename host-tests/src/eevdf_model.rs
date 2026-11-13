@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! EEVDF 参考模型 (E-01 冻结口径) — Q16.16 纯整数, host 侧唯一口径.
 //!
-//! 本模块不是生产实现, 而是 `docs/plan/eevdf-scheduler.md` §3 的可执行口径:
+//! 本模块不是生产实现, 而是 `docs/plan/archive/eevdf-scheduler.md` §3 的可执行口径:
 //! E-02 起的内核实现以本模型的公式、舍入方向与不变量为唯一参照, 并由
 //! `host-tests/tests/eevdf_reference_model_test.rs` 对拍.
 //!

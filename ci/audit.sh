@@ -332,7 +332,7 @@ fi
 
 # FP-06: aarch64 内核「零 FP/SIMD」反汇编白名单审计 — 防 EL1 出现浮点/NEON
 # (软浮点 target 只保证编译期不生成 FP 指令, 无法拦截源码/汇编层的回退;
-#  以反汇编白名单确定性覆盖, 见 docs/plan/aarch64-kernel-fp-free.md FP-06)
+#  以反汇编白名单确定性覆盖, 见 docs/plan/archive/aarch64-kernel-fp-free.md FP-06)
 # 产物: other/build/aarch64/kernel.bin —— 内核产物已按架构分目录 (P-10), 与 x86_64
 # 不共用输出路径, 因此本步骤不再要求"先跑 build.sh aarch64": ./ci/build.sh all 现
 # 已两架构各自链接, 两种产物同时存在. 旧共用路径曾使本审计在 build all 之后必读到

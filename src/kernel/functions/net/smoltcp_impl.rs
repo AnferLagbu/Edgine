@@ -29,8 +29,8 @@
 //!
 //! ## 设计依据
 //!
-//! - [docs/plan/smoltcp-framekernel-wrapper.md] §3 关键设计决策
-//! - [docs/plan/maintenance-cycle-2026-06-19.md] §9.5 REVAL-W 第 6 组
+//! - [docs/plan/archive/smoltcp-framekernel-wrapper.md] §3 关键设计决策
+//! - [docs/plan/archive/maintenance-cycle-2026-06-19.md] §9.5 REVAL-W 第 6 组
 
 use crate::privileged::net::iface_trait::{
     DhcpState, IpAddr, Ipv4Addr, Ipv6Addr, NetConfig, NetEndpoint, NetError, NetStack, PollOutcome,

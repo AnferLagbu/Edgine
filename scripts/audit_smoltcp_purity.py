@@ -14,7 +14,7 @@ REVAL-W 工程要求 smoltcp 源**永不修改**, 可直接同步上游.
 
 退出码: 0 = 通过, 1 = 有违规, 2 = 锁文件缺失 (warn)
 
-关联: docs/plan/smoltcp-framekernel-wrapper.md §CI 防污染机制
+关联: docs/plan/archive/smoltcp-framekernel-wrapper.md §CI 防污染机制
 """
 
 import hashlib

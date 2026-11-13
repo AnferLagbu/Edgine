@@ -321,7 +321,7 @@ fn syscall_dispatch_impl(num: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, 
         // functions (functions::proc::session::tcgetpgrp_syscall / tcsetpgrp_syscall).
 
         // ==================== 网络 (functions 代理) ====================
-        // 分层契约 (docs/plan/syscall-dispatch-cleanup.md B1/B3): 网络 syscall 由
+        // 分层契约 (docs/plan/archive/syscall-dispatch-cleanup.md B1/B3): 网络 syscall 由
         // functions::syscall::dispatch_net 真实实现 (无 cfg 门控, 所有构建配置下
         // 优先命中); 本回退层仅保留 not(net) 哨兵, 禁止新增与 functions 重叠的
         // 真实实现分支 (见 mod.rs 分层契约).

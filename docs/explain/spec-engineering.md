@@ -1,12 +1,12 @@
 # 工程纪律性规范
 
-> 约束后续新代码的工程规范。已有代码的解耦进度见 docs/plan/engineering-discipline.md。所有开发者（含 AI）提交新代码前必须遵守本文件。
+> 约束后续新代码的工程规范。已有代码的解耦进度见 docs/plan/archive/engineering-discipline.md。所有开发者（含 AI）提交新代码前必须遵守本文件。
 
 ## 这是什么
 
 ### 范围与配套
 
-工程纪律性规范的范畴。范围：约束后续新代码的工程规范；配套：docs/plan/engineering-discipline.md（已有代码解耦进度）/ guide-dev.md（架构开发场景）/ explain-framekernel.md（安全不变式 I1-I6）/ AGENTS.md（项目硬约束）；0 铁律 + 13 章节 + 1 提交检查清单 + 1 存量问题处理策略。
+工程纪律性规范的范畴。范围：约束后续新代码的工程规范；配套：docs/plan/archive/engineering-discipline.md（已有代码解耦进度）/ guide-dev.md（架构开发场景）/ explain-framekernel.md（安全不变式 I1-I6）/ AGENTS.md（项目硬约束）；0 铁律 + 13 章节 + 1 提交检查清单 + 1 存量问题处理策略。
 
 ## 为什么这样设计
 
@@ -102,7 +102,7 @@ x86_64 + aarch64 双架构必须同时通过。任何架构特定代码必须配
 
 ### 依赖清单
 
-4 个依赖源：guide-dev.md（架构开发场景指导）/ explain-framekernel.md（安全不变式 I1-I6 定义）/ engineering-discipline.md（已有代码解耦进度）/ AGENTS.md（项目硬约束）。
+4 个依赖源：guide-dev.md（架构开发场景指导）/ explain-framekernel.md（安全不变式 I1-I6 定义）/ docs/plan/archive/engineering-discipline.md（已有代码解耦进度）/ AGENTS.md（项目硬约束）。
 
 ### 被引用清单
 

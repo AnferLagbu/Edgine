@@ -302,7 +302,7 @@ def check_raw_pointer_access(filepath):
 
 
 # Vendored 3rd-party 库目录: 不属于项目自有代码, 审计豁免.
-# 设计依据: docs/plan/smoltcp-framekernel-wrapper.md §同步机制
+# 设计依据: docs/plan/archive/smoltcp-framekernel-wrapper.md §同步机制
 # 排除理由: smoltcp 100% safe Rust (上游承诺), 我们仅 vendored 不修改;
 #           上游代码含 26 处 unsafe 块 (phy/sys/raw_socket 等),
 #           审计项目自有代码不应误判 vendored 部分.

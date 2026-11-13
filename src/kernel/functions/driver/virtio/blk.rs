@@ -254,7 +254,7 @@ impl VirtioBlkDriver {
             Driver,
             "virtio-blk: 容量={} 扇区 ({} MB)",
             capacity,
-            // 整数除法 (消除内核侧浮点, 见 docs/plan/aarch64-kernel-fp-free.md)
+            // 整数除法 (消除内核侧浮点, 见 docs/plan/archive/aarch64-kernel-fp-free.md)
             capacity * 512 / (1024 * 1024)
         );
 

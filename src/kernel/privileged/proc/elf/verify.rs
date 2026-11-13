@@ -11,7 +11,7 @@
 //! 各自实现一份 ELF magic / class / machine 校验, 解析方式不一致, 容易出现一处修复另一处遗漏.
 //! 本模块抽出 `verify_elf` 作为**唯一**验证入口, 两个调用方都改用同一函数.
 //!
-//! 详见 [docs/plan/maintenance-2026-06-11.md] I-33.
+//! 详见 [docs/plan/archive/maintenance-2026-06-11.md] I-33.
 
 use super::{Elf64Header, Elf64Phdr, MAX_PHDR_COUNT};
 

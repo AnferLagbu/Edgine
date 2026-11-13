@@ -13,9 +13,18 @@
       批次失效; §9.2 要求 plan 同步的是状态标记 []/[X], 不是历史路径文本. 把它们计入
       漂移等于要求文档篡改历史记录.
   - docs/report/ : 正文只读的结果快照 (修订规则见 AGENTS.md §6, 同样理由).
+
+设计册计划路径免报 (docs/design/ 专属, 发现式判据, 不设人工注册表):
+  design 文档指向长期演化目标, 合法地引用**尚未新建**的模块名 (如 freg v2 迁移表的
+  state.rs / slot.rs). 判据取 git 全历史: 一个不存在的路径若**从未在任何提交中出现过**
+  (`git log --all --full-history` 零命中) ⇒ 计划新建, 免报; 若**曾存在而后被删除** ⇒
+  退役文件引用 (如 fd_alloc.rs), 仍是真漂移, 照报. 该判据客观可复现, 不依赖人工白名单,
+  也不改动设计意图. explain/ 与根文档描述当前代码形态, 不适用此免报 (任何失效路径都报).
 """
 
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 import sys
 
@@ -45,6 +54,27 @@ PATH_PAT2 = re.compile(
 )
 
 
+@lru_cache(maxsize=None)
+def ever_existed_in_git(repo_rel: str) -> bool:
+    """路径是否在 git 全历史中出现过 (含已删除). 区分计划新建 vs 退役引用.
+
+    git 不可用或返回非零时保守按「曾存在」处理 (仍报漂移), 不因工具故障而漏报.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "log", "--all", "--full-history", "--format=%H", "--", repo_rel],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if proc.returncode != 0:
+        return True
+    return bool(proc.stdout.strip())
+
+
 def scoped_docs() -> list[Path]:
     """展开校验范围: 目录取全部 *.md, 文件取自身 (不存在的项静默跳过)."""
     out: list[Path] = []
@@ -58,22 +88,34 @@ def scoped_docs() -> list[Path]:
 
 def main() -> int:
     drifted: list[tuple[Path, str, str]] = []  # (doc, missing_path, kind)
+    planned_exempt = 0
+    design_root = DOCS / "design"
     for doc in scoped_docs():
         try:
             text = doc.read_text(encoding="utf-8", errors="replace")
         except Exception:
             continue
-        for m in PATH_PAT.finditer(text):
-            rel = m.group(1)
-            if not (ROOT / rel).exists():
-                drifted.append((doc, rel, "src-path"))
-        for m in PATH_PAT2.finditer(text):
-            rel = m.group(1)
-            if not (SRC / rel).exists():
-                drifted.append((doc, rel, "sub-path"))
+        is_design = design_root in doc.parents
+        for pat, base, kind in ((PATH_PAT, ROOT, "src-path"), (PATH_PAT2, SRC, "sub-path")):
+            for m in pat.finditer(text):
+                rel = m.group(1)
+                if (base / rel).exists():
+                    continue
+                # 设计册中「从未在 git 全历史出现」的路径 = 计划新建模块, 免报;
+                # 曾存在而后删除的 = 退役引用, 仍报 (如 fd_alloc.rs).
+                if is_design:
+                    repo_rel = str((base / rel).relative_to(ROOT))
+                    if not ever_existed_in_git(repo_rel):
+                        planned_exempt += 1
+                        continue
+                drifted.append((doc, rel, kind))
     scanned = len(scoped_docs())
     if not drifted:
-        print(f"OK: 无文档路径漂移 (校验 {scanned} 份必须与代码同步的文档)")
+        msg = f"OK: 无文档路径漂移 (校验 {scanned} 份必须与代码同步的文档"
+        if planned_exempt:
+            msg += f"; 设计册计划新建路径免报 {planned_exempt} 条 (git 全历史零命中)"
+        msg += ")"
+        print(msg)
         return 0
     print(f"漂移 {len(drifted)} 条 (校验 {scanned} 份文档):")
     for doc, rel, kind in drifted[:50]:

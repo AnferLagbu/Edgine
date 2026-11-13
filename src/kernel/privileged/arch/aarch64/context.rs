@@ -34,7 +34,7 @@ global_asm!(
     r#"
 .section .text.context_switch, "ax"
 // 内核构建走 aarch64-unknown-none-softfloat (等效 -neon, 见
-// docs/plan/aarch64-kernel-fp-free.md), LLVM 集成汇编器随之禁用 FP/SIMD
+// docs/plan/archive/aarch64-kernel-fp-free.md), LLVM 集成汇编器随之禁用 FP/SIMD
 // 寄存器; 但本函数必须原样保存/恢复 EL0 的 V0-V31/FPCR/FPSR, 故在此汇编
 // 单元内显式重新启用 fp/simd 扩展 —— 仅作用于本单元, 不改变编译器对
 // Rust 代码的代码生成策略 (EL1 仍零隐式 FP/SIMD).
