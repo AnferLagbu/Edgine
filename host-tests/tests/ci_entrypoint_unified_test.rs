@@ -558,6 +558,102 @@ fn assert_full_claim_names_step_2e(sh: &str) {
     );
 }
 
+/// 2g 文档路径新鲜度腿接线锁 (用户裁定 2026-11-13 路径甲「保留 + 扩围 + 接门禁」).
+///
+/// 病灶 (取证轮 #257 实测): `tools/check_doc_paths.py` 能抓真漂移 (退役文件引用), 但此前
+/// 是**零 CI 调用者**的按需工具 —— AGENTS §6 旧口径明写「未接入 CI 门禁」. 即「文档源码
+/// 路径失效」这类漂移在本地一键门禁里无人执法, 与 P-49「零调用者审计脚本」同族. 本轮升为
+/// full 档阻断腿, 并把扫描面从反引号扩到 markdown 链接 (本仓主力引用风格, 数量远多于反引号).
+///
+/// 判据 (摘腿 / 降级 / 挪档 / 漏自述都由此转红):
+/// ① 调起形态 = `(cd "$PROJECT_ROOT" && python3 "tools/check_doc_paths.py")` —— 判退出码 +
+///    锚定仓库根 (借外层 cwd 会让扫描根漂移, P-50 同族);
+/// ② 非零出口是 `err "文档路径新鲜度腿失败` 而非只打印 —— 判了退出码却不阻断等于没判;
+/// ③ fail-closed: 存在性包装 + `audit_leg_missing "doc_paths"` 出口成对 —— 脚本缺失 / 无
+///    python3 时硬失败, 不静默消失 (P-46 同族);
+/// ④ 位置在 quick 早退分支**之后** —— full-only, 挪进 quick 会让弱档恒红;
+/// ⑤ `# - full:` 头部自述行与 quick 档位边界行都点名 2g —— 档位自述与实际结构一致 (P-48/57).
+///
+/// 负控制实测 (2026-11-13, cp+sha256 字节复原): 往 `docs/explain/explain-framekernel.md`
+/// 注入指向退役文件 `src/kernel/privileged/proc/fd_alloc.rs` (git 全历史曾存在) 的 markdown
+/// 链接 ⇒ 脚本 RC=1 报 `[md-link]`; 反引号同注入 ⇒ RC=1 报 `[src-path]`; 两形态各自字节
+/// 复原后 RC=0. 设计册计划新建路径 (git 零命中) 走 markdown 面仍免报, explain 面照报 ——
+/// #255 判别器对两形态同语义. 证明本腿真判存在性, 非只播报读数.
+#[test]
+fn test_doc_paths_leg_is_wired_and_blocking() {
+    let sh = read(AUDIT_SH);
+    let block = step_2g_block(&sh);
+
+    // ① 调起形态: 判退出码 + 锚定仓库根.
+    assert!(
+        block.contains("if (cd \"$PROJECT_ROOT\" && python3 \"tools/check_doc_paths.py\")"),
+        "2g 腿不再走「判退出码 + 锚定仓库根」的调起形态 —— 退回只播报读数或借外层 cwd (P-47/50 同族)"
+    );
+    // ② 阻断出口.
+    assert!(
+        block.contains("err \"文档路径新鲜度腿失败"),
+        "2g 腿的非零出口消失 —— 判了退出码却不阻断, 等于没判 (P-47 同族)"
+    );
+    // ③ fail-closed 成对.
+    assert!(
+        block.contains("command -v python3 >/dev/null 2>&1 && [ -f"),
+        "2g 腿缺存在性包装 —— 脚本缺失时静默跳过 (P-46 同族)"
+    );
+    assert!(
+        block.contains("audit_leg_missing \"doc_paths\""),
+        "2g 腿缺 audit_leg_missing 硬失败出口 —— 包装与出口不成对, 缺失腿静默消失 (P-46 回退)"
+    );
+    // ④ full-only 位置: 2g 在 quick 早退分支之后.
+    let quick_exit = sh
+        .find("if [ \"$MODE\" = \"quick\" ]")
+        .unwrap_or_else(|| panic!("ci/audit.sh 找不到 quick 早退分支 —— 档位语义已变"));
+    let step_2g = sh
+        .find("step \"2g/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2g (文档路径新鲜度腿)"));
+    assert!(
+        quick_exit < step_2g,
+        "2g 腿被挪到 quick 早退分支之前 —— full-only 腿变成两档都跑, 与覆盖边界分叉"
+    );
+    // ⑤ 自述一致: 头部 full 行 + quick 边界行都点名 2g.
+    let header_line = sh
+        .lines()
+        .find(|l| l.starts_with("# - full:"))
+        .unwrap_or_else(|| panic!("ci/audit.sh 头部缺少 `# - full:` 自述行"));
+    assert!(
+        header_line.contains("2g"),
+        "full 档自述未点名 2g —— 新增 full-only 腿却漏自述 (P-48 甲 同族)"
+    );
+    let boundary = sh
+        .split("report_mode_boundary() {")
+        .nth(1)
+        .and_then(|s| s.split("\n}").next())
+        .unwrap_or_else(|| panic!("档位自述函数体定位失败"));
+    let quick_line = boundary
+        .lines()
+        .find(|l| l.contains("档位: quick"))
+        .unwrap_or_else(|| panic!("档位自述函数缺少 quick 行"));
+    assert!(
+        quick_line.contains("2g"),
+        "quick 档位边界行未点名 2g —— 读日志的人不知道这条腿是 full-only (P-57 甲 同族)"
+    );
+    // 脚本本体存在 (接线与脚本集不漂移).
+    assert!(
+        Path::new("../tools/check_doc_paths.py").exists(),
+        "2g 腿点名 tools/check_doc_paths.py 但文件不存在 —— 接线与脚本集漂移"
+    );
+}
+
+fn step_2g_block(sh: &str) -> &str {
+    let start = sh
+        .find("step \"2g/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2g (文档路径新鲜度腿)"));
+    let block = &sh[start..];
+    match block.find("\nstep \"") {
+        Some(next) => &block[..next],
+        None => block,
+    }
+}
+
 /// P-69 结构锁: 两档到位断言的期望值不得与实测值同源 (self-referential).
 ///
 /// 病灶形态 (P-59 负控制 C5a 实测): 两处到位断言都用「清单变量 − 已登记腿」求差,

@@ -7,7 +7,7 @@
 #
 # - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 内核双架构 + 四树 pedantic
 #           扩围, 2b feature 维) + 2c rustfmt, 到 2c 后即退出
-# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 2f 性能指标测试腿 + 3 Lockbud + 4 QEMU
+# - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 2f 性能指标测试腿 + 2g 文档路径新鲜度腿 + 3 Lockbud + 4 QEMU
 #
 # P-56 甲: 原「3 SAFETY 注释覆盖率统计」与「6 模块级 SAFETY 不变式」两条统计腿已删除 ——
 # 前者与 0.5 组的 audit_safety_coverage.py 同名不同尺 (实测 131% 的「覆盖率」), 后者统计
@@ -172,9 +172,9 @@ report_unexecuted_legs() {
 # 分支, 在本函数里复写同一字面会让它们把函数定义误认成早退位置.
 report_mode_boundary() {
     if [ "${MODE}" = "quick" ]; then
-        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/2f/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
+        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/2f/2g/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
     else
-        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/2f/Lockbud/QEMU)${NC}"
+        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/2f/2g/Lockbud/QEMU)${NC}"
     fi
 }
 
@@ -823,6 +823,28 @@ if [ "$PERF_METRIC_RC" -eq 0 ]; then
     ok "性能指标测试腿: 条目全部在绝对预算内 (整表读数 other/build/log/audit_perf_metric.log)"
 else
     err "性能指标测试腿失败 (exit=$PERF_METRIC_RC, 整表读数 other/build/log/audit_perf_metric.log)"
+fi
+
+# ── 2g. 文档路径新鲜度腿 (check_doc_paths) ─────────────────────
+# 用户裁定 (2026-11-13, 路径甲「保留 + 扩围 + 接门禁」): tools/check_doc_paths.py 原为
+# 按需辅助工具 (零 CI 调用者, AGENTS §6 旧口径「未接入 CI」), 现升为 full 档阻断腿.
+# 判据 = 「必须与代码同步」的文档 (docs/explain + docs/design + 四根文档) 里的源码路径
+# 引用是否真实存在, 两形态都判: 反引号 `src/...rs` 与 markdown 链接 [文字](src/...rs)
+# (后者是本仓主力引用风格, 数量远多于反引号). 设计册计划新建模块 (git 全历史零命中)
+# 免报, 退役文件引用照报 (#255 判别器, 发现式不设人工白名单).
+# 本腿不写进 AUDIT_REQUIRED_LEGS / AUDIT_REQUIRED_LEGS_FULL: 脚本在 tools/ 不在 scripts/,
+# 两处清单的 `scripts/<name>.py` 调用形态硬编码容不下它 (与 2f cargo 腿同理, 见上);
+# 也不匹配 P-69 对账的 `(?:audit|scan)_` 脚本名正则, 故 standalone 不触发反向对账.
+# 接线形状锁见 host-tests/tests/ci_entrypoint_unified_test.rs.
+step "2g/6 文档路径新鲜度腿 (check_doc_paths)"
+if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/tools/check_doc_paths.py" ]; then
+    if (cd "$PROJECT_ROOT" && python3 "tools/check_doc_paths.py") 2>&1 | tail -25; then
+        ok "文档路径新鲜度腿: 通过 (反引号 + markdown 链接两形态)"
+    else
+        err "文档路径新鲜度腿失败 (tools/check_doc_paths.py 非零退出)"
+    fi
+else
+    audit_leg_missing "doc_paths" "$PROJECT_ROOT/tools/check_doc_paths.py"
 fi
 
 # ── 3. Lockbud 死锁扫描 ───────────────────────────────────────

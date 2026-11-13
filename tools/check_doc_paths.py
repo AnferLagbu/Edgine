@@ -20,8 +20,18 @@
   (`git log --all --full-history` 零命中) ⇒ 计划新建, 免报; 若**曾存在而后被删除** ⇒
   退役文件引用 (如 fd_alloc.rs), 仍是真漂移, 照报. 该判据客观可复现, 不依赖人工白名单,
   也不改动设计意图. explain/ 与根文档描述当前代码形态, 不适用此免报 (任何失效路径都报).
+
+两种引用形态都校验 (同一存在性判据 + 同一设计册免报):
+  - 反引号源码路径: `src/kernel/...rs` / `scripts/...py` / 省略前缀的 `privileged/...rs`.
+  - markdown 链接源码引用: [文字](目标) —— 本仓主力引用风格, 数量远多于反引号.
+    目标解析约定: 剥掉 #Lnn 行锚点; http(s)/mailto 等外部链接跳过; `../`/`./` 按文档
+    所在目录相对解析; 裸 `src/...`/`scripts/...` 按**仓库根**相对解析 (设计册约定, 不是
+    文档目录相对); file:// 与 / 开头按绝对路径. 只判源码/脚本扩展名
+    (.rs/.py/.sh/.toml/.ld/.S/.asm), doc→doc 的 .md 链接不在「源码路径新鲜度」射程.
+    解析后越出仓库根的目标跳过 (无法判定外部路径). 同一文件被两种形态各引一次只报一条.
 """
 
+import os
 import re
 import subprocess
 from functools import lru_cache
@@ -52,6 +62,50 @@ PATH_PAT = re.compile(
 PATH_PAT2 = re.compile(
     r"`((?:privileged|functions)/[A-Za-z0-9_./-]+\.(?:rs|md|toml|ld|S|asm))`"
 )
+
+# markdown 链接目标: [文字](目标) —— 取括号内整体, 调用侧再剥可选 title 与行锚点.
+MD_LINK_PAT = re.compile(r"\]\(([^)]+)\)")
+
+# markdown 面只判源码/脚本扩展名 (与反引号面的源码侧同集合, 不含 .md: doc→doc 链接
+# 属文档间引用, 不在「源码路径新鲜度」射程; 归档移动那类漂移由别的防线管).
+SOURCE_EXTS = {".rs", ".py", ".sh", ".toml", ".ld", ".S", ".asm"}
+
+
+def resolve_link(target: str, doc: Path) -> Path | None:
+    """把 markdown 链接目标解析成绝对路径 (外部链接 / 纯锚点返回 None).
+
+    约定见模块 docstring: ../ 与 ./ 按文档目录相对, 裸 src/ 等按仓库根相对.
+    用 normpath 折叠 .. (不跟随符号链接), 以便后续 relative_to(ROOT) 成立.
+    """
+    path = target.split("#", 1)[0].strip()
+    if not path or path.startswith(("http://", "https://", "mailto:", "ftp://")):
+        return None
+    if path.startswith("file://"):
+        raw = Path(path[7:])
+    elif path.startswith("/"):
+        raw = Path(path)
+    elif path.startswith("../") or path.startswith("./"):
+        raw = doc.parent / path
+    else:
+        raw = ROOT / path
+    return Path(os.path.normpath(raw))
+
+
+def classify_target(abs_path: Path, is_design: bool) -> tuple[str, str]:
+    """判一个已解析路径: 返回 (仓库相对路径, 判定 ok/exempt/drift).
+
+    越出仓库根的目标不在射程, 按 ok 跳过. 存在 ⇒ ok; 不存在且属设计册且 git 全历史
+    零命中 ⇒ exempt (计划新建); 其余不存在 ⇒ drift (退役引用或写错路径).
+    """
+    try:
+        rel = str(abs_path.relative_to(ROOT))
+    except ValueError:
+        return ("", "ok")
+    if abs_path.exists():
+        return (rel, "ok")
+    if is_design and not ever_existed_in_git(rel):
+        return (rel, "exempt")
+    return (rel, "drift")
 
 
 @lru_cache(maxsize=None)
@@ -88,6 +142,7 @@ def scoped_docs() -> list[Path]:
 
 def main() -> int:
     drifted: list[tuple[Path, str, str]] = []  # (doc, missing_path, kind)
+    seen: set[tuple[Path, str]] = set()  # (doc, 仓库相对路径): 两形态各引一次只报一条
     planned_exempt = 0
     design_root = DOCS / "design"
     for doc in scoped_docs():
@@ -96,19 +151,31 @@ def main() -> int:
         except Exception:
             continue
         is_design = design_root in doc.parents
+        # 反引号面 (既有判据不动): src/scripts 全路径 + 省略前缀的 privileged/functions.
         for pat, base, kind in ((PATH_PAT, ROOT, "src-path"), (PATH_PAT2, SRC, "sub-path")):
             for m in pat.finditer(text):
                 rel = m.group(1)
-                if (base / rel).exists():
-                    continue
-                # 设计册中「从未在 git 全历史出现」的路径 = 计划新建模块, 免报;
-                # 曾存在而后删除的 = 退役引用, 仍报 (如 fd_alloc.rs).
-                if is_design:
-                    repo_rel = str((base / rel).relative_to(ROOT))
-                    if not ever_existed_in_git(repo_rel):
-                        planned_exempt += 1
-                        continue
-                drifted.append((doc, rel, kind))
+                canon, verdict = classify_target(base / rel, is_design)
+                if verdict == "exempt":
+                    planned_exempt += 1
+                elif verdict == "drift" and (doc, canon) not in seen:
+                    seen.add((doc, canon))
+                    drifted.append((doc, rel, kind))
+        # markdown 链接面 (新增): 只判源码/脚本扩展名, 同一存在性判据 + 设计册免报.
+        for m in MD_LINK_PAT.finditer(text):
+            inner = m.group(1).strip()
+            if not inner:
+                continue
+            target = inner.split(maxsplit=1)[0]  # 剥掉可选的 "title"
+            abs_path = resolve_link(target, doc)
+            if abs_path is None or abs_path.suffix not in SOURCE_EXTS:
+                continue
+            canon, verdict = classify_target(abs_path, is_design)
+            if verdict == "exempt":
+                planned_exempt += 1
+            elif verdict == "drift" and (doc, canon) not in seen:
+                seen.add((doc, canon))
+                drifted.append((doc, target, "md-link"))
     scanned = len(scoped_docs())
     if not drifted:
         msg = f"OK: 无文档路径漂移 (校验 {scanned} 份必须与代码同步的文档"
