@@ -40,6 +40,7 @@
 | socket_max_sockets flaky 排查 (2026-08-31) | 1 | B06-PRE-004 | ✅ 已修复 (非内核问题) |
 | **总计** | **~82 项 (2026-08-09 原登记)** | — | **复验订正: 真正仍开放 ≈ 25 项 + 3 项刻意维持** |
 
+> **🔄 2026-11-13 复核订正（结合源码）**: 总览「≈25 开放」为 2026-08-09 登记快照。按本册后续「本轮修复（修遗留工程）」记录 + 源码核验（`boost_priority` 死代码已删、5 项 `SYS_*` 已 dispatch、MIG-003 pl011 已迁 `functions/driver/char/pl011.rs`、B03-LEGACY-001 `cow_handle_fault_locked` 锁变体在位、B06-PRE-002 `FS_CAP_CHOWN` 校验在 `functions/fs/misc.rs`、eg 自有 `TODO/FIXME` 0 处），**实际仍开放收敛为：ISSUE-RT-002（aarch64 GICv3 偶发挂起，代码侧根因 ARE 已显式置位、仅真机复验待硬件）+ ISSUE-RT-003（真实硬件启动验证，待真机）+ 刻意维持 DEC-005（brittle 测试潜在风险，维持现状）**；DEC-041（cast 保留）已由 P-64 清零关闭；F1-F5 归 future-roadmap。
 > **【本轮复验订正】** 按当前源码状态逐类复核 (原登记数保留上表, 不涂改):
 > - **源码未实现 (TODO)**: 原 ~43 项 → 实测**仅剩 1 项**真实 TODO ([privileged/net/init.rs:601](file:///home/anfer/Code/Edgine/src/kernel/privileged/net/init.rs#L601), 即原 ISSUE-SRC-008, 行号由 `:822` 漂移); 另 1 项 ISSUE-SRC-028 所在文件 `functions/fs/vfs/api.rs` 已不存在 (拆分迁至 `handle.rs`). 其余 41 项全部消除 (源码仅残留 `TRACK-xxxxxx 消除` 说明注释).
 > - **【本轮修复（修遗留工程）】** 上条所述**唯一**真实 TODO **ISSUE-SRC-008 已修复** → 第 2 类源码未实现项**全部清零** (eg 自有代码 0 活跃 TODO).
@@ -51,7 +52,7 @@
 > - **迁移中子系统**: MIG-001/002/003/004/006/007/008 仍成立; MIG-005 文件名漂移 (privileged 侧实为 `ata.rs`/`nvme.rs`/`ahci.rs`/`ata_block.rs`, **无** `nvme_block.rs`/`ahci_block.rs`).
 > - **分册 6 预存问题**: B06-PRE-001 已失效 (tmpfs 改用 `nodes.len()` + `VfsFileType::Dir.as_u8()`); B06-PRE-002 仍成立 (安全缺陷); B06-PRE-003 行号漂移.
 > - **远期工程**: FUT-001~005 未启动; FUT-006 (WASM WASI) 已完成.
-> - **刻意维持**: DEC-046 计数 1354/166 → **1406/173**; DEC-005 计数 345 → **492** (逐项见各节).
+> - **刻意维持**: DEC-046 计数 1354/166 → **1406/173**; DEC-005 计数 345 → **492** (逐项见各节). **DEC-041（cast 保留）已于 2026-11-13 复核关闭**（P-64 cast 清零：全仓 `clippy::cast_*` 抑制 0 / 告警 0）
 
 ---
 
