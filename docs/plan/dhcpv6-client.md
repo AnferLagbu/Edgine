@@ -113,9 +113,11 @@ InfoBound → (refresh 定时器) → InfoRequesting
 - **方案**:
   - `src/kernel/functions/Cargo.toml` + `src/kernel/privileged/Cargo.toml` 的 smoltcp features 增 `socket-raw` (仿 P6a 启用 `proto-ipv6-slaac`).
   - `iface_trait.rs` 新增 `Dhcpv6State` enum (Idle/Soliciting/Selecting/Requesting/Bound/Renewing/Rebinding/Releasing/InfoRequesting/InfoBound/Failed); `SocketKind` 增 `Dhcpv6` 变体并纳入 `is_internal()`; `NetStack` trait 增 `dhcpv6_state()` 等观察方法 (默认实现仿 `dhcp_state()`).
-  - `NetConfig` 增 IPv6 字段 (`static_ipv6: Option<[u8;16]>` / DHCPv6 启用策略), 与现有 `use_dhcp()` 同构.
-- **状态**: []
+  - `NetConfig` IPv6 字段**延后** (裁定见详情): 用户已选 RA M/O 标准触发, 无需 NetConfig 显式启用标志; `static_ipv6` 当前无消费者.
+- **状态**: [X]
 - **详情**: 类型擦除 — `Dhcpv6State` 是 Edgine 自有 enum, functions 层不依赖 smoltcp 类型 (F2). 启用 `socket-raw` 后跑 `audit_smoltcp_purity.py` 确认 vendored `src/` hash 不变 (feature 启用不改源码). TCB 占比变化记入 PR 描述.
+  - **已落地**: `socket-raw` 双 `Cargo.toml` 启用 (vendored hash 不变, purity 腿绿); `Dhcpv6State` enum (11 变体 + `is_configured()` / `ipv6()` 观察方法); `SocketKind::Dhcpv6` 纳入 `is_internal()` 并同步 `init/raw.rs` 穷尽臂; `NetStack::dhcpv6_state()` 默认方法 (返回 `Idle`); 单测 `test_dhcpv6_state_configured` + `test_socket_kind_internal` 扩 `Dhcpv6` 断言. 七门槛全绿 (双架构 check/clippy pedantic/fmt 0 漂移; host 单测 1256 过; audit full 未执行腿 0, smoltcp_purity / QEMU 2/2 + feature 4/4 / lockbud 4/4 零发现; host-tests; rustdoc 双架构).
+  - **NetConfig IPv6 延后裁定**: 原方案列 `static_ipv6` / DHCPv6 启用策略, 但 (1) 用户已裁定 RA M/O 标准触发而非 NetConfig 显式触发, 启用标志与所选设计相悖; (2) `static_ipv6` 无消费者 (SLAAC P6a 已覆盖 IPv6 寻址); (3) `NetConfig` 字面量构造点约 17 处, 加字段波及面大. 按 §11.3 不预留无消费者扩展点, 待 Phase 4 地址落表确需静态 IPv6 配置时再加.
 
 ### Phase 2: wire 编解码 (functions)
 

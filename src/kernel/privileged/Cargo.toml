@@ -35,6 +35,7 @@ smoltcp = { path = "../functions/net/smoltcp", default-features = false, feature
     "socket-tcp-cubic",
     "socket-dhcpv4",
     "socket-dns",
+    "socket-raw",
     "auto-icmp-echo-reply",
 ] }
 

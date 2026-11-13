@@ -146,6 +146,8 @@ pub enum SocketKind {
     Dhcpv4,
     /// DNS 客户端 (内部使用)
     Dns,
+    /// `DHCPv6` 客户端 (内部使用, 用户态不可见; 自研机制走 UDP 字节管道)
+    Dhcpv6,
 }
 
 impl SocketKind {
@@ -153,7 +155,7 @@ impl SocketKind {
     #[inline]
     #[must_use]
     pub const fn is_internal(self) -> bool {
-        matches!(self, Self::Dhcpv4 | Self::Dns)
+        matches!(self, Self::Dhcpv4 | Self::Dhcpv6 | Self::Dns)
     }
 }
 
@@ -293,6 +295,82 @@ impl DhcpState {
 }
 
 // ============================================================================
+// DHCPv6 状态 (自研客户端; smoltcp 无内置 DHCPv6 socket, 机制由 Edgine 自持)
+// ============================================================================
+
+/// `DHCPv6` 客户端状态机 (RFC 8415).
+///
+/// 与 [`DhcpState`] (`DHCPv4`, smoltcp 内置机制) 不同, `DHCPv6` 机制由 Edgine
+/// functions 层自持 (报文编解码 + SARR/租约状态机), 本枚举是 privileged
+/// safe API 边界上的**观察类型**, 不暴露 smoltcp 任何类型 (F2).
+///
+/// 有状态形态 (`IA_NA` 地址分配): `Idle → Soliciting → Selecting → Requesting
+/// → Bound`, 租约维护 `Bound → Renewing → Rebinding`, 释放 `Bound → Releasing`.
+/// 无状态形态 (Information-Request, 仅取 DNS/选项): `Idle → InfoRequesting
+/// → InfoBound`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Dhcpv6State {
+    /// 未启动
+    #[default]
+    Idle,
+    /// Solicit 已发送, 等待 Advertise
+    Soliciting,
+    /// 已收 Advertise, 按 preference 选定服务器
+    Selecting,
+    /// Request 已发送, 等待 Reply
+    Requesting,
+    /// 已绑定有效租约 (有状态 `IA_NA`)
+    Bound {
+        /// 分配的 IPv6 地址
+        ipv6: [u8; 16],
+        /// 租约到期时间 (绝对时间, 协议栈时间单位)
+        lease_expires_at: u64,
+    },
+    /// 租约续期中 (T1 到, 单播 Renew)
+    Renewing {
+        /// 续期中保留的 IPv6 地址
+        ipv6: [u8; 16],
+    },
+    /// 重绑定中 (T2 到无 Reply, 组播 Rebind)
+    Rebinding {
+        /// 重绑定中保留的 IPv6 地址
+        ipv6: [u8; 16],
+    },
+    /// 释放租约中 (Release 已发送)
+    Releasing,
+    /// 无状态: Information-Request 已发送, 等待 Reply
+    InfoRequesting,
+    /// 无状态: 已获取 DNS/选项 (不分配地址, 地址仍靠 SLAAC)
+    InfoBound,
+    /// 失败 (不可恢复错误)
+    Failed,
+}
+
+impl Dhcpv6State {
+    /// 是否处于"已配置"状态 (有状态 Bound/Renewing/Rebinding, 即持有地址).
+    #[inline]
+    #[must_use]
+    pub const fn is_configured(self) -> bool {
+        matches!(
+            self,
+            Self::Bound { .. } | Self::Renewing { .. } | Self::Rebinding { .. }
+        )
+    }
+
+    /// 获取已绑定的 IPv6 地址 (若有状态形态已配置).
+    #[inline]
+    #[must_use]
+    pub fn ipv6(self) -> Option<[u8; 16]> {
+        match self {
+            Self::Bound { ipv6, .. } | Self::Renewing { ipv6 } | Self::Rebinding { ipv6 } => {
+                Some(ipv6)
+            }
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
 // 网络错误类型 (替代 smoltcp 的复杂错误)
 // ============================================================================
 
@@ -411,6 +489,15 @@ pub trait NetStack {
     #[inline]
     fn dhcp_state(&self) -> DhcpState {
         DhcpState::default()
+    }
+
+    /// 查询 `DHCPv6` 客户端状态.
+    ///
+    /// `DHCPv6` 机制由 functions 层自持 (见 [`Dhcpv6State`]); 默认实现返回
+    /// `Idle` (未启用), 实际实现方在 RA M/O 触发后推进状态机.
+    #[inline]
+    fn dhcpv6_state(&self) -> Dhcpv6State {
+        Dhcpv6State::default()
     }
 
     // ========================================================================
@@ -635,11 +722,41 @@ mod tests {
     #[test]
     fn test_socket_kind_internal() {
         assert!(SocketKind::Dhcpv4.is_internal());
+        assert!(SocketKind::Dhcpv6.is_internal());
         assert!(SocketKind::Dns.is_internal());
         assert!(!SocketKind::Tcp.is_internal());
         assert!(!SocketKind::Udp.is_internal());
         assert!(!SocketKind::Icmp.is_internal());
         assert!(!SocketKind::Raw.is_internal());
+    }
+
+    /// 验证 DHCPv6 状态机的"已配置"判据与地址提取 (有状态形态).
+    #[test]
+    fn test_dhcpv6_state_configured() {
+        let addr = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert!(!Dhcpv6State::Idle.is_configured());
+        assert!(!Dhcpv6State::Soliciting.is_configured());
+        assert!(!Dhcpv6State::InfoBound.is_configured(), "无状态不持有地址");
+        assert_eq!(Dhcpv6State::Idle.ipv6(), None);
+
+        let bound = Dhcpv6State::Bound {
+            ipv6: addr,
+            lease_expires_at: 1000,
+        };
+        assert!(bound.is_configured());
+        assert_eq!(bound.ipv6(), Some(addr));
+
+        let renewing = Dhcpv6State::Renewing { ipv6: addr };
+        assert!(renewing.is_configured());
+        assert_eq!(renewing.ipv6(), Some(addr));
+
+        let rebinding = Dhcpv6State::Rebinding { ipv6: addr };
+        assert!(rebinding.is_configured());
+        assert_eq!(rebinding.ipv6(), Some(addr));
+
+        assert!(!Dhcpv6State::Releasing.is_configured());
+        assert!(!Dhcpv6State::Failed.is_configured());
+        assert_eq!(Dhcpv6State::default(), Dhcpv6State::Idle);
     }
 
     /// 验证 NetConfig 的 DHCP 决策.

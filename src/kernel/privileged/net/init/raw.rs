@@ -526,8 +526,8 @@ pub fn socket_open_stub(
                 set_udp_tx_buf(slot_idx, tx_ptr);
                 Some(handle)
             }
-            SocketKind::Raw | SocketKind::Dhcpv4 | SocketKind::Dns => {
-                // Raw/Dhcpv4/Dns: 用户态不可见, 暂不支持
+            SocketKind::Raw | SocketKind::Dhcpv4 | SocketKind::Dhcpv6 | SocketKind::Dns => {
+                // Raw/Dhcpv4/Dhcpv6/Dns: 用户态不可见, 暂不支持
                 None
             }
         }
