@@ -80,6 +80,8 @@ mod init {
 /// REVAL-W 第 6 组 W6 (2026-06-25): DHCP 策略 trait 抽象
 /// (何时重试/续约/fallback), 机制与策略分离.
 pub mod dhcp_policy;
+/// P6b: `DHCPv6` 客户端机制 (functions 层自持, RFC 8415; 见 `dhcpv6` 模块文档)
+pub mod dhcpv6;
 pub mod netfilter;
 pub mod route;
 /// REVAL-W 第 6 组 W3.2 (2026-06-24): NetStack trait 的 smoltcp 实现

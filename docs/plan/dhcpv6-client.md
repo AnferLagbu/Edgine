@@ -127,8 +127,9 @@ InfoBound → (refresh 定时器) → InfoRequesting
   - 选项: ClientID / ServerID (DUID) / IA_NA / IAAddr / StatusCode / OptionRequest / DNS / RapidCommit. TLV (type 2B + len 2B + value) 解析与序列化.
   - API: `parse(&[u8]) -> Result<Repr, ParseError>` + `Repr::emit(&mut [u8]) -> usize`; 全部 `#![deny(unsafe_code)]`, 仅用 `&[u8]` / 整数, 不依赖 smoltcp.
   - 边界闭合: 截断 / 畸形长度 / 未知选项跳过 / 选项重复 / IAAddr  lifetimes 校验.
-- **状态**: []
+- **状态**: [X]
 - **详情**: 仿 smoltcp `wire::dhcpv4` 的编解码风格但自研 (DHCPv6 报文格式不同). 离线 round-trip 测试覆盖每个选项 + 畸形输入. 不可信输入解析器, 边界分支必须完整闭合 (相对完整诉求).
+  - **已落地**: `functions/net/dhcpv6/wire.rs` (958 行含 27 内联测试) + `dhcpv6/mod.rs` 模块声明 + `net/mod.rs` 挂载. `Repr::parse(&[u8]) -> Result<Repr, ParseError>` / `Repr::emit(&mut [u8]) -> Result<usize, ParseError>` 纯字节编解码, 拥有型 `Vec<Opt>` (无生命周期, 供 Phase 3 状态机跨 poll 持有). 覆盖选项 ClientID/ServerID/IA_NA/IAAddr/StatusCode/ORO/Preference/ElapsedTime/RapidCommit/DNS/InfRefreshTime + Unknown 保真 round-trip. 边界全闭合: 截断 / 畸形定长 / ORO 奇长 / DNS 非 16 倍数 / RapidCommit 非零长 / IAAddr preferred>valid / ClientID·ServerID 重复 / emit 缓冲不足 / 选项超 u16. 递归有界: IA_NA 子选项仅 IAAddr/StatusCode/Unknown (深度 ≤2, 防恶意深嵌套栈溢). Reader/Writer 游标 panic-free (get/checked_add/try_into). 七门槛全绿 (双架构 build.sh all / clippy pedantic / fmt 0 漂移; host 单测 1283 过含 +27 wire; audit full 未执行腿 0, smoltcp_purity / QEMU 2/2 + feature 4/4 / lockbud 4/4 零发现; host-tests; rustdoc 双架构).
 
 ### Phase 3: 状态机 + 策略 (functions)
 
