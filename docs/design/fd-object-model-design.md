@@ -1,6 +1,6 @@
 # fd 对象模型设计立场文档
 
-> 本文是 Edgine fd（file descriptor）子系统的设计立场文档：回答"fd 要演化成什么、为什么这么选"，不是任务清单。可执行分解见 `docs/plan/fd-object-model-unification.md`；现状机制说明见 `docs/explain/` 相关章节。根因与证据快照见 `docs/report/context-consistency-audit.md`。
+> 本文是 Edgine fd（file descriptor）子系统的设计立场文档：回答"fd 要演化成什么、为什么这么选"，不是任务清单。可执行分解见 `docs/plan/archive/fd-object-model-unification.md`；现状机制说明见 `docs/explain/` 相关章节。根因与证据快照见 `docs/report/context-consistency-audit.md`。
 
 ## 一、问题陈述
 

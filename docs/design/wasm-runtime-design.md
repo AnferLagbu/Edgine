@@ -1,6 +1,6 @@
 # WASM 运行时设计立场
 
-> 本文回答 Edgine 的 **WASM**（WebAssembly）子系统"要演化成什么、为什么这么选"：能力边界的取舍根基、隔离立场、载体形态、与业界方案的对比、尚未闭合的开放议题。它不是现状说明（那是 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md)），也不是可执行任务清单（那是 [wasm-runtime-wiring.md](../plan/wasm-runtime-wiring.md)，本文引用的 §3 甲/乙/丙/丁裁定与 §4 验收判据均出自该册）。
+> 本文回答 Edgine 的 **WASM**（WebAssembly）子系统"要演化成什么、为什么这么选"：能力边界的取舍根基、隔离立场、载体形态、与业界方案的对比、尚未闭合的开放议题。它不是现状说明（那是 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md)），也不是可执行任务清单（那是 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)，本文引用的 §3 甲/乙/丙/丁裁定与 §4 验收判据均出自该册）。
 
 ## 一、定位：为什么是内核内 safe 解释器
 
@@ -68,11 +68,11 @@ Edgine 从这些方案吸纳的不是执行形态，而是两条经过验证的�
 
 ## 六、开放议题
 
-以下议题尚未闭合，记录于此作为后续裁定的输入；可执行分解一律归 [wasm-runtime-wiring.md](../plan/wasm-runtime-wiring.md)，本文不持状态。
+以下议题尚未闭合，记录于此作为后续裁定的输入；可执行分解一律归 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)，本文不持状态。
 
 - **步进让出与恢复**：当前 one-shot gas 限界使长任务无法中途让出。扩展需解释器步预算 + 载体续跑状态，并与进程级载体的调度语义对齐。何时需扩展：出现需长时间运行且可被抢占的 wasm 载荷时。
 - **浮点两难**：软浮点（+600–1,200 行 + libm 级用例）vs 下沉 privileged（触 FREG 冻结）vs 保持排除。三条路各有显著代价，需用户裁定方向，不擅自选。
 - **WASI preview2 / component model**：preview1 子集之外的生态演进。判据是真实载荷需求，而非版本追新。
 - **多实例与 fork 继承**：当前一进程至多一实例、fork 不继承。多实例需重估注册表容量与句柄语义；fork 继承需定线性内存与 WASI 上下文的复制语义。
 - **真实工具链载荷验收**：§4 验收判据 3 把"一段真实工具链产出的 wasm（非手写）能在内核里跑通并产出可断言结果"定为接线完成的唯一实证，不接受"单元里自造字节码通过"作替代。这是能力边界是否够用的最终检验。
-- **已知正确性边界（已修复，2026-11-13）**：`args_get`/`environ_get` 曾依赖线性内存零初始化来提供 NUL 终止符（写字符串字节后只前进 `len+1` 而不显式写 `0`），属隐式前提而非显式契约。已按设计立场「字符串终止应成为显式写入的契约」落地：两个宿主函数在写完字符串字节后显式写入 `0` 终止符；回归锁 `host-tests/tests/wasi_behavior_test.rs` 的 `args_environ_get_explicitly_write_nul` 以**预填 `0xFF`** 的线性内存证明该字节是显式写出而非零初始化副作用（负控制实测：摘掉显式写即红，left `[255]` vs right `[0]`）。W-9 发现记录见 [wasm-runtime-wiring.md](../plan/wasm-runtime-wiring.md) 的 W-9 结案注。
+- **已知正确性边界（已修复，2026-11-13）**：`args_get`/`environ_get` 曾依赖线性内存零初始化来提供 NUL 终止符（写字符串字节后只前进 `len+1` 而不显式写 `0`），属隐式前提而非显式契约。已按设计立场「字符串终止应成为显式写入的契约」落地：两个宿主函数在写完字符串字节后显式写入 `0` 终止符；回归锁 `host-tests/tests/wasi_behavior_test.rs` 的 `args_environ_get_explicitly_write_nul` 以**预填 `0xFF`** 的线性内存证明该字节是显式写出而非零初始化副作用（负控制实测：摘掉显式写即红，left `[255]` vs right `[0]`）。W-9 发现记录见 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md) 的 W-9 结案注。

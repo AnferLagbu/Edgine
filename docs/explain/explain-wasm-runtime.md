@@ -1,6 +1,6 @@
 # WASM 运行时
 
-> Edgine 在内核 **functions** 层（100% safe Rust）内解释执行 **WASM**（WebAssembly）1.0 整数子集与 **WASI**（WebAssembly System Interface）snapshot_preview1 子集；wasm 全树 `#![deny(unsafe_code)]` + `#![deny(missing_docs)]`，不扩大 **TCB**（Trusted Computing Base，可信计算基）。进程级载体经 `execve` 魔数派发 + 用户态入口桩 + `EG_WASM_*` 私有 syscall 驱动，可被调度器调度、可被信号中断。能力边界的取舍立场见 [wasm-runtime-design.md](../design/wasm-runtime-design.md)，施工分解见 [wasm-runtime-wiring.md](../plan/wasm-runtime-wiring.md)。
+> Edgine 在内核 **functions** 层（100% safe Rust）内解释执行 **WASM**（WebAssembly）1.0 整数子集与 **WASI**（WebAssembly System Interface）snapshot_preview1 子集；wasm 全树 `#![deny(unsafe_code)]` + `#![deny(missing_docs)]`，不扩大 **TCB**（Trusted Computing Base，可信计算基）。进程级载体经 `execve` 魔数派发 + 用户态入口桩 + `EG_WASM_*` 私有 syscall 驱动，可被调度器调度、可被信号中断。能力边界的取舍立场见 [wasm-runtime-design.md](../design/wasm-runtime-design.md)，施工分解见 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)。
 
 ## 定位与边界
 
