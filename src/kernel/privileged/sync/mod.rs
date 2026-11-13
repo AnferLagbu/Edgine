@@ -71,6 +71,9 @@ pub mod irq_spinlock;
 /// Lockdep — 运行时锁依赖检测器 (P1)
 pub mod lockdep;
 
+/// memorder — 内存序断言 hook + 软件弱内存模型 (A-4 乙)
+pub mod memorder;
+
 // ============================================================================
 // 3. 内部 use (本模块 FFI 桥接层使用)
 // ============================================================================
@@ -89,6 +92,7 @@ pub use atomic::{
 };
 pub use irq_spinlock::IrqSpinLock;
 pub use irq_spinlock::IrqSpinLockGuard;
+pub use memorder::{Required, debug_assert_order};
 pub use mutex::Mutex;
 pub use once_lock::OnceLock;
 pub use rcu::{

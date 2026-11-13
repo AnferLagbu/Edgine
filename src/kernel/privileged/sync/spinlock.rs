@@ -24,6 +24,9 @@ use super::lockdep::{self, LockClassDesc, LockClassId, LockKind};
 pub use super::types::IrqSaveFlags;
 use super::types::{SpinLockGuard, SpinLockInner, TryLockResult};
 
+#[cfg(debug_assertions)]
+use super::memorder::{Required, debug_assert_order};
+
 /// 自旋锁 (`SpinLock`)
 ///
 /// 基于 `x86_64` 的 `xchg` 指令实现原子锁定。
@@ -376,6 +379,9 @@ pub fn restore_interrupts(_flags: IrqSaveFlags) {}
 /// 确保所有写操作对其他 CPU 可见
 #[inline]
 pub fn smp_wmb() {
+    // A-4 乙: 内存序断言 hook —— 本 helper 契约要求 Release 类屏障, 若后续被弱化即 debug panic.
+    #[cfg(debug_assertions)]
+    debug_assert_order(Ordering::Release, Required::Release, "smp_wmb");
     fence(Ordering::Release);
 }
 
@@ -383,12 +389,16 @@ pub fn smp_wmb() {
 /// 确保读取到最新值
 #[inline]
 pub fn smp_rmb() {
+    #[cfg(debug_assertions)]
+    debug_assert_order(Ordering::Acquire, Required::Acquire, "smp_rmb");
     fence(Ordering::Acquire);
 }
 
 /// 全局内存屏障
 #[inline]
 pub fn smp_mb() {
+    #[cfg(debug_assertions)]
+    debug_assert_order(Ordering::SeqCst, Required::SeqCst, "smp_mb");
     fence(Ordering::SeqCst);
 }
 
