@@ -99,8 +99,8 @@
   - 状态: [X] (3 项均已在阶段 7-8 期间完成, master 文档未同步)
 
 - **长期待办 (永久保留, 不强制修复)**
-  - [ ] cast 类 1700+ 处已知安全 cast 保留原状 (DECISION-041)
-  - 状态: []
+  - [X] cast 类 1700+ 处已知安全 cast 保留原状 (DECISION-041) — **2026-11-13 复核：已由 P-64 cast 清零工程取代并关闭**（`-A clippy::cast_*` 逐族撤除 7a-7d，源码窄化/回绕/丢符号/精度损失 `as` 全部改走 `functions::intcast` 位级助手或 `try_from`；CI 现为 `-D warnings -D clippy::pedantic` 全 deny，`bash ci/audit.sh full` 下 cast lint 告警 = 0、抑制点 = 0；DECISION-041「保留原状让警告作提醒」模型作废）
+  - 状态: [X]
 
 ### 决策记录
 
@@ -145,6 +145,7 @@
     3. 文件大小 → u32 (如 `device.len() as u32` 当 device 可能 > u32::MAX)
     4. 用户态指针 → 内核指针 (需 check_user_ptr 前置检查, try_from 仅辅助)
   - 状态: [X]
+  - **2026-11-13 追加（不改历史正文）**: 本决策「保留原状、让 clippy 警告作提醒、CI `-A clippy::cast_*` 放行」的形态**后续已被 P-64 cast 清零工程取代**——`-A clippy::cast_*` 逐族撤除（7a `cast_possible_wrap` / 7b `cast_sign_loss` / 7c `cast_possible_truncation` / 7d `cast_precision_loss`），窄化/回绕/丢符号/精度损失 `as` 全部改走 `functions::intcast` 位级助手或 `try_from`，CI 现为 `-D warnings -D clippy::pedantic` 全 deny；`bash ci/audit.sh full` 下 cast lint 告警 = 0、抑制点 = 0。故本决策「保留 1700+ 告警」的前提已不成立，对应待办行已转 `[X]`。
 
 - **DECISION-042: DECISION-034 推迟到 macro 改造后实施 (历史, 已不再适用)** (2026-08-04)
   - 描述: 实施 DECISION-034 时发现 `klog_fmt` 等 macro 内部触发 ptr_as_ptr 等 pedantic lint, `#[expect]` 不能从外部施加到宏展开内部. 1598 处 macro 内 lint 无法 expect 兜底.
@@ -405,4 +406,4 @@
 - **nursery 1230 处**: 不强制修复 (DECISION-044), 但保留 clippy::nursery 警告可观测. 若需要修复需先评估 ROI + 跨文件影响.
 - **host-tests brittle**: 当前 ~15 处已知 brittle (含阶段 16 修复的 2 处). 修改 impl 字段名/方法名时优先 grep host-tests 看 brittle.
 - **rustdoc 3 个内部 warning**: 已知 rustdoc 0.75+ 行为 (unclosed HTML tag dyn/OpenFile + could not parse code block), 不计入 CI 阻断. 升级 rustdoc 版本可能消除.
-- **cast 类 1700+ 处**: 永久保留原状 (DECISION-041), 让 clippy 警告作为"提醒"但 CI 不阻断.
+- **cast 类 1700+ 处**: ~~永久保留原状 (DECISION-041), 让 clippy 警告作为"提醒"但 CI 不阻断~~ ⇒ **2026-11-13 已由 P-64 cast 清零工程关闭**（`-A clippy::cast_*` 逐族撤除、改 `intcast` 位级助手、CI 全 deny 且 cast 告警 = 0）.
