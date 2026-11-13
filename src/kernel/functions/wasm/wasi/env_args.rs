@@ -62,6 +62,11 @@ pub fn wasi_environ_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Resu
                     byte,
                 );
             }
+            // WASI 契约要求宿主显式写 NUL 终止符, 不能依赖调用方缓冲零初始化的副作用.
+            let _ = mem.write_u8(
+                buf_ptr + offset + crate::functions::intcast::low_u32_from_usize(bytes.len()),
+                0,
+            );
         }
         offset += crate::functions::intcast::low_u32_from_usize(bytes.len()) + 1; // +1 for NUL terminator
     }
@@ -119,6 +124,11 @@ pub fn wasi_args_get(ctx: &mut WasiContext, interp: &mut Interpreter) -> Result<
                     byte,
                 );
             }
+            // WASI 契约要求宿主显式写 NUL 终止符, 不能依赖调用方缓冲零初始化的副作用.
+            let _ = mem.write_u8(
+                buf_ptr + offset + crate::functions::intcast::low_u32_from_usize(bytes.len()),
+                0,
+            );
         }
         offset += crate::functions::intcast::low_u32_from_usize(bytes.len()) + 1;
     }

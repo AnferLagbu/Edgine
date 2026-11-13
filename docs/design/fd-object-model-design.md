@@ -4,7 +4,7 @@
 
 ## 一、问题陈述
 
-Edgine 当前的 fd 是**全局编号 + 数值区间分段**的过渡模型：`FdPlan`（`privileged/proc/fd_alloc.rs`）为 8 个非 VFS 子系统（Smoltcp/UDS/EventFd/SignalFd/Inotify/TimerFd/PidFd/UserFaultFd）各划一段全局 fd 区间，syscall 层靠 `subsystem_of(fd)` 的数值区间判定来分发。而文件系统侧走的是另一套 per-process 模型：`FdTable`（每进程 `[0, 64)`）→ handle → `OpenFileTable` → `OpenFile { Arc<dyn Inode>, offset, flags, ... }`。两套模型并存造成一组结构性问题：
+Edgine 曾采用**全局编号 + 数值区间分段**的过渡模型：`FdPlan`（全局 fd 编号规划层，已随 fd 对象模型阶段 4 退役）为 8 个非 VFS 子系统（Smoltcp/UDS/EventFd/SignalFd/Inotify/TimerFd/PidFd/UserFaultFd）各划一段全局 fd 区间，syscall 层靠 `subsystem_of(fd)` 的数值区间判定来分发。而文件系统侧走的是另一套 per-process 模型：`FdTable`（每进程 `[0, 64)`）→ handle → `OpenFileTable` → `OpenFile { Arc<dyn Inode>, offset, flags, ... }`。两套模型并存造成一组结构性问题：
 
 - **边界松动（I3/I4 类）**：非 VFS fd 全局有效且与进程无关——任何进程可引用任何其他进程的 socket fd，dup 到 socket、CLOEXEC、进程退出回收全部缺失。
 - **分发散点化**：每个 syscall（close/ioctl/poll/fcntl/read/write…）都要手写一遍区间判定；方案 C（Smoltcp 段基址 64）之后 `subsystem_of` 判定开始趋于一致，但本质上是把"数值即类型"的耦合固化。

@@ -232,6 +232,45 @@ fn environ_get_roundtrip() {
     assert_eq!(mem_bytes(&inst, 4, 7), b"KEY=val".to_vec());
 }
 
+/// `args_get`/`environ_get` 必须**显式**写出 NUL 终止符, 不依赖线性内存零初始化.
+///
+/// 以 `0xFF` 预填整段线性内存: 若宿主只在写字符串字节后前进 `len+1` 而漏写 `0`,
+/// 预留槽会保留 `0xFF`, 该断言即失败 —— 从而区分「显式写入」与「零初始化副作用」.
+#[test]
+fn args_environ_get_explicitly_write_nul() {
+    let prefill = vec![0xFFu8; 32];
+
+    // environ: 单条 "KEY=val" (7 字节), NUL 落在 buf@4 + 7 = 11.
+    let imports = [("environ_get", sig(&[I32, I32], &[I32]))];
+    let f_body = vec![0x41, 0x00, 0x41, 0x04, 0x10, 0x00, 0x0B];
+    let (ret, inst) = run_instance(&imports, f_body, prefill.clone(), |ctx| {
+        ctx.env.push((String::from("KEY"), String::from("val")));
+    });
+    assert_eq!(ret, Ok(Some(Value::I32(0))));
+    assert_eq!(mem_u32(&inst, 0), 4, "environ[0] 指向 buf@4");
+    assert_eq!(mem_bytes(&inst, 4, 7), b"KEY=val".to_vec());
+    assert_eq!(
+        mem_bytes(&inst, 11, 1),
+        vec![0u8],
+        "NUL 终止符应被显式写入 (预填 0xFF 证明非零初始化副作用)"
+    );
+
+    // args: 单条 "prog" (4 字节), NUL 落在 buf@4 + 4 = 8.
+    let imports = [("args_get", sig(&[I32, I32], &[I32]))];
+    let f_body = vec![0x41, 0x00, 0x41, 0x04, 0x10, 0x00, 0x0B];
+    let (ret, inst) = run_instance(&imports, f_body, prefill, |ctx| {
+        ctx.args.push(String::from("prog"));
+    });
+    assert_eq!(ret, Ok(Some(Value::I32(0))));
+    assert_eq!(mem_u32(&inst, 0), 4, "argv[0] 指向 buf@4");
+    assert_eq!(mem_bytes(&inst, 4, 4), b"prog".to_vec());
+    assert_eq!(
+        mem_bytes(&inst, 8, 1),
+        vec![0u8],
+        "NUL 终止符应被显式写入 (预填 0xFF 证明非零初始化副作用)"
+    );
+}
+
 /// `clock_time_get`: 合法时钟 success 并写结果; 非法 `clock_id` 返 Inval.
 #[test]
 fn clock_time_get_valid_and_invalid() {
