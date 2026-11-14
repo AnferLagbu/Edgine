@@ -6,11 +6,13 @@
 //! 钩子 [`poll_hook`] 在 `NET_STATE` 锁内驱动. 客户端锁 `DHCPV6_CLIENT` 为
 //! `IrqSpinLock` (ISR 上下文安全), 与 `NET_STATE` 同属锁层级 12 (同层取锁允许).
 //! 启动 (`start_stateful` / `start_stateless`) 置 pending 标志, 由下一次 poll
-//! 钩子消费 (此时才有 ctx 执行发包); RA M/O 触发接线见 Phase 5.
+//! 钩子消费 (此时才有 ctx 执行发包). Phase 5: poll 钩子另经 raw `ICMPv6` 捕获 RA,
+//! 纯字节解析 (`ra`) 提取 M/O 标志, 仅 `Idle` 时触发有状态 (M=1) / 无状态 (O=1).
 
 use alloc::vec::Vec;
 
 use crate::functions::net::dhcpv6::policy::Dhcpv6PolicyConfig;
+use crate::functions::net::dhcpv6::ra;
 use crate::functions::net::dhcpv6::state::{Dest, Dhcpv6Client, Output};
 use crate::privileged::net::iface_trait::Dhcpv6State;
 use crate::privileged::net::init::dhcpv6::{ALL_DHCPV6_MULTICAST, Dhcpv6PollCtx};
@@ -20,6 +22,8 @@ use crate::privileged::sync::IrqSpinLock;
 const IAID: u32 = 1;
 /// 收报文栈缓冲字节数 (与 privileged UDP 缓冲同量级, 覆盖典型 `DHCPv6` 报文).
 const RECV_BUF_SIZE: usize = 2048;
+/// RA 捕获栈缓冲字节数 (与 privileged raw `ICMPv6` 缓冲同量级, 覆盖标准 MTU).
+const RA_RECV_BUF_SIZE: usize = 1500;
 
 /// 启动模式.
 #[derive(Clone, Copy)]
@@ -81,7 +85,7 @@ fn execute(ctx: &mut Dhcpv6PollCtx<'_>, out: &Output) {
 /// privileged poll 钩子: 在 `NET_STATE` 锁内驱动 `DHCPv6` 客户端.
 ///
 /// 惰性构造客户端 (首次 poll 时从 ctx 取 MAC / 时钟), 消费 pending 启动标志,
-/// 收取报文喂状态机, 推进定时器, 执行输出指令.
+/// 捕获 RA 按 M/O 触发启动, 收取报文喂状态机, 推进定时器, 执行输出指令.
 pub fn poll_hook(ctx: &mut Dhcpv6PollCtx<'_>) {
     let mut guard = DHCPV6_CLIENT.lock();
     let now_ms = ctx.now_ms();
@@ -101,6 +105,25 @@ pub fn poll_hook(ctx: &mut Dhcpv6PollCtx<'_>) {
         let out = match mode {
             Mode::Stateful => client.start_stateful(now_ms),
             Mode::Stateless => client.start_stateless(now_ms),
+        };
+        execute(ctx, &out);
+    }
+    // P6b Phase 5: RA M/O 触发 (raw ICMPv6 捕获 + 纯字节解析).
+    // 仅 Idle 时触发, 避免周期性 RA 重启已启动客户端; M=1 优先于 O=1.
+    let mut ra_buf = [0u8; RA_RECV_BUF_SIZE];
+    while let Some(n) = ctx.recv_ra(&mut ra_buf) {
+        let Some(trigger) = ra::parse(&ra_buf[..n]) else {
+            continue;
+        };
+        if !matches!(client.state(), Dhcpv6State::Idle) {
+            continue;
+        }
+        let out = if trigger.managed {
+            client.start_stateful(now_ms)
+        } else if trigger.other {
+            client.start_stateless(now_ms)
+        } else {
+            continue;
         };
         execute(ctx, &out);
     }

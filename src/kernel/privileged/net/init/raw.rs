@@ -97,6 +97,20 @@ pub fn set_dhcpv6_udp_handle(h: Option<SocketHandle>) {
     }
 }
 
+/// 安全读取 `dhcpv6_ra_handle` (P6b Phase 5: RA 捕获 raw `ICMPv6` 管道)
+pub fn dhcpv6_ra_handle() -> Option<SocketHandle> {
+    // SAFETY: SocketHandle 是 Copy, 调用方持有锁.
+    unsafe { state().dhcpv6_ra_handle }
+}
+
+/// 安全设置 `dhcpv6_ra_handle` (P6b Phase 5)
+pub fn set_dhcpv6_ra_handle(h: Option<SocketHandle>) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().dhcpv6_ra_handle = h;
+    }
+}
+
 /// 安全清空网络全局状态
 pub fn clear_all() {
     // SAFETY: 调用方持有 NET_STATE 锁, 串行重置流程.
@@ -106,6 +120,7 @@ pub fn clear_all() {
     s.dhcp_handle = None;
     s.dns_handle = None;
     s.dhcpv6_udp_handle = None;
+    s.dhcpv6_ra_handle = None;
 }
 
 // ========================================================================

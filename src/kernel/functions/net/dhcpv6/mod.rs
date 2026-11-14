@@ -11,6 +11,8 @@
 //! 全部 0 unsafe, 仅用 `&[u8]` / 整数 / `alloc::vec::Vec`, 不依赖 smoltcp.
 
 pub mod policy;
+/// P6b Phase 5: RA M/O 触发解析 (纯字节, 0 smoltcp, 离线可测).
+pub mod ra;
 pub mod state;
 pub mod wire;
 

@@ -696,6 +696,10 @@ fn net_init_open_sockets() {
         let v6_handle = dhcpv6::open_socket(sockets, &mut stack.iface);
         raw::set_dhcpv6_udp_handle(Some(v6_handle));
     }
+
+    // P6b Phase 5: RA 捕获 raw ICMPv6 socket (M/O 触发 DHCPv6, 不依赖 iface).
+    let ra_handle = dhcpv6::open_ra_socket(sockets);
+    raw::set_dhcpv6_ra_handle(Some(ra_handle));
 }
 
 /// 启动期 DHCP 轮询: 最多 500 次 poll, 取得租约即停 (超时后由 fallback 兜底).

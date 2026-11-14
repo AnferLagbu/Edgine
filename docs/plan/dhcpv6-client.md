@@ -173,8 +173,12 @@ InfoBound → (refresh 定时器) → InfoRequesting
   - privileged raw ICMPv6 socket 收 RA → 交 functions 用 public `wire::ndisc::RouterAdvertisement::parse` + `router_flags()` 解析 `RouterFlags::MANAGED` / `OTHER`.
   - M=1 → 启动有状态 SARR; O=1 → 启动无状态 Information-Request; 与 SLAAC (P6a) 派生地址协同.
   - RA 过滤: 仅处理 type 134 (Router Advertisement), 校验 hop_limit=255 / 源 link-local (仿 smoltcp 内部校验).
-- **状态**: []
-- **详情**: raw socket 收所有 ICMPv6, 须在 functions 过滤 RA (避免误处理 echo/NDP/MLD). M/O 解析全用 public wire API, vendored 零修改. 与 SLAAC 的 RA 处理并行不冲突 (raw socket 投递在内部处理之前).
+- **状态**: [X]
+- **详情**: raw socket 收所有 ICMPv6, 须在 functions 过滤 RA (避免误处理 echo/NDP/MLD). 与 SLAAC 的 RA 处理并行不冲突 (raw socket 投递在内部处理之前).
+  - **已落地 (纯字节裁定)**: 原方案 `wire::ndisc::RouterAdvertisement::parse` sketch 经用户裁定改为**纯字节解析** (与 wire/state/policy 同范式, 0 smoltcp 依赖, 离线可测). 新增 `functions/net/dhcpv6/ra.rs` (202 行含 12 内联测试): `RaTrigger { managed, other }` + `parse(&[u8]) -> Option<RaTrigger>`, 在重序列化完整 IPv6 报文上按固定偏移校验 next_header=58 / hop_limit=255 / 源 link-local / 目的 `ff02::1` 或 link-local / ICMPv6 type=134 code=0, 提取 flags 字节 M(0x80)/O(0x40). checksum 跳过以 SIMPLIFIED 标记 (raw 捕获仅触发低危 DHCPv6 发现, 结构校验防 off-link 伪造; smoltcp 内部 SLAAC 独立校验 checksum).
+  - **privileged 接线**: `init/dhcpv6.rs` 新增 `open_ra_socket` (raw `IpVersion::Ipv6` + `IpProtocol::Icmpv6`, `Box::leak` 缓冲) + `Dhcpv6PollCtx::recv_ra` (句柄缺失优雅降级); `init.rs::net_init_open_sockets` 无条件创建 RA socket (独立于 iface); `state.rs`/`raw.rs` 增 `dhcpv6_ra_handle` 字段与 accessor. **共存关键**: smoltcp `process_nxt_hdr` 对 ICMPv6 无条件走 `process_icmpv6` (不受 raw socket 标志门控), 故 raw 捕获不破坏 SLAAC/ND; `ff02::1` 为自动成员, RA 必达 raw socket.
+  - **触发逻辑**: `driver.rs::poll_hook` 在 pending 消费后、DHCPv6 收包前插 RA 循环 — 仅 `Dhcpv6State::Idle` 触发 (防周期 RA 重启已启动客户端), M=1 优先于 O=1, 命中即 `start_stateful`/`start_stateless` + execute.
+  - **七门槛全绿**: 双架构 `build.sh all` (link 6/6, 0 代码 warning); `audit.sh full` 未执行腿 0 (clippy pedantic 双架构 + 四树 / fmt 0 漂移 / 核心审计 / QEMU 2/2 + feature 4/4 / lockbud 4/4 零发现 / perf 24 项在预算 / doc-paths / feature_semantics); host-tests; `test-kernel-host` 三成员 (kernel 12 / kernel-functions 792 含 +12 ra / kernel-privileged 522, 0 failed); rustdoc 双架构 0 link 错误.
 
 ### Phase 6: 测试与互操作
 
