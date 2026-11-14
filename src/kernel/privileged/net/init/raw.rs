@@ -83,6 +83,20 @@ pub fn set_dns_handle(h: Option<SocketHandle>) {
     }
 }
 
+/// 安全读取 `dhcpv6_udp_handle` (P6b Phase 4: `DHCPv6` UDP 字节管道)
+pub fn dhcpv6_udp_handle() -> Option<SocketHandle> {
+    // SAFETY: SocketHandle 是 Copy, 调用方持有锁.
+    unsafe { state().dhcpv6_udp_handle }
+}
+
+/// 安全设置 `dhcpv6_udp_handle` (P6b Phase 4)
+pub fn set_dhcpv6_udp_handle(h: Option<SocketHandle>) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().dhcpv6_udp_handle = h;
+    }
+}
+
 /// 安全清空网络全局状态
 pub fn clear_all() {
     // SAFETY: 调用方持有 NET_STATE 锁, 串行重置流程.
@@ -91,6 +105,7 @@ pub fn clear_all() {
     s.stack = None;
     s.dhcp_handle = None;
     s.dns_handle = None;
+    s.dhcpv6_udp_handle = None;
 }
 
 // ========================================================================
@@ -683,6 +698,9 @@ pub fn smoltcp_net_stack_poll() -> crate::privileged::net::iface_trait::PollOutc
     let poll_result = stack.poll(nic, sockets);
     // SAFETY: process_dhcp_events 在 NET_LOCK 保护下处理 DHCP 事件.
     unsafe { super::process_dhcp_events(sockets) };
+    // P6b Phase 4: 锁内驱动 DHCPv6 客户端 (与 poll_network 对称).
+    let now_ms = crate::privileged::timer::hrtimer_clock_read() / 1_000_000;
+    super::dhcpv6::drive_dhcpv6(sockets, stack, now_ms);
 
     // 将 smoltcp PollResult 翻译为 Edgine PollOutcome
     match poll_result {

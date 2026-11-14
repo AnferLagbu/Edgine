@@ -74,6 +74,7 @@
     { "level": 12, "name": "NET_SNAPSHOT_LOCK", "anchor": "symbol" },
     { "level": 12, "name": "NET_STACK_INSTANCE", "anchor": "symbol", "note": "smoltcp 栈锁" },
     { "level": 12, "name": "UDS_STATE", "anchor": "symbol", "note": "unix socket 表" },
+    { "level": 12, "name": "DHCPV6_CLIENT", "anchor": "lockdep", "note": "DHCPv6 客户端状态机锁 (functions 自持, IrqSpinLock::named_lazy); poll_network 持 NET_STATE 锁内回调驱动, 与 NET_STATE 同层 (12→12)" },
     { "level": 13, "name": "UEFI.gop_mode", "anchor": "lockdep" },
     { "level": 13, "name": "UEFI.memory_map", "anchor": "lockdep" },
     { "level": 13, "name": "UEFI.variables", "anchor": "lockdep" },

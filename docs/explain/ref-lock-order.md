@@ -59,7 +59,8 @@
 
 层级 12: Network（网络）
   NET_STATE（原 NET_LOCK 与 12 个 static mut 的替代单源）, NET_SNAPSHOT_LOCK,
-  NET_STACK_INSTANCE（smoltcp 栈锁）, UDS_STATE（unix socket 表）
+  NET_STACK_INSTANCE（smoltcp 栈锁）, UDS_STATE（unix socket 表）,
+  DHCPV6_CLIENT（DHCPv6 客户端状态机; functions 自持, poll_network 持 NET_STATE 锁内回调驱动, 同层 12→12）
 
 层级 13: Driver（驱动）
   UEFI.gop_mode, UEFI.memory_map, UEFI.variables,
@@ -72,7 +73,7 @@
 
 本表不再是手写清单：它的**机器可读单源**是 `scripts/lock_class_order.json`（层级定义 + 每条锁类的锚点与归属层级），`scripts/audit_deadlock_matrix.py` 的第 (6) 项检查对本表做双向对账并把四条判据执法——① 代码里 `::named` / `::named_lazy` 注册的锁类若序表未声明即红（新锁类必须先入表）；② 序表声明的 `lockdep` 类在代码里已无注册点、或 `symbol` 锚在代码里定位不到即红（本表因此能抓住改名与删锁，序表对账首跑即抓出 `COW_REFS` 已删、`NET_LOCK` 已改名 `NET_STATE`、层级 14 四名从无实现）；③ 本表的条目集合与序表逐层级双向不符即红（括号内的说明文字不参与判定）；④ 容量对账（A-127c）：序表 `lockdep` 条目数与代码具名类数任一到达 `limits.rs` 的 `MAX_LOCK_CLASSES` 实值即红，上限不在脚本里抄数、单源不可解析即 fail-closed。判据 ④ 之所以必要：类表是定长数组，到顶之后的第 N+1 个类在运行时只表现为「注册被丢弃 + 一条粘滞失效读数」，静态侧必须当场拦住而不是等读数行。`MAX_HELD_LOCKS` 与本表层级数的差只进摘要读数不进取决（当前 8 vs 15，即「一条合法长链可每层持一把、而持有栈只跟得住 8 把」）——抬高上限牵动 boot BSS 定长数组尺寸，属另一轮裁定，溢出本身由运行时粘滞读数执法。改锁的顺序归属 = 改序表 + 改本表，两处同批提交，红在门禁而不是在下一次读文档时。第 (7) 项检查是静态倒序检测（见下节「静态锁序倒序检测」），它消费同一份序表与 `exceptions` 数组。
 
-序表的锚点有两种口径：`lockdep` 锚要求名称与代码类名字面量完全一致（16 个，见下文 Lockdep 集成；该计数**必须整文件匹配**——`IrqSpinLock::named_lazy(` 与类名字面量分行的 4 处 FREG 域内锁，逐行扫会看成「代码里没注册」而同时漏掉判据 ① 与表条目，注释行则整体跳过）；`symbol` 锚只要求该标识符仍能在 `src/kernel` 定位，用于尚未具名化的锁——`PhysicalMemoryManager::lock` 与 `VMM_LOCK` 是 `AtomicBool` 手递自旋标志、不进 lockdep 类表，`PAGE_CACHE` / `PROC_SNAPSHOT` / `TIMER_MANAGER` 等仍是未具名 `static` 构造。全仓未具名构造点共 242 处，一律不被具名化纳入本表（2026-11-05 裁定：先建表再改名，避免把改名噪声与表条目失效混在首轮读数里）。
+序表的锚点有两种口径：`lockdep` 锚要求名称与代码类名字面量完全一致（19 个，见下文 Lockdep 集成；该计数**必须整文件匹配**——`IrqSpinLock::named_lazy(` 与类名字面量分行的 4 处 FREG 域内锁，逐行扫会看成「代码里没注册」而同时漏掉判据 ① 与表条目，注释行则整体跳过）；`symbol` 锚只要求该标识符仍能在 `src/kernel` 定位，用于尚未具名化的锁——`PhysicalMemoryManager::lock` 与 `VMM_LOCK` 是 `AtomicBool` 手递自旋标志、不进 lockdep 类表，`PAGE_CACHE` / `PROC_SNAPSHOT` / `TIMER_MANAGER` 等仍是未具名 `static` 构造。全仓未具名构造点共 242 处，一律不被具名化纳入本表（2026-11-05 裁定：先建表再改名，避免把改名噪声与表条目失效混在首轮读数里）。
 
 ## 规则
 

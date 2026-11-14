@@ -186,6 +186,12 @@ pub fn init() {
     NET_STACK_INSTANCE.get_or_init(|slot| {
         slot.write(Mutex::new(SmoltcpNetStack::new()));
     });
+    // P6b Phase 4: 注册 DHCPv6 反转钩子 (privileged poll 在 NET_STATE 锁内回调
+    // functions 驱动). 须在 eg_net_init 之前注册, 使启动期 boot poll 也能驱动.
+    #[cfg(not(feature = "kernel_test"))]
+    crate::privileged::net::init::dhcpv6::net_register_dhcpv6_poll_hook(
+        crate::functions::net::dhcpv6::driver::poll_hook,
+    );
     fw_net_socket::eg_net_init();
 }
 

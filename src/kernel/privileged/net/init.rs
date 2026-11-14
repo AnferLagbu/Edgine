@@ -47,6 +47,9 @@ pub(crate) mod irq;
 // S-3: 网络轮询截止期驱动 (smoltcp `poll_at` → hrtimer → NetRx 底半部).
 pub(crate) mod poll_timer;
 
+// P6b Phase 4: DHCPv6 机制封装 (UDP 字节管道 + 地址落表 + 反转钩子).
+pub mod dhcpv6;
+
 // B04-09 优化 Step G: 配置入口 (FFI) 拆至 cmd.rs.
 pub(crate) mod cmd;
 pub use cmd::*;
@@ -262,23 +265,12 @@ pub unsafe fn poll_network() {
         let sockets = &mut *raw::socket_set();
         next_poll_ns = crate::privileged::net::poll_stack(nic, stack, sockets);
         raw::process_dhcp_events(sockets);
+        // P6b Phase 4: 锁内驱动 functions 层 DHCPv6 客户端 (反转钩子, 同层 12→12).
+        let dhcpv6_now_ms = hrtimer_clock_read() / 1_000_000;
+        dhcpv6::drive_dhcpv6(sockets, stack, dhcpv6_now_ms);
 
-        // P6a 联调观测: SLAAC 处理 Router Advertisement 成功后, smoltcp 会把从 RA
-        // 前缀派生的全局 IPv6 地址写入 iface 地址表. 此处只读检查并一次性上报
-        // (发现即置位 SLAAC_OBSERVED, 后续 tick 不重复打印), 不修改地址表.
-        if !SLAAC_OBSERVED.load(Ordering::Relaxed) {
-            for cidr in stack.iface.ip_addrs() {
-                if let IpCidr::Ipv6(v6) = cidr {
-                    let octets = v6.address().octets();
-                    // 排除 fe80::/64 link-local (init_stack 注入) 与 :: 未指定
-                    if octets[0..8] != [0xfe, 0x80, 0, 0, 0, 0, 0, 0] && octets != [0u8; 16] {
-                        SLAAC_OBSERVED.store(true, Ordering::Relaxed);
-                        crate::klog_info!(Net, "IPv6 SLAAC: global address {} acquired", v6);
-                        break;
-                    }
-                }
-            }
-        }
+        // P6a 联调观测: SLAAC 全局 IPv6 地址一次性上报 (只读, 不修改地址表).
+        observe_slaac_once(stack);
 
         // P2-I-41: poll 完毕后通知所有 fd 的等待者, 让 sm_send/sm_recv
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
@@ -369,6 +361,25 @@ pub unsafe fn poll_network() {
     for &pid in &to_wake[..wake_n] {
         if pid != 0 {
             scheduler_unblock(pid);
+        }
+    }
+}
+
+/// P6a 联调观测: SLAAC 处理 Router Advertisement 成功后, smoltcp 会把从 RA
+/// 前缀派生的全局 IPv6 地址写入 iface 地址表. 此处只读检查并一次性上报
+/// (发现即置位 `SLAAC_OBSERVED`, 后续 tick 不重复打印), 不修改地址表.
+fn observe_slaac_once(stack: &NetworkStack) {
+    if !SLAAC_OBSERVED.load(Ordering::Relaxed) {
+        for cidr in stack.iface.ip_addrs() {
+            if let IpCidr::Ipv6(v6) = cidr {
+                let octets = v6.address().octets();
+                // 排除 fe80::/64 link-local (init_stack 注入) 与 :: 未指定
+                if octets[0..8] != [0xfe, 0x80, 0, 0, 0, 0, 0, 0] && octets != [0u8; 16] {
+                    SLAAC_OBSERVED.store(true, Ordering::Relaxed);
+                    crate::klog_info!(Net, "IPv6 SLAAC: global address {} acquired", v6);
+                    break;
+                }
+            }
         }
     }
 }
@@ -678,6 +689,13 @@ fn net_init_open_sockets() {
     let dns_socket = smoltcp_dns::Socket::new(&[], query_slots);
     let dns_handle = sockets.add(dns_socket);
     raw::set_dns_handle(Some(dns_handle));
+
+    // P6b Phase 4: DHCPv6 UDP 字节管道 (bind 546 + join ff02::1:2).
+    // stack 已在 Step2 置入 (eg_net_init), 此处取 iface 加入组播组.
+    if let Some(stack) = raw::stack_mut() {
+        let v6_handle = dhcpv6::open_socket(sockets, &mut stack.iface);
+        raw::set_dhcpv6_udp_handle(Some(v6_handle));
+    }
 }
 
 /// 启动期 DHCP 轮询: 最多 500 次 poll, 取得租约即停 (超时后由 fallback 兜底).

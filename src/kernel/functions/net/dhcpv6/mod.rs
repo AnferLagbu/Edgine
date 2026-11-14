@@ -13,3 +13,10 @@
 pub mod policy;
 pub mod state;
 pub mod wire;
+
+/// P6b Phase 4: 客户端驱动 (IRQ 安全静态 + privileged 反转钩子).
+///
+/// 依赖 privileged `init::dhcpv6` 的 [`Dhcpv6PollCtx`](crate::privileged::net::init::dhcpv6::Dhcpv6PollCtx),
+/// 该模块在 `kernel_test` 下被 cfg-out, 故本模块同 gate.
+#[cfg(not(feature = "kernel_test"))]
+pub mod driver;

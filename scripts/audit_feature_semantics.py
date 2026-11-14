@@ -72,6 +72,11 @@ FUNCTIONS_WHITELIST = [
 #   virtio/mod.rs     virtio_net_registration 随唯一消费者同门控 (§5 F9 死代码防线)
 #   fs/io.rs          stdin 键盘输入源仅 x86_64 生产构建存在
 #   sgeg/storage/disk.rs + syscall/dispatch.rs  引导安装 (磁盘扇区写) 仅 x86_64 生产实装
+#   net/dhcpv6/mod.rs driver 门控镜像 privileged `net::init` 的 `not(kernel_test)`
+#                     (driver 依赖 `init::dhcpv6::Dhcpv6PollCtx`, 仅 privileged init
+#                     编译时可用); 且白名单文件 smoltcp_impl.rs 的 dhcpv6_state()
+#                     `not(kernel_test)` 分支调用 driver::state(), 故 driver 必须在
+#                     host-test 下编译 —— 改 any(kt,ht) 会断裂 host-test, 保留单端.
 FUNCTIONS_WHITELIST_GATES = {
     ('src/kernel/functions/driver/net/e1000.rs',
      '#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]'): 2,
@@ -93,6 +98,8 @@ FUNCTIONS_WHITELIST_GATES = {
      '#[cfg(all(not(feature = "kernel_test"), target_arch = "x86_64"))]'): 1,
     ('src/kernel/functions/syscall/dispatch.rs',
      '#[cfg(feature = "kernel_test")]'): 1,
+    ('src/kernel/functions/net/dhcpv6/mod.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 1,
 }
 
 # Vendored 3rd-party 目录: 审计豁免 (同 audit_functions_boundary.py)

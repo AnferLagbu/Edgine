@@ -154,8 +154,17 @@ InfoBound → (refresh 定时器) → InfoRequesting
   - raw ICMPv6 socket: 注册 `IpProtocol::Icmpv6` raw socket 捕获 RA (Phase 5 解析 M/O).
   - 地址落表: 把 functions 输出的 `apply_addr` 经 `Interface::update_ip_addrs` 落表; DNS/选项落配置.
   - poll 接线: 在网络 poll 循环驱动 `Dhcpv6Client::poll`, 把收到的报文喂入, 把输出指令执行 (仿 DHCPv4 在 `smoltcp_impl.rs` 的驱动位置).
-- **状态**: []
+- **状态**: [X]
 - **详情**: 所有 smoltcp 句柄操作在 privileged, unsafe 块配 `// SAFETY:` (F4). functions 只产指令不碰句柄 (F1/F2). 内部 socket (`SocketKind::Dhcpv6`) 用户态不可见.
+  - **已落地**: privileged `net/init/dhcpv6.rs` (173 行, 0 unsafe — 全走 smoltcp safe API + raw 安全访问器) + functions `net/dhcpv6/driver.rs` (164 行含 3 内联测试, `#![deny(unsafe_code)]`).
+    - **架构 (裁定甲「反转钩子·锁内驱动」)**: privileged 持擦除 `fn(&mut Dhcpv6PollCtx<'_>)` 钩子 (`OnceLock`, 仿 `net_register_functions_driver`), functions `net::init` 注册 `driver::poll_hook`; `poll_network` 在持有的 `NET_STATE` 锁内回调驱动 functions 客户端 (依赖反转, 避免 F3 循环). `Dhcpv6PollCtx` 字段私有, 只暴露 safe 字节级 `recv`/`send`/`apply_addr` + `now_ms`/`mac`, 不泄漏任何 smoltcp 类型 (F2 类型擦除).
+    - **机制**: `open_socket` bind 546 + `set_hop_limit(255)` + `join_multicast_group(ff02::1:2)`, 收发缓冲 `Box::leak` 取 `'static`; 句柄经 `raw::set_dhcpv6_udp_handle` 存 `NetState` (safe 访问器). `apply_addr` 经 `Interface::update_ip_addrs` 落 /128 (安装/移除, 池满告警).
+    - **poll 接线 (两路径对称)**: ISR 路径 `poll_network` (init.rs) + `SmoltcpNetStack::poll` 路径 `smoltcp_net_stack_poll` (raw.rs) 均在 `NET_STATE` 锁内调 `drive_dhcpv6`. 客户端锁 `DHCPV6_CLIENT` 为 `IrqSpinLock::named_lazy`, 与 `NET_STATE` 同属锁层级 12 (同层取锁允许); 已登记 `scripts/lock_class_order.json` + `docs/explain/ref-lock-order.md` (lockdep 类 19).
+    - **启动**: `start_stateful`/`start_stateless` 置 pending 标志, 下次 poll 钩子消费发 Solicit/Information-Request; RA M/O 自动触发接线 + raw ICMPv6 RA 捕获 socket 均留 Phase 5 (M/O 解析处).
+    - **SIMPLIFIED**: `apply_options` (IPv6 DNS / 刷新间隔) 暂不落配置 — `G_DNS` 为 IPv4 专用, 内核尚无 IPv6 DNS 配置面; 地址落表与发包不受影响, 待独立工程引入 IPv6 DNS 面时消费 `out.apply_options`.
+    - **观测**: `SmoltcpNetStack::dhcpv6_state()` 经 trait 暴露 functions 驱动观察态 (`kernel_test` 下返 `Idle` 桩, B 类白名单门控).
+    - **七门槛全绿**: 双架构 `build.sh all` (Passed 6/0, 两架构 build+link 过) / clippy pedantic 七腿 (双架构 + host-tests --all-targets + src/user×2 + 壳 + edgine-abi) + feature 维 (kernel_test/host-test) / fmt 四 crate 0 漂移; kernel-host 三成员 1314 过 (kernel 12 + functions 780 含 +3 driver + privileged 522); host-tests 全过 (HTEST_EXIT=0); audit full `AUDIT_EXIT=0` 未执行腿 0, 审计腿 19/19 + 存量 10/10, CRITICAL/HIGH/WARN=0, 死代码抑制 0, smoltcp_purity / perf 24 项绝对预算内 / lockbud 4/4 零发现 / QEMU 2/2 + feature 运行维 4/4 + thread-stress 6/6 / lockdep 构建面双架构 / check_doc_paths 17 文档无漂移 / 锁类序表 56 条目违规 0; rustdoc 双架构 Generated 成功.
+    - **feature_semantics 定性登记**: driver 门控 `not(kernel_test)` 镜像 privileged `net::init` 同门控 (依赖 `init::dhcpv6::Dhcpv6PollCtx`), 且被白名单 `smoltcp_impl.rs::dhcpv6_state()` 的 `not(kernel_test)` 分支依赖 (盲转 `any(kt,ht)` 会断裂 host-test 编译), 按 P-49 登记 `FUNCTIONS_WHITELIST_GATES` (HIGH→INFO, 不改代码).
 
 ### Phase 5: RA M/O 触发集成
 

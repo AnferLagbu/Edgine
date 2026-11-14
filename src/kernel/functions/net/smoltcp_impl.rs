@@ -33,8 +33,8 @@
 //! - [docs/plan/archive/maintenance-cycle-2026-06-19.md] §9.5 REVAL-W 第 6 组
 
 use crate::privileged::net::iface_trait::{
-    DhcpState, IpAddr, Ipv4Addr, Ipv6Addr, NetConfig, NetEndpoint, NetError, NetStack, PollOutcome,
-    Result, SocketHandle, SocketKind,
+    DhcpState, Dhcpv6State, IpAddr, Ipv4Addr, Ipv6Addr, NetConfig, NetEndpoint, NetError, NetStack,
+    PollOutcome, Result, SocketHandle, SocketKind,
 };
 use crate::privileged::net::socket_types::{Domain, SockType};
 use crate::privileged::net_socket as fw_net_socket;
@@ -458,6 +458,18 @@ impl NetStack for SmoltcpNetStack {
     /// 查询 DHCP 状态.
     fn dhcp_state(&self) -> DhcpState {
         self.dhcp_state
+    }
+
+    /// 查询 `DHCPv6` 客户端状态 (functions 侧驱动观测).
+    fn dhcpv6_state(&self) -> Dhcpv6State {
+        #[cfg(feature = "kernel_test")]
+        {
+            Dhcpv6State::default()
+        }
+        #[cfg(not(feature = "kernel_test"))]
+        {
+            crate::functions::net::dhcpv6::driver::state()
+        }
     }
 
     /// 将 Socket 绑定到本地端点 (地址 + 端口).

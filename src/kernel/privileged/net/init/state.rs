@@ -75,6 +75,9 @@ pub struct NetState {
     /// `SocketSet` 中的 handle, 由 `eg_net_init` Step3 写入, 查询/servers
     /// 更新经 `raw::dns_handle()` 读取 (持 `NET_STATE` 锁).
     pub(crate) dns_handle: Option<SocketHandle>,
+    /// P6b Phase 4: `DHCPv6` UDP 字节管道 socket 句柄 (bind 546 + join `ff02::1:2`),
+    /// 由 `net_init_open_sockets` 创建, `init::dhcpv6::drive_dhcpv6` 据此收发.
+    pub(crate) dhcpv6_udp_handle: Option<SocketHandle>,
     pub(crate) socket_table: Vec<Option<SocketHandle>>,
     pub(crate) fd_types: Vec<u8>,
     /// 各槽位的本地端点 (D1): bind 成功时写入, 供端口冲突检测与 getsockname.
@@ -117,6 +120,7 @@ impl NetState {
             stack: None,
             dhcp_handle: None,
             dns_handle: None,
+            dhcpv6_udp_handle: None,
             socket_table: Vec::new(),
             fd_types: Vec::new(),
             local_endpoints: Vec::new(),
