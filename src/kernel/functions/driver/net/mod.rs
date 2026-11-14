@@ -30,5 +30,11 @@ pub fn net_init() {
     #[cfg(not(feature = "kernel_test"))]
     {
         let _ = crate::privileged::net::net_register_functions_driver(net_functions_probe);
+        // P6b: DHCPv6 反转钩子须在生产启动路径注册 —— crate root 经本函数
+        // (而非 functions::net::init) 编排 eg_net_init, 故钩子在此注册,
+        // 使启动期 boot poll 即能驱动 functions DHCPv6 客户端.
+        crate::privileged::net::init::dhcpv6::net_register_dhcpv6_poll_hook(
+            crate::functions::net::dhcpv6::driver::poll_hook,
+        );
     }
 }

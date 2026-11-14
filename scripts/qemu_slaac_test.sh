@@ -121,12 +121,14 @@ start_dnsmasq() {
     if [ "$MODE" = "dhcpv6" ]; then
         # 有状态 DHCPv6 地址池: dnsmasq 配置 dhcp-range 后 RA 自动置 M=1/O=1,
         # 内核 raw ICMPv6 捕获 RA → ra::parse 提取 M 位 → 触发有状态 SARR.
+        # slaac 模式置 RA 前缀 A=1: dnsmasq 默认 "managed 置位 / use SLAAC 复位"
+        # (A=0), 须显式 slaac 模式才派生 SLAAC 地址, 实现 DHCPv6 + SLAAC 共存.
         # information-refresh-time 选项供无状态 (O=1) 路径取刷新间隔.
         cat > "$DNSMASQ_CONF" <<EOF
 interface=$TAP_IF
 bind-interfaces
 enable-ra
-dhcp-range=$DHCPV6_POOL_START,$DHCPV6_POOL_END,$PREFIX_LEN,$DHCPV6_LEASE
+dhcp-range=$DHCPV6_POOL_START,$DHCPV6_POOL_END,slaac,$PREFIX_LEN,$DHCPV6_LEASE
 dhcp-option=option6:information-refresh-time,3600
 no-resolv
 no-hosts
