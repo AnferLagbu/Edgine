@@ -33,10 +33,10 @@ pub const OPT_ORO: u16 = 6;
 pub const OPT_PREFERENCE: u16 = 7;
 /// `OPTION_ELAPSED_TIME` (8): 已用时间 (2 字节, 百分之一秒).
 pub const OPT_ELAPSED_TIME: u16 = 8;
-/// `OPTION_STATUS_CODE` (12): 状态码 (2B) + 状态消息 (变长 UTF-8).
-pub const OPT_STATUS_CODE: u16 = 12;
-/// `OPTION_RAPID_COMMIT` (13): 快速提交 (零长度), 两报文交换.
-pub const OPT_RAPID_COMMIT: u16 = 13;
+/// `OPTION_STATUS_CODE` (13): 状态码 (2B) + 状态消息 (变长 UTF-8).
+pub const OPT_STATUS_CODE: u16 = 13;
+/// `OPTION_RAPID_COMMIT` (14): 快速提交 (零长度), 两报文交换.
+pub const OPT_RAPID_COMMIT: u16 = 14;
 /// `OPTION_DNS_SERVERS` (23, RFC 3646): DNS 递归服务器 IPv6 地址列表.
 pub const OPT_DNS_SERVERS: u16 = 23;
 /// `OPTION_INFORMATION_REFRESH_TIME` (32): 无状态信息刷新间隔 (4B, 秒).
@@ -809,11 +809,67 @@ mod tests {
     /// `RapidCommit` 必须零长度.
     #[test]
     fn test_rapid_commit_nonzero_length() {
-        let buf = [1, 0, 0, 1, 0x00, 0x0d, 0x00, 0x01, 0x00];
+        let buf = [1, 0, 0, 1, 0x00, 0x0e, 0x00, 0x01, 0x00];
         assert_eq!(
             Repr::parse(&buf),
             Err(ParseError::MalformedOption(OPT_RAPID_COMMIT))
         );
+    }
+
+    /// 回归: dnsmasq 2.93 的 Advertise 选项集必须整体解析成功.
+    ///
+    /// 曾因 `OPT_STATUS_CODE` 误编为 12、`OPT_RAPID_COMMIT` 误编为 13, 使
+    /// status-code(13) 落入 rapid-commit 分支并以「非空载荷」判错; 解析失败后
+    /// 客户端永久停在 Soliciting, 只重发 Solicit (RA M=1 实测现象).
+    #[test]
+    fn test_dnsmasq_advertise_parses() {
+        let mut buf = vec![2u8, 0x57, 0x00, 0x01];
+        // 选项 1 客户端 ID: DUID-LL (硬件类型 1 + MAC 52:54:00:12:34:56)
+        buf.extend_from_slice(&[0x00, 0x01, 0x00, 0x0a, 0x00, 0x01, 0x00, 0x01]);
+        buf.extend_from_slice(&[0x52, 0x54, 0x00, 0x12, 0x34, 0x56]);
+        // option 2 server-id: DUID-LLT (14 字节)
+        buf.extend_from_slice(&[0x00, 0x02, 0x00, 0x0e, 0x00, 0x01, 0x00, 0x01]);
+        buf.extend_from_slice(&[0x32, 0x8a, 0x73, 0xe1]);
+        buf.extend_from_slice(&[0x78, 0x55, 0x36, 0x0a, 0x82, 0x39]);
+        // option 3 IA_NA: iaid=1, t1=21600, t2=37800, 嵌套 IA_ADDR
+        buf.extend_from_slice(&[0x00, 0x03, 0x00, 0x28]);
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(&21600u32.to_be_bytes());
+        buf.extend_from_slice(&37800u32.to_be_bytes());
+        // 嵌套 option 5 IA_ADDR: fd00::1086, pltime/vltime 43200
+        buf.extend_from_slice(&[0x00, 0x05, 0x00, 0x18]);
+        buf.extend_from_slice(&[
+            0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x10, 0x86,
+        ]);
+        buf.extend_from_slice(&43200u32.to_be_bytes());
+        buf.extend_from_slice(&43200u32.to_be_bytes());
+        // 选项 13 状态码: Success (0)
+        buf.extend_from_slice(&[0x00, 0x0d, 0x00, 0x02, 0x00, 0x00]);
+        // 选项 7 偏好值: 0
+        buf.extend_from_slice(&[0x00, 0x07, 0x00, 0x01, 0x00]);
+
+        let r = Repr::parse(&buf).expect("dnsmasq Advertise 必须可解析");
+        assert_eq!(r.msg_type, MessageType::Advertise);
+        assert_eq!(r.transaction_id, [0x57, 0x00, 0x01]);
+        assert!(
+            r.options
+                .iter()
+                .any(|o| matches!(o, Opt::StatusCode(s) if s.code == 0))
+        );
+        assert!(r.options.iter().any(|o| matches!(o, Opt::Preference(0))));
+        let ia = r
+            .options
+            .iter()
+            .find_map(|o| match o {
+                Opt::IaNa(ia) => Some(ia),
+                _ => None,
+            })
+            .expect("Advertise 必须含 IA_NA");
+        assert!(ia.options.iter().any(|o| matches!(
+            o,
+            Opt::IaAddr(a) if a.addr == [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x86]
+        )));
     }
 
     /// `ORO` 奇数长度判错.

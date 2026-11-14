@@ -17,6 +17,8 @@
 #   - dnsmasq            : RA 路由通告 + (dhcpv6 模式) 有状态 DHCPv6 服务
 #   - python3            : UDP6 回显服务
 #   - qemu-system-x86_64
+#   - firewall-cmd (可选): firewalld 运行时把 tap0 绑 trusted zone 放行 DHCPv6
+#                          547/udp (Fedora 默认 zone 拦此端口), 测试后复原
 #
 # 输出: other/build/log/qemu_slaac_x86_64.log
 # 退出码: 0 = 对应模式里程碑全部命中; 1 = 任一未命中或环境不满足
@@ -83,6 +85,43 @@ DNSMASQ_PID=""
 DNSMASQ_CONF=""
 TMP_DIR=""
 QEMU_PID=""
+FIREWALLD_ACTIVE=0
+TAP_ZONE_SAVED=""
+
+# --- firewalld: 运行时放行 tap0 的 DHCPv6 服务端组播 (UDP 547) ---
+# Fedora 默认 zone (FedoraWorkstation) 放行 ICMPv6 ND/RA 与 1025-65535/udp, 但拦
+# incoming UDP 547 (DHCPv6 服务端) → guest Solicit 到不了 dnsmasq, SARR 永不绑定
+# (ICMPv6 RS/RA 与 UDP 9999 回显仍通, 故仅 DHCPv6 里程碑红). 把 tap0 运行时绑到
+# trusted zone (仅 tap0, 不影响 wlp4s0 等接口), cleanup 复原; 不加 --permanent,
+# 不改宿主永久配置. firewalld 未运行则跳过 (无防火墙拦截, 无需处理).
+setup_firewall() {
+    command -v firewall-cmd >/dev/null 2>&1 || return 0
+    [ "$(firewall-cmd --state 2>/dev/null)" = "running" ] || return 0
+    FIREWALLD_ACTIVE=1
+    TAP_ZONE_SAVED="$(firewall-cmd --get-zone-of-interface="$TAP_IF" 2>/dev/null || true)"
+    $SUDO firewall-cmd --zone=trusted --change-interface="$TAP_IF" >/dev/null
+    # firewalld 经 D-Bus 异步落规则, --change-interface 返回不代表已生效;
+    # 未生效即起 QEMU 会偶发丢首个 Solicit (5 Solicits / 0 Advertise).
+    # 轮询 --query-interface 确认 tap0 已入 trusted (上限 5s), 再放行后续流程.
+    local i
+    for i in $(seq 1 50); do
+        if $SUDO firewall-cmd --zone=trusted --query-interface="$TAP_IF" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.1
+    done
+    info "firewalld: $TAP_IF 运行时绑到 trusted zone (放行 DHCPv6 547/udp, 测试后复原)"
+}
+restore_firewall() {
+    [ "$FIREWALLD_ACTIVE" -eq 1 ] || return 0
+    # 原先有显式 zone 则绑回; 原为 "no zone" (落默认 zone) 则从 trusted 移除即复原.
+    if [ -n "$TAP_ZONE_SAVED" ] && [ "$TAP_ZONE_SAVED" != "no zone" ]; then
+        $SUDO firewall-cmd --zone="$TAP_ZONE_SAVED" --change-interface="$TAP_IF" >/dev/null 2>&1 || true
+    else
+        $SUDO firewall-cmd --zone=trusted --remove-interface="$TAP_IF" >/dev/null 2>&1 || true
+    fi
+}
+
 cleanup() {
     if [ -n "$QEMU_PID" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
         kill "$QEMU_PID" 2>/dev/null || true
@@ -93,6 +132,7 @@ cleanup() {
     if [ -n "$DNSMASQ_PID" ] && [ -f "$DNSMASQ_PID" ]; then
         $SUDO kill "$(cat "$DNSMASQ_PID" 2>/dev/null)" 2>/dev/null || true
     fi
+    restore_firewall
     [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     return 0
 }
@@ -253,6 +293,7 @@ if [ ! -f other/build/x86_64/kernel.flat ]; then
 fi
 
 ensure_tap
+setup_firewall
 # 先起 QEMU 建立 tap0 载波 (后台), 再启宿主服务: 无载波期 IPv6 DAD 停摆,
 # 宿主地址 tentative 会致回显 bind 失败 (Errno 99) 且 dnsmasq 无法发 RA.
 run_qemu &
