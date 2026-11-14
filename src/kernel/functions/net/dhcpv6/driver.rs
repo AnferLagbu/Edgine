@@ -106,10 +106,14 @@ fn execute(ctx: &mut Dhcpv6PollCtx<'_>, out: &Output) {
             );
         }
     }
-    // SIMPLIFIED: apply_options (IPv6 DNS / 刷新间隔) 暂不落配置;
-    //   影响面: 无状态取得的 DNS 服务器暂不注入解析器 (G_DNS 为 IPv4 专用,
-    //   内核尚无 IPv6 DNS 配置面), 地址落表与发包路径不受影响;
-    //   何时扩展: 引入 IPv6 DNS 配置面 (独立工程) 时消费 out.apply_options.
+    // DNS 双栈 (docs/plan/dns-dual-stack.md Phase 1): 消费 DHCPv6 取得的 IPv6
+    // DNS 服务器, 经 ctx 合并喂入 smoltcp dns::Socket (IPv6 优先, D3).
+    if let Some(opts) = &out.apply_options {
+        ctx.apply_dns6(&opts.dns_servers);
+    }
+    // SIMPLIFIED: apply_options.refresh_s (无状态信息刷新间隔) 暂不落配置;
+    //   影响面: Information-request 的周期刷新间隔不被消费, DNS 服务器注入与
+    //   地址落表不受影响; 何时扩展: 引入无状态周期刷新调度时消费 refresh_s.
 }
 
 /// privileged poll 钩子: 在 `NET_STATE` 锁内驱动 `DHCPv6` 客户端.

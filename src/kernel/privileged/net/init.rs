@@ -797,14 +797,18 @@ fn net_init_register() {
     // boot 完成后发一次真实查询并 printk; 成败均不阻断 boot (只观测).
     #[cfg(feature = "dns-selftest")]
     match dns_resolve("example.com") {
-        Some(ip) => crate::klog_info!(
+        Some(crate::privileged::net::iface_trait::IpAddr::V4(v4)) => crate::klog_info!(
             Net,
             "dns-selftest: example.com -> {}.{}.{}.{}",
-            ip[0],
-            ip[1],
-            ip[2],
-            ip[3]
+            v4.0[0],
+            v4.0[1],
+            v4.0[2],
+            v4.0[3]
         ),
+        // V6 打印原始 16 字节 (诊断观测用, 非标准 IPv6 文本格式).
+        Some(crate::privileged::net::iface_trait::IpAddr::V6(v6)) => {
+            crate::klog_info!(Net, "dns-selftest: example.com -> {:?}", v6.0)
+        }
         None => crate::klog_warn!(Net, "dns-selftest: example.com -> None"),
     }
 }
@@ -892,7 +896,7 @@ pub(crate) mod raw;
 mod tests {
     use super::*;
     use crate::privileged::net::iface_trait::{
-        Ipv4Addr as TraitIpv4Addr, NetEndpoint as TraitEndpoint,
+        IpAddr, Ipv4Addr as TraitIpv4Addr, NetEndpoint as TraitEndpoint,
     };
     use smoltcp::wire::IpAddress;
 
@@ -977,18 +981,39 @@ mod tests {
 
     #[test]
     fn test_dns_resolve_static_hosts() {
-        assert_eq!(dns_resolve("localhost"), Some([127, 0, 0, 1]));
-        assert_eq!(dns_resolve("LOCALHOST"), Some([127, 0, 0, 1])); // 大小写不敏感
-        assert_eq!(dns_resolve("Router"), Some([10, 0, 2, 2]));
-        assert_eq!(dns_resolve("qemu-gateway"), Some([10, 0, 2, 2]));
-        assert_eq!(dns_resolve("edgine-gateway"), Some([10, 0, 2, 2]));
+        assert_eq!(
+            dns_resolve("localhost"),
+            Some(IpAddr::V4(TraitIpv4Addr([127, 0, 0, 1])))
+        );
+        assert_eq!(
+            dns_resolve("LOCALHOST"),
+            Some(IpAddr::V4(TraitIpv4Addr([127, 0, 0, 1])))
+        ); // 大小写不敏感
+        assert_eq!(
+            dns_resolve("Router"),
+            Some(IpAddr::V4(TraitIpv4Addr([10, 0, 2, 2])))
+        );
+        assert_eq!(
+            dns_resolve("qemu-gateway"),
+            Some(IpAddr::V4(TraitIpv4Addr([10, 0, 2, 2])))
+        );
+        assert_eq!(
+            dns_resolve("edgine-gateway"),
+            Some(IpAddr::V4(TraitIpv4Addr([10, 0, 2, 2])))
+        );
     }
 
     #[test]
     fn test_dns_resolve_unknown_falls_back_to_ip_literal() {
         // 未知主机名直接走 IPv4 字面量路径
-        assert_eq!(dns_resolve("8.8.8.8"), Some([8, 8, 8, 8]));
-        assert_eq!(dns_resolve("10.0.2.15"), Some([10, 0, 2, 15]));
+        assert_eq!(
+            dns_resolve("8.8.8.8"),
+            Some(IpAddr::V4(TraitIpv4Addr([8, 8, 8, 8])))
+        );
+        assert_eq!(
+            dns_resolve("10.0.2.15"),
+            Some(IpAddr::V4(TraitIpv4Addr([10, 0, 2, 15])))
+        );
     }
 
     #[test]

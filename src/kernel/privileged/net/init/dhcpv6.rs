@@ -180,6 +180,18 @@ impl Dhcpv6PollCtx<'_> {
             }
         });
     }
+
+    /// 安装 `DHCPv6` 下发的 IPv6 DNS 服务器并合并喂入 smoltcp `dns::Socket`
+    /// (DNS 双栈 Phase 1).
+    ///
+    /// `servers` 为选项 23 解析出的 IPv6 地址列表; 空列表清空 IPv6 槽. IPv6
+    /// 优先合并语义见 `init::dns::apply_dns_servers`. 由 functions 侧
+    /// `dhcpv6::driver` 收到 `apply_options` 时回调 (依赖反转, F2 类型擦除:
+    /// 只接受裸字节, 不泄漏 smoltcp 类型). 调用方 (`drive_dhcpv6`) 已持
+    /// `NET_STATE` 锁.
+    pub fn apply_dns6(&mut self, servers: &[[u8; 16]]) {
+        super::dns::apply_dns6_servers(self.sockets, raw::dns_handle(), servers);
+    }
 }
 
 /// 擦除的 `DHCPv6` 轮询钩子 (functions 侧注册, 仿 `net_register_functions_driver`).

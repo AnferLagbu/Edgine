@@ -7,7 +7,7 @@
 #![deny(missing_docs)]
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use crate::privileged::error::KernelError;
 use crate::privileged::net::iface_trait::NetEndpoint;
@@ -54,6 +54,13 @@ pub static G_IPV4: AtomicU32 = AtomicU32::new(0);
 pub static G_GATEWAY: AtomicU32 = AtomicU32::new(0);
 /// DNS 服务器地址列表 (最多 3 个, 网络字节序)
 pub static G_DNS: [AtomicU32; 3] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
+/// DNS 双栈 (docs/plan/dns-dual-stack.md Phase 2): 是否存在 `DHCPv6` 下发的 IPv6 DNS
+/// 服务器 (lock-free 短路观测).
+///
+/// `dns6_servers` 本体在 `NET_STATE` 锁内, 本原子标志供 `dns_query_net` 无锁短路
+/// 判断 "有无任何 DNS 服务器" (与 `G_DNS[0]` 的 IPv4 观测对称). 由
+/// `dns::apply_dns6_servers` 置位/清位, `clear_all` / `shutdown_network` 清位.
+pub static G_DNS6_PRESENT: AtomicBool = AtomicBool::new(false);
 
 // ============================================================================
 // 全局网络状态 (NetState 统一结构)
@@ -75,6 +82,11 @@ pub struct NetState {
     /// `SocketSet` 中的 handle, 由 `eg_net_init` Step3 写入, 查询/servers
     /// 更新经 `raw::dns_handle()` 读取 (持 `NET_STATE` 锁).
     pub(crate) dns_handle: Option<SocketHandle>,
+    /// DNS 双栈 (docs/plan/dns-dual-stack.md Phase 1): `DHCPv6` 租约下发的 IPv6 DNS
+    /// 服务器 (最多 3 个, `None` = 空槽), 由 `init::dhcpv6::Dhcpv6PollCtx::apply_dns6`
+    /// 经 `raw::set_dns6_servers` 写入, `dns::apply_dns_servers` 合并喂入 smoltcp
+    /// (IPv6 优先). 与 `G_DNS` (IPv4) 对称, 用裸字节避免 `iface_trait` 耦合.
+    pub(crate) dns6_servers: [Option<[u8; 16]>; 3],
     /// P6b Phase 4: `DHCPv6` UDP 字节管道 socket 句柄 (bind 546 + join `ff02::1:2`),
     /// 由 `net_init_open_sockets` 创建, `init::dhcpv6::drive_dhcpv6` 据此收发.
     pub(crate) dhcpv6_udp_handle: Option<SocketHandle>,
@@ -123,6 +135,7 @@ impl NetState {
             stack: None,
             dhcp_handle: None,
             dns_handle: None,
+            dns6_servers: [None; 3],
             dhcpv6_udp_handle: None,
             dhcpv6_ra_handle: None,
             socket_table: Vec::new(),

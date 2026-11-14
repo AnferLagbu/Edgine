@@ -83,6 +83,24 @@ pub fn set_dns_handle(h: Option<SocketHandle>) {
     }
 }
 
+/// 安全读取 `DHCPv6` 下发的 IPv6 DNS 服务器 (DNS 双栈 Phase 1, 最多 3 个, `None` = 空).
+///
+/// 调用方须持有 `NET_STATE` 锁.
+pub fn dns6_servers() -> [Option<[u8; 16]>; 3] {
+    // SAFETY: 数组是 Copy, 调用方持有锁.
+    unsafe { state().dns6_servers }
+}
+
+/// 安全写入 `DHCPv6` 下发的 IPv6 DNS 服务器 (DNS 双栈 Phase 1).
+///
+/// 调用方须持有 `NET_STATE` 锁.
+pub fn set_dns6_servers(servers: [Option<[u8; 16]>; 3]) {
+    // SAFETY: 调用方持有 NET_STATE 锁.
+    unsafe {
+        state().dns6_servers = servers;
+    }
+}
+
 /// 安全读取 `dhcpv6_udp_handle` (P6b Phase 4: `DHCPv6` UDP 字节管道)
 pub fn dhcpv6_udp_handle() -> Option<SocketHandle> {
     // SAFETY: SocketHandle 是 Copy, 调用方持有锁.
@@ -119,6 +137,8 @@ pub fn clear_all() {
     s.stack = None;
     s.dhcp_handle = None;
     s.dns_handle = None;
+    s.dns6_servers = [None; 3];
+    super::state::G_DNS6_PRESENT.store(false, core::sync::atomic::Ordering::Release);
     s.dhcpv6_udp_handle = None;
     s.dhcpv6_ra_handle = None;
 }

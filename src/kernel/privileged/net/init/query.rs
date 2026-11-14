@@ -15,7 +15,9 @@ use crate::privileged::net::{NET_CONFIGURED, NET_READY};
 
 use super::raw;
 use super::sockets::SOCKETS_INITIALIZED;
-use super::state::{G_DNS, G_GATEWAY, G_INIT_STATE, G_IPV4, G_MAC, InitState, NET_STATE};
+use super::state::{
+    G_DNS, G_DNS6_PRESENT, G_GATEWAY, G_INIT_STATE, G_IPV4, G_MAC, InitState, NET_STATE,
+};
 
 // ============================================================================
 // 网络状态查询
@@ -142,6 +144,15 @@ pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
     ]
 }
 
+/// 查询 `DHCPv6` 下发的 IPv6 DNS 服务器列表 (DNS 双栈 Phase 2, 最多 3 个, `None` = 空).
+///
+/// 与 [`get_dns_servers`] (IPv4, 无锁原子读) 对称, 但 IPv6 服务器本体存于
+/// `NET_STATE` 锁内 (`dns6_servers`), 故本函数取锁读取 (仅进程上下文观测面).
+pub fn get_dns6_servers() -> [Option<[u8; 16]>; 3] {
+    let _guard = NET_STATE.lock();
+    raw::dns6_servers()
+}
+
 /// 显式关闭网络栈 (重置配置 + 状态)
 pub fn shutdown_network() {
     let _guard = NET_STATE.lock();
@@ -150,6 +161,7 @@ pub fn shutdown_network() {
     G_DNS[0].store(0, Ordering::Release);
     G_DNS[1].store(0, Ordering::Release);
     G_DNS[2].store(0, Ordering::Release);
+    G_DNS6_PRESENT.store(false, Ordering::Release);
     NET_CONFIGURED.store(false, Ordering::Release);
     G_INIT_STATE.store(InitState::Uninitialized as u8, Ordering::Release);
     raw::klog_msg("Network shutdown");

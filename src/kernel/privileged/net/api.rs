@@ -49,6 +49,8 @@ pub trait NetworkDevice: Send + Sync {
 // ============================================================================
 
 #[cfg(not(feature = "kernel_test"))]
+use super::iface_trait::IpAddr;
+#[cfg(not(feature = "kernel_test"))]
 use super::init::InitState;
 use crate::privileged::error::KernelError;
 
@@ -144,11 +146,19 @@ pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
     super::init::get_dns_servers()
 }
 
-/// 简单 DNS 解析 (主机名 → IPv4)
+/// 查询 `DHCPv6` 下发的 IPv6 DNS 服务器 (最多 3 个, DNS 双栈 Phase 2)
+#[cfg(not(feature = "kernel_test"))]
+#[must_use]
+pub fn get_dns6_servers() -> [Option<[u8; 16]>; 3] {
+    super::init::get_dns6_servers()
+}
+
+/// 简单 DNS 解析 (主机名 → 双栈 `IpAddr`)
 ///
-/// # 实现 (S2 接线后三级解析)
+/// # 实现 (S2 接线后三级解析, DNS 双栈 Phase 2 升级)
 /// - IPv4 字面量直返 → 静态 hosts 表 → smoltcp `dns::Socket` 真实查询
-///   (阻塞有界等待, servers 来自 DHCP option 6 / fallback 常量)
+///   (阻塞有界等待, servers 来自 DHCP option 6 / `DHCPv6` 选项 23 / fallback 常量)
+/// - 真实查询 **IPv6 优先**: 先 AAAA 返 `IpAddr::V6`, 否则 A 返 `IpAddr::V4`
 ///
 /// # 调用契约
 /// - 仅限**进程上下文**: 第三级查询内部 `poll_network` + 有界自旋,
@@ -156,10 +166,10 @@ pub fn get_dns_servers() -> [Option<[u8; 4]>; 3] {
 /// - 网络未就绪 / 无 server / 查询失败均回退 `None`
 ///
 /// # 局限
-/// - 仅支持 IPv4 单地址 (`Type::A`, 无 AAAA / search domain / 缓存)
+/// - 无 search domain / 缓存; IPv6 字面量文本暂不解析 (仅 IPv4 字面量短路)
 #[cfg(not(feature = "kernel_test"))]
 #[must_use]
-pub fn dns_resolve(name: &str) -> Option<[u8; 4]> {
+pub fn dns_resolve(name: &str) -> Option<IpAddr> {
     super::init::dns_resolve(name)
 }
 
