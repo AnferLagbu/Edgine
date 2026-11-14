@@ -640,3 +640,85 @@ pub fn getpeername_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64
     };
     i64::from(rc)
 }
+
+/// 把双栈 `IpAddr` 映射为单个 `EgAddrInfo` (ABI 序列化, DNS 双栈 E1).
+///
+/// IPv4 → `family = EG_AF_INET` + 4 字节零扩展到 16; IPv6 → `family = EG_AF_INET6`
+/// + 16 字节原样. 纯函数, 与用户内存搬运解耦以便单测.
+#[cfg(not(feature = "kernel_test"))]
+fn ip_to_addrinfo(ip: crate::privileged::net::iface_trait::IpAddr) -> edgine_abi::net::EgAddrInfo {
+    use crate::privileged::net::iface_trait::IpAddr;
+    use edgine_abi::net::{EG_AF_INET, EG_AF_INET6, EgAddrInfo};
+    match ip {
+        IpAddr::V4(v4) => {
+            let mut addr = [0u8; 16];
+            addr[..4].copy_from_slice(&v4.octets());
+            EgAddrInfo {
+                family: EG_AF_INET,
+                addr,
+            }
+        }
+        IpAddr::V6(v6) => EgAddrInfo {
+            family: EG_AF_INET6,
+            addr: v6.octets(),
+        },
+    }
+}
+
+/// getaddrinfo(name, `name_len`, out) — 双栈 DNS 解析 (DNS 双栈 E1)
+///
+/// 读用户主机名 → [`super::api::dns_resolve`] (IPv6 优先) → 回写单个
+/// [`edgine_abi::net::EgAddrInfo`]. 成功返 0; 主机名非 UTF-8 返 `-EINVAL`;
+/// 解析失败 (网络未就绪 / 无 server / 无记录) 返 `-ENOENT`; 用户缓冲无效返 `-EFAULT`.
+///
+/// # 调用契约
+/// 仅限**进程上下文**: `dns_resolve` 内部 `poll_network` + 有界自旋,
+/// IRQ/持锁路径调用会死锁 (详见 `init::dns::dns_query_net`).
+/// `kernel_test` 下 `dns_resolve` 被 cfg 过滤 (无真实网络), 故本入口同步 gate.
+#[cfg(not(feature = "kernel_test"))]
+#[must_use]
+pub fn getaddrinfo_syscall(name_ptr: u64, name_len: u32, out_ptr: u64) -> i64 {
+    let name_bytes = match raw_copy_in(name_ptr, name_len) {
+        Ok(bytes) => bytes,
+        Err(e) => return e.as_ret(),
+    };
+    let Ok(name) = core::str::from_utf8(&name_bytes) else {
+        return Errno::Einval.as_ret();
+    };
+    let Some(ip) = super::api::dns_resolve(name) else {
+        return Errno::Enoent.as_ret();
+    };
+    let info = ip_to_addrinfo(ip);
+    if !userptr::write_struct_to_user(out_ptr, &info) {
+        return Errno::Efault.as_ret();
+    }
+    0
+}
+
+#[cfg(all(test, not(feature = "kernel_test")))]
+mod getaddrinfo_tests {
+    use super::ip_to_addrinfo;
+    use crate::privileged::net::iface_trait::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use edgine_abi::net::{EG_AF_INET, EG_AF_INET6};
+
+    /// IPv4 映射: family=AF_INET, 4 字节零扩展到 16.
+    #[test]
+    fn v4_maps_to_af_inet_zero_extended() {
+        let info = ip_to_addrinfo(IpAddr::V4(Ipv4Addr([10, 0, 2, 15])));
+        assert_eq!(info.family, EG_AF_INET);
+        let mut expect = [0u8; 16];
+        expect[..4].copy_from_slice(&[10, 0, 2, 15]);
+        assert_eq!(info.addr, expect);
+    }
+
+    /// IPv6 映射: family=AF_INET6, 16 字节原样.
+    #[test]
+    fn v6_maps_to_af_inet6_full() {
+        let mut v6 = [0u8; 16];
+        v6[0] = 0xfd;
+        v6[15] = 0x53;
+        let info = ip_to_addrinfo(IpAddr::V6(Ipv6Addr(v6)));
+        assert_eq!(info.family, EG_AF_INET6);
+        assert_eq!(info.addr, v6);
+    }
+}

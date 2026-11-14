@@ -77,6 +77,13 @@ FUNCTIONS_WHITELIST = [
 #                     编译时可用); 且白名单文件 smoltcp_impl.rs 的 dhcpv6_state()
 #                     `not(kernel_test)` 分支调用 driver::state(), 故 driver 必须在
 #                     host-test 下编译 —— 改 any(kt,ht) 会断裂 host-test, 保留单端.
+#   net/syscall.rs + syscall/dispatch.rs  getaddrinfo (DNS 双栈 E1) 全链同步
+#                     not(kernel_test): privileged 后端 + functions 代理 + dispatch
+#                     helper/调用点镜像既有 net syscall 门控; DNS 解析依赖 privileged
+#                     net::init 真实网络栈, kernel_test 下过滤; host-test (kernel_test
+#                     OFF) 须编译以供 dispatch 契约测试 (dns_getaddrinfo_test), 改
+#                     any(kt,ht) 会使 functions 侧在 kernel_test 下编译而后端被 gate
+#                     掉 → 断裂, 保留单端.
 FUNCTIONS_WHITELIST_GATES = {
     ('src/kernel/functions/driver/net/e1000.rs',
      '#[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]'): 2,
@@ -100,6 +107,10 @@ FUNCTIONS_WHITELIST_GATES = {
      '#[cfg(feature = "kernel_test")]'): 1,
     ('src/kernel/functions/net/dhcpv6/mod.rs',
      '#[cfg(not(feature = "kernel_test"))]'): 1,
+    ('src/kernel/functions/net/syscall.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 1,
+    ('src/kernel/functions/syscall/dispatch.rs',
+     '#[cfg(not(feature = "kernel_test"))]'): 2,
 }
 
 # Vendored 3rd-party 目录: 审计豁免 (同 audit_functions_boundary.py)

@@ -164,19 +164,24 @@ start_dnsmasq() {
         # slaac 模式置 RA 前缀 A=1: dnsmasq 默认 "managed 置位 / use SLAAC 复位"
         # (A=0), 须显式 slaac 模式才派生 SLAAC 地址, 实现 DHCPv6 + SLAAC 共存.
         # information-refresh-time 选项供无状态 (O=1) 路径取刷新间隔.
+        # E1-e DNS 双栈 e2e: 去掉 port=0 启用 dnsmasq DNS (默认 53, bind 到
+        # $HOST_V6); option6:dns-server (选项23) 把 $HOST_V6 喂给内核 DHCPv6
+        # 客户端 → dns6_servers; address= 合成 AAAA 记录 test6.edgine→fd00::53
+        # (须与 init dns_getaddrinfo_probe 的 hostname/EXPECT_ADDR 一致).
         cat > "$DNSMASQ_CONF" <<EOF
 interface=$TAP_IF
 bind-interfaces
 enable-ra
 dhcp-range=$DHCPV6_POOL_START,$DHCPV6_POOL_END,slaac,$PREFIX_LEN,$DHCPV6_LEASE
 dhcp-option=option6:information-refresh-time,3600
+dhcp-option=option6:dns-server,[$HOST_V6]
+address=/test6.edgine/fd00::53
 no-resolv
 no-hosts
-port=0
 pid-file=$DNSMASQ_PID
 log-dhcp
 EOF
-        info "启动 dnsmasq 有状态 DHCPv6 服务 (池 $DHCPV6_POOL_START-$DHCPV6_POOL_END, RA M/O)"
+        info "启动 dnsmasq 有状态 DHCPv6 + DNS6 服务 (池 $DHCPV6_POOL_START-$DHCPV6_POOL_END, RA M/O, AAAA test6.edgine)"
     else
         cat > "$DNSMASQ_CONF" <<EOF
 interface=$TAP_IF
@@ -322,6 +327,10 @@ if [ "$MODE" = "dhcpv6" ]; then
     # 链路判据: 绑定后用户态 IPv6 UDP 收发往返仍 ok.
     check_marker "用户态 IPv6 UDP 发送 (TX ok)" "[net6] TX ok" || RESULT=1
     check_marker "用户态 IPv6 UDP 回显接收 (RX ok)" "[net6] RX ok" || RESULT=1
+    # E1-e: getaddrinfo 双栈解析里程碑 (DHCPv6 选项23 喂 DNS6 → AAAA 查询
+    # → fd00::53, init 探针经 EG_GETADDRINFO 取回并校验 family/addr).
+    check_marker "用户态 getaddrinfo AAAA 解析 (test6.edgine → fd00::53)" \
+        "[dns6] AAAA ok" || RESULT=1
 else
     check_marker "内核 SLAAC 全局地址派生 ($KERNEL_V6/$PREFIX_LEN)" \
         "IPv6 SLAAC: global address $KERNEL_V6/$PREFIX_LEN acquired" || RESULT=1
@@ -332,7 +341,7 @@ fi
 echo
 if [ "$RESULT" -eq 0 ]; then
     if [ "$MODE" = "dhcpv6" ]; then
-        ok "IPv6 DHCPv6 联调通过: RA M=1 触发有状态 SARR 绑定 + SLAAC 共存 + UDP 收发 ok"
+        ok "IPv6 DHCPv6 联调通过: RA M=1 触发有状态 SARR 绑定 + SLAAC 共存 + UDP 收发 + DNS6 AAAA 解析 ok"
     else
         ok "IPv6 SLAAC 联调通过: 链路连通 (RA 派生 + 用户态 UDP 收发往返 ok)"
     fi

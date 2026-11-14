@@ -1007,7 +1007,28 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
     if let Some(ret) = dispatch_net_msg(num, args) {
         return Some(ret);
     }
+    #[cfg(not(feature = "kernel_test"))]
+    if let Some(ret) = dispatch_net_dns(num, args) {
+        return Some(ret);
+    }
     None
+}
+
+/// 网络地址解析 (DNS) 系统调用 — `EG_GETADDRINFO` (DNS 双栈 E1)
+///
+/// `kernel_test` 下 `dns_resolve` 被 cfg 过滤 (无真实网络), 故本 helper 同步 gate.
+#[cfg(not(feature = "kernel_test"))]
+fn dispatch_net_dns(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::EG_GETADDRINFO;
+    let [a0, a1, a2, _, _, _] = args;
+    Some(match num {
+        EG_GETADDRINFO => as_ret(crate::functions::net::syscall::getaddrinfo_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            a2,
+        )),
+        _ => return None,
+    })
 }
 
 /// 套接字创建/连接/单条消息收发系统调用

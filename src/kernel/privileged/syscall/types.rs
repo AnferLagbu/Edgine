@@ -823,6 +823,13 @@ pub const EG_NF_ADD_RULE: u64 = 810;
 /// `nf_del_rule` — 删除 Netfilter 规则
 pub const EG_NF_DEL_RULE: u64 = 811;
 
+// ==================== C5: 网络地址解析 (DNS, 812-814 私有段) ====================
+
+// Linux 无 getaddrinfo 系统调用 (libc 函数), 故不占 0-299 段; 单一权威源
+// `edgine_abi::net` (编号 + EgAddrInfo 结果结构, 内核与 userlib 共享).
+/// `EG_GETADDRINFO` — 双栈 DNS 解析 (返回单个 `EgAddrInfo`, IPv6 优先)
+pub const EG_GETADDRINFO: u64 = edgine_abi::net::EG_GETADDRINFO;
+
 // ==================== C4: io_uring ====================
 
 // `io_uring_setup` — 创建 `io_uring` 实例
@@ -1212,6 +1219,7 @@ const _: () = {
         EG_ROUTE_QUERY,
         EG_NF_ADD_RULE,
         EG_NF_DEL_RULE,
+        EG_GETADDRINFO,
         EG_IO_URING_SUBMIT,
         EG_CGROUP_CREATE,
         EG_CGROUP_DESTROY,

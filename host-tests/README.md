@@ -164,6 +164,8 @@ criterion_main!(benches);
 | `net_ipv6_addr_test.rs` | IPv6 地址抽象类型契约 (Ipv6Addr/IpAddr/Ipv6Cidr) | DECISION-032 |
 | `net_sockaddr_in6_test.rs` | sockaddr_in6 结构 + FFI 翻译层契约 | DECISION-032 |
 | `net_dual_stack_socket_test.rs` | V4/V6 双栈 socket 契约 (sm_socket/分流/28B 缓冲) | DECISION-032 |
+| `dns_dual_stack_test.rs` | DNS 双栈跨 crate 公共面契约 (D1 返回面/D4 观测面/D3 存储短路/DHCPv6 喂入/IPv6 优先合并序) | dns-dual-stack Phase 3 |
+| `dns_getaddrinfo_test.rs` | getaddrinfo syscall 面回归锁 (ABI 单源/EgAddrInfo 布局/dispatch 不回落 ENOSYS/userlib 接线) | dns-dual-stack E1 |
 | `driver_e1000_eeprom_test.rs` | e1000 EEPROM 读取 | I-40 |
 
 #### 进程 / 调度

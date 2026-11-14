@@ -147,13 +147,35 @@
 
 ### E1: getaddrinfo 类 syscall (用户态双栈消费者) + 真实 AAAA e2e
 
-- **描述**: 新增用户态 syscall 返回双栈地址列表 (当前 `dns_resolve` 仅 boot 探针 + api 内部消费, 无用户态面).
+- **描述**: 新增用户态 syscall 返回双栈地址 (当前 `dns_resolve` 仅 boot 探针 + api 内部消费, 无用户态面).
   附带承接 Phase 3 移交的真实 AAAA e2e: 用户态进程上下文探针在 DHCPv6 绑定后调 getaddrinfo 解析,
   提供 boot 探针缺位的可观测面 (见 Phase 3 详情).
-- **方案**: net syscall 分发面增 getaddrinfo, 返 `IpAddr` 列表; 复用 D2 双查询.
-  e2e: 扩 `qemu_slaac_test.sh` dnsmasq (开 DNS port + 本地 AAAA 记录 + 经 DHCPv6 选项 23 通告自身为 IPv6 DNS),
-  用户态探针解析该记录并 printk, 断言 AAAA 命中 (用户 sudo 腿).
-- **状态**: [] (待裁)
+- **方案**: net syscall 分发面增原生 `EG_GETADDRINFO` (getaddrinfo 非 Linux syscall, 取空闲编号 812),
+  返单个 `EgAddrInfo { family: u32, addr: [u8; 16] }` (repr(C), 20 字节); 复用 D2 双查询.
+  e2e: 扩 `qemu_slaac_test.sh` dhcpv6 模式 dnsmasq (去 port=0 开 DNS + 本地 AAAA 记录 + 经 DHCPv6 选项 23
+  通告自身为 IPv6 DNS), 用户态探针解析该记录并 printk, 断言 AAAA 命中 (用户 sudo 腿).
+- **状态**: [X]
+- **详情**: 用户裁定返回面为**双栈 `IpAddr` 枚举单地址** (非列表). 分五批落地:
+  - **E1-a** ABI 单源: `edgine-abi/src/net.rs` 新增 `EG_GETADDRINFO=812` / `EG_AF_INET=2` / `EG_AF_INET6=10` /
+    `EgAddrInfo` (repr(C)); `privileged/syscall/types.rs` 镜像编号 (单源对账).
+  - **E1-b** 内核后端 + functions 代理 + 分发: `privileged/net/syscall.rs::getaddrinfo_syscall`
+    (`raw_copy_in` 取名 → UTF-8 校验 → `dns_resolve` → `ip_to_addrinfo` 映射 → `write_struct_to_user`);
+    错误面 None→ENOENT / 非 UTF-8→EINVAL / 坏缓冲→EFAULT; functions 代理 + dispatch 接线;
+    全链 `#[cfg(not(feature = "kernel_test"))]` 门控 (与既有 net syscall 同口径).
+  - **E1-c** userlib 包装 + init 探针: `sys.rs::getaddrinfo(name, out)` 经 sys3 发 `EG_GETADDRINFO`;
+    init `dns_getaddrinfo_probe` (x86_64, DHCPv6 绑定后有界重试 120×50ms, 命中打印 `[dns6] AAAA ok`).
+  - **E1-d** 回归测试: `dns_getaddrinfo_test.rs` 4 host 契约锁 (ABI 单源 / `EgAddrInfo` 布局 /
+    dispatch 不回落 ENOSYS+ENOENT / userlib 接线) + 后端 `ip_to_addrinfo` 2 内联单测 (V4 零扩展 / V6 原样).
+  - **E1-e** e2e 扩展: `qemu_slaac_test.sh` dhcpv6 模式 dnsmasq 开 DNS + `address=/test6.edgine/fd00::53` +
+    `dhcp-option=option6:dns-server,[fd00::1]` (选项23) + `[dns6] AAAA ok` 断言; slaac 模式不变 (port=0 保留).
+  - **施工偏差 (单地址非列表)**: 原方案设想返 `IpAddr` 列表; 实际返单个 `EgAddrInfo`. 理由: 用户裁定双栈
+    枚举单地址返回面, 且 smoltcp `DNS_MAX_RESULT_COUNT=1` 每查询本就单地址, 列表无信息增量. 何时扩展:
+    E4 抬容量后若需多地址再改列表面.
+  - **host 测试覆盖局限 (预存, 非本批引入)**: 非 UTF-8→EINVAL / 坏缓冲→EFAULT 两条错误分支需真实用户内存
+    搬运 (`raw_copy_in` / `write_struct_to_user`), 而 `copy_from_user` 的 SMAP 护栏 `smap_is_enabled` 读 CR4
+    (ring-0 特权指令), host x86_64 (ring-3) 必 SIGSEGV, 故无法在 host 腿覆盖; 其映射逻辑由后端源码契约 +
+    e2e 真机腿保证. 此为 host/裸机分歧的预存测试缺口 (任何走真实用户内存搬运的 syscall 同受影响),
+    未改 privileged 强测绿 (§11.2), 处置待用户裁定 (§11.5).
 
 ### E2: 异步化 (waker → wait_queue)
 
@@ -218,3 +240,22 @@
   跑出现 (门禁 `--workspace` feature 统一使 cfg 块编译进来, 不报), 属预存非本批, 未动 (§11.2).
 - 用户裁定: 真实 AAAA e2e **并入 E1** (boot 探针早于 DHCPv6 绑定 + 用户态 DNS syscall 未实装 + poll 路径持锁
   不能就地加阻塞探针, 现有基建缺可观测面). Phase 3 以单测 + 契约 + 七门槛绿收口, e2e 待 E1 用户态探针.
+- E1 完成 (getaddrinfo syscall + 真实 AAAA e2e), 分五批落地:
+  - **E1-a** ABI 单源 `edgine-abi/src/net.rs` (`EG_GETADDRINFO=812` / `EG_AF_INET=2` / `EG_AF_INET6=10` /
+    `EgAddrInfo` repr(C) 20 字节 family@0 addr@4); `privileged/syscall/types.rs` 镜像编号 + 唯一性对账块.
+  - **E1-b** 后端 `privileged/net/syscall.rs::getaddrinfo_syscall` (raw_copy_in → UTF-8 校验 → dns_resolve →
+    ip_to_addrinfo → write_struct_to_user; None→ENOENT / 非 UTF-8→EINVAL / 坏缓冲→EFAULT) + functions 0-unsafe
+    代理 + `dispatch_net_dns` 接线; 全链 `#[cfg(not(feature = "kernel_test"))]` (镜像既有 net syscall 门控,
+    已登记 `audit_feature_semantics` P-49 白名单 2 键: net/syscall.rs×1 + dispatch.rs×2).
+  - **E1-c** userlib `sys.rs::getaddrinfo` 经 sys3 + init `dns_getaddrinfo_probe` (x86_64, DHCPv6 绑定后
+    120×50ms 有界重试, 命中打印 `[dns6] AAAA ok: test6.edgine -> fd00::53`).
+  - **E1-d** `dns_getaddrinfo_test.rs` 4 host 契约锁 (ABI 单源 / repr(C) 布局 / dispatch 不回落 ENOSYS+ENOENT /
+    userlib 接线) + 后端 `ip_to_addrinfo` 2 内联单测 (V4 零扩展 / V6 原样), privileged 527→529.
+  - **E1-e** `qemu_slaac_test.sh` dhcpv6 模式 dnsmasq 去 port=0 开 DNS + `address=/test6.edgine/fd00::53` +
+    `dhcp-option=option6:dns-server,[fd00::1]` (选项23) + `[dns6] AAAA ok` 断言 (slaac 模式 port=0 保留).
+  - **§2.3 七门槛全绿**: build.sh all 6/6 / audit full (19/19 + 10/10 腿, QEMU 2/2, feature 4/4, Lockbud 4/4
+    零发现, perf 24 项在预算, doc-paths 17 份无漂移) / test-host 1545 passed 0 failed / test-kernel-host
+    12+796+529 / ci-rustdoc 双架构 exit 0. 真实 AAAA e2e sudo 腿 (`MODE=dhcpv6 scripts/qemu_slaac_test.sh`) 待用户跑.
+  - **host 测试覆盖局限 (预存, §11.5 待裁)**: 非 UTF-8→EINVAL / 坏缓冲→EFAULT 两分支需真实用户内存搬运,
+    `copy_from_user` 的 SMAP 护栏 `smap_is_enabled` 读 CR4 (ring-0 特权指令), host x86_64 (ring-3) 必 SIGSEGV,
+    无法 host 腿覆盖; 映射逻辑由后端源码契约 + e2e 真机腿保证, 未改 privileged 强测绿 (§11.2).

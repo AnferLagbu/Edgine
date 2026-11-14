@@ -859,6 +859,9 @@ pub use edgine_abi::socket::{
     SO_RCVTIMEO, SO_REUSEADDR, SO_REUSEPORT, SO_SNDTIMEO, SO_TYPE, SOL_SOCKET, TCP_NODELAY,
 };
 
+/// 网络地址解析私有 syscall 编号与结果结构 — 单一权威源 `edgine-abi` (DNS 双栈 E1).
+pub use edgine_abi::net::{EG_AF_INET, EG_AF_INET6, EG_GETADDRINFO, EgAddrInfo};
+
 // D8b: poll 事件位 (与内核 `sm_fi.rs` D8b 同值域; poll 族不属 sockopt, 不在
 // 本轮 abi 统一范围, 见 plan S1 范围界定).
 pub const POLLIN: i16 = 1;
@@ -1159,6 +1162,22 @@ pub fn getpeername(sockfd: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
             addr as u64,
             addrlen as u64,
         ))
+    }
+}
+
+/// `EG_GETADDRINFO(name, out)` — 双栈 DNS 解析 (DNS 双栈 E1, IPv6 优先).
+///
+/// 成功返 0 并回写单个 [`EgAddrInfo`]; 解析失败返 `-ENOENT`, 主机名非 UTF-8
+/// 返 `-EINVAL`, 用户缓冲无效返 `-EFAULT`. `name` 为主机名字节 (不含 NUL 终止符).
+#[must_use]
+pub fn getaddrinfo(name: &[u8], out: &mut EgAddrInfo) -> i64 {
+    unsafe {
+        sys3(
+            EG_GETADDRINFO,
+            name.as_ptr() as u64,
+            name.len() as u64,
+            core::ptr::from_mut(out) as u64,
+        )
     }
 }
 

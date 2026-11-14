@@ -507,6 +507,19 @@ pub fn getpeername_syscall(fd: i32, addr_ptr: u64, addrlen_ptr: u64) -> Result<u
     ))
 }
 
+/// getaddrinfo(name, `name_len`, out) — 双栈 DNS 解析安全代理 (DNS 双栈 E1)
+///
+/// 0 unsafe: 仅把用户指针透传给 privileged 后端, 由其完成 copy-in/out 与
+/// `dns_resolve`. DNS 解析非 socket 操作, 不涉 fd 对象解析.
+///
+/// # Errors
+/// 主机名非 UTF-8 → `Errno::Einval`; 解析失败 → `Errno::Enoent`;
+/// 用户缓冲无效 → `Errno::Efault`.
+#[cfg(not(feature = "kernel_test"))]
+pub fn getaddrinfo_syscall(name_ptr: u64, name_len: u32, out_ptr: u64) -> Result<usize, Errno> {
+    ret_to_result(fw::getaddrinfo_syscall(name_ptr, name_len, out_ptr))
+}
+
 /// shutdown(fd, how)
 ///
 /// # Errors

@@ -20,9 +20,10 @@ use userlib::sys::{
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
 #[cfg(target_arch = "x86_64")]
 use userlib::sys::{
-    AF_INET6, F_SETFL, IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IPPROTO_IP, IPPROTO_IPV6,
-    IPPROTO_UDP, IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, In6Addr, IpMreq, Ipv6Mreq, O_NONBLOCK,
-    SOCK_DGRAM, SockaddrIn6, connect, fcntl, getpeername, getsockname, recvfrom, sendto,
+    AF_INET6, EG_AF_INET6, EgAddrInfo, F_SETFL, IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IPPROTO_IP,
+    IPPROTO_IPV6, IPPROTO_UDP, IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, In6Addr, IpMreq,
+    Ipv6Mreq, O_NONBLOCK, SOCK_DGRAM, SockaddrIn6, connect, fcntl, getaddrinfo, getpeername,
+    getsockname, recvfrom, sendto,
 };
 use userlib::{print, print_char, print_dec, println};
 
@@ -179,6 +180,12 @@ pub extern "C" fn _start() -> ! {
     // 并继续 (与 ipv6_udp_probe 同款容错). 须在 echo fork 前同步完成并释放 fd.
     #[cfg(target_arch = "x86_64")]
     udp_echo_probe();
+    // DNS 双栈 E1 端到端验证: 经 EG_GETADDRINFO 解析 AAAA 记录 (仅 x86_64).
+    // 依赖宿主 dnsmasq 经 DHCPv6 选项 23 下发 IPv6 DNS + 本地 AAAA 记录
+    // (qemu_slaac_test.sh dhcpv6 模式); SLAAC 模式无 DNS, 有界重试后 FAIL 并继续.
+    // 不占用户 fd (DNS 查询槽为内核内部), 但仍须在 echo fork 前同步完成.
+    #[cfg(target_arch = "x86_64")]
+    dns_getaddrinfo_probe();
     // P3 D6 端到端验证: 常驻 TCP echo 服务端 (双架构). 由
     // scripts/qemu_boot_test.sh 的端到端阶段经 hostfwd 入站连接驱动
     // (accept -> recv -> send 回显), 验证 D6 "先建后换" 交接语义.
@@ -1515,6 +1522,48 @@ fn ipv6_udp_probe() {
         if recvs >= MAX_TRIES {
             print("[net6] FAIL: recv() timeout (无回显)");
             let _ = close_socket(fd);
+            return;
+        }
+        delay_ms(50);
+    }
+}
+
+/// 用户态双栈 DNS 解析探针 (DNS 双栈 E1 端到端验证, 仅 x86_64).
+///
+/// 经 `EG_GETADDRINFO` 解析 `test6.edgine` 的 AAAA 记录, 校验返回单个
+/// `EgAddrInfo` (family=`AF_INET6`, addr=`fd00::53`). 依赖宿主 dnsmasq 经 `DHCPv6`
+/// 选项 23 下发 IPv6 DNS 服务器 + 本地 AAAA 记录 (`qemu_slaac_test.sh` dhcpv6 模式);
+/// SLAAC 模式无 DNS, 有界重试后 FAIL 并继续 (与 `ipv6_udp_probe` 同款容错).
+#[cfg(target_arch = "x86_64")]
+fn dns_getaddrinfo_probe() {
+    // 期望 AAAA 记录 fd00::53 (与 qemu_slaac_test.sh dnsmasq address= 约定一致).
+    const EXPECT_ADDR: [u8; 16] = [0xfd, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x53];
+    // DHCPv6 bound + 选项 23 DNS 学习需留出等待窗口 (每轮 50ms).
+    const MAX_TRIES: u32 = 120;
+
+    let name = b"test6.edgine";
+    let mut info = EgAddrInfo {
+        family: 0,
+        addr: [0u8; 16],
+    };
+    let mut tries: u32 = 0;
+    loop {
+        let rc = getaddrinfo(name, &mut info);
+        if rc == 0 {
+            if info.family == EG_AF_INET6 && info.addr == EXPECT_ADDR {
+                println("[dns6] AAAA ok: test6.edgine -> fd00::53");
+            } else {
+                print("[dns6] FAIL: unexpected family=");
+                print_dec(i64::from(info.family));
+                print_char(b'\n');
+            }
+            return;
+        }
+        tries += 1;
+        if tries >= MAX_TRIES {
+            print("[dns6] FAIL: getaddrinfo()=");
+            print_dec(rc);
+            print_char(b'\n');
             return;
         }
         delay_ms(50);
