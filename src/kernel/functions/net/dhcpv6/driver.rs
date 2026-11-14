@@ -9,7 +9,10 @@
 //! 钩子消费 (此时才有 ctx 执行发包). Phase 5: poll 钩子另经 raw `ICMPv6` 捕获 RA,
 //! 纯字节解析 (`ra`) 提取 M/O 标志, 仅 `Idle` 时触发有状态 (M=1) / 无状态 (O=1).
 
+use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt::Write;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::functions::net::dhcpv6::policy::Dhcpv6PolicyConfig;
 use crate::functions::net::dhcpv6::ra;
@@ -49,6 +52,10 @@ static DHCPV6_CLIENT: IrqSpinLock<Dhcpv6Driver> = IrqSpinLock::named_lazy(
     },
 );
 
+/// 绑定里程碑一次性观测标志 (仿 SLAAC `SLAAC_OBSERVED`: 首次落地址即上报,
+/// 续约刷新与后续 tick 不重复打印).
+static DHCPV6_BOUND_OBSERVED: AtomicBool = AtomicBool::new(false);
+
 /// 由 MAC 派生 `DUID-LL` (RFC 8415 §11.2: type=3, hwtype=1 以太网, + 6 字节 MAC).
 fn duid_ll(mac: [u8; 6]) -> Vec<u8> {
     let mut duid = Vec::with_capacity(10);
@@ -64,6 +71,20 @@ fn txid_from(now_ms: u64) -> [u8; 3] {
     [bytes[0], bytes[1], bytes[2]]
 }
 
+/// 将 16 字节 IPv6 地址格式化为全展开十六进制组 (`2001:db8:0:0:0:0:0:1`).
+///
+/// 仅用于绑定里程碑日志, 不压缩零段 (保持与落表地址逐字节对应, 便于 e2e 核对).
+fn fmt_ipv6(a: [u8; 16]) -> String {
+    let mut s = String::new();
+    for i in 0..8 {
+        if i > 0 {
+            s.push(':');
+        }
+        let _ = write!(s, "{:x}", u16::from_be_bytes([a[i * 2], a[i * 2 + 1]]));
+    }
+    s
+}
+
 /// 执行状态机输出: 发包 + 地址落表.
 fn execute(ctx: &mut Dhcpv6PollCtx<'_>, out: &Output) {
     for pkt in &out.tx_packets {
@@ -75,6 +96,15 @@ fn execute(ctx: &mut Dhcpv6PollCtx<'_>, out: &Output) {
     }
     if let Some(addr) = &out.apply_addr {
         ctx.apply_addr(addr.ipv6, addr.remove);
+        // 绑定里程碑 (仿 SLAAC 一次性观测): 首次安装地址即上报, 续约刷新不重复.
+        if !addr.remove && !DHCPV6_BOUND_OBSERVED.swap(true, Ordering::Relaxed) {
+            crate::privileged::klog_info!(
+                Net,
+                "DHCPv6 bound: {} lease={}ms",
+                fmt_ipv6(addr.ipv6),
+                u64::from(addr.valid_s) * 1000
+            );
+        }
     }
     // SIMPLIFIED: apply_options (IPv6 DNS / 刷新间隔) 暂不落配置;
     //   影响面: 无状态取得的 DNS 服务器暂不注入解析器 (G_DNS 为 IPv4 专用,
@@ -183,5 +213,22 @@ mod tests {
     #[test]
     fn txid_zero() {
         assert_eq!(txid_from(0), [0, 0, 0]);
+    }
+
+    #[test]
+    fn fmt_ipv6_full_form() {
+        let a = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert_eq!(fmt_ipv6(a), "2001:db8:0:0:0:0:0:1");
+    }
+
+    #[test]
+    fn fmt_ipv6_all_zero() {
+        assert_eq!(fmt_ipv6([0u8; 16]), "0:0:0:0:0:0:0:0");
+    }
+
+    #[test]
+    fn fmt_ipv6_link_local() {
+        let a = [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        assert_eq!(fmt_ipv6(a), "fe80:0:0:0:0:0:0:1");
     }
 }

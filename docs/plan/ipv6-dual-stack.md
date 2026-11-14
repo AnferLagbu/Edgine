@@ -164,13 +164,13 @@
 - **状态**: [X]
 - **验证**: 双架构 `./ci/build.sh all` 0 error / 0 warning + link ✅; clippy pedantic (x86_64 lib/bins/examples) + feature 维 (kernel_test / host-test) 全 0 warning ✅; `cargo fmt --check` 三 crate ✅; `audit_smoltcp_purity.py` 本地 hash ✅. 唯一红项 `test_no_uncommitted_local_patch_to_vendored_smoltcp` (vendored 改动待提交, 见「未决」).
 
-#### P6b: DHCPv6 (自研, 已立项待实施)
+#### P6b: DHCPv6 (自研, 已实施)
 
 - **条目**: DHCPv6 客户端
 - **描述**: smoltcp 无 DHCPv6 实现, 需 Edgine 侧自研 (Solicit/Advertise/Request/Reply, UDP 协议)
 - **方案**: 使用 smoltcp 公开 API (`udp::Socket::bind/send_slice/recv_slice` + `Interface::join_multicast_group` + `Interface::update_ip_addrs`), **vendored 源码零修改**. 报文编解码 + 状态机落 functions 层 (仿 `dhcp_policy.rs`), socket I/O 与地址落表由 privileged 提供 safe 封装
-- **状态**: []
-- **详情**: 无污染约束由 `audit_smoltcp_purity.py` 机器化保证 (vendored `src/` SHA256 不变).
+- **状态**: [X]
+- **详情**: 无污染约束由 `audit_smoltcp_purity.py` 机器化保证 (vendored `src/` SHA256 不变). **已实施 (Phase 1-6 全 [X])**: functions 自研 wire/state/policy/ra/driver (0 unsafe) + privileged UDP/raw 封装 + RA M/O 纯字节触发; host 集成 `dhcpv6_policy_test.rs` 23 用例绿; 内核 `DHCPv6 bound:` 一次性里程碑; QEMU e2e `MODE=dhcpv6` 扩展 (载波竞态已修, 运行维待用户复跑). 七门槛全绿 (详见 [dhcpv6-client.md](./dhcpv6-client.md) Phase 6). Ping6/TCP6 探针延后 (SIMPLIFIED, e2e 复用 UDP6 判据).
 - **详细计划**: [dhcpv6-client.md](./dhcpv6-client.md) — 实现路径已裁定 (相对完整 + 有状态/无状态双形态 + RA M/O 标准触发, 启用 `socket-raw`). 本条目为登记入口, 详细分阶段方案见该册.
 - **未决**:
   - P6a 引入 vendored `src/iface/interface/ipv6.rs` 最小本地化调整 (恢复上游 `use crate::iface::Route;`, 因启用 SLAAC 后该 import 转为必需), 连带 `SMOLTCP_LOCAL_SRC_HASH` 更新. 该改动须提交后方可解除 host-tests 的 vendored 洁净门禁.

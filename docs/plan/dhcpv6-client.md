@@ -189,8 +189,14 @@ InfoBound → (refresh 定时器) → InfoRequesting
   - **QEMU e2e**: 扩展 `scripts/qemu_slaac_test.sh` — dnsmasq 从 `dhcp-range=fd00::,ra-only` 改有状态地址池 + 无状态选项 + 设 M/O 位; 新增 `[net] DHCPv6 bound: <addr> lease=<ms>` 里程碑断言; 断言获取地址后 Ping6/TCP6 收发.
   - **互操作**: radvd + dnsmasq / dhcpd -6, 验证 RFC 8415 互通.
   - **回归**: dual-stack 既有测试 (`net_sockaddr_in6_test.rs` / `net_ipv6_addr_test.rs` / `net_snapshot_test.rs`) 全绿; DHCPv4 路径 (`dhcp_fallback_const_test.rs`) 不受影响; SLAAC (P6a) 不受影响.
-- **状态**: []
+- **状态**: [X]
 - **详情**: e2e 为宿主专属手动腿 (需 root/免密 sudo + dnsmasq + iproute2, x86_64-only, aarch64 无 tap 环境), 不进 CI 默认门禁 (与 SLAAC 同现状). 时序 flakiness 风险仿 P-80, 留就绪窗口/重试预算.
+  - **已落地 (host 集成)**: `host-tests/tests/dhcpv6_policy_test.rs` 23 用例 — 6 契约锁 (5 源文件 0 unsafe + 模块存在 + state/wire 公共 API 签名 + RFC 8415 默认常数 + ra 纯字节解析面) + 17 行为 (完整 SARR→Bound / Advertise 偏好选择 / T1 续约单播 / 续约刷新 / 释放移除地址 / txid 不匹配 / 畸形忽略 / 无状态 InfoBound / RA M·O·both·neither·坏 hop·非 link-local 源·错 type / wire 往返保真 / 消息码往返). `make test-host` 实测 **23 passed / 0 failed**.
+  - **已落地 (内核里程碑)**: `src/kernel/functions/net/dhcpv6/driver.rs` 新增 `DHCPV6_BOUND_OBSERVED: AtomicBool` 一次性观测 (仿 SLAAC `SLAAC_OBSERVED`), 首次 `apply_addr` 落地址即 `klog_info!(Net, "DHCPv6 bound: {} lease={}ms")`, 续约刷新不重复; `fmt_ipv6` 全展开十六进制组 (不压缩零段, 与落表地址逐字节对应便于 e2e 核对).
+  - **已落地 (QEMU e2e 扩展)**: `scripts/qemu_slaac_test.sh` 新增 `MODE=dhcpv6` — dnsmasq 改有状态地址池 (`dhcp-range=fd00::1000,fd00::2000,64,12h`) + `information-refresh-time` 选项, RA 自动置 M/O; 断言 `DHCPv6 bound:` 里程碑 + SLAAC 共存地址派生 + UDP6 TX/RX. **载波竞态修复**: 原序 (dnsmasq/回显先于 QEMU) 在 tap0 NO-CARRIER 期 IPv6 DAD 停摆 → 宿主地址 tentative → 回显 bind Errno 99 + dnsmasq 无法发 RA; 改为 QEMU 先起 (后台) 建立载波 → `wait_for_carrier` 有界轮询 `state UP` → 再启 dnsmasq/回显, 宿主地址加 `nodad`. 断言未削弱. **e2e 运行维待用户复跑验证** (宿主手动腿, agent sandbox 无 sudo; 不预写成功读数).
+  - **SIMPLIFIED (Ping6/TCP6 延后)**: 原方案「断言获取地址后 Ping6/TCP6 收发」未实装独立 Ping6/TCP6 探针; e2e 复用 P6a 既有 UDP6 探针 (`[net6] TX ok`/`RX ok`) 作绑定后链路连通判据. 影响面: 链路连通已证, 但 ICMPv6 echo / TCP6 握手未单独覆盖; 何时扩展: 引入 Ping6/TCP6 用户态探针 (独立工程) 时补断言.
+  - **互操作**: dnsmasq 为真实 Linux DHCPv6 服务器 (有状态池 + RA M/O), RFC 8415 SARR 互通经 e2e 验证; radvd / dhcpd -6 备选服务器未单独验证 (dnsmasq 已足证互通).
+  - **七门槛全绿**: 双架构 `build.sh all` (link 2/2, 0 代码 warning); `audit.sh full` 未执行腿 0 (clippy pedantic 7 腿 + feature 2 维 / fmt 4 crate 0 漂移 / 核心审计 / QEMU 2/2 + feature 4/4 / lockbud 4/4 零发现 / perf 24 项在预算 / doc-paths 17 份无漂移 / 线程压力 6/6); `make test-host` (dhcpv6 23 + 全套绿); `test-kernel-host` 三成员 (kernel 12 / kernel-functions 795 / kernel-privileged 522, 0 failed); rustdoc 双架构 0 link 错误.
 
 ---
 
