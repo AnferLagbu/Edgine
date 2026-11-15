@@ -96,9 +96,17 @@ TAP_ZONE_SAVED=""
 # 不改宿主永久配置. firewalld 未运行则跳过 (无防火墙拦截, 无需处理).
 setup_firewall() {
     command -v firewall-cmd >/dev/null 2>&1 || return 0
-    [ "$(firewall-cmd --state 2>/dev/null)" = "running" ] || return 0
+    # 运行检测优先 systemctl (无特权/无 dbus/无 polkit): firewall-cmd --state
+    # 需 polkit 鉴权, 无特权环境返 "Authorization failed." (非 "running") → 整腿
+    # 静默跳过 → tap0 未绑 trusted → 547 被默认 zone 拦 (机制见上) → SARR 永不绑定.
+    # systemctl is-active 不经 dbus/polkit, 检测稳定; 非 systemd 托管时回退特权
+    # firewall-cmd --state.
+    if [ "$(systemctl is-active firewalld 2>/dev/null)" != "active" ] \
+        && [ "$($SUDO firewall-cmd --state 2>/dev/null)" != "running" ]; then
+        return 0
+    fi
     FIREWALLD_ACTIVE=1
-    TAP_ZONE_SAVED="$(firewall-cmd --get-zone-of-interface="$TAP_IF" 2>/dev/null || true)"
+    TAP_ZONE_SAVED="$($SUDO firewall-cmd --get-zone-of-interface="$TAP_IF" 2>/dev/null || true)"
     $SUDO firewall-cmd --zone=trusted --change-interface="$TAP_IF" >/dev/null
     # firewalld 经 D-Bus 异步落规则, --change-interface 返回不代表已生效;
     # 未生效即起 QEMU 会偶发丢首个 Solicit (5 Solicits / 0 Advertise).
