@@ -291,4 +291,6 @@
   fmt 4 crate / perf 24 项在预算 / doc-paths 18 份无漂移 / Lockbud 4/4 零发现 / QEMU 2/2 /
   feature 4/4 / P-49 10/10, 缺失腿 0) / test-host 1550 passed 0 failed / test-kernel-host
   12+803+532 / ci-rustdoc 双架构 exit 0. 真实 AAAA e2e sudo 腿
-  (`MODE=dhcpv6 scripts/qemu_slaac_test.sh`) 待用户跑 (B2 阻塞路径成功面).
+  (`MODE=dhcpv6 scripts/qemu_slaac_test.sh`) 用户已跑全绿: 5 里程碑 (DHCPv6 有状态绑定 /
+  SLAAC 共存全局地址 / IPv6 UDP TX / RX / getaddrinfo AAAA `test6.edgine → fd00::53`) 全 ✓,
+  B2 进程上下文阻塞路径 (登记 → block → poll 消费 → 唤醒读表) 成功面实证, 异步重构无回归.
