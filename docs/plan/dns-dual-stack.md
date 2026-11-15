@@ -178,11 +178,28 @@
     未改 privileged 强测绿 (§11.2). 处置已裁 (2026-11-15 用户裁定, §11.5): 记录 docs/plan, 见
     [syscall-followup.md](./syscall-followup.md) 预存登记「host 用户内存搬运 CR4/SIGSEGV 测试缺口」.
 
-### E2: 异步化 (waker → wait_queue)
+### E2: 异步化 (电平重扫 wait_queue, 免 smoltcp async)
 
-- **描述**: 替换 `dns_query_net` 的有界自旋 SIMPLIFIED, 改 `register_query_waker` + wait_queue 阻塞 (复用 P5 形状).
-- **方案**: smoltcp `register_query_waker` 已就绪; 接 functions/net/wait_queue.rs.
-- **状态**: [] (2026-11-15 已裁取 B: smoltcp `register_query_waker` 真异步 + wait_queue; 待施工)
+- **描述**: 替换 `dns_query_net` 进程上下文的有界自旋 SIMPLIFIED, 改真异步阻塞:
+  登记电平重扫等待表 → `scheduler_block` 让出 CPU → `poll_network` 每 tick 消费
+  smoltcp 结果并唤醒 (复用 P5 fd wait_queue 形状).
+- **方案**: **B2 (电平重扫, 免 smoltcp async)**. 调研发现 `register_query_waker` 受
+  vendored `async` feature 门控 (当前 off), 启用需改 vendored 配置 + 引入孤儿
+  RawWaker TCB 面, 违 purity 门禁与 TCB 最小化. 故不取 smoltcp waker, 改由
+  `poll_network` 每 tick 电平重扫: 新增 `init/dns_wait.rs` 定长登记表 (容量
+  `DNS_QUERY_SLOTS=2`; DNS 非 socket fd, 不能复用 per-fd wait_queue), 锁内消费
+  `get_query_result` (完成即释放槽, 无非消费 peek) 落结果 + 采集 pid, 释放锁后
+  `scheduler_unblock` (F8: 禁 NET_STATE→SCHEDULER 嵌套). 消费者醒来读表返回,
+  不再自行 `get_query_result`. boot/IRQ 上下文回退原 bounded 自旋 (无进程可调度).
+  丢唤醒由终态槽每 tick 非破坏重采自愈 (同 fd wait_queue).
+- **状态**: [X]
+- **详情**: 用户 2026-11-15 裁定取 B2 (长期最优: 免 vendored 改动 + 免孤儿 RawWaker
+  TCB + 复用既有 poll 驱动与 P5 唤醒范式). 死线 5s (`DNS_QUERY_TIMEOUT_NS`),
+  smoltcp 应答/失败均快, 正常返回 ms 级. 新增 `map_first` 3 内联单测 (V4/V6/空),
+  privileged 529→532. 回归锁: 既有 `dns_dual_stack_test.rs` 公共面契约 + QEMU boot
+  冒烟 (阻塞路径无挂死) + sudo e2e `dns_getaddrinfo_probe` 成功路径; 阻塞机制本身
+  (privileged unsafe 登记表 + drain) 镜像 wait_queue 先例, 无独立 host 单测 (需
+  scheduler + 真网络, host 短路).
 
 ### E3: DNS 缓存 + search domain
 
@@ -261,3 +278,17 @@
     `copy_from_user` 的 SMAP 护栏 `smap_is_enabled` 读 CR4 (ring-0 特权指令), host x86_64 (ring-3) 必 SIGSEGV,
     无法 host 腿覆盖; 映射逻辑由后端源码契约 + e2e 真机腿保证, 未改 privileged 强测绿 (§11.2).
     2026-11-15 用户裁定 (§11.5) 记录 docs/plan: 见 [syscall-followup.md](./syscall-followup.md) 同名预存登记.
+- E2 完成 (B2 电平重扫真异步阻塞, 免 smoltcp async): 新增 `init/dns_wait.rs` 定长登记表
+  (容量 `DNS_QUERY_SLOTS=2`, `UnsafeCell` + `unsafe impl Sync` 镜像 `NetState` 契约, 唯一
+  互斥域 `NET_STATE`); `dns_query_net` 进程上下文改 `dns_query_blocking` (登记 → block →
+  醒来读表), boot/IRQ 回退 `dns_query_spin` (原 bounded 自旋); `poll_network` 锁内
+  `dns_wait::drain` 消费 `get_query_result` 落结果 + 采集 pid, 释放锁后 `scheduler_unblock`
+  (F8 锁内采集/锁外唤醒). 调研纠偏: `register_query_waker` 受 vendored `async` feature
+  门控 (off), 启用违 purity + 引孤儿 RawWaker TCB, 故取 B2 电平重扫 (用户裁定长期最优).
+  新增 `map_first` 3 内联单测 (V4/V6/空), privileged 529→532. clippy 红归因: 2 处
+  (doc_markdown 缺反引号 / explicit_iter_loop) + fmt 3 处漂移均本批新代码, 已修.
+  **§2.3 七门槛全绿**: build.sh all 6/6 / audit full (clippy 双架构+四树+feature 维 /
+  fmt 4 crate / perf 24 项在预算 / doc-paths 18 份无漂移 / Lockbud 4/4 零发现 / QEMU 2/2 /
+  feature 4/4 / P-49 10/10, 缺失腿 0) / test-host 1550 passed 0 failed / test-kernel-host
+  12+803+532 / ci-rustdoc 双架构 exit 0. 真实 AAAA e2e sudo 腿
+  (`MODE=dhcpv6 scripts/qemu_slaac_test.sh`) 待用户跑 (B2 阻塞路径成功面).

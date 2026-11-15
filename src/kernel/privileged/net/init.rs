@@ -34,6 +34,9 @@ pub use sockets::*;
 pub(crate) mod dns;
 pub use dns::*;
 
+// E2 B2: DNS 查询电平重扫等待登记 (免 smoltcp async 的真异步阻塞).
+pub(crate) mod dns_wait;
+
 // B04-09 优化 Step E: 查询/控制 API 拆至 query.rs.
 pub(crate) mod query;
 pub use query::*;
@@ -276,6 +279,11 @@ pub unsafe fn poll_network() {
         // (未来阻塞扩展点) 重新检查 socket 状态. try_wake 持锁时间 O(1).
         // P5d: 死线到点判定用单调时钟 (纳秒). 每 tick 采一次, 全 fd 循环复用.
         let now_ns = hrtimer_clock_read();
+        // E2 B2: 电平重扫排空 DNS 等待登记 (锁内消费结果 + 采集 pid, 释放锁后
+        // 与 fd 等待者一并 unblock). 终态槽非破坏重采 ⇒ 丢唤醒下一 tick 自愈.
+        if wake_n < WAKE_BATCH {
+            wake_n += dns_wait::drain(sockets, now_ns, &mut to_wake[wake_n..]);
+        }
         for fd in 0..MAX_SM_FD {
             if raw::fd_type(fd) == 0 {
                 continue;

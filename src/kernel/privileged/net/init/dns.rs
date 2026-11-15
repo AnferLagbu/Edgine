@@ -14,10 +14,17 @@ use core::sync::atomic::Ordering;
 use smoltcp::socket::dns as smoltcp_dns;
 use smoltcp::wire::{DnsQueryType, IpAddress, Ipv4Address, Ipv6Address};
 
+use super::dns_wait;
 use super::raw;
 use super::state::{G_DNS, G_DNS6_PRESENT, NET_STATE};
 use crate::privileged::net::iface_trait::{IpAddr, Ipv4Addr, Ipv6Addr};
 use crate::privileged::net::types::{FALLBACK_DNS, FALLBACK_GATEWAY, FALLBACK_IPV4};
+use crate::privileged::proc::{
+    BlockReason, has_deliverable_signal, process_get_current_pid, scheduler_block,
+    scheduler_schedule,
+};
+use crate::privileged::sync::in_irq_context;
+use crate::privileged::timer::hrtimer_clock_read;
 
 /// DNS 并发查询槽数 (借给 smoltcp `dns::Socket` 的定长查询表容量).
 pub(crate) const DNS_QUERY_SLOTS: usize = 2;
@@ -173,21 +180,20 @@ pub(crate) fn apply_dns6_servers(
     apply_dns_servers(sockets, handle, raw::dhcp_dns_servers());
 }
 
-/// 真实 DNS 查询 (阻塞有界等待, 仅进程上下文).
+/// 真实 DNS 查询 (进程上下文真异步阻塞, boot/IRQ 回退有界自旋).
 ///
 /// `qtype` 指定查询类型 (`A` / `Aaaa`); 结果按地址族映射为 `IpAddr`
 /// (`Ipv4 -> V4` / `Ipv6 -> V6`). DNS 双栈 (Phase 2) 由 `dns_resolve` 先 AAAA
 /// 后 A 顺序调用, IPv6 优先.
 ///
 /// # 契约
-/// - **仅限进程上下文**: 有界轮次内 `poll_network` + 自旋等待, 不得在 IRQ/
-///   持锁路径调用 (`poll_network` 自行 `NET_STATE.try_lock`, 嵌套必死锁).
+/// - **进程上下文** (`pid != 0` 且非 IRQ): 提交查询后登记 `dns_wait` 电平重扫
+///   等待表 → `scheduler_block` 让出 CPU, 由 `poll_network` 每 tick 消费 smoltcp
+///   结果并唤醒 (E2 B2, 免 smoltcp async). 等待期间绝不持 `NET_STATE`.
+/// - **boot/IRQ 上下文**: 回退有界自旋 (`poll_network` + spin), 不得阻塞 (无
+///   进程可调度 / 中断上下文). `poll_network` 自行 `NET_STATE.try_lock`, 嵌套必死锁.
 /// - 短路路径全部无锁: `NET_READY=false` (host 单测/boot 前) 与无 server
-///   (`G_DNS[0]==0` 且 `G_DNS6_PRESENT=false`, 含 cmd 手工 static ip 路径)
-///   直接返 `None`, 不碰 socket.
-///
-/// SIMPLIFIED: 同步阻塞语义, 无异步/缓存; 影响面: 单次查询串行且最坏占用有界
-/// 自旋窗口; 何时扩展: E2 异步化 (`waker→wait_queue`) 独立阶段.
+///   (`G_DNS[0]==0` 且 `G_DNS6_PRESENT=false`) 直接返 `None`, 不碰 socket.
 fn dns_query_net(name: &str, qtype: DnsQueryType) -> Option<IpAddr> {
     if !crate::privileged::net::NET_READY.load(Ordering::Acquire) {
         return None;
@@ -213,9 +219,77 @@ fn dns_query_net(name: &str, qtype: DnsQueryType) -> Option<IpAddr> {
             .ok()?
     };
 
-    // 阶段 2: 锁外驱动等待 (P-27 锁域慢 IO 教训: 等待期间绝不持 NET_STATE)
+    // 阶段 2: 进程上下文真异步阻塞; boot/IRQ 回退有界自旋.
+    let pid = process_get_current_pid();
+    if pid != 0 && !in_irq_context() {
+        dns_query_blocking(query, pid)
+    } else {
+        dns_query_spin(query)
+    }
+}
+
+/// 进程上下文阻塞查询 (E2 B2): 登记电平重扫等待表 → block 让出 CPU →
+/// `poll_network` 每 tick 消费 smoltcp 结果并唤醒 → 醒来读表返回.
+///
+/// 结果由 poll 侧消费 (smoltcp `get_query_result` 完成即释放槽, 无非消费 peek),
+/// 本函数只读 `dns_wait` 落表的结果. 丢唤醒由下一 tick 电平重扫自愈.
+fn dns_query_blocking(query: smoltcp_dns::QueryHandle, pid: u32) -> Option<IpAddr> {
+    let deadline = hrtimer_clock_read() + dns_wait::DNS_QUERY_TIMEOUT_NS;
+    // 登记 (锁内). 表满 → 取消查询释放 smoltcp 槽, 回退 None.
+    let idx = {
+        let _guard = NET_STATE.lock();
+        // SAFETY: 持 NET_STATE 锁 (dns_wait 唯一互斥域).
+        unsafe { dns_wait::register(pid, query, deadline) }
+    };
+    let Some(idx) = idx else {
+        let _guard = NET_STATE.lock();
+        cancel_query_locked(query);
+        return None;
+    };
+    loop {
+        // 先让出 CPU (不持锁), 醒来后再锁内读表重判.
+        scheduler_block(BlockReason::WaitingForIo);
+        scheduler_schedule();
+        let _guard = NET_STATE.lock();
+        // SAFETY: 持 NET_STATE 锁.
+        let (state, result) = unsafe { dns_wait::status(idx) };
+        match state {
+            dns_wait::DnsWaitState::Done => {
+                // SAFETY: 持 NET_STATE 锁.
+                unsafe { dns_wait::free(idx) };
+                return result;
+            }
+            dns_wait::DnsWaitState::Failed | dns_wait::DnsWaitState::Timeout => {
+                // SAFETY: 持 NET_STATE 锁.
+                unsafe { dns_wait::free(idx) };
+                return None;
+            }
+            dns_wait::DnsWaitState::Pending => {
+                // 信号 / 死线自兜底 (poll 侧亦会到点取消): 取消查询 + 摘槽.
+                if has_deliverable_signal(pid) || hrtimer_clock_read() >= deadline {
+                    // SAFETY: 持 NET_STATE 锁; 状态 Pending ⇒ smoltcp 槽仍占用,
+                    // cancel_query 不会命中已释放槽.
+                    unsafe {
+                        if let Some(h) = dns_wait::handle_of(idx) {
+                            cancel_query_locked(h);
+                        }
+                        dns_wait::free(idx);
+                    }
+                    return None;
+                }
+                // 否则继续阻塞 (guard 随本轮结束释放, 下一轮重新 block).
+            }
+        }
+    }
+}
+
+/// boot/IRQ 上下文回退: 有界轮次内 `poll_network` + 自旋, 自行消费结果.
+///
+/// 复用原同步范式 (无进程可调度时不能 block). 不登记 `dns_wait`, 故与 poll
+/// 侧排空互不干扰. 超时显式取消查询释放槽 (否则 `DNS_QUERY_SLOTS` 槽泄漏).
+fn dns_query_spin(query: smoltcp_dns::QueryHandle) -> Option<IpAddr> {
     for _round in 0..DNS_QUERY_MAX_ROUNDS {
-        // SAFETY: 进程上下文非中断; NET_STATE 由 poll_network 内部 try_lock
+        // SAFETY: boot/IRQ 上下文; NET_STATE 由 poll_network 内部 try_lock
         // 自保护; device/socket_set 在 NET_READY=true 后已初始化 (调用方契约).
         unsafe { super::poll_network() };
         for _ in 0..DNS_QUERY_SPIN {
@@ -228,8 +302,6 @@ fn dns_query_net(name: &str, qtype: DnsQueryType) -> Option<IpAddr> {
         let socket = sockets.get_mut::<smoltcp_dns::Socket>(handle);
         match socket.get_query_result(query) {
             Ok(addrs) => {
-                // 按地址族映射 (DNS_MAX_RESULT_COUNT=1, 每查询返单地址):
-                // AAAA 查询出 Ipv6 -> V6, A 查询出 Ipv4 -> V4.
                 return addrs
                     .iter()
                     .map(|ip| match ip {
@@ -245,17 +317,21 @@ fn dns_query_net(name: &str, qtype: DnsQueryType) -> Option<IpAddr> {
             }
         }
     }
-
-    // 超时: 显式释放查询槽 (否则 DNS_QUERY_SLOTS 个槽泄漏后永久 NoFreeSlot)
+    // 超时: 显式释放查询槽.
     let _guard = NET_STATE.lock();
+    cancel_query_locked(query);
+    None
+}
+
+/// 锁内取消查询释放 smoltcp 槽 (调用方须持 `NET_STATE`; 槽须仍占用).
+fn cancel_query_locked(query: smoltcp_dns::QueryHandle) {
     if let Some(handle) = raw::dns_handle() {
-        // SAFETY: 持 NET_STATE 锁; SOCKET_SET 已初始化 (NET_READY=true 契约).
+        // SAFETY: 调用方持 NET_STATE 锁; SOCKET_SET 已初始化 (NET_READY 契约).
         let sockets = unsafe { &mut *raw::socket_set() };
         sockets
             .get_mut::<smoltcp_dns::Socket>(handle)
             .cancel_query(query);
     }
-    None
 }
 
 /// 解析 IPv4 字面量 "a.b.c.d" (无错处理; 不合法返 None)
