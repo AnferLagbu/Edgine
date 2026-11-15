@@ -35,7 +35,7 @@ Edgine 的框内核（Framekernel）结构——privileged（TCB，可信计算�
 
 ## 三、偏离清单：未经归属审查的内核内服务
 
-下列子系统当前落在内核，且在 `docs/design/` 无设计立场册（该目录仅有 fd-object-model / freg / sgeg / wasm 四册）——即未经归属审查、按便利性（引导自足、smoltcp 已在内核）滑入内核。这是「监管疏忽」的具体含义，而非连贯的设计选择。
+下列子系统当前落在内核，未经对着通用内核判据的归属审查、按便利性（引导自足、smoltcp 已在内核、技术可行性）滑入内核。多数在 `docs/design/` 无设计立场册（该目录仅有 fd-object-model / freg / sgeg / wasm 四册）；WASM 虽有册，但其论证是事后合理化而非归属裁定（见§四改判），故同列偏离。这是「监管疏忽」的具体含义，而非连贯的设计选择。
 
 | 子系统 | 当前内核内形态 | 业界用户态惯例 | 目标归属 |
 |---|---|---|---|
@@ -45,6 +45,7 @@ Edgine 的框内核（Framekernel）结构——privileged（TCB，可信计算�
 | NTP / PTP 客户端 | [time_sync.rs:230](src/kernel/functions/timer/time_sync.rs) `TimeSyncSubsystem` | chrony / systemd-timesyncd（内核仅 adjtimex 机制） | 用户态客户端，内核留时钟调整机制 |
 | 热插拔策略 | [hotplug.rs:17](src/kernel/privileged/driver/hotplug.rs) 已注「未来: 用户态通知」 | 内核发 uevent，udev 用户态做策略 | 内核留事件，策略退用户态 |
 | 固件加载 | [firmware.rs:49](src/kernel/privileged/egdf/firmware.rs) blob 库 + EG_FW_LOAD=730 | udev + /lib/firmware，内核 request_firmware | 用户态供给，内核留请求机制 |
+| WASM 运行时 | functions 层 safe 解释器 [wasm/mod.rs](src/kernel/functions/wasm/mod.rs) + `EG_WASM_*` 766-779 | Wasmtime / Wasmer / wasmi（用户态） | 用户态生态运行时，自研待退役（见§四） |
 | 路由控制面 | EG_ROUTE_* 807-809 部分用户面 | rtnetlink 完整用户面 | 补齐用户态控制面（补全，非迁移） |
 
 DHCPv4 与 DHCPv6 的迁移成本不对称：v4 是 smoltcp vendored 内置 socket，抽取须动第三方锁定子树；v6 是自研 functions 状态机，整体可搬。DNS 解析器迁移还牵涉刚接线的 getaddrinfo syscall 的去留（见§六开放议题）。
@@ -53,7 +54,7 @@ DHCPv4 与 DHCPv6 的迁移成本不对称：v4 是 smoltcp vendored 内置 sock
 
 **SGEG**：[sgeg-design.md](./sgeg-design.md) 的 v2 目标已裁「内核侧收敛为默认关闭、启用即强制的安全模块，只留主体标签 / 客体标签 / 转移规则 / 判定四原语；身份、策略语言、可信启动与审计消费全部退用户态」。这里须分清两层：**SGEG 本体是内核安全机制**（四原语判定），与 netfilter 同列下文「留内核，非偏离」对齐项，**不是迁移对象**；退用户态的只是 v1 捆绑进内核的**服务**（身份/账户/登录、策略语言/编译器、审计消费）。这与本文判据一致——内核留判定机制，捆绑服务退用户态。本文引为「机制留内核、服务退用户态」的对齐范例，不重复其论证。
 
-**WASM**：[wasm-runtime-design.md](./wasm-runtime-design.md) 把内核内 safe 解释器论证为**刻意立场**：F1（functions 0 unsafe）排除 JIT（Just-In-Time，即时编译），单地址空间 + 函数调用替代 IPC（Inter-Process Communication，进程间通信）是性能立场。这与「服务退用户态」存在**张力**：通用内核并不排斥用户态 WASM（Wasmtime 即用户态），但 WASM 的内核内立场源自框内核约束，而非 RTOS 惯性。本文**不擅自重裁**这一既有立场，张力列为开放议题（§六），由用户裁定是保留为显式例外，还是重开用户态迁移评估。
+**WASM（改判监管疏忽偏离）**：[wasm-runtime-design.md](./wasm-runtime-design.md) 原把内核内 safe 解释器论证为「刻意立场」，经归属审查**改判为监管疏忽偏离**（§三 第 7 个真偏离，路由仍为补全）。改判依据有二：其一，Linux 模型下通用 WASM 一律用户态（Wasmtime / Wasmer / WasmEdge / wasmi），内核内沙箱字节码是 eBPF（验证器、限定 hook）而非通用 WASM——内核内通用 WASM 与「通用内核」判据相悖；其二，册的承重论证「F1 排除 JIT → 解释器」是**条件论证**，只在「WASM 已落内核」时成立，给既定位置补了形态理由却不论证位置本身，属事后合理化。这是**双重疏忽**：位置错（内核 vs 用户态）+ 重复造轮子（生态已有成熟用户态运行时）。方向已裁：**退用户态、对接 Linux 生态运行时**（JIT 系 Wasmtime 或解释器系 wasmi），自研解释器为过渡形态、待退役，迁移方向见 [wasm-runtime-design.md](./wasm-runtime-design.md)。与 SGEG 恰相反：SGEG 被误述为偏离、实则对齐（本体留内核）；WASM 被误述为对齐例外、实则偏离。§六 原开放张力据此闭合。
 
 **对齐项（留内核，非偏离）**：netfilter（[netfilter.rs](src/kernel/privileged/net/netfilter.rs)，Linux nftables 也在内核）、SGEG 判定机制（四原语，Linux SELinux 安全服务器也在内核）、SLAAC / RA、核心协议栈、文件系统数据路径（15 个文件系统，Linux 也在内核）、驱动。这些在 Linux 模型下本就属内核，不迁移。文件系统缺的是用户态**选项**（FUSE 通道，见§五），不是把内核文件系统搬走。
 
@@ -77,7 +78,6 @@ DHCPv4 与 DHCPv6 的迁移成本不对称：v4 是 smoltcp vendored 内置 sock
 
 **开放议题**：
 
-- **WASM 内核内立场 vs 通用判据的张力**：保留为显式例外（框内核约束推导），还是重开用户态迁移评估？待用户裁定。本文不预判。
 - **审查门槛的执行形态**：review checklist 约定 vs 机器审计腿（如「内核内新增服务客户端须登记例外」）？待定。
 - **迁移优先级与时间窗**：取决于用户态服务基建（raw socket / 地址配置 / EGDF / FUSE）的立项次序，待 `plan/` 分解。
 - **DNS 解析器迁移与 getaddrinfo syscall 的关系**：getaddrinfo 刚作为内核 syscall 接线；迁移后它保留为内核 fallback，还是退化为 libc 用户态实现？待定。

@@ -1,6 +1,8 @@
 # WASM 运行时设计立场
 
 > 本文回答 Edgine 的 **WASM**（WebAssembly）子系统"要演化成什么、为什么这么选"：能力边界的取舍根基、隔离立场、载体形态、与业界方案的对比、尚未闭合的开放议题。它不是现状说明（那是 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md)），也不是可执行任务清单（那是 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)，本文引用的 §3 甲/乙/丙/丁裁定与 §4 验收判据均出自该册）。
+>
+> **归属改判（顶层判据册 [service-placement-design.md](./service-placement-design.md) §四）**：本文原把内核内 safe 解释器论证为「刻意立场」，经归属审查改判为**监管疏忽偏离**——Linux 模型下通用 WASM 一律用户态，「F1 排除 JIT → 解释器」只是「已落内核」条件下的形态论证，不论证位置本身。目标方向已裁为**退用户态、对接 Linux 生态运行时**（Wasmtime / wasmi 等），本文所述内核解释器为**过渡形态、待退役**。下文 §一–§六 保留为过渡形态的技术记录与历史论证；迁移方向见 §七。
 
 ## 一、定位：为什么是内核内 safe 解释器
 
@@ -11,7 +13,7 @@ Edgine 的 wasm 运行时是一个落在 **functions** 层（100% safe Rust）�
 
 与"用户态 wasm runtime + 微内核服务"路线相比，内核内解释器的取舍是：wasm 进程直接复用内核既有 POSIX 服务（VFS / 网络 / 进程），**WASI**（WebAssembly System Interface）适配层是一层薄翻译而非跨地址空间 IPC。这继承了框内核"单地址空间 + 函数调用替代 IPC"的性能立场，代价是解释器本身成为内核内一个需严格限界的执行体（gas / 深度 / 内存上限，见 §三）。
 
-设计立场一句话：**wasm 是内核内一个被严格限界的 safe 解释执行体，能力边界由 TCB 最小化与 FREG 冻结推导，而非由"对齐业界最全功能"推导**。
+设计立场一句话（改判后）：**wasm 目标退用户态、对接 Linux 生态运行时；内核内 safe 解释器是过渡形态、待退役**。下文「内核内一个被严格限界的 safe 解释执行体，能力边界由 TCB 最小化与 FREG 冻结推导」描述的是该过渡形态的技术取舍，不再是长期立场。归属改判见顶部声明与 [service-placement-design.md](./service-placement-design.md) §四。
 
 ## 二、能力边界：支持什么、排除什么、为什么
 
@@ -64,11 +66,13 @@ Edgine 的 wasm 运行时是一个落在 **functions** 层（100% safe Rust）�
 
 Edgine 从这些方案吸纳的不是执行形态，而是两条经过验证的设计点：其一，**WASI 保真度是生态兼容的正确载体**（Wasmtime/Wasmer 的竞争力在 WASI 实现完整度，而非 syscall 号位）；其二，**语言级隔离可以把 unsafe 关进最小 TCB**（Asterinas 框内核论文的核心主张），wasm 解释器全程 safe 正是这一主张在"执行不可信字节码"场景下的落地。
 
-独立推理的部分：业界 wasm runtime 几乎都走 JIT/AOT 因为它们运行在用户态、可自由使用 unsafe 与可执行内存；Edgine 的约束相反（内核内、functions 0 unsafe），故**解释执行不是落后，而是约束下的最优解**。当约束变化（如用户裁定解冻 FREG 或接受 privileged 内的代码生成器），形态才需重估。
+独立推理的部分（历史论证，已随归属改判失效）：业界 wasm runtime 几乎都走 JIT/AOT 因为它们运行在用户态、可自由使用 unsafe 与可执行内存；Edgine 原约束（内核内、functions 0 unsafe）下「解释执行不是落后，而是约束下的最优解」——但该论证**只在「WASM 已落内核」的条件下成立**，不论证位置本身。归属改判后位置约束已裁撤（退用户态），用户态可自由用 JIT/AOT 与生态运行时，「解释执行最优」不再适用；过渡期保留 safe 解释器仅为退役前的能力兜底。
 
 ## 六、开放议题
 
 以下议题尚未闭合，记录于此作为后续裁定的输入；可执行分解一律归 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)，本文不持状态。
+
+**改判后的口径**：下列能力缺口（浮点 / SIMD / preview2 / 多实例）是**内核内自研解释器**的开放议题；归属改判退用户态接生态后，生态运行时（Wasmtime / wasmi）原生支持全规范（浮点 / SIMD / threads / preview2），这些缺口随之消解，不再是 Edgine 需自研补齐的项。下列条目保留为过渡形态的历史记录。
 
 - **步进让出与恢复**：当前 one-shot gas 限界使长任务无法中途让出。扩展需解释器步预算 + 载体续跑状态，并与进程级载体的调度语义对齐。何时需扩展：出现需长时间运行且可被抢占的 wasm 载荷时。
 - **浮点两难**：软浮点（+600–1,200 行 + libm 级用例）vs 下沉 privileged（触 FREG 冻结）vs 保持排除。三条路各有显著代价，需用户裁定方向，不擅自选。
@@ -76,3 +80,15 @@ Edgine 从这些方案吸纳的不是执行形态，而是两条经过验证的�
 - **多实例与 fork 继承**：当前一进程至多一实例、fork 不继承。多实例需重估注册表容量与句柄语义；fork 继承需定线性内存与 WASI 上下文的复制语义。
 - **真实工具链载荷验收**：§4 验收判据 3 把"一段真实工具链产出的 wasm（非手写）能在内核里跑通并产出可断言结果"定为接线完成的唯一实证，不接受"单元里自造字节码通过"作替代。这是能力边界是否够用的最终检验。
 - **已知正确性边界（已修复，2026-11-13）**：`args_get`/`environ_get` 曾依赖线性内存零初始化来提供 NUL 终止符（写字符串字节后只前进 `len+1` 而不显式写 `0`），属隐式前提而非显式契约。已按设计立场「字符串终止应成为显式写入的契约」落地：两个宿主函数在写完字符串字节后显式写入 `0` 终止符；回归锁 `host-tests/tests/wasi_behavior_test.rs` 的 `args_environ_get_explicitly_write_nul` 以**预填 `0xFF`** 的线性内存证明该字节是显式写出而非零初始化副作用（负控制实测：摘掉显式写即红，left `[255]` vs right `[0]`）。W-9 发现记录见 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md) 的 W-9 结案注。
+
+## 七、迁移方向：退用户态、对接生态
+
+归属改判（[service-placement-design.md](./service-placement-design.md) §四）裁定 wasm 退用户态、对接 Linux 生态运行时，自研内核解释器待退役。迁移是方向主张，可执行分解归 `plan/`，本文不持状态。
+
+**目标形态**：用户态生态运行时承载 wasm 执行，WASI 经既有 POSIX syscall 面翻译（与 Linux 用户态 Wasmtime / wasmi 同款）。JIT 系（Wasmtime，Cranelift 后端）取性能与生态完整度；解释器系（wasmi，纯 Rust、no_std 友好）ABI 前提低，可作第一站。
+
+**前提门槛（须先核，不预设）**：生态运行时是 Linux 用户态程序，Edgine 须能托管——JIT 系需 `mmap PROT_EXEC`（可执行内存）+ 信号处理（trap / 边界检查）+ 线程；解释器系前提较低。Edgine 用户态 ABI 是否齐备须先核实，不齐备则先补前提，不凭空迁移。
+
+**退役次序**：补用户态前提 → 接生态运行时（wasmi 解释器先行 / Wasmtime JIT 后续）→ 退自研内核解释器与 `EG_WASM_*` 私有 syscall 段。**不立即删码**：前提齐备前自研解释器仍是唯一可用 wasm 能力，保留为过渡兜底；生态运行时接管后再退役。
+
+**与既有开放议题的关系**：§六 的浮点 / SIMD / preview2 / 多实例缺口在对接生态后自然消解（生态运行时全规范），不再需自研补齐；步进让出 / 恢复由生态运行时的调度模型承担。
