@@ -51,11 +51,11 @@ DHCPv4 与 DHCPv6 的迁移成本不对称：v4 是 smoltcp vendored 内置 sock
 
 ## 四、既有立场的子系统：引用而非重裁
 
-**SGEG**：[sgeg-design.md](./sgeg-design.md) 的 v2 目标已裁「内核侧收敛为默认关闭、启用即强制的安全模块，只留主体标签 / 客体标签 / 转移规则 / 判定四原语；身份、策略语言、可信启动与审计消费全部退用户态」。这与本文判据**完全一致**——内核留判定机制，服务退用户态。SGEG 属已裁迁移目标，本文引为对齐范例，不重复其论证。
+**SGEG**：[sgeg-design.md](./sgeg-design.md) 的 v2 目标已裁「内核侧收敛为默认关闭、启用即强制的安全模块，只留主体标签 / 客体标签 / 转移规则 / 判定四原语；身份、策略语言、可信启动与审计消费全部退用户态」。这里须分清两层：**SGEG 本体是内核安全机制**（四原语判定），与 netfilter 同列下文「留内核，非偏离」对齐项，**不是迁移对象**；退用户态的只是 v1 捆绑进内核的**服务**（身份/账户/登录、策略语言/编译器、审计消费）。这与本文判据一致——内核留判定机制，捆绑服务退用户态。本文引为「机制留内核、服务退用户态」的对齐范例，不重复其论证。
 
 **WASM**：[wasm-runtime-design.md](./wasm-runtime-design.md) 把内核内 safe 解释器论证为**刻意立场**：F1（functions 0 unsafe）排除 JIT（Just-In-Time，即时编译），单地址空间 + 函数调用替代 IPC（Inter-Process Communication，进程间通信）是性能立场。这与「服务退用户态」存在**张力**：通用内核并不排斥用户态 WASM（Wasmtime 即用户态），但 WASM 的内核内立场源自框内核约束，而非 RTOS 惯性。本文**不擅自重裁**这一既有立场，张力列为开放议题（§六），由用户裁定是保留为显式例外，还是重开用户态迁移评估。
 
-**对齐项（留内核，非偏离）**：netfilter（[netfilter.rs](src/kernel/privileged/net/netfilter.rs)，Linux nftables 也在内核）、SLAAC / RA、核心协议栈、文件系统数据路径（15 个文件系统，Linux 也在内核）、驱动。这些在 Linux 模型下本就属内核，不迁移。文件系统缺的是用户态**选项**（FUSE 通道，见§五），不是把内核文件系统搬走。
+**对齐项（留内核，非偏离）**：netfilter（[netfilter.rs](src/kernel/privileged/net/netfilter.rs)，Linux nftables 也在内核）、SGEG 判定机制（四原语，Linux SELinux 安全服务器也在内核）、SLAAC / RA、核心协议栈、文件系统数据路径（15 个文件系统，Linux 也在内核）、驱动。这些在 Linux 模型下本就属内核，不迁移。文件系统缺的是用户态**选项**（FUSE 通道，见§五），不是把内核文件系统搬走。
 
 ## 五、迁移前提与次序
 
@@ -67,7 +67,7 @@ DHCPv4 与 DHCPv6 的迁移成本不对称：v4 是 smoltcp vendored 内置 sock
 - **EGDF syscall 接线**：[user_driver.rs:63](src/kernel/privileged/egdf/user_driver.rs) 的 bind / map / forward_irq 已建并有 C ABI 导出，但无 syscall 入口、无生产消费者（[api.rs:16](src/kernel/privileged/syscall/api.rs) 仅文档提及）。这是用户态驱动的前提，框架已造好、差最后一公里接线。
 - **FUSE 通道**：用户态文件系统前提。当前 [virtiofs.rs](src/kernel/functions/fs/virtiofs.rs) 仅客户协议，无 FUSE（Filesystem in Userspace，用户态文件系统）通道。
 
-**次序主张**（立场，非施工清单）：先补前提面（raw socket + 地址配置 + 关闭开关），再迁服务客户端（DHCP / DNS / NTP）；系统服务（hotplug / 固件 / SGEG v2）按各自设计册推进。**不做大爆炸迁移**。可执行分解归 `plan/`，本文只立主张。
+**次序主张**（立场，非施工清单）：先补前提面（raw socket + 地址配置 + 关闭开关），再迁服务客户端（DHCP / DNS / NTP）；系统服务（hotplug / 固件 / SGEG v2 捆绑服务）按各自设计册推进。**不做大爆炸迁移**。可执行分解归 `plan/`，本文只立主张。
 
 **共存过渡**：迁移期内核客户端与用户态守护共存，靠关闭开关切换；内核客户端保留为引导 fallback。这保证迁移任一步都不破坏「开机即有网」。
 
