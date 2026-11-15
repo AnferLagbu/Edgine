@@ -175,13 +175,14 @@
     搬运 (`raw_copy_in` / `write_struct_to_user`), 而 `copy_from_user` 的 SMAP 护栏 `smap_is_enabled` 读 CR4
     (ring-0 特权指令), host x86_64 (ring-3) 必 SIGSEGV, 故无法在 host 腿覆盖; 其映射逻辑由后端源码契约 +
     e2e 真机腿保证. 此为 host/裸机分歧的预存测试缺口 (任何走真实用户内存搬运的 syscall 同受影响),
-    未改 privileged 强测绿 (§11.2), 处置待用户裁定 (§11.5).
+    未改 privileged 强测绿 (§11.2). 处置已裁 (2026-11-15 用户裁定, §11.5): 记录 docs/plan, 见
+    [syscall-followup.md](./syscall-followup.md) 预存登记「host 用户内存搬运 CR4/SIGSEGV 测试缺口」.
 
 ### E2: 异步化 (waker → wait_queue)
 
 - **描述**: 替换 `dns_query_net` 的有界自旋 SIMPLIFIED, 改 `register_query_waker` + wait_queue 阻塞 (复用 P5 形状).
 - **方案**: smoltcp `register_query_waker` 已就绪; 接 functions/net/wait_queue.rs.
-- **状态**: [] (待裁)
+- **状态**: [] (2026-11-15 已裁取 B: smoltcp `register_query_waker` 真异步 + wait_queue; 待施工)
 
 ### E3: DNS 缓存 + search domain
 
@@ -256,6 +257,7 @@
   - **§2.3 七门槛全绿**: build.sh all 6/6 / audit full (19/19 + 10/10 腿, QEMU 2/2, feature 4/4, Lockbud 4/4
     零发现, perf 24 项在预算, doc-paths 17 份无漂移) / test-host 1545 passed 0 failed / test-kernel-host
     12+796+529 / ci-rustdoc 双架构 exit 0. 真实 AAAA e2e sudo 腿 (`MODE=dhcpv6 scripts/qemu_slaac_test.sh`) 待用户跑.
-  - **host 测试覆盖局限 (预存, §11.5 待裁)**: 非 UTF-8→EINVAL / 坏缓冲→EFAULT 两分支需真实用户内存搬运,
+  - **host 测试覆盖局限 (预存, 已裁记录)**: 非 UTF-8→EINVAL / 坏缓冲→EFAULT 两分支需真实用户内存搬运,
     `copy_from_user` 的 SMAP 护栏 `smap_is_enabled` 读 CR4 (ring-0 特权指令), host x86_64 (ring-3) 必 SIGSEGV,
     无法 host 腿覆盖; 映射逻辑由后端源码契约 + e2e 真机腿保证, 未改 privileged 强测绿 (§11.2).
+    2026-11-15 用户裁定 (§11.5) 记录 docs/plan: 见 [syscall-followup.md](./syscall-followup.md) 同名预存登记.

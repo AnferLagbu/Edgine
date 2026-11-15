@@ -33,7 +33,7 @@ pub enum Dhcpv6Action {
     GiveUp,
 }
 
-/// `DHCPv6` 客户端策略配置 (RFC 8415 §15 重传常数 + 续约阈值).
+/// `DHCPv6` 客户端策略配置 (RFC 8415 §7.6 重传常数 + 续约阈值).
 ///
 /// 重传常数单位毫秒; `T1`/`T2` 阈值以万分比表示 (0-10000), 与
 /// [`crate::functions::net::dhcp_policy::DhcpPolicyConfig`] 同口径.
@@ -41,7 +41,7 @@ pub enum Dhcpv6Action {
 pub struct Dhcpv6PolicyConfig {
     /// `Solicit` 初始重传间隔 (RFC `SOL_TIMEOUT` = 1s).
     pub sol_timeout_ms: u64,
-    /// `Solicit` 重传间隔上限 (RFC `SOL_MAX_RT` = 120s).
+    /// `Solicit` 重传间隔上限 (RFC 8415 §7.6 `SOL_MAX_RT` = 3600s, RFC 7083 自 120s 更新).
     pub sol_max_rt_ms: u64,
     /// `Request` 初始重传间隔 (RFC `REQ_TIMEOUT` = 1s).
     pub req_timeout_ms: u64,
@@ -57,7 +57,7 @@ pub struct Dhcpv6PolicyConfig {
     pub reb_max_rt_ms: u64,
     /// `Information-Request` 初始重传间隔 (RFC `INF_TIMEOUT` = 1s).
     pub inf_timeout_ms: u64,
-    /// `Information-Request` 重传间隔上限 (RFC `INF_MAX_RT` = 120s).
+    /// `Information-Request` 重传间隔上限 (RFC 8415 §7.6 `INF_MAX_RT` = 3600s, RFC 7083 自 120s 更新).
     pub inf_max_rt_ms: u64,
     /// `Release` 初始重传间隔 (RFC `REL_TIMEOUT` = 1s).
     pub rel_timeout_ms: u64,
@@ -73,11 +73,11 @@ pub struct Dhcpv6PolicyConfig {
 }
 
 impl Default for Dhcpv6PolicyConfig {
-    /// RFC 8415 §15 默认重传常数 + `T1`=50% / `T2`=87.5%.
+    /// RFC 8415 §7.6 默认重传常数 (`SOL/INF_MAX_RT` = 3600s, RFC 7083) + `T1`=50% / `T2`=87.5%.
     fn default() -> Self {
         Self {
             sol_timeout_ms: 1_000,
-            sol_max_rt_ms: 120_000,
+            sol_max_rt_ms: 3_600_000,
             req_timeout_ms: 1_000,
             req_max_rt_ms: 30_000,
             ren_timeout_ms: 10_000,
@@ -85,7 +85,7 @@ impl Default for Dhcpv6PolicyConfig {
             reb_timeout_ms: 10_000,
             reb_max_rt_ms: 600_000,
             inf_timeout_ms: 1_000,
-            inf_max_rt_ms: 120_000,
+            inf_max_rt_ms: 3_600_000,
             rel_timeout_ms: 1_000,
             max_retries: 8,
             renew_t1_ratio: 5_000,
@@ -216,12 +216,13 @@ pub fn t2_ms(lease_ms: u64, ratio: u32) -> u64 {
 mod tests {
     use super::*;
 
-    /// 默认配置: RFC 8415 §15 常数 + `T1`/`T2` 阈值.
+    /// 默认配置: RFC 8415 §7.6 常数 + `T1`/`T2` 阈值.
     #[test]
     fn test_default_config() {
         let cfg = Dhcpv6PolicyConfig::default();
         assert_eq!(cfg.sol_timeout_ms, 1_000);
-        assert_eq!(cfg.sol_max_rt_ms, 120_000);
+        assert_eq!(cfg.sol_max_rt_ms, 3_600_000);
+        assert_eq!(cfg.inf_max_rt_ms, 3_600_000);
         assert_eq!(cfg.req_max_rt_ms, 30_000);
         assert_eq!(cfg.ren_timeout_ms, 10_000);
         assert_eq!(cfg.max_retries, 8);

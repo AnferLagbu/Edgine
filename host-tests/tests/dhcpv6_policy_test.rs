@@ -100,10 +100,11 @@ fn contract_wire_public_api_signatures() {
 #[test]
 fn contract_policy_rfc8415_defaults() {
     let content = read(&format!("{DHCPV6_DIR}/policy.rs"));
-    // RFC 8415 §15 重传常数 + T1=50% / T2=87.5%.
+    // RFC 8415 §7.6 重传常数 (SOL/INF_MAX_RT = 3600s, RFC 7083) + T1=50% / T2=87.5%.
     for needle in [
         "sol_timeout_ms: 1_000",
-        "sol_max_rt_ms: 120_000",
+        "sol_max_rt_ms: 3_600_000",
+        "inf_max_rt_ms: 3_600_000",
         "max_retries: 8",
         "renew_t1_ratio: 5_000",
         "renew_t2_ratio: 8_750",

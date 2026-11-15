@@ -1049,7 +1049,8 @@ mod tests {
         let first_txid = txid_of(&out);
         let mut now = 0u64;
         let mut last_txid = first_txid;
-        for _ in 0..9 {
+        // 窗口须覆盖 SOL_MAX_RT=3600s 下的累计退避 (第 8 次间隔 256s, 重启点 ≈1.83M ms).
+        for _ in 0..10 {
             now += 200_000;
             let out = c.tick(now);
             if let Some(p) = out.tx_packets.first() {

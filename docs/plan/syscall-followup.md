@@ -2170,3 +2170,11 @@ src/kernel/privileged/proc/scheduler.rs::add_rt_task
 - sendfile 已实装：`functions/fs/sendfile.rs:13`（包装 `privileged::syscall::sys_sendfile`）→ **D-2 清单含 sendfile 属过时**，实施前重扫。
 - functions dispatch 无 read/write/execve/prctl 分支（privileged 回退层执行）→ B2 24 未迁移分类准确。
 - 用户态暂不用 sendfile/readv/writev/preadv（src/user+userland grep 空）→ 高级项实装优先级可据用户态需求排后。
+
+### 预存登记（host 用户内存搬运 CR4/SIGSEGV 测试缺口，DNS E1 批发现）
+
+任何经 `copy_from_user` / `copy_to_user` / `copy_string_from_user` / `clear_user` / `strlen_user`（及上层包装 `raw_copy_in` / `write_struct_to_user`）做**真实用户内存搬运**的 syscall，其搬运分支都无法在 host-tests（`host-test` feature，宿主 ring-3 进程）中执行：根因是 `smap_is_enabled`（[copy_user.rs:56](../../src/kernel/privileged/mm/copy_user.rs#L56)）以 `mov {0}, cr4` 读 CR4——这是 ring-0 特权指令，宿主 ring-3 执行必 SIGSEGV。该缺口是 host/裸机执行环境的**固有分歧**（SMAP 门控本身是正确的裸机安全机制，非 bug），射程覆盖所有做用户内存搬运的 syscall，不限于 DNS。host 侧现有覆盖形态：参数校验/错误分支契约锁（不触搬运）+ 纯函数内联单测 + e2e 真机腿（QEMU ring-0 真搬运）。
+
+| 项 | 裁决 | 说明 |
+|---|---|---|
+| E1 getaddrinfo 非 UTF-8 → EINVAL / 坏用户缓冲 → EFAULT 分支无 host 覆盖 | 记录（2026-11-15 用户裁定，§11.5） | 映射逻辑由源码契约 + `ip_to_addrinfo` 内联单测 + e2e 真机腿保证。将来选项：host-test 维给 SMAP 查询加 cfg 门控桩（E-04 桩化 idiom 先例）——但安全敏感路径加桩有弱化护栏与 `audit_feature_semantics` 审计风险，暂不做；若做须单独立项并过 feature 语义审计 |

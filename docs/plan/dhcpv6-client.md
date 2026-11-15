@@ -101,7 +101,7 @@ InfoBound → (refresh 定时器) → InfoRequesting
 
 ### 重传退避
 
-按 RFC 8415 §15: Solicit/Request/Renew/Rebind/Information-Request 各自的最大重传时长 (SOL_MAX_RT / REQ_MAX_RT 等) + 指数退避 + 随机抖动. 重传上限与退避参数落 `policy.rs` 纯函数, 离线可测.
+按 RFC 8415 §15 重传算法: Solicit/Request/Renew/Rebind/Information-Request 各自的最大重传时长 (SOL_MAX_RT / REQ_MAX_RT 等, 常数表见 §7.6) + 指数退避 + 随机抖动. SOL_MAX_RT / INF_MAX_RT = 3600s (RFC 7083 自 120s 更新, RFC 8415 并入). 重传上限与退避参数落 `policy.rs` 纯函数, 离线可测.
 
 ---
 
@@ -207,6 +207,24 @@ InfoBound → (refresh 定时器) → InfoRequesting
     - **根因 D (内核·wire.rs 选项码错位)**: `OPT_STATUS_CODE` 误编 12 (实为 UNICAST)、`OPT_RAPID_COMMIT` 误编 13 (实为 STATUS_CODE), 违 RFC 8415 §21 (UNICAST=12 / STATUS_CODE=13 / RAPID_COMMIT=14). dnsmasq Advertise 的 status-code(13,len2) 落入 rapid-commit 分支 (要求零长度) → `MalformedOption` → 整包解析失败 → 客户端永停 Soliciting 只重发 Solicit. 修复: 两常量改 13/14 (单源, parse/emit 全走常量), `test_rapid_commit_nonzero_length` 字面量 0x0d→0x0e, 新增 `test_dnsmasq_advertise_parses` 互操作回归 (完整 dnsmasq Advertise 选项集断言 StatusCode/Preference/IaNa/IaAddr).
     - **七门槛全绿 (修复后复跑)**: `build.sh all` Passed 6/0 (双架构 link); `audit.sh full` exit 0 未执行腿 0 (clippy pedantic + feature 维 / fmt 四 crate / 核心审计 / perf 在预算 / lockbud 零发现 / QEMU 2/2 + feature 4/4 + thread-stress 6/6 / lockdep 构建面双架构 / doc-paths 无漂移); `make test-host` exit 0 (dhcpv6 套件 23/0, 合计 1536 passed); `test-kernel-host` 三成员 kernel 12 / functions 796 / privileged 522 (0 failed, 含两 wire 回归); `ci-rustdoc` 双架构 exit 0 (0 link 错误).
     - **真实 e2e 复跑转绿 (用户 sudo 腿)**: `MODE=dhcpv6` 四里程碑全 ✓ (DHCPv6 bound + SLAAC 共存 `fd00::5054:ff:fe12:3456/64` + UDP6 TX/RX), `MODE=slaac` 三里程碑全 ✓. 断言/超时/预算未削弱.
+
+---
+
+## 裁定后扩展 (P6b 收口后)
+
+### SOL_MAX_RT / INF_MAX_RT 对齐 RFC 7083/8415 (3600s)
+
+- **描述**: 默认重传上限 `sol_max_rt_ms` / `inf_max_rt_ms` 由 120_000 对齐为 3_600_000 (RFC 7083 于 2013 年将 SOL_MAX_RT/INF_MAX_RT 自 120s 更新为 3600s, RFC 8415 §7.6 常数表并入).
+- **方案**: `policy.rs` 两默认值 + 文档注释改 §7.6 出处 (常数表在 §7.6, §15 是重传算法, 原注释引 §15 不精确); host-tests `contract_policy_rfc8415_defaults` 契约针同批改 3_600_000 并补 `inf_max_rt_ms` 针. `test_retransmit_backoff` 的显式 120_000 入参保留 — 它测的是封顶纯函数机制, 与默认值无关. `state.rs` `test_discovery_retry_exhaustion_restart` 时间窗 9×200s → 10×200s: 新上限下第 8 次重传间隔 256s (含抖动 ≈232s), 重启点 ≈1.83M ms 超出旧窗 1.8M ms; 断言 (txid 前进 / 回 Soliciting) 不变, 仅窗口随默认值扩一轮.
+- **状态**: [X]
+- **详情**: 2026-11-15 用户裁定「对齐 3600s」. 行为影响极小: `max_retries=8` 下退避序列 1/2/4/8/16/32/64/128s, 旧 120s 上限仅在第 8 次重试 (128→120s) 起作用, 完整发现流程总时长差约 8s; 主要价值是 RFC 合规与注释准确性. **远期登记**: RFC 8415 §21.24/§21.25 定义 SOL_MAX_RT(24)/INF_MAX_RT(25) **选项**, 服务器可下发覆盖默认值, 客户端 MUST 处理; 当前 `wire.rs` 未解析这两个选项码 (落 `Opt::Unknown` 忽略), 属预存缺口, 本批不扩围 (§11.2), 待后续单独立项.
+
+### 运行时策略配置面
+
+- **描述**: `PolicyConfig` 当前仅编译期默认值 (`Default::default()`), 无运行时配置入口; 用户裁定现在实装运行时策略配置面 (重传上限/超时/重试次数等可运行时调整).
+- **方案**: 待调研 — 先核实既有配置面先例 (DHCPv4 `dhcp_policy.rs` / `NetConfig` in `iface_trait.rs`) 再定入口形态; 若形态存在二义按 §9.1 提请裁定.
+- **状态**: []
+- **详情**: 2026-11-15 用户裁定「现在实装」(原建议延后, 用户改裁).
 
 ---
 
