@@ -209,6 +209,85 @@ pub fn t2_ms(lease_ms: u64, ratio: u32) -> u64 {
 }
 
 // ============================================================================
+// 运行时配置校验
+// ============================================================================
+
+/// 重传间隔合法上限 (ms, 24 小时): 防止退避定时器溢出与荒谬配置.
+const MAX_TIMEOUT_MS: u64 = 86_400_000;
+/// 发现阶段最大重传次数上限 (与 [`retransmit_timeout_ms`] 的移位封顶对齐).
+const MAX_RETRIES_CAP: u32 = 64;
+/// 续约阈值万分比上限 (100%).
+const RATIO_MAX: u32 = 10_000;
+
+/// 运行时策略配置校验错误 (逐字段定位,  syscall 统一映射 `EINVAL`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigError {
+    /// 基值重传间隔为 0 或超上限 (`field` = sol/req/ren/reb/inf/rel).
+    TimeoutOutOfRange {
+        /// 出错字段名.
+        field: &'static str,
+    },
+    /// 重传上限小于基值或超上限 (`field` = sol/req/ren/reb/inf).
+    MaxRtInvalid {
+        /// 出错字段名.
+        field: &'static str,
+    },
+    /// 最大重传次数为 0 或超 64.
+    MaxRetriesOutOfRange,
+    /// 续约阈值为万分比超 10000 (`field` = t1/t2).
+    RatioOutOfRange {
+        /// 出错字段名.
+        field: &'static str,
+    },
+    /// `T1` 阈值大于 `T2` (违反续约时序).
+    RatioOrder,
+}
+
+/// 校验运行时策略配置 (纯函数, 相同输入相同输出, 可离线单元测试).
+///
+/// 规则: 各基值重传间隔 `(0, 24h]`; 各上限 `>=` 对应基值且 `<=` 24h;
+/// `max_retries` 落在 `[1, 64]`; `T1`/`T2` 万分比 `<= 10000` 且 `T1 <= T2`.
+/// 默认配置 ([`Dhcpv6PolicyConfig::default`]) 必过校验.
+///
+/// # Errors
+/// 任一字段越界返对应 [`ConfigError`]: 基值/上限间隔越界 (`TimeoutOutOfRange` /
+/// `MaxRtInvalid`), 重试次数越界 (`MaxRetriesOutOfRange`), 万分比越界
+/// (`RatioOutOfRange`), 或 `T1 > T2` (`RatioOrder`).
+pub fn validate_config(cfg: Dhcpv6PolicyConfig) -> Result<(), ConfigError> {
+    let pairs = [
+        (cfg.sol_timeout_ms, cfg.sol_max_rt_ms, "sol"),
+        (cfg.req_timeout_ms, cfg.req_max_rt_ms, "req"),
+        (cfg.ren_timeout_ms, cfg.ren_max_rt_ms, "ren"),
+        (cfg.reb_timeout_ms, cfg.reb_max_rt_ms, "reb"),
+        (cfg.inf_timeout_ms, cfg.inf_max_rt_ms, "inf"),
+    ];
+    for (base, max_rt, name) in pairs {
+        if base == 0 || base > MAX_TIMEOUT_MS {
+            return Err(ConfigError::TimeoutOutOfRange { field: name });
+        }
+        if max_rt < base || max_rt > MAX_TIMEOUT_MS {
+            return Err(ConfigError::MaxRtInvalid { field: name });
+        }
+    }
+    if cfg.rel_timeout_ms == 0 || cfg.rel_timeout_ms > MAX_TIMEOUT_MS {
+        return Err(ConfigError::TimeoutOutOfRange { field: "rel" });
+    }
+    if cfg.max_retries == 0 || cfg.max_retries > MAX_RETRIES_CAP {
+        return Err(ConfigError::MaxRetriesOutOfRange);
+    }
+    if cfg.renew_t1_ratio > RATIO_MAX {
+        return Err(ConfigError::RatioOutOfRange { field: "t1" });
+    }
+    if cfg.renew_t2_ratio > RATIO_MAX {
+        return Err(ConfigError::RatioOutOfRange { field: "t2" });
+    }
+    if cfg.renew_t1_ratio > cfg.renew_t2_ratio {
+        return Err(ConfigError::RatioOrder);
+    }
+    Ok(())
+}
+
+// ============================================================================
 // 单元测试
 // ============================================================================
 
@@ -356,5 +435,92 @@ mod tests {
         assert_eq!(Dhcpv6Action::Continue, Dhcpv6Action::Continue);
         assert_ne!(Dhcpv6Action::Renew, Dhcpv6Action::Rebind);
         assert_ne!(Dhcpv6Action::Restart, Dhcpv6Action::GiveUp);
+    }
+
+    /// 默认配置必过校验.
+    #[test]
+    fn test_validate_default_ok() {
+        assert_eq!(validate_config(Dhcpv6PolicyConfig::default()), Ok(()));
+    }
+
+    /// 基值重传间隔: 0 与超 24h 均拒.
+    #[test]
+    fn test_validate_timeout_out_of_range() {
+        let mut cfg = Dhcpv6PolicyConfig::default();
+        cfg.sol_timeout_ms = 0;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::TimeoutOutOfRange { field: "sol" })
+        );
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.rel_timeout_ms = 86_400_001;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::TimeoutOutOfRange { field: "rel" })
+        );
+        // 边界: 恰 24h 合法.
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.sol_timeout_ms = 86_400_000;
+        cfg.sol_max_rt_ms = 86_400_000;
+        assert_eq!(validate_config(cfg), Ok(()));
+    }
+
+    /// 重传上限: 小于基值或超 24h 均拒; 等于基值合法.
+    #[test]
+    fn test_validate_max_rt_invalid() {
+        let mut cfg = Dhcpv6PolicyConfig::default();
+        cfg.req_max_rt_ms = cfg.req_timeout_ms - 1;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::MaxRtInvalid { field: "req" })
+        );
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.inf_max_rt_ms = 86_400_001;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::MaxRtInvalid { field: "inf" })
+        );
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.ren_max_rt_ms = cfg.ren_timeout_ms;
+        assert_eq!(validate_config(cfg), Ok(()));
+    }
+
+    /// 最大重传次数: 0 与超 64 拒; 1 与 64 合法.
+    #[test]
+    fn test_validate_max_retries() {
+        let mut cfg = Dhcpv6PolicyConfig::default();
+        cfg.max_retries = 0;
+        assert_eq!(validate_config(cfg), Err(ConfigError::MaxRetriesOutOfRange));
+        cfg.max_retries = 65;
+        assert_eq!(validate_config(cfg), Err(ConfigError::MaxRetriesOutOfRange));
+        cfg.max_retries = 1;
+        assert_eq!(validate_config(cfg), Ok(()));
+        cfg.max_retries = 64;
+        assert_eq!(validate_config(cfg), Ok(()));
+    }
+
+    /// 续约阈值: 超 10000 拒; `T1` > `T2` 拒; 相等合法.
+    #[test]
+    fn test_validate_ratios() {
+        let mut cfg = Dhcpv6PolicyConfig::default();
+        cfg.renew_t1_ratio = 10_001;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::RatioOutOfRange { field: "t1" })
+        );
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.renew_t2_ratio = 10_001;
+        assert_eq!(
+            validate_config(cfg),
+            Err(ConfigError::RatioOutOfRange { field: "t2" })
+        );
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.renew_t1_ratio = 9_000;
+        cfg.renew_t2_ratio = 8_000;
+        assert_eq!(validate_config(cfg), Err(ConfigError::RatioOrder));
+        cfg = Dhcpv6PolicyConfig::default();
+        cfg.renew_t1_ratio = 8_750;
+        cfg.renew_t2_ratio = 8_750;
+        assert_eq!(validate_config(cfg), Ok(()));
     }
 }

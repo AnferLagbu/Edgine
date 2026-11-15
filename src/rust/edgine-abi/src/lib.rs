@@ -15,6 +15,7 @@
 #![deny(missing_docs)]
 
 pub mod arch_prctl;
+pub mod dhcpv6;
 pub mod net;
 pub mod sched;
 pub mod socket;

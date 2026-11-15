@@ -1011,6 +1011,10 @@ fn dispatch_net(num: u64, args: [u64; 6]) -> Option<i64> {
     if let Some(ret) = dispatch_net_dns(num, args) {
         return Some(ret);
     }
+    #[cfg(not(feature = "kernel_test"))]
+    if let Some(ret) = dispatch_net_dhcpv6(num, args) {
+        return Some(ret);
+    }
     None
 }
 
@@ -1026,6 +1030,25 @@ fn dispatch_net_dns(num: u64, args: [u64; 6]) -> Option<i64> {
             a0,
             crate::functions::intcast::low_u32_from_u64(a1),
             a2,
+        )),
+        _ => return None,
+    })
+}
+
+/// `DHCPv6` 运行时策略配置系统调用 — `EG_DHCPV6_SET_POLICY` / `EG_DHCPV6_GET_POLICY` (#298)
+///
+/// `kernel_test` 下 `dhcpv6::driver` 被 cfg 过滤 (依赖 privileged `Dhcpv6PollCtx`),
+/// 故本 helper 同步 gate. 单指针参数 (`policy_ptr`), 配置读写与校验在 functions 代理层.
+#[cfg(not(feature = "kernel_test"))]
+fn dispatch_net_dhcpv6(num: u64, args: [u64; 6]) -> Option<i64> {
+    use crate::functions::syscall::types::{EG_DHCPV6_GET_POLICY, EG_DHCPV6_SET_POLICY};
+    let [a0, _, _, _, _, _] = args;
+    Some(match num {
+        EG_DHCPV6_SET_POLICY => as_ret(crate::functions::net::syscall::dhcpv6_set_policy_syscall(
+            a0,
+        )),
+        EG_DHCPV6_GET_POLICY => as_ret(crate::functions::net::syscall::dhcpv6_get_policy_syscall(
+            a0,
         )),
         _ => return None,
     })

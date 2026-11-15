@@ -753,6 +753,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未成对观察到 EL0 cpu=0/cpu=1 (实测: ${EL0_CPUS:-无})"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # #298: DHCPv6 运行时策略配置面 —— init 探针经 EG_DHCPV6_SET/GET_POLICY
+            # 做 get 基线 / set 自定义 + 往返 / enabled=0 关断 / 非法 (enabled=2 与
+            # sol_timeout=0) 拒收 / 复原基线五腿, 全过才打印 `[dhcpv6-policy] PASS:`.
+            # 纯 syscall 配置面 (驱动静态), 不依赖网络载体; 缺失即配置面回归 (fail-closed).
+            # -a: 串口并发写可能插入 NUL, 按文本处理以免误判二进制.
+            if grep -aq "\[dhcpv6-policy\] PASS:" "$X64_LOG"; then
+                ok "[x86_64] DHCPv6 运行时策略配置面通过 (#298)"
+            else
+                warn "[x86_64] 未观察到 DHCPv6 运行时策略配置面断言 (#298)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
 
             # P3 D6 端到端验证: hostfwd 入站连接驱动 guest 用户态 TCP echo
             # 服务端, 断言 accept/recv/send 里程碑 + FD 回收 + 监听槽持续可用.
@@ -973,6 +984,15 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] EL0 中断可达 (用户态可被抢占, ISSUE-RT-005)"
             else
                 warn "[aarch64] 未观察到 EL0 来源 IRQ (ISSUE-RT-005 回归?)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # #298: DHCPv6 运行时策略配置面 (与 x86_64 分支同构). 五腿全过才打印
+            # `[dhcpv6-policy] PASS:`; 纯 syscall 配置面不依赖网络载体, 缺失即 fail-closed.
+            # -a: 避免日志含 NUL 字节时 grep 误判二进制.
+            if grep -aq "\[dhcpv6-policy\] PASS:" "$A64_LOG"; then
+                ok "[aarch64] DHCPv6 运行时策略配置面通过 (#298)"
+            else
+                warn "[aarch64] 未观察到 DHCPv6 运行时策略配置面断言 (#298)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
 

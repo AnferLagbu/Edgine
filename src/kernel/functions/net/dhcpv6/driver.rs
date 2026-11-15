@@ -8,6 +8,10 @@
 //! 启动 (`start_stateful` / `start_stateless`) 置 pending 标志, 由下一次 poll
 //! 钩子消费 (此时才有 ctx 执行发包). Phase 5: poll 钩子另经 raw `ICMPv6` 捕获 RA,
 //! 纯字节解析 (`ra`) 提取 M/O 标志, 仅 `Idle` 时触发有状态 (M=1) / 无状态 (O=1).
+//!
+//! 运行时配置面 (#298): [`set_policy`] / [`get_policy`] 经 privileged 安全代理
+//! 读写策略配置与 `enabled` 启用开关; 关闭时 poll 钩子惰性返回, 供用户态守护
+//! 接管 (设计立场见 `docs/design/service-placement-design.md`).
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -37,10 +41,15 @@ enum Mode {
     Stateless,
 }
 
-/// 驱动状态: 客户端实例 + 待消费启动标志.
+/// 驱动状态: 客户端实例 + 待消费启动标志 + 启用开关 + 待生效配置.
 struct Dhcpv6Driver {
     client: Option<Dhcpv6Client>,
     pending_start: Option<Mode>,
+    /// 启用开关 (默认 true): false 时 poll 钩子惰性返回, 内核客户端不驱动,
+    /// 供用户态守护接管 (设计立场见 docs/design/service-placement-design.md).
+    enabled: bool,
+    /// 客户端尚未构造时暂存的配置 (首次 poll 构造时消费).
+    pending_cfg: Option<Dhcpv6PolicyConfig>,
 }
 
 /// 全局 `DHCPv6` 客户端 (IRQ 安全; 由 poll 钩子在 `NET_STATE` 锁内驱动).
@@ -49,6 +58,8 @@ static DHCPV6_CLIENT: IrqSpinLock<Dhcpv6Driver> = IrqSpinLock::named_lazy(
     Dhcpv6Driver {
         client: None,
         pending_start: None,
+        enabled: true,
+        pending_cfg: None,
     },
 );
 
@@ -122,13 +133,18 @@ fn execute(ctx: &mut Dhcpv6PollCtx<'_>, out: &Output) {
 /// 捕获 RA 按 M/O 触发启动, 收取报文喂状态机, 推进定时器, 执行输出指令.
 pub fn poll_hook(ctx: &mut Dhcpv6PollCtx<'_>) {
     let mut guard = DHCPV6_CLIENT.lock();
+    // 启用开关关闭: 内核客户端惰性 (不构造/不启动/不驱动), 供用户态守护接管.
+    if !guard.enabled {
+        return;
+    }
     let now_ms = ctx.now_ms();
     if guard.client.is_none() {
+        let cfg = guard.pending_cfg.unwrap_or_default();
         guard.client = Some(Dhcpv6Client::new(
             duid_ll(ctx.mac()),
             IAID,
             txid_from(now_ms),
-            Dhcpv6PolicyConfig::default(),
+            cfg,
         ));
     }
     let pending = guard.pending_start.take();
@@ -192,6 +208,34 @@ pub fn state() -> Dhcpv6State {
         .client
         .as_ref()
         .map_or(Dhcpv6State::Idle, Dhcpv6Client::state)
+}
+
+/// 设置运行时策略配置 + 启用开关 (进程上下文调用, 经 privileged 安全代理).
+///
+/// 客户端已构造则即时替换其配置 (下一 tick 生效); 未构造则暂存为待生效配置,
+/// 首次 poll 构造时消费. `enabled = false` 使 poll 钩子惰性返回 (内核客户端
+/// 不驱动), 供用户态守护接管; 校验由调用方 (functions 代理 `net/syscall.rs`) 先行完成.
+pub fn set_policy(cfg: Dhcpv6PolicyConfig, enabled: bool) {
+    let mut guard = DHCPV6_CLIENT.lock();
+    guard.enabled = enabled;
+    if let Some(client) = guard.client.as_mut() {
+        client.set_cfg(cfg);
+    } else {
+        guard.pending_cfg = Some(cfg);
+    }
+}
+
+/// 读取当前运行时策略配置 + 启用开关 (进程上下文调用).
+///
+/// 客户端已构造返其配置; 未构造返待生效配置, 无则返默认值.
+#[must_use]
+pub fn get_policy() -> (Dhcpv6PolicyConfig, bool) {
+    let guard = DHCPV6_CLIENT.lock();
+    let cfg = guard
+        .client
+        .as_ref()
+        .map_or_else(|| guard.pending_cfg.unwrap_or_default(), Dhcpv6Client::cfg);
+    (cfg, guard.enabled)
 }
 
 #[cfg(test)]

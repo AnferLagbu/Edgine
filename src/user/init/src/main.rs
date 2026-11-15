@@ -26,6 +26,8 @@ use userlib::sys::{
     getsockname, recvfrom, sendto,
 };
 use userlib::{print, print_char, print_dec, println};
+// DHCPv6 运行时策略配置面 (#298): 纯配置 syscall, 不依赖网络/NIC, 双架构通用.
+use userlib::sys::{EgDhcpv6Policy, dhcpv6_get_policy, dhcpv6_set_policy};
 
 /// KPTI-09 探针目标: 内核镜像基址的**高半区(高别名)映射**。
 ///
@@ -180,6 +182,9 @@ pub extern "C" fn _start() -> ! {
     // 并继续 (与 ipv6_udp_probe 同款容错). 须在 echo fork 前同步完成并释放 fd.
     #[cfg(target_arch = "x86_64")]
     udp_echo_probe();
+    // DHCPv6 运行时策略配置面 (#298): set/get 往返 + enabled 开关 + 非法拒收.
+    // 纯配置 syscall, 不依赖网络/NIC, 双架构通用; 末尾恢复基线不扰动后续探针.
+    dhcpv6_policy_probe();
     // DNS 双栈 E1 端到端验证: 经 EG_GETADDRINFO 解析 AAAA 记录 (仅 x86_64).
     // 依赖宿主 dnsmasq 经 DHCPv6 选项 23 下发 IPv6 DNS + 本地 AAAA 记录
     // (qemu_slaac_test.sh dhcpv6 模式); SLAAC 模式无 DNS, 有界重试后 FAIL 并继续.
@@ -1568,6 +1573,78 @@ fn dns_getaddrinfo_probe() {
         }
         delay_ms(50);
     }
+}
+
+/// `DHCPv6` 运行时策略配置面探针 (#298): set/get 往返 + `enabled` 开关 + 非法拒收.
+///
+/// 纯配置 syscall, 不依赖网络就绪 / 不占用户 fd, 双架构确定性强. 五腿:
+/// 1. 读默认 (`enabled=1` / `SOL_TIMEOUT=1s` / `SOL_MAX_RT=3600s`, RFC 7083);
+/// 2. 写自定义配置回读逐字段往返; 3. `enabled=0` 关闭开关回读;
+/// 4. `enabled=2` 与 `sol_timeout=0` 均须 `-EINVAL`; 5. 恢复基线配置.
+///
+/// 末尾恢复步骤 1 读得的基线 (`enabled=1`), 不扰动后续 `DHCPv6` bound / DNS 探针.
+fn dhcpv6_policy_probe() {
+    const EINVAL: i64 = 22;
+
+    let mut baseline = EgDhcpv6Policy::default();
+    let rc = dhcpv6_get_policy(&mut baseline);
+    if rc != 0 {
+        print("[dhcpv6-policy] FAIL: get()=");
+        print_dec(rc);
+        print_char(b'\n');
+        return;
+    }
+    if baseline.enabled != 1
+        || baseline.sol_timeout_ms != 1_000
+        || baseline.sol_max_rt_ms != 3_600_000
+    {
+        println("[dhcpv6-policy] FAIL: default mismatch");
+        return;
+    }
+
+    let mut want = baseline;
+    want.sol_timeout_ms = 2_000;
+    want.max_retries = 16;
+    want.renew_t1_ratio = 4_000;
+    if dhcpv6_set_policy(&want) != 0 {
+        println("[dhcpv6-policy] FAIL: set(custom)");
+        return;
+    }
+    let mut got = EgDhcpv6Policy::default();
+    if dhcpv6_get_policy(&mut got) != 0 || got != want {
+        println("[dhcpv6-policy] FAIL: round-trip");
+        return;
+    }
+
+    want.enabled = 0;
+    if dhcpv6_set_policy(&want) != 0 {
+        println("[dhcpv6-policy] FAIL: set(disabled)");
+        return;
+    }
+    if dhcpv6_get_policy(&mut got) != 0 || got.enabled != 0 {
+        println("[dhcpv6-policy] FAIL: enabled gate");
+        return;
+    }
+
+    let mut bad = want;
+    bad.enabled = 2;
+    if dhcpv6_set_policy(&bad) != -EINVAL {
+        println("[dhcpv6-policy] FAIL: enabled=2 not rejected");
+        return;
+    }
+    bad = want;
+    bad.enabled = 1;
+    bad.sol_timeout_ms = 0;
+    if dhcpv6_set_policy(&bad) != -EINVAL {
+        println("[dhcpv6-policy] FAIL: sol_timeout=0 not rejected");
+        return;
+    }
+
+    if dhcpv6_set_policy(&baseline) != 0 {
+        println("[dhcpv6-policy] FAIL: restore baseline");
+        return;
+    }
+    println("[dhcpv6-policy] PASS: round-trip+enabled+reject");
 }
 
 /// 用户态 UDP 连接态探针 (P4 D9 端到端验证, 仅 x86_64).

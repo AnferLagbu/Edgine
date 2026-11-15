@@ -862,6 +862,9 @@ pub use edgine_abi::socket::{
 /// 网络地址解析私有 syscall 编号与结果结构 — 单一权威源 `edgine-abi` (DNS 双栈 E1).
 pub use edgine_abi::net::{EG_AF_INET, EG_AF_INET6, EG_GETADDRINFO, EgAddrInfo};
 
+/// `DHCPv6` 运行时策略配置私有 syscall 编号与结构 — 单一权威源 `edgine-abi` (#298).
+pub use edgine_abi::dhcpv6::{EG_DHCPV6_GET_POLICY, EG_DHCPV6_SET_POLICY, EgDhcpv6Policy};
+
 // D8b: poll 事件位 (与内核 `sm_fi.rs` D8b 同值域; poll 族不属 sockopt, 不在
 // 本轮 abi 统一范围, 见 plan S1 范围界定).
 pub const POLLIN: i16 = 1;
@@ -1179,6 +1182,24 @@ pub fn getaddrinfo(name: &[u8], out: &mut EgAddrInfo) -> i64 {
             core::ptr::from_mut(out) as u64,
         )
     }
+}
+
+/// `EG_DHCPV6_SET_POLICY(policy)` — 设置 `DHCPv6` 运行时策略 + 启用开关 (#298).
+///
+/// 成功返 0; `enabled` 非 0/1 或策略字段非法返 `-EINVAL`, 用户缓冲无效返 `-EFAULT`.
+/// `policy.enabled` 取 0 (关闭内核客户端, 用户态守护接管) / 1 (启用).
+#[must_use]
+pub fn dhcpv6_set_policy(policy: &EgDhcpv6Policy) -> i64 {
+    unsafe { sys1(EG_DHCPV6_SET_POLICY, core::ptr::from_ref(policy) as u64) }
+}
+
+/// `EG_DHCPV6_GET_POLICY(policy)` — 读取当前 `DHCPv6` 运行时策略 + 启用开关 (#298).
+///
+/// 成功返 0 并回写 [`EgDhcpv6Policy`] (客户端未构造时返待生效配置或默认值);
+/// 用户缓冲无效返 `-EFAULT`.
+#[must_use]
+pub fn dhcpv6_get_policy(policy: &mut EgDhcpv6Policy) -> i64 {
+    unsafe { sys1(EG_DHCPV6_GET_POLICY, core::ptr::from_mut(policy) as u64) }
 }
 
 /// `shutdown(sockfd, how)` — D7 半关语义透传 (`SHUT_RD`/`SHUT_WR`/`SHUT_RDWR`).

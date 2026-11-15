@@ -144,6 +144,20 @@ impl Dhcpv6Client {
         self.state
     }
 
+    /// 替换重传/续约策略配置 (运行时配置面).
+    ///
+    /// 下一 tick 起按新配置退避/续约; 不重置当前已设的重传定时器与协议状态.
+    pub fn set_cfg(&mut self, cfg: Dhcpv6PolicyConfig) {
+        self.cfg = cfg;
+    }
+
+    /// 当前策略配置 (运行时配置面读取).
+    #[inline]
+    #[must_use]
+    pub fn cfg(&self) -> Dhcpv6PolicyConfig {
+        self.cfg
+    }
+
     /// 启动有状态 SARR (RA M=1 触发): 发 `Solicit`, 进入 `Soliciting`.
     pub fn start_stateful(&mut self, now_ms: u64) -> Output {
         self.stateless = false;

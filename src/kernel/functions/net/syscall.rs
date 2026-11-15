@@ -520,6 +520,141 @@ pub fn getaddrinfo_syscall(name_ptr: u64, name_len: u32, out_ptr: u64) -> Result
     ret_to_result(fw::getaddrinfo_syscall(name_ptr, name_len, out_ptr))
 }
 
+// ============================================================================
+// DHCPv6 运行时策略配置面 (#298)
+// ============================================================================
+
+#[cfg(not(feature = "kernel_test"))]
+use super::dhcpv6::policy::{Dhcpv6PolicyConfig, validate_config};
+
+/// ABI 结构 → 内核策略配置 (丢弃 `enabled`, 由调用方单独解码).
+///
+/// 纯函数, 14 个策略字段一一映射, 与用户内存搬运解耦以便单测.
+#[cfg(not(feature = "kernel_test"))]
+fn policy_from_abi(p: &edgine_abi::dhcpv6::EgDhcpv6Policy) -> Dhcpv6PolicyConfig {
+    Dhcpv6PolicyConfig {
+        sol_timeout_ms: p.sol_timeout_ms,
+        sol_max_rt_ms: p.sol_max_rt_ms,
+        req_timeout_ms: p.req_timeout_ms,
+        req_max_rt_ms: p.req_max_rt_ms,
+        ren_timeout_ms: p.ren_timeout_ms,
+        ren_max_rt_ms: p.ren_max_rt_ms,
+        reb_timeout_ms: p.reb_timeout_ms,
+        reb_max_rt_ms: p.reb_max_rt_ms,
+        inf_timeout_ms: p.inf_timeout_ms,
+        inf_max_rt_ms: p.inf_max_rt_ms,
+        rel_timeout_ms: p.rel_timeout_ms,
+        max_retries: p.max_retries,
+        renew_t1_ratio: p.renew_t1_ratio,
+        renew_t2_ratio: p.renew_t2_ratio,
+    }
+}
+
+/// 内核策略配置 + 启用开关 → ABI 结构 (`enabled` 编码为 0/1).
+#[cfg(not(feature = "kernel_test"))]
+fn policy_to_abi(cfg: Dhcpv6PolicyConfig, enabled: bool) -> edgine_abi::dhcpv6::EgDhcpv6Policy {
+    edgine_abi::dhcpv6::EgDhcpv6Policy {
+        sol_timeout_ms: cfg.sol_timeout_ms,
+        sol_max_rt_ms: cfg.sol_max_rt_ms,
+        req_timeout_ms: cfg.req_timeout_ms,
+        req_max_rt_ms: cfg.req_max_rt_ms,
+        ren_timeout_ms: cfg.ren_timeout_ms,
+        ren_max_rt_ms: cfg.ren_max_rt_ms,
+        reb_timeout_ms: cfg.reb_timeout_ms,
+        reb_max_rt_ms: cfg.reb_max_rt_ms,
+        inf_timeout_ms: cfg.inf_timeout_ms,
+        inf_max_rt_ms: cfg.inf_max_rt_ms,
+        rel_timeout_ms: cfg.rel_timeout_ms,
+        max_retries: cfg.max_retries,
+        renew_t1_ratio: cfg.renew_t1_ratio,
+        renew_t2_ratio: cfg.renew_t2_ratio,
+        enabled: u32::from(enabled),
+    }
+}
+
+/// `dhcpv6_set_policy(policy_ptr)` — 设置 `DHCPv6` 运行时策略 + 启用开关 (#298)
+///
+/// 读用户 [`edgine_abi::dhcpv6::EgDhcpv6Policy`] → 解码 `enabled` (仅 0/1) →
+/// [`validate_config`] 逐字段校验 → 写入 [`super::dhcpv6::driver::set_policy`].
+/// 用户内存搬运经 privileged 安全代理 (I4); 驱动调用留在 functions 层
+/// (privileged 生产代码禁反向依赖 functions, 见 `audit_reverse_deps`).
+///
+/// # Errors
+/// 用户缓冲无效 → `Errno::Efault`; `enabled` 非 0/1 或策略字段非法 → `Errno::Einval`.
+#[cfg(not(feature = "kernel_test"))]
+pub fn dhcpv6_set_policy_syscall(policy_ptr: u64) -> Result<usize, Errno> {
+    let mut abi = edgine_abi::dhcpv6::EgDhcpv6Policy::default();
+    if !api::read_struct_from_user(policy_ptr, &mut abi) {
+        return Err(Errno::Efault);
+    }
+    let enabled = match abi.enabled {
+        0 => false,
+        1 => true,
+        _ => return Err(Errno::Einval),
+    };
+    let cfg = policy_from_abi(&abi);
+    validate_config(cfg).map_err(|_| Errno::Einval)?;
+    super::dhcpv6::driver::set_policy(cfg, enabled);
+    Ok(0)
+}
+
+/// `dhcpv6_get_policy(policy_ptr)` — 读取当前 `DHCPv6` 运行时策略 + 启用开关 (#298)
+///
+/// 从 [`super::dhcpv6::driver::get_policy`] 取配置 (客户端未构造时返待生效配置
+/// 或默认值) → 编码为 ABI 结构 → 回写用户缓冲.
+///
+/// # Errors
+/// 用户缓冲无效 → `Errno::Efault`.
+#[cfg(not(feature = "kernel_test"))]
+pub fn dhcpv6_get_policy_syscall(policy_ptr: u64) -> Result<usize, Errno> {
+    let (cfg, enabled) = super::dhcpv6::driver::get_policy();
+    let abi = policy_to_abi(cfg, enabled);
+    if !api::write_struct_to_user(policy_ptr, &abi) {
+        return Err(Errno::Efault);
+    }
+    Ok(0)
+}
+
+#[cfg(all(test, not(feature = "kernel_test")))]
+mod dhcpv6_policy_tests {
+    use super::{policy_from_abi, policy_to_abi};
+    use crate::functions::net::dhcpv6::policy::Dhcpv6PolicyConfig;
+
+    /// 默认配置往返: cfg → ABI → cfg 逐字段不变, `enabled` 独立编码.
+    #[test]
+    fn round_trip_default_enabled_true() {
+        let cfg = Dhcpv6PolicyConfig::default();
+        let abi = policy_to_abi(cfg, true);
+        assert_eq!(abi.enabled, 1);
+        let back = policy_from_abi(&abi);
+        assert_eq!(back.sol_timeout_ms, cfg.sol_timeout_ms);
+        assert_eq!(back.sol_max_rt_ms, cfg.sol_max_rt_ms);
+        assert_eq!(back.req_max_rt_ms, cfg.req_max_rt_ms);
+        assert_eq!(back.ren_timeout_ms, cfg.ren_timeout_ms);
+        assert_eq!(back.reb_max_rt_ms, cfg.reb_max_rt_ms);
+        assert_eq!(back.inf_max_rt_ms, cfg.inf_max_rt_ms);
+        assert_eq!(back.rel_timeout_ms, cfg.rel_timeout_ms);
+        assert_eq!(back.max_retries, cfg.max_retries);
+        assert_eq!(back.renew_t1_ratio, cfg.renew_t1_ratio);
+        assert_eq!(back.renew_t2_ratio, cfg.renew_t2_ratio);
+    }
+
+    /// 关闭开关编码为 0; 非默认字段往返保真.
+    #[test]
+    fn round_trip_custom_disabled() {
+        let mut cfg = Dhcpv6PolicyConfig::default();
+        cfg.sol_timeout_ms = 2_000;
+        cfg.max_retries = 16;
+        cfg.renew_t1_ratio = 4_000;
+        let abi = policy_to_abi(cfg, false);
+        assert_eq!(abi.enabled, 0);
+        let back = policy_from_abi(&abi);
+        assert_eq!(back.sol_timeout_ms, 2_000);
+        assert_eq!(back.max_retries, 16);
+        assert_eq!(back.renew_t1_ratio, 4_000);
+    }
+}
+
 /// shutdown(fd, how)
 ///
 /// # Errors

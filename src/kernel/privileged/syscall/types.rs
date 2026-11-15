@@ -830,6 +830,15 @@ pub const EG_NF_DEL_RULE: u64 = 811;
 /// `EG_GETADDRINFO` — 双栈 DNS 解析 (返回单个 `EgAddrInfo`, IPv6 优先)
 pub const EG_GETADDRINFO: u64 = edgine_abi::net::EG_GETADDRINFO;
 
+// ==================== C5: DHCPv6 运行时策略 (816-817 私有段) ====================
+
+// Linux 无 DHCPv6 客户端配置系统调用 (客户端在用户态守护), 故不占 0-299 段;
+// 单一权威源 `edgine_abi::dhcpv6` (编号 + EgDhcpv6Policy 配置结构, 内核与 userlib 共享).
+/// `EG_DHCPV6_SET_POLICY` — 设置 `DHCPv6` 运行时策略配置 + 启用开关
+pub const EG_DHCPV6_SET_POLICY: u64 = edgine_abi::dhcpv6::EG_DHCPV6_SET_POLICY;
+/// `EG_DHCPV6_GET_POLICY` — 读取当前 `DHCPv6` 运行时策略配置 + 启用开关
+pub const EG_DHCPV6_GET_POLICY: u64 = edgine_abi::dhcpv6::EG_DHCPV6_GET_POLICY;
+
 // ==================== C4: io_uring ====================
 
 // `io_uring_setup` — 创建 `io_uring` 实例
@@ -1220,6 +1229,8 @@ const _: () = {
         EG_NF_ADD_RULE,
         EG_NF_DEL_RULE,
         EG_GETADDRINFO,
+        EG_DHCPV6_SET_POLICY,
+        EG_DHCPV6_GET_POLICY,
         EG_IO_URING_SUBMIT,
         EG_CGROUP_CREATE,
         EG_CGROUP_DESTROY,
