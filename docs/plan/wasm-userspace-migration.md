@@ -61,9 +61,10 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **描述**: wasmi 需 alloc，当前用户态零堆分配能力，须先补。
 - **方案**: 补 mmap wrapper（`SYS_MMAP`=9 / `SYS_MUNMAP`=11）+ 最小 `#[global_allocator]`
   （bump 或 linked-list over mmap，no_std）；核实 SGEG mmap 能力门授权路径。
-- **状态**: []
+- **状态**: [X]
 - **详情**: 缺口实测——`src/user` 全树 `global_allocator`/`SYS_MMAP`/`alloc::` 零命中。
-  这是 P0，阻塞 P1。interpreter 只需 `PROT_READ|WRITE`，不需 `PROT_EXEC`。
+  已实装（P0）：sys.rs 增 mmap/munmap wrapper + heap.rs free-list `#[global_allocator]`，
+  10 host 单测全绿。interpreter 只需 `PROT_READ|WRITE`，不需 `PROT_EXEC`。
 
 ### D3: WASI 38 函数全量翻译到既有 POSIX syscall
 
@@ -98,9 +99,16 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - 新增最小 `#[global_allocator]`（bump/linked-list over mmap，no_std），落 user lib 或新 crate。
   - 核实 SGEG mmap 能力门（bit 7.0x01）对 wasm 运行时进程的授权放行路径。
   - 单测：alloc 基本路径（分配/释放/对齐）+ mmap 失败分支。
-- **状态**: []
-- **详情**: 阻塞 P1。验收 = 用户态 `Vec`/`Box` 可用，mmap 授权路径打通。
-  interpreter 不需 `PROT_EXEC`，绕开 JIT 缺口。
+- **状态**: [X]
+- **详情**: 已实装。heap.rs = K&R 地址升序 first-fit free-list（块分裂 + 相邻合并 +
+  高对齐回填块头指针），AtomicBool 自旋锁保护，mmap 64KiB 粒度增长；FreeList 纯指针核心
+  host 可测（静态 arena），mmap 后端 host 桩替代（CR4 限制，真映射只在 QEMU 用户态生效）。
+  sys.rs 增 SYS_MMAP=9 / SYS_MUNMAP=11 wrapper。10 host 单测全绿（分配/释放/对齐/分裂/
+  合并/双释放幂等/OOM 传播/高对齐/零尺寸/realloc）。SGEG mmap 能力门（domain 7=CAP_DOMAIN_MEM,
+  bit 0x01）已核实：init 以 PWM 0 bootstrap 身份运行，pwm_has_capability 对 PWM 0 恒真
+  （CapBits::ALL 全域），wasm 运行时经 bootstrap 身份即放行；非 bootstrap 身份须显式 grant
+  domain 7。七门槛全绿 + x86_64 QEMU 6/6 启动零 vec14。alloc 前提就绪，P1 wasmi 为首个真实
+  消费者（运行时 mmap 行使随 P1）。interpreter 不需 PROT_EXEC，绕开 JIT 缺口。
 
 ### P1: wasmi vendored 集成 + stdio demo (de-risk 首里程碑)
 

@@ -1507,3 +1507,46 @@ pub fn tgkill(tgid: i32, thread_id: i32, sig: i32) -> i64 {
         )
     }
 }
+
+// ============================================================
+// 内存映射 (mmap/munmap — POSIX 编号 9/11, 与内核 dispatch_mm 对齐)
+// ============================================================
+
+pub const SYS_MMAP: u64 = 9;
+pub const SYS_MUNMAP: u64 = 11;
+
+// 保护位 (Linux asm-generic 值域, 与内核 functions::mm::mmap 的 prot_to_vma_flags 对齐)
+pub const PROT_READ: i32 = 0x1;
+pub const PROT_WRITE: i32 = 0x2;
+pub const PROT_EXEC: i32 = 0x4;
+
+// 映射标志 (Linux asm-generic 值域)
+pub const MAP_SHARED: i32 = 0x01;
+pub const MAP_PRIVATE: i32 = 0x02;
+pub const MAP_FIXED: i32 = 0x10;
+pub const MAP_ANONYMOUS: i32 = 0x20;
+
+/// `mmap(addr, len, prot, flags, fd, offset)` — 成功返映射地址 (>0), 失败返 `-Errno`.
+///
+/// 匿名堆映射取 `addr=0` (内核自动选空闲区间) / `fd=-1` / `offset=0` /
+/// `MAP_PRIVATE | MAP_ANONYMOUS`. 返回地址页对齐.
+#[must_use]
+pub fn mmap(addr: u64, len: u64, prot: i32, flags: i32, fd: i32, offset: i64) -> i64 {
+    unsafe {
+        sys6(
+            SYS_MMAP,
+            addr,
+            len,
+            arg_bits(i64::from(prot)),
+            arg_bits(i64::from(flags)),
+            arg_bits(i64::from(fd)),
+            arg_bits(offset),
+        )
+    }
+}
+
+/// `munmap(addr, len)` — 解除映射, 成功返 0, 失败返 `-Errno`.
+#[must_use]
+pub fn munmap(addr: u64, len: u64) -> i64 {
+    unsafe { sys2(SYS_MUNMAP, addr, len) }
+}
