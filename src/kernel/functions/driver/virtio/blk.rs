@@ -239,11 +239,15 @@ impl VirtioBlkDriver {
         }
 
         // 分配 VirtQueue (块设备通常仅 vq0)
-        // SIMPLIFIED: blk 固定请求 modern 语义 num=VQ_SIZE(32), finalize 恒走 modern 寄存器序;
-        // 影响面: legacy virtio-blk 设备不可用; 何时需扩展: 出现真实 legacy blk 消费者时
-        // 按 net.rs 模板改走 PFN 路径 (布局由 queue.rs vring_layout 运行时 num 自然提供)
+        // 队列寄存器形态锚定传输层版本 (P-31 同范式): legacy 走 PFN 路径, modern 走三段地址+Ready.
         let is_legacy = device.is_legacy();
         let vq = VirtQueue::new(is_legacy, VQ_SIZE)?;
+
+        // legacy 设备: GuestPageSize 必须在首次写 QueuePFN 之前设置 (P-31 virtio-net 同范式;
+        // 不写则设备按 2^0 移位误读 PFN → vring 地址错 → 请求永不完成).
+        if is_legacy {
+            device.set_guest_page_size(4096);
+        }
 
         // 读取配置空间: 容量
         let cap_lo = u64::from(device.read_config32(BLK_CONFIG_CAPACITY_LO));
@@ -282,12 +286,20 @@ impl VirtioBlkDriver {
         let vq_index = 0u16;
         self.device.select_queue(vq_index);
         self.device.set_queue_num(self.vq.num);
-        self.device.setup_queue_addrs(
-            self.vq.desc_paddr(),
-            self.vq.avail_paddr(),
-            self.vq.used_paddr(),
-        );
-        self.device.set_queue_ready();
+        if self.device.is_legacy() {
+            // 传统模式: 范式序 QueueNum → QueueAlign(4096) → QueuePFN(vring 基址).
+            // legacy 无 QueueReady —— 0x040 即 QueuePFN, PFN 写入本身即激活队列.
+            self.device.set_queue_align(4096);
+            self.device.setup_queue_legacy(self.vq.desc_paddr());
+        } else {
+            // 现代模式: QueueNum → 地址三段 → Ready.
+            self.device.setup_queue_addrs(
+                self.vq.desc_paddr(),
+                self.vq.avail_paddr(),
+                self.vq.used_paddr(),
+            );
+            self.device.set_queue_ready();
+        }
         self.set_driver_ok();
     }
 

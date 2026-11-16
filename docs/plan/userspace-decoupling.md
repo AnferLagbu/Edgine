@@ -258,6 +258,12 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   ⇒ **aarch64 virtio-blk I/O 超时, 格式/读写无法完成、挂载阻塞**. ⇒ **D5 真前置 = 修 aarch64 virtio-blk 请求
   超时**(与历史 aarch64 virtio-net TX 超时 P-31 同族, blk 版), 属驱动层根因工程, 单独立项**(D5-PR)**; 门控去
   x86-only 本身安全(无盘路径无回归), 但 with-disk 到 virtio-blk 超时前不成立, 不能宣称 D5 完成.
+- **D5-PR virtio-blk legacy 超时已修并验证 (2026-11-16)**: blk 的 legacy 初始化按 net(P-31) 模板补齐——`new()` 对 legacy
+  先 `set_guest_page_size(4096)`(须在写 PFN 前), `finalize()` legacy 走 `QueueNum→QueueAlign(4096)→
+  setup_queue_legacy(desc_paddr)`(legacy 无 QueueReady), modern 走原三段地址+Ready(原 SIMPLIFIED「legacy 不可用」即此).
+  **aarch64 空盘实测**: `virtio-blk 请求超时`消失, **`FORMAT: Complete` + `EGFS Initialized (disk, 1 drive)`**(秒级);
+  x86 不受影响(走 AHCI/NVMe). ⇒ 驱动层 D5-PR 闭合. **新余项 = `EGFS mount failed`**: 格式成功后
+  `vfs_mount_internal("/","egfs")` 返非零 —— aarch64 VFS 挂根步骤待查(下一子项, 非驱动问题).
 
 ### D6: 收口 (七门槛 + 文档 + 台账)
 
