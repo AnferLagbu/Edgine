@@ -14,9 +14,11 @@
 # ============================================================================
 
 # 构建带 initramfs feature 的内核 (cpio 不嵌入; 消费者读 boot-module)。
+# 保留默认 features (A-1 lockdep 常开) 以与既有默认腿口径一致; cpio 出镜像后 initramfs-feature
+# 镜像仍在 K-08 (USER_CODE_BASE=0x400000) 之内, 故不再需要 KERNEL_NO_DEFAULT。
 boot_module_build() {
     local arch="$1"
-    make ARCH="$arch" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all
+    make ARCH="$arch" KERNEL_FEATURES=initramfs all
 }
 
 # x86_64: 组 GRUB module2 ISO (multiboot2 kernel.bin + module2 cpio),
