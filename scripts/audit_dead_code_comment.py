@@ -53,7 +53,7 @@ BASELINE_FILE = SCRIPT_DIR / "audit_dead_code_comment.baseline.json"
 SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust", "kani-harness")
 
 # vendored 目录按**路径分量**排除 (不按子串: 否则 net/smoltcp_impl.rs 会被误伤).
-VENDORED_DIRS = {"smoltcp"}
+VENDORED_DIRS = {"smoltcp", "vendor"}
 SKIP_DIRS = {"target"}
 
 # 行首属性: `#[allow(…)]` / `#![allow(…)]` / expect 同形.

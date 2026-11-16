@@ -707,8 +707,8 @@ def main() -> int:
         files_scanned += 1
         rel = rs_file.relative_to(PROJECT_ROOT)
         rel_str = str(rel)
-        # 排除 vendored 第三方代码
-        if "smoltcp/" in rel_str:
+        # 排除 vendored 第三方代码 (smoltcp + P1 wasmi 退用户态的 cargo vendor 树)
+        if "smoltcp/" in rel_str or "user/vendor/" in rel_str:
             continue
         # 排除 cargo 构建产物 (target/ 下第三方 build script 的 probe/生成代码)
         if "/target/" in rel_str:
@@ -732,7 +732,7 @@ def main() -> int:
             print(f"  {issue}")
         if len(issues) > 80:
             print(f"  ... and {len(issues) - 80} more")
-        print(f"\n扫描: {files_scanned} 个 .rs 文件, 排除 vendored smoltcp/*")
+        print(f"\n扫描: {files_scanned} 个 .rs 文件, 排除 vendored smoltcp/* 与 user/vendor/*")
         return 1
 
     print(f"TD-22 注释语言 audit PASSED: 扫描 {files_scanned} 个 .rs 文件, 0 违规")
