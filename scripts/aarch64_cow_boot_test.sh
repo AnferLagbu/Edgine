@@ -66,9 +66,12 @@ IMAGE="other/build/aarch64/kernel-aarch64.img"
 BOOT_LOG="$LOG_DIR/aarch64_cow_boot.log"
 BUILD_LOG="$LOG_DIR/aarch64_cow_build.log"
 
-# ── 构建 (默认口径, 不带 feature) ───────────────────────────────────────────
-info "[aarch64] 默认构建 (KERNEL_FEATURES 空)..."
-if ! make ARCH=aarch64 all >"$BUILD_LOG" 2>&1; then
+# D4: 统一 boot-with-module 载体 (cpio 经引导器交付, 不嵌入内核).
+source scripts/boot_module.sh
+
+# ── 构建 (initramfs feature; cpio 经 boot-module 交付, 不嵌入内核) ────────────
+info "[aarch64] boot-module 构建 (KERNEL_FEATURES=initramfs)..."
+if ! boot_module_build aarch64 >"$BUILD_LOG" 2>&1; then
     err "[aarch64] 构建失败 (日志: $BUILD_LOG)"
     exit 1
 fi
@@ -87,7 +90,7 @@ command -v qemu-system-aarch64 >/dev/null 2>&1 || {
 # ── 启动 + 轮询里程碑 ───────────────────────────────────────────────────────
 : > "$BOOT_LOG"
 qemu-system-aarch64 \
-    -M virt,gic-version=3 -cpu max -m 512 -smp "$SMP" -kernel "$IMAGE" \
+    -M virt,gic-version=3 -cpu max -m 512 -smp "$SMP" $(boot_module_carrier_args aarch64) \
     -serial "file:$BOOT_LOG" -display none -no-reboot >/dev/null 2>&1 &
 QPID=$!
 
