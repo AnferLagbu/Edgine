@@ -32,6 +32,8 @@ pub const MULTIBOOT2_MAGIC: u32 = 0x36D7_6289;
 pub const MBOOT1_FLAG_MEM: u32 = 1 << 0;
 /// Multiboot1 信息结构标志位: 内存映射 (`mmap_length` / `mmap_addr`) 有效
 pub const MBOOT1_FLAG_MMAP: u32 = 1 << 6;
+/// Multiboot1 信息结构标志位: 引导模块 (`mods_count` / `mods_addr`) 有效
+pub const MBOOT1_FLAG_MODS: u32 = 1 << 3;
 
 /// Multiboot1 引导信息结构 (Multiboot1 spec 定义的机器状态块)
 #[derive(Debug, Clone, Copy)]
@@ -123,6 +125,24 @@ impl MemoryMapEntry {
     }
 }
 
+/// Multiboot1 引导模块条目 (16 字节: 起止物理地址 + 命令行串地址 + 保留).
+///
+/// 引导器把 initrd 等文件作为"模块"装入内存; 本结构是模块数组的单元素,
+/// 数组首址见 [`Multiboot1Info::mods_addr`].
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct Mb1Module {
+    /// 模块起始物理地址
+    mod_start: u32,
+    /// 模块结束物理地址 (开区间)
+    mod_end: u32,
+    /// 模块命令行字符串的物理地址
+    string: u32,
+    /// 保留字段 (恒 0)
+    reserved: u32,
+}
+
 /// 引导阶段汇总的启动信息 (可用内存大小 / 内核结束地址 / 内存映射条目数)
 #[derive(Debug, Clone, Copy)]
 pub struct BootInfo {
@@ -132,6 +152,10 @@ pub struct BootInfo {
     pub kernel_end: u64,
     /// 引导器报告的内存映射条目数
     pub mmap_entries: usize,
+    /// 引导器交付的 initrd (引导模块) 起始物理地址; 0 表示无
+    pub initrd_base: u64,
+    /// initrd 字节长度; 0 表示无
+    pub initrd_size: u64,
 }
 
 impl Default for BootInfo {
@@ -148,6 +172,8 @@ impl BootInfo {
             mem_size: 0,
             kernel_end: 0,
             mmap_entries: 0,
+            initrd_base: 0,
+            initrd_size: 0,
         }
     }
 }
@@ -189,11 +215,26 @@ pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
+fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64)) {
     // SAFETY: `ptr` 由调用方保证指向有效 Multiboot1Info; 只读借用
     let mbi = unsafe { ptr.cast::<Multiboot1Info>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
+
+    // 引导模块 (initrd): flags bit3 且 mods_count>0 时取首模块的物理区间.
+    let initrd = if mbi.flags & MBOOT1_FLAG_MODS != 0 && mbi.mods_count > 0 && mbi.mods_addr != 0 {
+        // SAFETY: `mods_addr` 由引导器保证指向 `mods_count` 个 Mb1Module 的物理数组,
+        // 启动期低端物理内存经 boot 恒等映射可直读; 只读借用首元素.
+        let first = unsafe { (mbi.mods_addr as *const Mb1Module).read_unaligned() };
+        match first.mod_end.checked_sub(first.mod_start) {
+            Some(sz) if sz > 0 && first.mod_start != 0 => {
+                (u64::from(first.mod_start), u64::from(sz))
+            }
+            _ => (0, 0),
+        }
+    } else {
+        (0, 0)
+    };
 
     if mbi.flags & MBOOT1_FLAG_MEM != 0 {
         mem_size = (u64::from(mbi.mem_upper) + 1024) * 1024;
@@ -224,15 +265,16 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize) {
         }
     }
 
-    (mem_size, mmap_entries)
+    (mem_size, mmap_entries, initrd)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
+fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
     // SAFETY: `ptr` 由调用方保证指向有效 u32; 只读借用
     let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
+    let mut initrd: Option<(u64, u64)> = None;
 
     let mut offset: usize = 8;
     let end = total_size as usize;
@@ -250,6 +292,17 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
         }
 
         match tag_type {
+            3 => {
+                // tag 3 = 引导模块 (每模块一条); 取首模块 (initrd) 物理区间.
+                // SAFETY: tag_ptr 指向 MB2 标签表内有效 tag; +8/+12 (mod_start/mod_end,
+                // 32 位) 为该 tag 载荷, 标签表在启动期只读.
+                let mod_start = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
+                let mod_end = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
+                let sz = mod_end.saturating_sub(mod_start);
+                if initrd.is_none() && sz > 0 && mod_start != 0 {
+                    initrd = Some((u64::from(mod_start), u64::from(sz)));
+                }
+            }
             4 => {
                 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
                 let basic_ptr = unsafe { tag_ptr.add(8) };
@@ -317,7 +370,7 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize) {
         offset = (offset + 7) & !7;
     }
 
-    (mem_size, mmap_entries)
+    (mem_size, mmap_entries, initrd.unwrap_or((0, 0)))
 }
 
 // 符号桩化 (host-test): kernel_end 取值已分叉, 触发 borrow_as_ptr 的
@@ -356,33 +409,37 @@ pub fn init() -> BootInfo {
     );
 
     #[cfg(target_arch = "x86_64")]
-    let (mem_size, mmap_entries) = {
+    let (mem_size, mmap_entries, initrd) = {
         let magic = *MULTIBOOT_MAGIC.lock();
         let ptr = MULTIBOOT_INFO_PTR.lock().0;
+        crate::klog_boot_info!("Multiboot: magic=0x{:X} info=0x{:X}", magic, ptr as usize);
 
         let mut ms: u64 = 128 * 1024 * 1024;
         let mut me: usize = 0;
+        let mut initrd: (u64, u64) = (0, 0);
 
         if !ptr.is_null() {
             match magic {
                 MULTIBOOT1_MAGIC => {
-                    let (m, e) = parse_multiboot1(ptr);
+                    let (m, e, i) = parse_multiboot1(ptr);
                     ms = m;
                     me = e;
+                    initrd = i;
                 }
                 MULTIBOOT2_MAGIC => {
-                    let (m, e) = parse_multiboot2(ptr);
+                    let (m, e, i) = parse_multiboot2(ptr);
                     ms = m;
                     me = e;
+                    initrd = i;
                 }
                 _ => {}
             }
         }
-        (ms, me)
+        (ms, me, initrd)
     };
 
     #[cfg(target_arch = "aarch64")]
-    let (mem_size, mmap_entries) = {
+    let (mem_size, mmap_entries, initrd) = {
         // aarch64 不使用 Multiboot 协议, 但需读取字段以消除 dead_code 警告
         let _ = MULTIBOOT_INFO_PTR.lock().0;
         // QEMU virt 平台默认 512MB.
@@ -390,14 +447,25 @@ pub fn init() -> BootInfo {
         let ms: u64 = option_env!("AARCH64_MEM_MB")
             .and_then(|s| s.parse::<u64>().ok())
             .map_or(512 * 1024 * 1024, |mb| mb * 1024 * 1024);
-        (ms, 0)
+        // initrd 位置在 aarch64 经 DTB /chosen 交出 (D2 实现); 当前占位 0.
+        (ms, 0, (0u64, 0u64))
     };
 
     let info = BootInfo {
         mem_size,
         kernel_end,
         mmap_entries,
+        initrd_base: initrd.0,
+        initrd_size: initrd.1,
     };
+
+    if info.initrd_size > 0 {
+        crate::klog_boot_info!(
+            "Boot module initrd: base=0x{:X} size={}",
+            info.initrd_base,
+            info.initrd_size
+        );
+    }
 
     BOOT_INFO.get_or_init(|slot| {
         slot.write(info);

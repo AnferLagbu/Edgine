@@ -158,11 +158,25 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 
 - **描述**: x86_64 内核经 MB2 tag 3 取得 initrd base/size, PMM 预留, 从该区读 cpio.
 - **方案**: `parse_multiboot2` 补 tag 3 分支; `BootInfo` 增 `initrd_base/initrd_size`;
-  `pmm_init` 增 initrd 区预留; `load_init_from_initramfs` 改读模块区切片 (删 `INITRAMFS_CPIO`
-  `include_bytes!`).
-- **状态**: []
-- **详情**: 新 unsafe 读 tag 3 结构须 `// SAFETY:`. 回归锁: host 侧 tag3 解析纯函数单测 + QEMU
-  腿断言「initramfs 从 module 装载」.
+  `pmm_init` 增 initrd 区预留; 消费者切换 (从模块区读 cpio + 删 `include_bytes!`) 归 **D3 同批**
+  (经 privileged 安全 API, 避 blob 访问器在 feature-off 时成死代码); D1 只做「识别+预留+可观测」.
+- **状态**: [X] (plumbing 完成并验证; cpio 消费者与全 §2.3 收口于 D3/D6)
+- **详情**: `parse_multiboot1` (MB1 mods: `mods_count`@0x14 / `mods_addr`@0x18, 16B 项首元素) 与
+  `parse_multiboot2` (MB2 tag3: mod_start@+8 / mod_end@+12) **双解析** → `BootInfo.initrd_base/size`;
+  `boot_memory_init` 于 `pmm_init_bitmap` 后 `reserve_range` 预留; 启动报
+  `Boot module initrd: base/size`. 新 unsafe 均配 `// SAFETY:`.
+  **连带修复预存 magic bug**: [boot.asm](../../src/kernel/privileged/boot/boot.asm) 的 `mov al,0xFF`
+  (屏蔽 8259 PIC) 在保存 magic 之前冲掉 EAX 低字节 ⇒ MB1/MB2 magic 恒不匹配, 致内存图 / mem_size /
+  帧缓冲 / 引导模块**全部从未解析** (PMM 长期被限 128MB). 修法: 保存 info+magic 的 mov 提前到该指令前.
+  **实测 (2026-11-16)**: 修后 QEMU flat magic=0x2BADB002、GRUB module2 magic=0x36D76289, mem=511MB,
+  帧缓冲 tag8 恢复解析, **默认 qemu_boot_test x86_64 全绿** (SMP/网络/e2e 零回归); **GRUB module2 →
+  `Boot module initrd: base=0x6C0000 size=242780`(=cpio 精确字节)** ⇒ 模块检测成立. `test-kernel-host`
+  1347 passed / 0; quick 审计(clippy+fmt)绿.
+  **两处新发现 (归 D3)**: (a) QEMU `-kernel flat -initrd` **不交付模块**(无 MB1 mods) ⇒ CI 模块腿须走
+  GRUB 启动(合 L0); (b) GRUB initrd 落 0x6C0000, 与内核堆预留区 `[0x5F4000,0xDF4000]` 重叠 ⇒
+  `reserve_range` 报 overlap、堆迟早覆盖 cpio —— **D3 读 cpio 前须先解 initrd 放置/堆布局冲突**.
+  **附带治理**: F7/F9 审计补 `src/user/vendor/` vendored 排除 (P1 wasmi 第三方 .rs 英文注释/死代码
+  抑制不再污染全审计). 回归锁余项 = GRUB module2 启动腿 + 显式 magic 行断言 (并入 D4 启动腿批次).
 - **L0 spike 关键发现 (影响 D1 范围)**: 模块交付结构**随 loader 而异** —— QEMU `-kernel -initrd`
   走 **Multiboot1 `mods` 字段** (`mods_count`@MB1 info 偏移 0x14 / `mods_addr`@0x18, 每模块 16 字节:
   mod_start/mod_end/string/rfu); GRUB `multiboot2 module2` 走 **MB2 tag 3** (`mod_start`@+8 /

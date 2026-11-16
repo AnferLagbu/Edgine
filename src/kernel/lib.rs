@@ -687,6 +687,26 @@ fn boot_memory_init() {
     // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
     let reserved_after_kernel = GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE;
     crate::privileged::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
+
+    // 3.6 引导模块 initrd 预留: 引导器交付的 cpio/载荷所在物理区, 经 PMM 预留
+    // 防止后续分配覆盖 (须在位图/buddy 就绪后调用). aarch64 当前 initrd_size=0
+    // (DTB /chosen 接法待 D2), 故本块在 aarch64 为 no-op.
+    if boot_info.initrd_size > 0 {
+        let page = crate::privileged::config::memory::PAGE_SIZE;
+        let aligned_base = boot_info.initrd_base & !(page - 1);
+        let aligned_end = (boot_info.initrd_base + boot_info.initrd_size + page - 1) & !(page - 1);
+        let reserve_bytes = crate::privileged::glue::usize_from_u64(aligned_end - aligned_base);
+        match crate::privileged::mm::pmm::get_pmm()
+            .reserve_range(crate::privileged::mm::PhysAddr(aligned_base), reserve_bytes)
+        {
+            Ok(()) => crate::klog_boot_info!(
+                "initrd region reserved: base=0x{:X} size={}",
+                aligned_base,
+                reserve_bytes
+            ),
+            Err(e) => crate::klog_err!(Boot, "[BOOT] initrd reserve failed: {}", e),
+        }
+    }
     crate::klog_boot_info!("PMM bitmap initialized");
 }
 

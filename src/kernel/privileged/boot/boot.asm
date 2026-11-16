@@ -102,12 +102,15 @@ extern _kernel_end
 _start:
     cli
 
+    ; 先保存引导器传入的 magic(EAX) 与 info 指针(EBX) —— 必须先于任何改写 EAX/AL
+    ; 的指令. 下方 `mov al,0xFF` 屏蔽 8259 PIC 时会冲掉 EAX 低字节 (= multiboot
+    ; magic 低字节), 致 MULTIBOOT1/2 常量永不匹配、内存图/帧缓冲/引导模块全部失解析.
+    mov esi, ebx
+    mov edi, eax
+
     mov al, 0xFF
     out 0x21, al
     out 0xA1, al
-
-    mov esi, ebx
-    mov edi, eax
 
     call .get_eip
 .get_eip:
