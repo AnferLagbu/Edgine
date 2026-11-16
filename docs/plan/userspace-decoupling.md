@@ -57,9 +57,18 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
   `sys_boot_install` 运行时建; aarch64 真机介质是 FAT
   ([make_boot_medium.sh](../../scripts/make_boot_medium.sh)).
 
+**真机引导现状 (本轮实测)**: 当前自动验证全都走 QEMU `-kernel kernel.flat`——由 QEMU **内建
+multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自建
+[stage1.asm](../../src/kernel/privileged/boot/stage1.asm#L23) (`TOTAL_SECT=3200`) 只读 **1.56 MiB**
+到 0x100000, 而 `kernel.flat` = **2.66 MiB** (实测) ⇒ **裸 MBR 盘引导当前读不完内核、真机不可用**
+(`run-disk` 的 `-drive edgine.img` 同受此限). 真机可用路径是文档化但 CI 从未跑的两条: x86_64
+**GRUB2 multiboot2 ISO** ([Makefile iso](../../Makefile#L466) `multiboot2 /boot/kernel.bin`)、aarch64
+**arm64 Image + U-Boot extlinux/booti** ([make_boot_medium.sh](../../scripts/make_boot_medium.sh#L165)).
+⇒ 真机引导路径当前不可用, 需 loader 现代化 (前置阶段 L0).
+
 ## 设计决策
 
-### D1: 严格零嵌入 (内核镜像零用户态字节)
+### 决策 A: 严格零嵌入 (内核镜像零用户态字节)
 
 - **描述**: 内核镜像不嵌任何用户态字节 (连 init.bin 与 wasm 桩也不嵌), 全部用户态内容由
   boot-module initrd (QEMU `-initrd` / GRUB `module2` / U-Boot initrd) 提供; `/init` 与桩均
@@ -71,7 +80,7 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
 - **详情**: 用户裁定「严格零嵌入 (对齐 Linux)」. 代价: **所有进入用户态的启动腿** (`-kernel`
   裸起) 必须改 `-initrd` 携 cpio, 否则只能停在内核 (对齐 Linux「无 initrd 即 mount 不到 root」).
 
-### D2: 双协议 boot-module 载体
+### 决策 B: 双协议 boot-module 载体
 
 - **描述**: x86_64 与 aarch64 各用本平台 boot 协议交出 initrd 位置, 内核从该内存区读 cpio.
 - **方案**: x86_64 = **Multiboot2 tag 3 (MODULES)** (现 [boot/mod.rs:252](../../src/kernel/privileged/boot/mod.rs#L252)
@@ -83,7 +92,7 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
   (裸指针读 boot 结构) → 必配 `// SAFETY:` (F4). QEMU `-kernel kernel.flat -initrd cpio` 是否
   按 MB2 模块装载须 D0 实测.
 
-### D3: aarch64 EGFS 磁盘根接入
+### 决策 C: aarch64 EGFS 磁盘根接入
 
 - **描述**: aarch64 经 virtio-blk 发现并挂 EGFS 根、从磁盘装载用户态, 补齐生产形态.
 - **方案**: 去 [lib.rs:940](../../src/kernel/lib.rs#L940) `target_arch="x86_64"` 门控;
@@ -93,7 +102,7 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
 - **详情**: T-01 现状 (aarch64 有 virtio-blk 无 FS 消费). 镜像生成方案 (主机 `mkfs.egfs` 工具
   或缺则先 x86_64 建盘后复用) 待 D0 定; 现无 EGFS 格式化工具, 是 D0 的开放子项.
 
-### D4: x86_64 kview 低半区恒等窗口退役 (单独处理)
+### 决策 D: x86_64 kview 低半区恒等窗口退役 (单独处理)
 
 - **描述**: 退役造成 K-08 的 x86_64 低半区 kview 恒等窗口, 回归高半区直射区 (aarch64 为参照),
   从根上消除「内核镜像增长撞用户区」类约束.
@@ -103,25 +112,38 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
   [vmm_x86_64.rs `boot_identity_tables`](../../src/kernel/privileged/vmm_x86_64.rs#L1163).
 - **状态**: []
 - **详情**: 用户裁定「纳入本次插队项**但单独处理**」. 触及 #89 `kview` 修双视图分叉的根基, 与
-  内容解耦正交; D1-D3 落地后内核镜像已回 4 MiB 内, K-08 不再触发 ⇒ D4 是「根治天花板」而非
+  内容解耦正交; 施工 D1-D3 落地后内核镜像已回 4 MiB 内, K-08 不再触发 ⇒ 决策 D 是「根治天花板」而非
   解 K-08 的必需品, 风险高、跨度大, **单开为收尾独立批次**, 不阻塞 D1-D3.
 
 ## 施工分解
+
+### L0: 真机引导 loader 现代化 (前置阶段)
+
+- **描述**: 弃坏掉的自研 stage1, 改用生态成熟 loader, 并让 CI 真启动真实介质以验真机路径.
+- **方案**: x86_64 = **GRUB2 multiboot2** (`grub-pc` BIOS + `grub-efi` UEFI 双覆盖; `grub.cfg` 增
+  `module2 <cpio>` 把 initrd 作 MB2 tag 3 交出); aarch64 = **U-Boot extlinux `initrd` / `booti`**
+  (arm64 Image + DTB). **退役** [stage1.asm](../../src/kernel/privileged/boot/stage1.asm) 及
+  `edgine.img` 裸 MBR 盘产物 / `run-disk`; CI 用 QEMU 启 **真实 GRUB ISO(SeaBIOS) + `-bios OVMF`(UEFI)**
+  与 U-Boot FAT 盘, 断言 GRUB/U-Boot 经 `multiboot2 module2` / `initrd` 装载内核与 cpio——比
+  `-kernel`(QEMU 内建 loader) 贴近真机.
+- **状态**: []
+- **详情**: 用户裁定「GRUB2 + U-Boot 退 stage1」. stage1 1.56 MiB 读盘上限 < kernel 2.66 MiB, 修补
+  它 = 重造轮子 (BIOS int13 多段读 / 跨固件脆) 且还要自实现 initrd 装载; 用 GRUB/U-Boot 一举两得
+  (真机引导 + boot-module 载体, 正是 D1/D2 所需). UEFI-native (EFI-stub / EDK2) 为 BIOS 退场后的
+  长期演进、后置 (见开放议题). 与 D1 协同: GRUB `module2` 就是 D1 的真机 tag 3 来源.
 
 ### D0: 调研与前提验证
 
 - **描述**: 落地前的协议/工具/波及面实测, 杜绝把假设当事实.
 - **方案**:
   - 实测 QEMU `-kernel kernel.flat -initrd cpio`(x86_64) 与 `-M virt -kernel Image -initrd cpio`(aarch64)
-    是否分别按 MB2 模块 / DTB `/chosen` 交出 initrd 位置.
+    是否分别按 MB2 模块 / DTB `/chosen` 交出 initrd 位置 (QEMU 镜像侧快速验证; 真机 loader 的
+    module 行为与 stage1 退役归 L0).
   - 枚举全部进入用户态的启动腿 (`qemu_boot_test.sh` / `qemu_slaac_test.sh` / `initramfs_boot_test.sh` /
     `aarch64_cow_boot_test.sh` / `thread_stress_test.sh` / `gic_stress_test.sh` / `qemu_mcast_test.sh` /
     `pci_devices_boot_test.sh` / `lockdep_feature_probe.sh` / `lockdep_overhead_ab.sh` /
     `wasmi_boot_test.sh` / `qemu_liveness_probe.sh` 等) 与各自 `-kernel` 起法.
   - 定 aarch64 EGFS 磁盘镜像生成方案 (无 `mkfs.egfs` 工具).
-  - 登记 stage1 约束: 512 字节 MBR ([stage1.asm](../../src/kernel/privileged/boot/stage1.asm) `TOTAL_SECT=3200`)
-    读 kernel 到 0x100000 即跳转, **无法承载 module** ⇒ boot-module 只能走 QEMU `-initrd` /
-    GRUB `module2`; 真机 stage1(MBR) 路径为开放议题.
 - **状态**: []
 - **详情**: D0 实测结论决定 D1/D2/D3 的具体形态; 不得跳过.
 
@@ -186,13 +208,13 @@ cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) �
   4 MiB; x86_64 K-08 因镜像缩小自然不再触发.
 - **双架构**: x86_64 (MB2 tag 3) 与 aarch64 (DTB `/chosen`) 均从 boot-module 装载 `/init` 并进
   Ring 3; aarch64 EGFS 磁盘根可挂载并跑用户态.
-- **退役 (D4)**: x86_64 低半区 kview 恒等窗口退役后 `user_va_lower_bound` 不再随 kernel_end 增长;
+- **退役 (决策 D)**: x86_64 低半区 kview 恒等窗口退役后 `user_va_lower_bound` 不再随 kernel_end 增长;
   回归锁保护 copy_*_user 直射区路径.
 
 ## 开放议题 (不在本轮施工)
 
-- **stage1 (x86_64 MBR) 载体**: 512 字节 MBR 无法载 module; 真机 MBR 引导路径需扩展 stage1/改用
-  GRUB 才能用 boot-module. 本轮以 QEMU `-initrd` / GRUB `module2` 为验证载体, 真机 stage1 路径延后.
+- **UEFI-native loader 演进**: L0 用 GRUB2 覆盖 BIOS + UEFI 两类真机; 待老 BIOS 机退场后可进一步上
+  EFI-stub / EDK2 原生 loader (直接读文件系统载 kernel+initrd), 作为 BIOS 弃用后的长期形态.
 - **aarch64 EFI config table initrd**: UEFI 直启时 initrd 可经 `LINUX_EFI_INITRD_MEDIA_GUID`; 本轮
   先走 DTB `/chosen` (QEMU virt / U-Boot).
 - **mkfs EGFS 工具**: aarch64 磁盘镜像生成的格式化工具缺失; 若复用 x86_64 建盘再挂 aarch64 有
