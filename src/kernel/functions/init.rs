@@ -51,20 +51,8 @@ pub fn is_init_running() -> bool {
 // initramfs 载体装载 (K-07b: 用户态程序经文件系统进入, 双架构共用)
 // ============================================================================
 
-/// 把本架构的 initramfs cpio 归档编进镜像 (`feature = "initramfs"`).
-///
-/// 路径按**本编译目标架构**取 `other/build/<arch>/user/initramfs.cpio` (与 S-6
-/// 三条防线同口径: 产物按架构分目录, 两架构互不覆盖).
-///
-/// host target 取空切片: 判据用 `target_os` 而非 feature —— host 侧 lint 维
-/// (host-test / kernel_test) 与 host-tests 都会编译本块, 不桩化即让 host 编译硬
-/// 依赖 `other/build/` 下的裸机产物 (该目录仅由 make 生成且不入版本库).
-#[cfg(all(feature = "initramfs", target_os = "none", target_arch = "x86_64"))]
-const INITRAMFS_CPIO: &[u8] = include_bytes!("../../../other/build/x86_64/user/initramfs.cpio");
-#[cfg(all(feature = "initramfs", target_os = "none", target_arch = "aarch64"))]
-const INITRAMFS_CPIO: &[u8] = include_bytes!("../../../other/build/aarch64/user/initramfs.cpio");
-#[cfg(all(feature = "initramfs", not(target_os = "none")))]
-const INITRAMFS_CPIO: &[u8] = &[];
+// initramfs cpio 不再编译期嵌入 (用户裁定 D3 严格零嵌入): 由引导器作为 boot-module
+// 交付内存, 经 `privileged::boot::initrd_blob()` 取用 (见下方 `load_init_from_initramfs`).
 
 /// 解压 initramfs 并把归档里的 `/init` 载入为 PID 1, 返回其 pid.
 ///
@@ -77,22 +65,12 @@ const INITRAMFS_CPIO: &[u8] = &[];
 /// 是 K-07b 用户态运行射程的入口.
 #[cfg(feature = "initramfs")]
 fn load_init_from_initramfs() -> i32 {
-    // 优先取引导器交付的 initrd 模块 (boot-module); 无模块时回退内嵌 cpio (切模块过渡).
-    let module = crate::privileged::boot::initrd_blob();
-    let blob: &[u8] = match module {
-        Some(b) => {
-            crate::klog_boot_info!("[USER] initramfs from boot module ({} bytes)", b.len());
-            b
-        }
-        None => {
-            if INITRAMFS_CPIO.is_empty() {
-                crate::klog_boot_info!("[USER] initramfs archive is empty");
-                return -1;
-            }
-            crate::klog_boot_info!("[USER] initramfs from embedded cpio");
-            INITRAMFS_CPIO
-        }
+    // 严格零嵌入 (裁定 A): cpio 只来自引导器 boot-module; 无模块无 cpio → -1 (上层回落 init.bin).
+    let Some(blob) = crate::privileged::boot::initrd_blob() else {
+        crate::klog_boot_info!("[USER] no boot-module initrd (cpio must come from bootloader)");
+        return -1;
     };
+    crate::klog_boot_info!("[USER] initramfs from boot module ({} bytes)", blob.len());
     let count = match crate::functions::fs::initramfs::unpack(blob) {
         Ok(count) => count,
         Err(e) => {

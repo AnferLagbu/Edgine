@@ -228,6 +228,13 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   `load_init_from_initramfs` 改为**优先模块、回落内嵌 cpio**. 默认构建/双架构 build 6/6/quick 审计/host
   契约测试全绿(两处 feature needle 同批重指). 余项 = 删三类嵌入 + 启动腿改 GRUB 携 module + exec 读
   VFS 的**原子批**(见上条耦合), 未做.
+- **D3 cpio 解耦已落地 (2026-11-16, 主目标)**: 删 `INITRAMFS_CPIO` 三处 `include_bytes!` + build.rs cpio
+  嵌入护栏; `load_init_from_initramfs` 只认 boot-module; 载体腿 x86 改 **GRUB multiboot2 + module2**、aarch64
+  加 `-initrd`; K-07b 契约测试重写为「不嵌入、消费者读模块」。**双架构载体腿实测绿**: x86
+  `Entering Ring 3 (init from /init)`、aarch64 `Entering EL0 (init from /init)`, 解包/线程/EEVDF/exec/wasm
+  全 PASS; **x86 K-08 因 cpio 出镜像而解除**(feature 构建核回小)。build all 6/6、quick 审计绿。**余(严格全
+  零嵌入尾项)**: init.bin 与 wasm 桩仍嵌入(约合默认 0x3f5000, 非 K-08 主因) + exec `\0asm` 读 VFS + 默认
+  启动腿改 module —— 归后续子批/D4.
 
 ### D4: 启动腿改造 (-initrd 携载)
 

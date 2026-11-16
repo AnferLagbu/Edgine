@@ -305,32 +305,29 @@ fn test_unpack_and_read_are_fd_free() {
 // ── 4. init 编排: 双架构都走载体, 产物按架构嵌入 ───────────────────────────
 
 #[test]
-fn test_init_embeds_carrier_per_arch() {
+fn test_init_reads_carrier_from_boot_module_not_embed() {
     let code = code_only(&read_src(INIT_RS));
-    assert_contains(
-        &code,
-        "#[cfg(all(feature = \"initramfs\", target_os = \"none\", target_arch = \"x86_64\"))]",
-        "x86_64 分支按本架构嵌入归档",
-    );
-    assert_contains(
-        &code,
-        "#[cfg(all(feature = \"initramfs\", target_os = \"none\", target_arch = \"aarch64\"))]",
-        "aarch64 分支按本架构嵌入归档 (与 x86_64 同形, 不得只覆盖一架构)",
-    );
-    assert_contains(
+    // D3 严格零嵌入: cpio 不再 include_bytes! 进内核镜像, 改经 boot-module 取用.
+    assert_absent(
         &code,
         "other/build/x86_64/user/initramfs.cpio",
-        "x86_64 嵌入路径含架构段",
+        "cpio 不得编译期嵌入 (x86_64) —— D3 零嵌入",
     );
-    assert_contains(
+    assert_absent(
         &code,
         "other/build/aarch64/user/initramfs.cpio",
-        "aarch64 嵌入路径含架构段",
+        "cpio 不得编译期嵌入 (aarch64) —— D3 零嵌入",
+    );
+    assert_absent(&code, "INITRAMFS_CPIO", "不得残留 INITRAMFS_CPIO 常量");
+    assert_contains(
+        &code,
+        "crate::privileged::boot::initrd_blob()",
+        "cpio 消费者必须经 boot-module 安全读数器取数",
     );
     assert_contains(
         &code,
-        "#[cfg(all(feature = \"initramfs\", not(target_os = \"none\")))]",
-        "host 侧取空切片 (host 编译不得硬依赖裸机产物)",
+        "initramfs from boot module",
+        "载体路径须可观测来自 boot module",
     );
 }
 
@@ -374,24 +371,15 @@ fn test_init_loads_init_from_filesystem_on_both_arms() {
 // ── 5. build.rs: feature 点亮时按本架构要求归档 ────────────────────────────
 
 #[test]
-fn test_build_rs_requires_carrier_when_feature_on() {
+fn test_build_rs_no_longer_requires_embedded_cpio() {
     let code = code_only(&read_src(BUILD_RS));
-    assert_contains(
+    // D3 零嵌入: cpio 走 boot-module, 内核构建不再对 cpio 产物做嵌入护栏/重编译触发.
+    assert_absent(
         &code,
-        "std::env::var(\"CARGO_FEATURE_INITRAMFS\")",
-        "仅 feature 点亮时要求归档 (默认构建不该被它绑住)",
+        "CARGO_FEATURE_INITRAMFS",
+        "不再按 feature 要求嵌入 cpio",
     );
-    assert_contains(
-        &code,
-        "user/initramfs.cpio",
-        "检查路径与本模块 include 同源",
-    );
-    assert_contains(&code, "cargo:rerun-if-changed={}", "必须发出重编译触发器");
-    assert_contains(
-        &code,
-        "cpio.display()",
-        "rerun-if-changed 必须给绝对路径 (相对路径以包根为基准, 会静默失效 —— S-6 防线③)",
-    );
+    assert_absent(&code, "cpio.display()", "不再对 cpio 发 rerun-if-changed");
 }
 
 // ── 6. feature 默认关闭 ────────────────────────────────────────────────────

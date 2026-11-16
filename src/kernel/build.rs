@@ -58,6 +58,14 @@ fn main() {
             .join(&target_arch)
             .join("user/wasmstub.bin");
         require_exists(&wasm_stub);
+        // P1: 用户态 wasmi 运行时桩 wasmrun.bin 与 wasmstub.bin 同由 `make user` 产出
+        // (两 workspace 成员恒构建); `wasm_userspace` feature 选桩嵌入其一 (wasm/stub.rs
+        // 互斥 cfg), 两者恒存在, 故一并做存在性护栏与重编译触发.
+        let wasm_run = base
+            .join("other/build")
+            .join(&target_arch)
+            .join("user/wasmrun.bin");
+        require_exists(&wasm_run);
         // S-6 防线③附带: rerun-if-changed 必须给**绝对路径**. cargo 对相对路径以
         // 包根 (CARGO_MANIFEST_DIR = src/kernel) 为基准解析, 而 include_bytes! 以
         // 源文件为基准 —— 旧写法 `other/build/user/init.bin` 实际指向不存在的
@@ -70,23 +78,9 @@ fn main() {
         }
         println!("cargo:rerun-if-changed={}", init_bin.display());
         println!("cargo:rerun-if-changed={}", wasm_stub.display());
-        // K-07b: initramfs 载体归档按**本架构**目录检查, 与 `functions/init.rs` 的
-        // `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
-        // 仅在 feature 点亮时要求: 默认构建不嵌归档, 不该被它的存在性绑住.
-        // rerun-if-changed 同样只给绝对路径 (同 init.bin 的 S-6 防线③理由).
-        if std::env::var("CARGO_FEATURE_INITRAMFS").is_ok() {
-            let cpio = base
-                .join("other/build")
-                .join(&target_arch)
-                .join("user/initramfs.cpio");
-            assert!(
-                cpio.exists(),
-                "initramfs 载体缺失: {} — 请先运行 `make ARCH={} user` \
-                 (由 scripts/make_initramfs_cpio.py 生成)",
-                cpio.display(),
-                target_arch
-            );
-            println!("cargo:rerun-if-changed={}", cpio.display());
-        }
+        println!("cargo:rerun-if-changed={}", wasm_run.display());
+        // D3 零嵌入: initramfs cpio 不再编译期嵌入内核镜像, 改由引导器作 boot-module
+        // 交付 (经 privileged::boot::initrd_blob 取用). 故内核构建不再对 cpio 产物做
+        // 存在性护栏/重编译触发; cpio 仍由 `make user` 生产, 供引导介质打包.
     }
 }

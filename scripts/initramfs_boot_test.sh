@@ -68,9 +68,19 @@ esac
 ARCH_LIST="$ARCH"
 [ "$ARCH" = "all" ] && ARCH_LIST="x86_64 aarch64"
 
-image_of() {
+# 引导产物: x86 走 GRUB multiboot2 + module2 携 cpio; aarch64 走 -initrd (QEMU virt 经 DTB /chosen).
+kernel_for_boot() {
     if [ "$1" = "x86_64" ]; then
-        echo "other/build/x86_64/kernel.flat"
+        echo "other/build/x86_64/initramfs.iso"
+    else
+        echo "other/build/aarch64/kernel-aarch64.img"
+    fi
+}
+
+# 内核本体产物 (供 verify_image_arch 校验内嵌 init.bin 的架构一致).
+kernel_artifact_of() {
+    if [ "$1" = "x86_64" ]; then
+        echo "other/build/x86_64/kernel.bin"
     else
         echo "other/build/aarch64/kernel-aarch64.img"
     fi
@@ -78,12 +88,30 @@ image_of() {
 
 qemu_of() { echo "qemu-system-$1"; }
 
+# x86_64: 组 GRUB ISO —— multiboot2 载 kernel.bin + module2 载 cpio (boot-module 实际路径).
+prepare_x86_grub_iso() {
+    local idir="other/build/initramfs_isodir"
+    rm -rf "$idir"; mkdir -p "$idir/boot/grub"
+    cp other/build/x86_64/kernel.bin "$idir/boot/kernel.bin" || return 1
+    cp other/build/x86_64/user/initramfs.cpio "$idir/boot/initramfs.cpio" || return 1
+    cat > "$idir/boot/grub/grub.cfg" <<'GEOF'
+set timeout=0
+set default=0
+menuentry "Edgine" {
+    multiboot2 /boot/kernel.bin
+    module2 /boot/initramfs.cpio initramfs
+}
+GEOF
+    command -v grub2-mkrescue >/dev/null 2>&1 || return 1
+    grub2-mkrescue -o other/build/x86_64/initramfs.iso "$idir" >/dev/null 2>&1
+}
+
 qemu_args_of() {
     local arch="$1"
     if [ "$arch" = "x86_64" ]; then
-        echo "-M q35 -m 512 -smp $SMP -kernel $(image_of "$arch")"
+        echo "-M q35 -m 512 -smp $SMP -cdrom other/build/x86_64/initramfs.iso"
     else
-        echo "-M virt,gic-version=3 -cpu max -m 512 -smp $SMP -kernel $(image_of "$arch")"
+        echo "-M virt,gic-version=3 -cpu max -m 512 -smp $SMP -kernel other/build/aarch64/kernel-aarch64.img -initrd other/build/aarch64/user/initramfs.cpio"
     fi
 }
 
@@ -92,10 +120,10 @@ boot_and_check() {
     local arch="$1"
     local log="$LOG_DIR/initramfs_boot_${arch}.log"
     local image
-    image="$(image_of "$arch")"
+    image="$(kernel_for_boot "$arch")"
 
     if [ ! -f "$image" ]; then
-        err "[$arch] 镜像缺失: $image"
+        err "[$arch] 引导产物缺失: $image"
         return 1
     fi
     command -v "$(qemu_of "$arch")" >/dev/null 2>&1 || {
@@ -210,9 +238,17 @@ for arch in $ARCH_LIST; do
         FAILED=$((FAILED + 1))
         continue
     fi
+    # x86_64: 组 GRUB module2 ISO (cpio 不再嵌入内核, 须由引导器作模块交付).
+    if [ "$arch" = "x86_64" ]; then
+        if ! prepare_x86_grub_iso; then
+            err "[x86_64] GRUB module2 ISO 组包失败 (需 grub2-mkrescue)"
+            FAILED=$((FAILED + 1))
+            continue
+        fi
+    fi
     # S-6 防线③: 启动前先确认镜像内嵌的本架构用户态产物一致
     if ! python3 scripts/verify_image_arch.py --arch "$arch" \
-        --image "$(image_of "$arch")" \
+        --image "$(kernel_artifact_of "$arch")" \
         --init "other/build/$arch/user/init.bin"; then
         err "[$arch] 镜像架构自检未通过 — 拒绝在不可信镜像上跑门禁"
         FAILED=$((FAILED + 1))
