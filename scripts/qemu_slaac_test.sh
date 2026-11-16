@@ -240,9 +240,8 @@ run_qemu() {
         -display none \
         -no-reboot \
         -m 512 -smp 2 \
-        -kernel other/build/x86_64/kernel.flat \
-        -netdev tap,id=n0,ifname="$TAP_IF",script=no,downscript=no \
-        -device e1000,netdev=n0,mac="$KERNEL_MAC" \
+        -cdrom other/build/x86_64/boot_module.iso \
+        -netdev tap,id=n0,ifname="$TAP_IF",script=no,downscript=no \        -device e1000,netdev=n0,mac="$KERNEL_MAC" \
         >/dev/null 2>&1 || true
 }
 
@@ -291,11 +290,14 @@ for tool in qemu-system-x86_64 dnsmasq python3 ip; do
     command -v "$tool" >/dev/null 2>&1 || { err "缺少依赖: $tool"; exit 1; }
 done
 
-# init 内嵌于内核镜像 (include_bytes!), 用户态源码变更须先重建
+# D4: boot-with-module helper (x86 GRUB module2 交付 cpio)
+source scripts/boot_module.sh
+
+# D4: initramfs-feature 核 (cpio 经 boot-module 交付); x86 组 GRUB module2 ISO
 if [ "$SKIP_BUILD" != "1" ]; then
-    info "构建 x86_64 用户态 + 内核 (make ARCH=x86_64 user all)"
-    if ! make ARCH=x86_64 user all >/dev/null 2>&1; then
-        err "构建失败, 请手动执行 make ARCH=x86_64 user all 查看详情"
+    info "构建 x86_64 initramfs-feature 核 + GRUB module2 ISO"
+    if ! { boot_module_build x86_64 && boot_module_iso_x86; } >/dev/null 2>&1; then
+        err "boot-module 构建/组包失败, 请手动排查"
         exit 1
     fi
 fi

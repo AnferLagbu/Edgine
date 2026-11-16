@@ -101,11 +101,16 @@ GDB
     echo ""
 }
 
+# D4: 构建非-lockdep initramfs-feature 核 + GRUB module2 ISO (cpio 经 boot-module 交付)
+source scripts/boot_module.sh
+boot_module_build_nolockdep x86_64 >/dev/null 2>&1
+if ! boot_module_iso_x86; then echo "ERROR: boot-module ISO 组包失败"; exit 2; fi
+
 frozen=0; alive=0; unreadable=0
 for b in $(seq 1 "$BOOTS"); do
     LOG="$OUT/boot${b}.log"; BT="$OUT/boot${b}.bt"; rm -f "$LOG" "$BT"
     HP=$((HOST_PORT + b)); GP=$((GDB_BASE + b))
-    qemu-system-x86_64 -m 512 -smp "$SMP" -kernel "$IMG" -gdb "tcp::${GP}" \
+    qemu-system-x86_64 -m 512 -smp "$SMP" -cdrom other/build/x86_64/boot_module.iso -gdb "tcp::${GP}" \
         -device e1000,netdev=n0 -netdev "user,id=n0,hostfwd=tcp::${HP}-:80" \
         -serial "file:${LOG}" -display none -no-reboot >/dev/null 2>&1 &
     QPID=$!

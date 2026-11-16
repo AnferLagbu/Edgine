@@ -21,6 +21,12 @@ boot_module_build() {
     make ARCH="$arch" KERNEL_FEATURES=initramfs all
 }
 
+# 非-lockdep 变体 (liveness / perf 测量专用: 关 lockdep 降观测开销失真).
+boot_module_build_nolockdep() {
+    local arch="$1"
+    make ARCH="$arch" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all
+}
+
 # x86_64: 组 GRUB module2 ISO (multiboot2 kernel.bin + module2 cpio),
 # 产出 other/build/x86_64/boot_module.iso。
 boot_module_iso_x86() {
