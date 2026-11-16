@@ -24,6 +24,9 @@ cd "$PROJECT_ROOT"
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
+# D4: boot-with-module helper (cpio 经 boot-module 交付, 不嵌入内核)
+source scripts/boot_module.sh
+
 ARCH="${1:-all}"
 TIMEOUT_QEMU="${TIMEOUT_QEMU:-25}"
 # 门禁强度: 默认 fail-closed —— 任一里程碑缺失即整轮 RC=1.
@@ -151,8 +154,13 @@ boot_and_check() {
 # ---------------------------------------------------------------------------
 ensure_arch_artifacts() {
     local target_arch="$1"
-    if ! make ARCH="$target_arch" all 2>&1 | tail -3; then
-        err "[$target_arch] make ARCH=$target_arch all 失败"
+    # D4: initramfs-feature 核 (cpio 经 boot-module 交付); x86 另组 GRUB module2 ISO
+    if ! boot_module_build "$target_arch" 2>&1 | tail -3; then
+        err "[$target_arch] boot-module 构建失败"
+        return 1
+    fi
+    if [ "$target_arch" = "x86_64" ] && ! boot_module_iso_x86; then
+        err "[x86_64] GRUB module2 ISO 组包失败"
         return 1
     fi
     return 0
@@ -224,15 +232,16 @@ feature_caps_boot() {
     esac
 
     info "[x86_64] P-62: KERNEL_FEATURES=${feat} 构建..."
-    if ! make ARCH=x86_64 KERNEL_FEATURES="$feat" all 2>&1 | tail -3; then
+    if ! make ARCH=x86_64 KERNEL_FEATURES="$feat initramfs" all 2>&1 | tail -3; then
         err "[x86_64] P-62 ${feat}: 构建失败"
         return 1
     fi
+    boot_module_iso_x86 || { err "[x86_64] P-62 ${feat}: ISO 组包失败"; return 1; }
     verify_image_arch "x86_64" other/build/x86_64/kernel.flat || return 1
 
     rm -f "$log"
     boot_and_check "x86_64" "$log" "$FEATURE_BOOT_TIMEOUT" "capabilities" \
-        -m 512 -smp 2 -kernel other/build/x86_64/kernel.flat || return 1
+        -m 512 -smp 2 -cdrom other/build/x86_64/boot_module.iso || return 1
 
     local line
     line=$(grep -aoE "smp=(on|off) preempt=(on|off) kaslr=(on|off) kpti=(on|off) freg=(on|off)" \
@@ -370,7 +379,7 @@ while True:
         -display none
         -no-reboot
         -m 512 -smp 2
-        -kernel other/build/x86_64/kernel.flat
+        -cdrom other/build/x86_64/boot_module.iso
         -device e1000,netdev=n0
         -netdev "user,id=n0,hostfwd=tcp::${E2E_HOST_PORT}-:${E2E_GUEST_PORT}"
     )
@@ -519,7 +528,7 @@ a64_e2e_observe() {
     qemu-system-aarch64 \
         -serial "file:${log}" -display none -no-reboot \
         -M virt,gic-version=3 -cpu max -m 512 -smp 2 \
-        -kernel other/build/aarch64/kernel-aarch64.img \
+        -kernel other/build/aarch64/kernel-aarch64.img -initrd other/build/aarch64/user/initramfs.cpio \
         -device virtio-net-device,netdev=n0 \
         -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}" \
         >/dev/null 2>&1 &
@@ -611,7 +620,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         # PHY_RST) 修复后, 恢复默认 e1000 并断言驱动初始化里程碑 + 完整进 Ring 3.
         # APS-05 (DECISION-084): -smp 2 使次核上线路径与双核并发 EL0 进入门禁.
         if boot_and_check "x86_64" "$X64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -m 512 -smp 2 -kernel other/build/x86_64/kernel.flat; then
+            -m 512 -smp 2 -cdrom other/build/x86_64/boot_module.iso; then
             # P-62 甲 负控制: 默认构建 (KERNEL_FEATURES 空) 的能力行必须四 feature
             # 全 off; 若上一轮 feature 镜像未被复原/戳记失效, 这里会先于功能断言
             # 转红. kpti 在 x86_64 release 恒 on, 一并钉死防止误读为 feature 位.
@@ -719,24 +728,21 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # A-14 乙: execve 探针在无载体启动下必须是显式第三态. 默认根是空 ramfs,
-            # /bin/exectest 只来自 initramfs cpio ⇒ 探针自检载体后打印 `[EXEC] SKIP:`
-            # 并跳过两腿. SKIP 缺失 = 探针跑回 FAIL 或 init 未走到该段; FAIL 出现 =
-            # 载体自检失效 (无载体下两腿按设计不可能成功). 两者都判红 (fail-closed).
-            # -a: 日志可能被串口并发写插入 NUL, 按文本处理以免误判二进制.
-            if grep -aq "\[EXEC\] SKIP:" "$X64_LOG" && ! grep -aq "\[EXEC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] execve 探针无载体呈显式 SKIP 且无 FAIL 噪声 (A-14)"
+            # A-14/W-7 (D4): headline 改走 boot-module 后 cpio 载体在场, exec/wasm 探针
+            # 运行(打印 [EXEC]/[WASM] PASS)而非无载体 SKIP; 二者之一为合规载体态,
+            # 一律不容忍 FAIL (探针载体自检失效). 兼容未来无载体形态.
+            if ! grep -aq "\[EXEC\] FAIL" "$X64_LOG" \
+                && { grep -aq "\[EXEC\] SKIP:" "$X64_LOG" || grep -aq "\[EXEC\] PASS:" "$X64_LOG"; }; then
+                ok "[x86_64] execve 探针载体态合规 (SKIP/PASS, 无 FAIL) (A-14)"
             else
-                warn "[x86_64] execve 探针未呈现无载体第三态 (A-14)"
+                warn "[x86_64] execve 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # W-7: wasm 探针载荷 /bin/hello.wasm 只来自 initramfs cpio; 默认启动
-            # 的空 ramfs 下必须呈显式 SKIP (与 A-14 的 exec 探针同口径), 且 FAIL
-            # 缺席. 端到端 PASS 由 initramfs 载体腿断言.
-            if grep -aq "\[WASM\] SKIP:" "$X64_LOG" && ! grep -aq "\[WASM\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] wasm 探针无载体呈显式 SKIP 且无 FAIL 噪声 (W-7)"
+            if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \
+                && { grep -aq "\[WASM\] SKIP:" "$X64_LOG" || grep -aq "\[WASM\] PASS:" "$X64_LOG"; }; then
+                ok "[x86_64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"
             else
-                warn "[x86_64] wasm 探针未呈现无载体第三态 (W-7)"
+                warn "[x86_64] wasm 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (W-7)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据. 用户态 syscall 只能由 EL0
@@ -851,7 +857,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         # QEMU 经 Image 头 text_offset 定位入口, 与 U-Boot booti / 真机一致.
         # SMP-09 (DECISION-082): 以 -smp 2 启动双核, 使 AP 上线路径进入 CI 门禁.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
-            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img \
+            -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img -initrd other/build/aarch64/user/initramfs.cpio \
             -device virtio-net-device,netdev=n0 \
             -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}"; then
             # A-127d: lockdep 覆盖面读数行 + 四项硬零 (与 x86_64 分支同判据).
@@ -948,19 +954,20 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] EEVDF 观测快照缺失或账目守恒判据失败 (K-07b 批3)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # A-14 乙: execve 探针的无载体第三态 (与 x86_64 分支同断言).
-            # 载体自检链路与架构无关, 故两架构的读数逐字相同 (取证见 A-14 详情).
-            if grep -aq "\[EXEC\] SKIP:" "$A64_LOG" && ! grep -aq "\[EXEC\] FAIL" "$A64_LOG"; then
-                ok "[aarch64] execve 探针无载体呈显式 SKIP 且无 FAIL 噪声 (A-14)"
+            # A-14/W-7 (D4): aarch64 改走 boot-module 后载体在场, exec/wasm 探针运行(PASS)
+            # 而非无载体 SKIP; 二者之一合规, 一律拒 FAIL. 与 x86 分支同口径.
+            if ! grep -aq "\[EXEC\] FAIL" "$A64_LOG" \
+                && { grep -aq "\[EXEC\] SKIP:" "$A64_LOG" || grep -aq "\[EXEC\] PASS:" "$A64_LOG"; }; then
+                ok "[aarch64] execve 探针载体态合规 (SKIP/PASS, 无 FAIL) (A-14)"
             else
-                warn "[aarch64] execve 探针未呈现无载体第三态 (A-14)"
+                warn "[aarch64] execve 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # W-7: wasm 探针无载体第三态 (与 x86_64 分支同断言, 载体链路与架构无关).
-            if grep -aq "\[WASM\] SKIP:" "$A64_LOG" && ! grep -aq "\[WASM\] FAIL" "$A64_LOG"; then
-                ok "[aarch64] wasm 探针无载体呈显式 SKIP 且无 FAIL 噪声 (W-7)"
+            if ! grep -aq "\[WASM\] FAIL" "$A64_LOG" \
+                && { grep -aq "\[WASM\] SKIP:" "$A64_LOG" || grep -aq "\[WASM\] PASS:" "$A64_LOG"; }; then
+                ok "[aarch64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"
             else
-                warn "[aarch64] wasm 探针未呈现无载体第三态 (W-7)"
+                warn "[aarch64] wasm 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (W-7)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # APS-05 (DECISION-084): 双核并发 EL0 判据 (与 x86_64 分支同构).
