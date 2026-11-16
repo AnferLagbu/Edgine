@@ -968,7 +968,9 @@ fn boot_rootfs_and_probes() {
                 .spa
                 .disk_present
                 .store(true, core::sync::atomic::Ordering::Release);
-            let r = crate::functions::fs::api::vfs_mount_internal(b"/".as_ptr(), b"egfs".as_ptr());
+            // 用安全接口 (自动 NUL 终止); 原 b"/".as_ptr() / b"egfs".as_ptr() 无终止符,
+            // ptr_to_str 越界读 → fs_name 非 "egfs" → from_name Unknown → -EOPNOTSUPP(潜藏 bug).
+            let r = crate::functions::fs::api::vfs_mount_safe("/", "egfs");
             if r == 0 {
                 let n_drives = crate::functions::fs::egfs::entry::get_egfs()
                     .drives_discovered
@@ -980,7 +982,7 @@ fn boot_rootfs_and_probes() {
                     crate::klog_boot_info!("Root filesystem: EGFS (disk)");
                 }
             } else {
-                crate::klog_boot_info!("EGFS mount failed");
+                crate::klog_boot_info!("EGFS mount failed (r={})", r);
             }
         } else {
             crate::klog_boot_info!("EGFS: running in memory mode (no disk)");

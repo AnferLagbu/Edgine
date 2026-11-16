@@ -249,7 +249,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **描述**: aarch64 virtio-blk → EGFS 挂根 → 从磁盘装载用户态.
 - **方案**: 去 [lib.rs:940](../../src/kernel/lib.rs#L940) 门控; 接 EGFS 自动发现挂载; 补 aarch64
   EGFS 磁盘镜像生成; 新增 aarch64 磁盘根 QEMU 腿.
-- **状态**: []
+- **状态**: [X] (aarch64 空盘 EGFS 盘根实测成立; 全 §2.3 于 D6 收口)
 - **详情**: D0 定的镜像生成方案落地. 与 D1-D4 正交 (boot 载体 vs 运行时磁盘根); 可并行.
 - **D5-a 实测 (2026-11-16) + 真前置**: 去 [lib.rs] EGFS 挂根块的 `target_arch="x86_64"` 门控(改架构中立)
   后: (a) aarch64 **无盘** → `EGFS memory mode` + `Entering EL0` ✓ 无回归; (b) aarch64 + 空白 virtio-blk 盘 →
@@ -264,6 +264,12 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   **aarch64 空盘实测**: `virtio-blk 请求超时`消失, **`FORMAT: Complete` + `EGFS Initialized (disk, 1 drive)`**(秒级);
   x86 不受影响(走 AHCI/NVMe). ⇒ 驱动层 D5-PR 闭合. **新余项 = `EGFS mount failed`**: 格式成功后
   `vfs_mount_internal("/","egfs")` 返非零 —— aarch64 VFS 挂根步骤待查(下一子项, 非驱动问题).
+- **D5 收口 (2026-11-16, aarch64)**: 修 `vfs_mount_internal` **调用处的 NUL 终止 bug** —— 原
+  `b"/".as_ptr()` / `b"egfs".as_ptr()` 无终止符, `ptr_to_str` 越界读致 fs_name≠"egfs" → `FsType::Unknown`
+  → `-EOPNOTSUPP(-95)`, EGFS 挂根恒失败 (此 bug **x86 磁盘根亦从未成功**, 因无盘未触发). 改用
+  `vfs_mount_safe("/","egfs")`(自动 NUL 终止). **aarch64 空盘实测**: `FORMAT: Complete` →
+  **`Root filesystem: EGFS (disk)`** → `Entering EL0`; 无盘 → memory mode 无回归; x86 无盘不受影响.
+  ⇒ **EGFS 接入 aarch64 成立** (空盘自格式化 + virtio-blk legacy 修复 + 挂根 NUL 修复三件齐备).
 
 ### D6: 收口 (七门槛 + 文档 + 台账)
 
