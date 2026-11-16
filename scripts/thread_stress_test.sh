@@ -35,6 +35,8 @@ set -uo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
+# D4: boot-with-module helper (cpio 经 boot-module 交付, 不嵌入内核)
+source scripts/boot_module.sh
 
 ITER="${1:-50}"
 TIMEOUT="${THREAD_STRESS_TIMEOUT:-25}"
@@ -66,14 +68,13 @@ boot_once() {
     local arch="$1" log="$2"
     local image qemu_bin
     local -a args
+    image="$(boot_module_image "$arch")"
     if [ "$arch" = "x86_64" ]; then
-        image="other/build/x86_64/kernel.flat"
         qemu_bin="qemu-system-x86_64"
-        args=(-M q35 -m 512 -smp "$SMP" -kernel "$image")
+        args=(-M q35 -m 512 -smp "$SMP" $(boot_module_carrier_args x86_64))
     else
-        image="other/build/aarch64/kernel-aarch64.img"
         qemu_bin="qemu-system-aarch64"
-        args=(-M virt,gic-version=3 -cpu max -m 512 -smp "$SMP" -kernel "$image")
+        args=(-M virt,gic-version=3 -cpu max -m 512 -smp "$SMP" $(boot_module_carrier_args aarch64))
     fi
 
     if [ ! -f "$image" ]; then
@@ -125,6 +126,15 @@ echo "[thread-stress] 里程碑断言: '$MARKER' + '[THREAD] PASS:' + conserve=o
 [ -n "$QEMU_EXTRA" ] && echo "[thread-stress] 附加 QEMU 参数: $QEMU_EXTRA"
 
 for arch in $ARCH_LIST; do
+    # D4: 构建 initramfs-feature 核; x86 另组 GRUB module2 ISO (cpio 经 boot-module 交付)
+    if ! boot_module_build "$arch" >/dev/null 2>&1; then
+        echo "[$arch] boot-module 构建失败" >&2
+        FAILED=$((FAILED + 1)); continue
+    fi
+    if [ "$arch" = "x86_64" ] && ! boot_module_iso_x86; then
+        echo "[x86_64] GRUB module2 ISO 组包失败" >&2
+        FAILED=$((FAILED + 1)); continue
+    fi
     echo "[$arch]"
     for i in $(seq 1 "$ITER"); do
         TOTAL=$((TOTAL + 1))

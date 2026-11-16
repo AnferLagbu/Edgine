@@ -47,6 +47,8 @@ NC='\033[0m'
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
+# D4: boot-with-module helper (x86 GRUB module2 交付 cpio)
+source scripts/boot_module.sh
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/qemu_mcast_x86_64.log"
@@ -203,7 +205,7 @@ run_qemu() {
         -display none \
         -no-reboot \
         -m 512 -smp 2 \
-        -kernel other/build/x86_64/kernel.flat \
+        $(boot_module_carrier_args x86_64) \
         -netdev socket,id=n0,udp="$HOST_ADDR:$HOST_PORT",localaddr="$HOST_ADDR:$PEER_PORT" \
         -device e1000,netdev=n0,mac="$KERNEL_MAC" \
         >/dev/null 2>&1 || true
@@ -239,10 +241,10 @@ done
 # 走 ci/build.sh 而非直接 make: 它自带跨架构中间产物陈旧处理 (上一次构建为
 # aarch64 时, 裸 `make ARCH=x86_64 user all` 会因子命令串扰而失败).
 if [ "$SKIP_BUILD" != "1" ]; then
-    info "构建 x86_64 用户态 + 内核 (./ci/build.sh x86_64)"
+    info "构建 x86_64 initramfs-feature 核 + GRUB module2 ISO (cpio 经 boot-module 交付)"
     build_log="$(mktemp)"
-    if ! ./ci/build.sh x86_64 >"$build_log" 2>&1; then
-        err "构建失败 (./ci/build.sh x86_64), 末 10 行:"
+    if ! { boot_module_build x86_64 && boot_module_iso_x86; } >"$build_log" 2>&1; then
+        err "boot-module 构建/组包失败, 末 10 行:"
         tail -10 "$build_log" >&2
         rm -f "$build_log"
         exit 1
