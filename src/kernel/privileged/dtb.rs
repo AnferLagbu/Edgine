@@ -99,6 +99,10 @@ pub struct DtbInfo {
     pub cpus: Option<CpuTopology>,
     /// PSCI conduit (`/psci` 节点 `method` 属性); 无该节点或无法识别时为 `None`
     pub psci_method: Option<PsciMethod>,
+    /// `/chosen` 节点 `linux,initrd-start` (大端单元格解码); 无该属性时 `None`
+    pub initrd_start: Option<u64>,
+    /// `/chosen` 节点 `linux,initrd-end`; 无该属性时 `None`
+    pub initrd_end: Option<u64>,
 }
 
 /// 解析 DTB 二进制块, 失败时返回 `None`
@@ -153,6 +157,33 @@ pub fn psci_method() -> Option<PsciMethod> {
     PSCI_METHOD.get().copied()
 }
 
+/// 启动阶段从 `/chosen` 解析到的 initrd 物理区 (base, size); 供引导路径转交内核
+static INITRD_REGION: OnceLock<(u64, u64)> = OnceLock::new();
+
+/// 保存启动阶段探测到的 initrd 物理区 (仅引导阶段写入一次, 重复写入被忽略)
+pub fn set_initrd_region(base: u64, size: u64) {
+    let _ = INITRD_REGION.set((base, size));
+}
+
+/// 读取启动阶段探测到的 initrd 物理区; 未探测到时返回 `None`
+#[must_use]
+pub fn initrd_region() -> Option<(u64, u64)> {
+    INITRD_REGION.get().copied()
+}
+
+/// 解码 DTB 单元格值 (大端): 4 字节 = 1 cell (u32), 8 字节 = 2 cells (u64).
+fn decode_be_cells(value: &[u8]) -> Option<u64> {
+    match value.len() {
+        4 => Some(u64::from(read_be32(value, 0)?)),
+        8 => {
+            let hi = u64::from(read_be32(value, 0)?);
+            let lo = u64::from(read_be32(value, 4)?);
+            Some(hi << 32 | lo)
+        }
+        _ => None,
+    }
+}
+
 /// 单个节点的属性切片集合 (仅在节点结束时用于资源识别)
 #[derive(Debug, Clone, Copy, Default)]
 struct NodeScan<'a> {
@@ -179,6 +210,8 @@ struct Parser<'a> {
     cpus_addr_cells: u32,
     /// `/psci` 节点自身属性所在深度 (0 = 尚未遇到 `/psci`)
     psci_depth: usize,
+    /// `/chosen` 节点自身属性所在深度 (0 = 尚未遇到 `/chosen`)
+    chosen_depth: usize,
     /// 已枚举的 CPU 数量
     cpus_count: u32,
     /// 已枚举的 CPU MPIDR
@@ -227,10 +260,13 @@ impl<'a> Parser<'a> {
                 gic_redist_base: None,
                 cpus: None,
                 psci_method: None,
+                initrd_start: None,
+                initrd_end: None,
             },
             cpus_depth: 0,
             cpus_addr_cells: 0,
             psci_depth: 0,
+            chosen_depth: 0,
             cpus_count: 0,
             cpus_mpidrs: [0; CPU_MPIDR_MAX],
         })
@@ -302,6 +338,10 @@ impl<'a> Parser<'a> {
         if self.depth == ROOT_DEPTH && name == b"psci" {
             self.psci_depth = self.depth + 1;
         }
+        // 识别根的 `/chosen` 节点: 其 `linux,initrd-start/end` 交出 initrd 物理区
+        if self.depth == ROOT_DEPTH && name == b"chosen" {
+            self.chosen_depth = self.depth + 1;
+        }
         self.stack[self.depth] = NodeScan {
             name,
             compatible: &[],
@@ -365,6 +405,18 @@ impl<'a> Parser<'a> {
                 self.info.psci_method = decode_psci_method(value);
             }
             return Some(());
+        }
+
+        // `/chosen` 节点的 initrd 物理区 (大端单元格: 4 或 8 字节)
+        if self.chosen_depth != 0 && self.depth == self.chosen_depth {
+            if name == b"linux,initrd-start" {
+                self.info.initrd_start = decode_be_cells(value);
+                return Some(());
+            }
+            if name == b"linux,initrd-end" {
+                self.info.initrd_end = decode_be_cells(value);
+                return Some(());
+            }
         }
 
         let idx = self.depth.checked_sub(1)?;

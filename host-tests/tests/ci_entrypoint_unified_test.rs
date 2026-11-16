@@ -311,7 +311,7 @@ fn test_p53_f9_dead_code_comment_gate_is_wired() {
 
     for needle in [
         r#"SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust", "kani-harness")"#,
-        r#"VENDORED_DIRS = {"smoltcp"}"#,
+        r#"VENDORED_DIRS = {"smoltcp", "vendor"}"#,
         "for root in SCAN_ROOTS",
         "扫描根不存在",
         "if args.self_test:",

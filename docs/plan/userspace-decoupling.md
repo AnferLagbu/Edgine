@@ -188,13 +188,20 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 
 - **描述**: aarch64 内核经 DTB `/chosen` 的 initrd-start/end 取得 initrd 区, 同上管线.
 - **方案**: [privileged/dtb.rs](../../src/kernel/privileged/dtb.rs) 新增 `/chosen` initrd-start/end
-  解析, 填 `BootInfo`; 其余与 D1 共用 `load_init_from_initramfs` 模块区读法.
-- **状态**: []
+  解析, 填 `BootInfo`; 其余与 D1 共用模块区读法.
+- **状态**: [X] (解析+预留完成并实测; 消费者与全 §2.3 于 D3/D6)
 - **详情**: DTB 属性按 32/64 位 cell 宽度解析; 与 aarch64 entry 已有的 `_fdt_addr`
   高半区别名衔接 ([boot/aarch64/entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs)).
 - **L0 spike 实测 (2026-11-16)**: `qemu-system-aarch64 -M virt -kernel Image -initrd cpio -M virt,dumpdtb=…`
   导出的 DTB 字节含 `/chosen` 节点与 `linux,initrd-start` + `linux,initrd-end` 两属性 ⇒ **aarch64
   的 initrd 位置由 QEMU virt 确实经 DTB `/chosen` 交出**, D2 的 aarch64 前提成立.
+- **D2 实装实测 (2026-11-16)**: `dtb.rs` 的 `Parser` 以 `chosen_depth` 识别根 `/chosen`, 读
+  `linux,initrd-start/end` (大端单元格 4/8 字节, `decode_be_cells`) → `DtbInfo.initrd_start/end`;
+  `entry.rs` 的 `apply_fdt_overrides` 经 `dtb::set_initrd_region` 持久化; `boot::init` aarch64
+  分支取 `dtb::initrd_region` 填 `BootInfo`. aarch64 QEMU `-initrd` 实测:
+  `Boot module initrd: base=0x48000000 size=750388`(=cpio 精确字节)、`initrd region reserved`(页对齐
+  预留成功, **aarch64 无 x86 那类与堆重叠**)、到 `Entering EL0 (pid=5)`. 双架构 build 6/6、quick
+  审计(clippy 含 `collapsible_if` 修复 + fmt)绿、host 结构锁 needle 同批重指(`VENDORED_DIRS` 加 vendor).
 
 ### D3: 严格零嵌入收口 (删全部用户态 include_bytes!)
 

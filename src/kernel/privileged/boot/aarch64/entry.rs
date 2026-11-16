@@ -183,6 +183,13 @@ unsafe fn apply_fdt_overrides() -> Option<dtb::DtbInfo> {
             dtb::set_psci_method(method);
         }
 
+        // 持久化 initrd 物理区 (经 /chosen) 供 boot::init 填入 BootInfo 并 PMM 预留.
+        if let (Some(start), Some(end)) = (info.initrd_start, info.initrd_end)
+            && end > start
+        {
+            dtb::set_initrd_region(start, end - start);
+        }
+
         // Device 窗口仅覆盖 [0, 0x4000_0000); 越界基址一律忽略, 沿用默认值.
         if let Some(pa) = info.uart_base.filter(|pa| *pa < DEVICE_WINDOW_END) {
             uart::set_base(pa);

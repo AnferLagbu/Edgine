@@ -447,8 +447,9 @@ pub fn init() -> BootInfo {
         let ms: u64 = option_env!("AARCH64_MEM_MB")
             .and_then(|s| s.parse::<u64>().ok())
             .map_or(512 * 1024 * 1024, |mb| mb * 1024 * 1024);
-        // initrd 位置在 aarch64 经 DTB /chosen 交出 (D2 实现); 当前占位 0.
-        (ms, 0, (0u64, 0u64))
+        // initrd 位置由 aarch64 entry 的 DTB /chosen 解析后经 dtb::initrd_region 交出.
+        let initrd = crate::privileged::dtb::initrd_region().unwrap_or((0, 0));
+        (ms, 0, initrd)
     };
 
     let info = BootInfo {
