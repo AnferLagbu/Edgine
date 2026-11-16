@@ -1,18 +1,21 @@
 //! 内核 crate 的构建脚本 — 嵌入产物的存在性护栏与重编译触发器.
 //!
-//! 裸机 target 下检查 `other/build/<arch>/user/init.bin` (S-6 用户态产物) 与
-//! x86_64 专属的 `other/build/x86_64/stage1.bin` (引导码) 是否存在, 缺失即 panic
-//! (DECISION-H15: 不再生成全 0 占位符, 以免遮蔽真实产物缺失状态); 并对两者发出
-//! **绝对路径**的 `cargo:rerun-if-changed` —— cargo 以包根 `src/kernel` 解析相对
-//! 路径, 而 `include_bytes!` 以源文件为基准, 两者不同源时该指令会静默失效.
-//! `feature = "initramfs"` 点亮时另按本架构检查 `user/initramfs.cpio` 载体 (K-07b).
-//! host target (host-tests 触发) 不做上述检查, 避免干净 checkout 形成隐式 `make` 依赖.
+//! 裸机 target 下检查本架构 `other/build/<arch>/user/` 下仍被 `include_bytes!` 嵌入的
+//! 产物 —— 用户态 wasm 载体桩 `wasmstub.bin` / `wasmrun.bin` (W-7 / P1) 与 x86_64
+//! 专属引导码 `stage1.bin` —— 缺失即 panic (DECISION-H15: 不再生成全 0 占位符, 以免
+//! 遮蔽真实产物缺失状态); 并对它们发出**绝对路径**的 `cargo:rerun-if-changed` ——
+//! cargo 以包根 `src/kernel` 解析相对路径, 而 `include_bytes!` 以源文件为基准, 两者
+//! 不同源时该指令会静默失效. D4 严格零嵌入后 init.bin / initramfs cpio 不再嵌入内核,
+//! 故不再对其做护栏/重编译触发. host target (host-tests 触发) 不做上述检查,
+//! 避免干净 checkout 形成隐式 `make` 依赖.
 
 use std::path::Path;
 
 /// DECISION-H15: 构建产物缺失时直接报错, 不再生成全 0 占位符.
 ///
-/// 原因: stage1.bin / init.bin 由 Makefile 从真实汇编/ELF 产物生成
+/// 原因: 被嵌入的用户态桩产物由 Makefile 从真实 ELF 产物生成
+/// (Makefile:132/177 `cp` 自 `USER_WASMSTUB_ELF` / `USER_WASMRUN_ELF`,
+/// stage1.bin 由 stage1.asm 汇编).
 /// (Makefile:221 由 stage1.asm 汇编, Makefile:132/177 cp 自 `USER_INIT_ELF`).
 /// 若此处静默写入全 0 占位, 会覆盖/遮蔽真实产物或让缺失状态被掩盖,
 /// 且与 Makefile 产物存在顺序冲突 (全 0 镜像被当成真实引导码).
@@ -46,11 +49,8 @@ fn main() {
         // 时删掉它来防异架构残留 —— 该补丁机制已随目录隔离退役, 此处不再需要它:
         // 路径自带 x86_64 段, aarch64 构建既不会读到异架构产物, 也不存在“被删以
         // 后缺失”的正常情形 (本函数仅在 target_arch == "x86_64" 分支检查).
-        let init_bin = base
-            .join("other/build")
-            .join(&target_arch)
-            .join("user/init.bin");
-        require_exists(&init_bin);
+        // D4 零嵌入: init.bin 不再编译期嵌入内核镜像 (init 经 boot-module 交付),
+        // 故内核构建不再对其做存在性护栏/重编译触发 (仍由 `make user` 产出供 verify_image_arch 架构自检).
         // W-7: wasm 用户态入口桩按架构嵌入 (函数侧 `wasm/stub.rs` 的
         // include_bytes! 同源); 缺失即报错, 不生成占位符.
         let wasm_stub = base
@@ -76,7 +76,6 @@ fn main() {
             require_exists(&stage1);
             println!("cargo:rerun-if-changed={}", stage1.display());
         }
-        println!("cargo:rerun-if-changed={}", init_bin.display());
         println!("cargo:rerun-if-changed={}", wasm_stub.display());
         println!("cargo:rerun-if-changed={}", wasm_run.display());
         // D3 零嵌入: initramfs cpio 不再编译期嵌入内核镜像, 改由引导器作 boot-module

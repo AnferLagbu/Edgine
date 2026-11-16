@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""内核镜像内嵌用户态 ELF 的架构自检 (S-6 防线③).
+"""内核镜像与用户态产物的架构自检 (S-6 防线③).
 
-背景: 内核在编译期用 `include_bytes!` 把 `other/build/<arch>/user/init.bin` 原样
-嵌进镜像. 该产物曾跨架构共享同一路径并原地覆盖, 于是出现过"嵌 aarch64 用户态的
-x86_64 镜像" — 全程 0 error / 0 warning / rc=0, 直到进入 Ring 3 执行非法指令才
-#PF. 本脚本把这类问题拦在启动之前, 判定不符即 fail (不降级为 warn).
+背景: 用户态产物曾跨架构共享同一路径并原地覆盖, 内核又曾把它 `include_bytes!`
+嵌进镜像, 于是出现过"嵌 aarch64 用户态的 x86_64 镜像" — 全程 0 error / 0 warning
+/ rc=0, 直到进入 Ring 3 执行非法指令才 #PF. D4 严格零嵌入后内核不再嵌入用户态
+(改由引导器 boot-module 交付), 但本架构产物仍是启动载体的来源, 其架构身份必须
+在启动前核实. 本脚本把这类问题拦在启动之前, 判定不符即 fail (不降级为 warn).
 
-判据说明: 只用两类可靠信号 ——
-  1. 产物 ELF 头部 (`e_ident` 魔数/class/端序 + `e_machine`) 的架构身份;
-  2. 镜像是否**逐字节包含**本架构产物的完整内容 (嵌入是否真的发生).
+判据说明:
+  1. **硬判据** = 产物 ELF 头部 (`e_ident` 魔数/class/端序 + `e_machine`) 的架构身份;
+  2. 镜像是否**逐字节包含**本架构产物: D4 零嵌入后内核镜像不再内嵌 init.bin,
+     故本项**仅信息提示** (含 = 兼容旧内嵌形态, 不含 = 零嵌入合规), 不作失败判据.
 `kernel.flat` 尺寸不参与判定: 同一合法构型在全量/增量构建下尺寸可差数十 KB,
 尺寸只能提示"产物变动过", 不是架构判据.
 
@@ -96,8 +98,8 @@ def check_image_contains(image: Path, init_bin: Path) -> tuple[bool, str]:
     off = data.find(blob)
     if off < 0:
         return False, (
-            f"{image} 未包含 {init_bin} 的完整字节 (镜像陈旧或嵌入了另一份产物; "
-            "请确认 make 依赖与 build.rs rerun-if-changed 生效)"
+            f"{image} 未包含 {init_bin} 的完整字节 (D4 零嵌入下为常态; 若仍按旧内嵌"
+            "形态构建, 则提示镜像陈旧或嵌入了另一份产物)"
         )
     return True, f"{image} @0x{off:x} 内含 {init_bin} ({len(blob)}B) OK"
 
@@ -116,10 +118,10 @@ def main(argv: list[str]) -> int:
         failures.append(msg)
 
     if args.image is not None:
+        # D4 零嵌入: 镜像不再内嵌 init.bin. 含则打印(兼容旧形态), 不含亦合规(零嵌入);
+        # 硬判据 = init 产物 e_machine 与 ARCH 一致 (嵌不嵌都不影响架构身份).
         ok, msg = check_image_contains(args.image, args.init)
-        print(f"{'[OK]' if ok else '[FAIL]'} {msg}")
-        if not ok:
-            failures.append(msg)
+        print(f"{'[OK]' if ok else '[INFO 零嵌入]'} {msg}")
 
     if failures:
         print(

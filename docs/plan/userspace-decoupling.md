@@ -241,8 +241,21 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **描述**: 全部进入用户态的启动腿改 `-initrd <cpio>`, 使零嵌入后仍能进 Ring 3.
 - **方案**: 逐脚本改 `-kernel` 起法附 `-initrd`; 覆盖门槛 5 (`qemu_boot_test.sh`) / e2e / P-62
   feature 运行腿 / wasmi 腿; `initramfs_boot_test.sh` 由「feature 载体腿」转为默认形态.
-- **状态**: []
+- **状态**: [] (载体迁移全部已落, 余 wasmi 腿随 D4-d)
 - **详情**: 波及 12+ 腿 (D0 清单). 每条改后单独真跑一次取证 (红先归因, §QEMU 纪律).
+- **D4-b 载体迁移已落 (2026-11-16)**: 全 user-mode 腿改 boot-module 载体, 单源 helper
+  `scripts/boot_module.sh` (`boot_module_build` / `boot_module_iso_x86` / `boot_module_carrier_args`:
+  x86 = `-cdrom boot_module.iso`(GRUB multiboot2 + module2), aarch64 = `-kernel img -initrd cpio`).
+  覆盖 headline `qemu_boot_test.sh`(双架构主腿 + e2e + P-62 feature 运行维四 feature + lockdep 构建面探针)、
+  `initramfs_boot_test.sh`、`thread_stress` / `qemu_mcast` / `pci_devices` / `gic_stress` /
+  `qemu_liveness_probe`(gdb) / `qemu_slaac`(handoff) / `aarch64_cow_boot_test.sh`. 每次真构建真启动取证.
+- **D4-c 删 init.bin 嵌入已落 (2026-11-16)**: (a) `load_init_from_initramfs` 与
+  `boot::boot_initrd_blob()` 去 `initramfs` feature 门控, 只认 boot-module, **无内嵌回退** ——
+  无模块即报错 + 停机/`qemu_exit`; (b) `src/kernel/build.rs` 删 init.bin 存在性护栏与
+  `rerun-if-changed`; (c) `verify_image_arch.py` 镜像逐字节包含项降为信息提示 (硬判据 = 产物
+  `e_machine`, 产物仍是本架构 cpio 来源); (d) K-07b 契约锁改 `assert_absent("falling back to init.bin")`.
+  读数: build all 6/6 绿 (含 P-62 needle 同批重指 `KERNEL_FEATURES="$feat initramfs"`),
+  headline QEMU 双架构绿 (`init from /init` 经 module), aarch64 COW 腿绿.
 
 ### D5: EGFS 接入 aarch64
 

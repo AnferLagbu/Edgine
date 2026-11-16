@@ -20,8 +20,9 @@
 //!    实测症状正是"归档解析成功但只落 1 个条目、`/init` 不存在". 落盘与读取因此
 //!    必须走 `fs_create` / `Inode::write` / `Inode::read` 的无 fd 形态.
 //!
-//! feature 默认关闭 (内嵌 `init.bin` 仍是出货路径), 所以真跑判据不在默认门禁里,
-//! 由 `ci/audit.sh` full 档的专项 feature 腿 (`scripts/initramfs_boot_test.sh`) 承担.
+//! D4 严格零嵌入后内嵌 `init.bin` 回退已删除, feature 腿即出货启动形态; 真跑判据
+//! 不在默认门禁里, 由 `ci/audit.sh` full 档的专项 feature 腿
+//! (`scripts/initramfs_boot_test.sh`) 承担.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -356,10 +357,10 @@ fn test_init_loads_init_from_filesystem_on_both_arms() {
         "read_file_to_vec",
         "载体路径不得依赖需要 fd 的 read_file_to_vec",
     );
-    assert_eq!(
-        count_needle(&code, "falling back to init.bin"),
-        2,
-        "两架构都保留内嵌 init.bin 回退, 且回退点必须可观测"
+    assert_absent(
+        &code,
+        "falling back to init.bin",
+        "D4 零嵌入: init 只来自 boot-module, 不得保留内嵌 init.bin 回退",
     );
     assert_eq!(
         count_needle(&code, "init from /init"),

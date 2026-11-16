@@ -210,7 +210,6 @@ pub fn get_boot_info() -> &'static BootInfo {
 ///
 /// 该区由引导器装入并经 PMM 预留 (见 `boot_memory_init`), 生命周期覆盖内核运行;
 /// 经高半区直射区映射为只读切片, 供 functions 层解包 (functions 零 unsafe, 见 F1).
-#[cfg(feature = "initramfs")]
 pub fn initrd_blob() -> Option<&'static [u8]> {
     let info = get_boot_info();
     if info.initrd_size == 0 {

@@ -135,8 +135,9 @@ fn test_boot_targets_real_image_and_rejects_x86_64() {
         "必须用真被 -kernel 加载的 .img (kernel.flat 不是 aarch64 产物)"
     );
     assert!(
-        script.contains("-kernel \"$IMAGE\"") && script.contains("-serial \"file:$BOOT_LOG\""),
-        "判据必须来自本架构真启动的串口日志"
+        script.contains("boot_module_carrier_args aarch64")
+            && script.contains("-serial \"file:$BOOT_LOG\""),
+        "判据必须来自本架构真启动的串口日志 (D4: 经 boot-module 载体 -kernel img -initrd)"
     );
     assert_before(
         &script,

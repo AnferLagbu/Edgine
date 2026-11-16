@@ -57,15 +57,13 @@ pub fn is_init_running() -> bool {
 /// 解压 initramfs 并把归档里的 `/init` 载入为 PID 1, 返回其 pid.
 ///
 /// 返回 `<= 0` 表示载体不可用 (归档为空 / 解压失败 / 读不到 `/init` / ELF 装载
-/// 失败), 调用方应回退到内嵌 `init.bin`. 本函数**不**切入用户态: 进入方式与失败
-/// 兜底按架构不同 (x86_64 `qemu_exit` / aarch64 `halt` 循环), 由调用方决定.
+/// 失败). 严格零嵌入 (D4): 无内嵌 `init.bin` 回退, 调用方按失败处理 (报错 + 停机 /
+/// `qemu_exit`). 本函数**不**切入用户态: 进入方式与失败兜底按架构不同, 由调用方决定.
 ///
-/// 与内嵌路径的分工: 内嵌 `init.bin` 是出货路径 (feature 关闭), 载体路径让 PID 1
-/// 经 VFS 读出 → `prepare_elf_image` → 纯机制装载, 即 `execve` 同款取镜像链路,
-/// 是 K-07b 用户态运行射程的入口.
-#[cfg(feature = "initramfs")]
+/// 取镜像链路: PID 1 经 VFS 读出 → `prepare_elf_image` → 纯机制装载, 即 `execve`
+/// 同款路径, 是 K-07b 用户态运行射程的入口.
 fn load_init_from_initramfs() -> i32 {
-    // 严格零嵌入 (裁定 A): cpio 只来自引导器 boot-module; 无模块无 cpio → -1 (上层回落 init.bin).
+    // 严格零嵌入 (裁定 A): cpio 只来自引导器 boot-module; 无模块无 cpio → -1 (上层按失败停机).
     let Some(blob) = crate::privileged::boot::initrd_blob() else {
         crate::klog_boot_info!("[USER] no boot-module initrd (cpio must come from bootloader)");
         return -1;
@@ -105,7 +103,7 @@ fn load_init_from_initramfs() -> i32 {
 /// 编排步骤:
 /// 1. 挂载 ramfs 为 `/`
 /// 2. 解压 initramfs cpio 到 ramfs (`feature = "initramfs"`)
-/// 3. 加载 `/init` ELF (失败回退内嵌 `init.bin`), 创建 PID 1
+/// 3. 加载 `/init` ELF (仅 boot-module, 无内嵌回退), 创建 PID 1
 /// 4. 经 privileged 机制入口进入 Ring 3 / EL0
 ///
 /// 正常路径下进入用户态不返回; 若机制入口返回, 尾部停机兜底.
@@ -124,45 +122,18 @@ pub fn launch_first_user_process() -> ! {
 
     #[cfg(target_arch = "x86_64")]
     {
-        #[cfg(feature = "initramfs")]
-        {
-            let pid = load_init_from_initramfs();
-            if pid > 0 {
-                crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
-                crate::klog_boot_info!("[USER] Entering Ring 3 (init from /init, pid={})...", pid);
-                crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
-            }
-            crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
+        // 严格零嵌入 (D4): init 只来自引导器 boot-module (initramfs cpio); 无内嵌 init.bin 回退.
+        let pid = load_init_from_initramfs();
+        if pid > 0 {
+            crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
+            crate::klog_boot_info!("[USER] Entering Ring 3 (init from /init, pid={})...", pid);
+            crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
         }
-
-        // 回退: 直接加载内嵌的 init.bin.
-        // 判据用 target_os 而非 feature: host target 的 host-test / kernel_test
-        // 两个 lint 维度与 host-tests 都会编译本块, 不桩化即让 host 侧编译硬依赖
-        // 裸机产物 (other/build/ 仅由 make 生成). 本函数为裸机 init 入口, host 不可达,
-        // 取空切片 ⇒ 走下方 bin.is_empty() 报错退出分支.
-        #[cfg(target_os = "none")]
-        let bin = include_bytes!("../../../other/build/x86_64/user/init.bin");
-        #[cfg(not(target_os = "none"))]
-        let bin: &[u8] = &[];
-
-        if bin.is_empty() {
-            crate::klog_err!(Boot, "[USER] init binary is empty");
-            crate::privileged::debug::qemu_exit(false);
-        }
-
-        let pid = crate::privileged::proc::mechanism::user_proc_load_elf_from_memory(
-            bin.as_ptr(),
-            bin.len() as u64,
-            0,
+        crate::klog_err!(
+            Boot,
+            "[USER] no boot-module /init (zero-embed; bootloader must supply initramfs)"
         );
-        if pid <= 0 {
-            crate::klog_err!(Boot, "[USER] Failed to load init ELF, pid={}", pid);
-            crate::privileged::debug::qemu_exit(false);
-        }
-
-        crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
-        crate::klog_boot_info!("[USER] Entering Ring 3 (init pid={})...", pid);
-        crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
+        crate::privileged::debug::qemu_exit(false);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -174,45 +145,22 @@ pub fn launch_first_user_process() -> ! {
         // 与本处 EL1 侧的中断屏蔽状态无关, 故无需恢复.
         let _saved = crate::arch!(interrupt_disable());
 
-        // initramfs 载体路径 (与 x86_64 同一份 `load_init_from_initramfs`): 成功即
-        // 切入 EL0 不返回; 失败/无 `/init` 才落到下方内嵌 `init.bin` 回退.
-        #[cfg(feature = "initramfs")]
-        {
-            let pid = load_init_from_initramfs();
-            if pid > 0 {
-                crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
-                crate::klog_boot_info!("[USER] Entering EL0 (init from /init, pid={})...", pid);
-                crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
-            }
-            crate::klog_boot_info!("[USER] /init not found, falling back to init.bin");
+        // 严格零嵌入 (D4): init 只来自 boot-module (DTB /chosen initrd); 无内嵌 init.bin 回退;
+        // 无 module /init ⇒ 落到下方 halt 循环 (不再回退 init.bin).
+        let pid = load_init_from_initramfs();
+        if pid > 0 {
+            crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
+            crate::klog_boot_info!("[USER] Entering EL0 (init from /init, pid={})...", pid);
+            crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
         }
-
-        let bin = include_bytes!("../../../other/build/aarch64/user/init.bin");
-        let bin_size = bin.len() as u64;
-        if bin_size == 0 {
-            crate::klog_boot_info!("[USER] init ELF is empty");
-            loop {
-                crate::arch!(halt());
-            }
-        }
-
-        let pid = crate::privileged::proc::mechanism::user_proc_load_elf_from_memory(
-            bin.as_ptr(),
-            bin_size,
-            0,
+        crate::klog_err!(
+            Boot,
+            "[USER] no boot-module /init (zero-embed; bootloader must supply initramfs)"
         );
-        if pid <= 0 {
-            crate::klog_err!(Boot, "[USER] Failed to load init ELF");
-            loop {
-                crate::arch!(halt());
-            }
-        }
-
-        crate::privileged::proc::set_init_status(INIT_STATUS_RUNNING);
-        crate::klog_boot_info!("[USER] Entering EL0 (init pid={})...", pid);
-        crate::privileged::proc::mechanism::enter_user_process(pid.cast_unsigned());
     }
 
+    // x86_64 分支以 qemu_exit(`-> !`) 收尾; aarch64 分支落此 halt 循环.
+    #[cfg(target_arch = "aarch64")]
     loop {
         crate::arch!(halt());
     }

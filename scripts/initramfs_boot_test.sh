@@ -3,11 +3,10 @@
 # initramfs 载体启动测试 (K-07b 专项 feature 腿: 批1 载体 + 批2 execve 射程)
 #
 # 用途: 以 `KERNEL_FEATURES=initramfs` 真构建 + 真启动, 断言 PID 1 是经**文件系统**
-#       (cpio 归档 → ramfs `/init` → VFS 读出 → ELF 装载) 起来的, 而不是编译期
-#       `include_bytes!` 的内嵌 `init.bin`.
+#       (cpio 归档 → ramfs `/init` → VFS 读出 → ELF 装载) 起来的.
 #
-#       默认构建不含该 feature (内嵌 init 仍是出货路径), 所以这条链在默认门禁里
-#       完全不可见 —— 与 P-62 甲 的 feature 运行维同形: 只有真构建才暴露断链.
+#       D4 严格零嵌入后内嵌 `init.bin` 路径已删除, 本 feature 腿即出货启动形态;
+#       与 P-62 甲 的 feature 运行维同形: 只有真构建才暴露断链.
 #       本腿断言四条判据 (缺一即红):
 #         1. `[INITRAMFS] Unpacked N files` 且 N >= 7 —— 归档被解析且真落盘
 #            (数量下限把"只有根目录/只有 /init 落盘"的嵌套目录回归钉住);

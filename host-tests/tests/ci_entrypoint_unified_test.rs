@@ -920,7 +920,7 @@ fn test_p62_feature_caps_runtime_dimension_is_wired() {
     for needle in [
         "FEATURE_CAPS=(smp preempt kaslr freg)",
         "feature_caps_boot()",
-        "KERNEL_FEATURES=\"$feat\" all",
+        "KERNEL_FEATURES=\"$feat initramfs\" all",
         "smp=on preempt=off kaslr=off kpti=on freg=off",
         "smp=off preempt=on kaslr=off kpti=on freg=off",
         "smp=off preempt=off kaslr=on kpti=on freg=off",
