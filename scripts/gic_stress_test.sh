@@ -41,6 +41,10 @@ IMAGE="other/build/aarch64/kernel-aarch64.img"
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
+# D4: boot-with-module 载体 (initramfs feature 构建, cpio 经 -initrd 交付, 不嵌入内核).
+source scripts/boot_module.sh
+boot_module_build aarch64
+
 if [ ! -f "$IMAGE" ]; then
     echo "[gic-stress] 镜像缺失: $IMAGE (先运行 make ARCH=aarch64 all)" >&2
     exit 1
@@ -66,7 +70,7 @@ for i in $(seq 1 "$ITER"); do
     qemu-system-aarch64 \
         -M virt,gic-version=3 -cpu max -m 512 -smp "$SMP" \
         $QEMU_EXTRA \
-        -kernel "$IMAGE" \
+        $(boot_module_carrier_args aarch64) \
         -serial "file:$log" \
         -display none -no-reboot \
         -device virtio-net-device,netdev=n0 \
