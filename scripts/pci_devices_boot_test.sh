@@ -42,6 +42,9 @@ if [ ! -f "$NVME_DISK" ]; then
     dd if=/dev/zero of="$NVME_DISK" bs=1M count=64 status=none
 fi
 
+# D4: boot-with-module helper (x86 GRUB module2 交付 cpio)
+source scripts/boot_module.sh
+
 RESULT=0
 TESTED=0
 PASSED=0
@@ -57,6 +60,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         err "other/build/x86_64/kernel.flat 缺失, 跳过"
         RESULT=1
     else
+        # D4: 构建 initramfs-feature 核 + 组 GRUB module2 ISO (cpio 经 boot-module 交付)
+        boot_module_build x86_64 || { err "boot-module 构建失败"; RESULT=1; }
+        boot_module_iso_x86 || { err "GRUB module2 ISO 组包失败"; RESULT=1; }
         LOG="$LOG_DIR/pci_boot_x86_64.log"
         rm -f "$LOG"
 
@@ -66,7 +72,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
             -no-reboot \
             -m 512 \
             -nic none \
-            -kernel other/build/x86_64/kernel.flat \
+            $(boot_module_carrier_args x86_64) \
             -device nvme,serial=QM0001,id=nvme0 \
             -drive "file=${NVME_DISK},if=none,id=nd0" \
             -device nvme-ns,drive=nd0,bus=nvme0 \
