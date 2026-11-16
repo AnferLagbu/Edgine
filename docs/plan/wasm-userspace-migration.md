@@ -123,6 +123,11 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **状态**: []
 - **详情**: 首阶段只最小 WASI，de-risk 优先；全量 WASI 在 P2。
   验收 = 一个 wasi-sdk 编译的 hello 模块在用户态 wasmi 下 stdio 输出正确。
+  载体变更注记: P1 的 x86_64 载体腿受 K-08 (< 4 MiB 内核镜像) 阻塞——wasmrun 桩 + 载荷叠在
+  内嵌 initramfs 上顶破上限。先由插队工程 [userspace-decoupling.md](./userspace-decoupling.md)
+  把用户态内容移出内核镜像 (boot-module initrd，严格零嵌入)；P1 的**载体相关接线**（demo 载荷
+  cpio 条目 / wasmi 探针 / wasmi 启动腿 / feature 选桩形态）在该解耦落地后于新载体上重做，
+  carrier 无关资产 (wasmrun crate / wasmi vendoring / wasi fixture) 保留。
 
 ### P2: 完整 WASI 38 函数 syscall 翻译层
 
