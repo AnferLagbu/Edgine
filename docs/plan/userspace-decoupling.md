@@ -131,6 +131,11 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   它 = 重造轮子 (BIOS int13 多段读 / 跨固件脆) 且还要自实现 initrd 装载; 用 GRUB/U-Boot 一举两得
   (真机引导 + boot-module 载体, 正是 D1/D2 所需). UEFI-native (EFI-stub / EDK2) 为 BIOS 退场后的
   长期演进、后置 (见开放议题). 与 D1 协同: GRUB `module2` 就是 D1 的真机 tag 3 来源.
+- **L0 spike 实测 (2026-11-16)**: 工具齐备 (qemu 11.1 / grub2-mkrescue 2.12 / `multiboot2.mod` 同时
+  有 i386-pc 与 x86_64-efi / OVMF CODE+VARS / xorriso; `dtc` 缺, 以字节 grep 验 DTB). `make iso` 出的
+  GRUB ISO 在 **SeaBIOS(BIOS) 与 OVMF(UEFI)** 均启动到 `Entering Ring 3 (pid=4)` + 心跳正常;
+  在 `grub.cfg` 加 `module2 /boot/initramfs.cpio` 重打包后 **BIOS 与 UEFI 仍到 Ring 3 且不崩**
+  ⇒ GRUB 载模块机制与 BIOS+UEFI 双覆盖成立. (模块内容到达内核的**结构**见 D1 — 尚未据此断言.)
 
 ### D0: 调研与前提验证
 
@@ -145,7 +150,9 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
     `wasmi_boot_test.sh` / `qemu_liveness_probe.sh` 等) 与各自 `-kernel` 起法.
   - 定 aarch64 EGFS 磁盘镜像生成方案 (无 `mkfs.egfs` 工具).
 - **状态**: []
-- **详情**: D0 实测结论决定 D1/D2/D3 的具体形态; 不得跳过.
+- **详情**: D0 实测结论决定 D1/D2/D3 的具体形态; 不得跳过. L0 spike (2026-11-16) 已确认: 工具
+  齐备、GRUB BIOS+UEFI 均到 Ring 3、aarch64 DTB `/chosen` 交出 initrd; 余项 = 各 loader 的
+  `MULTIBOOT_MAGIC` 与模块结构确认 (归 D1 落地时以 `MULTIBOOT_MAGIC` 实测 + 回归锁).
 
 ### D1: x86_64 boot-module (MB2 tag 3)
 
@@ -156,6 +163,12 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **状态**: []
 - **详情**: 新 unsafe 读 tag 3 结构须 `// SAFETY:`. 回归锁: host 侧 tag3 解析纯函数单测 + QEMU
   腿断言「initramfs 从 module 装载」.
+- **L0 spike 关键发现 (影响 D1 范围)**: 模块交付结构**随 loader 而异** —— QEMU `-kernel -initrd`
+  走 **Multiboot1 `mods` 字段** (`mods_count`@MB1 info 偏移 0x14 / `mods_addr`@0x18, 每模块 16 字节:
+  mod_start/mod_end/string/rfu); GRUB `multiboot2 module2` 走 **MB2 tag 3** (`mod_start`@+8 /
+  `mod_end`@+12); GRUB `multiboot`(MB1) 走 MB1 mods. ⇒ **D1 必须同时**在 `parse_multiboot1`
+  (补 mods 解析) 与 `parse_multiboot2`(补 tag 3) 取模块, 不能只加 tag 3. 各 loader 实际走哪型由
+  D0 用 `MULTIBOOT_MAGIC` 实测确认 (QEMU 侧预计 MB1).
 
 ### D2: aarch64 boot-module (DTB /chosen)
 
@@ -165,6 +178,9 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **状态**: []
 - **详情**: DTB 属性按 32/64 位 cell 宽度解析; 与 aarch64 entry 已有的 `_fdt_addr`
   高半区别名衔接 ([boot/aarch64/entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs)).
+- **L0 spike 实测 (2026-11-16)**: `qemu-system-aarch64 -M virt -kernel Image -initrd cpio -M virt,dumpdtb=…`
+  导出的 DTB 字节含 `/chosen` 节点与 `linux,initrd-start` + `linux,initrd-end` 两属性 ⇒ **aarch64
+  的 initrd 位置由 QEMU virt 确实经 DTB `/chosen` 交出**, D2 的 aarch64 前提成立.
 
 ### D3: 严格零嵌入收口 (删全部用户态 include_bytes!)
 
