@@ -251,6 +251,13 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   EGFS 磁盘镜像生成; 新增 aarch64 磁盘根 QEMU 腿.
 - **状态**: []
 - **详情**: D0 定的镜像生成方案落地. 与 D1-D4 正交 (boot 载体 vs 运行时磁盘根); 可并行.
+- **D5-a 实测 (2026-11-16) + 真前置**: 去 [lib.rs] EGFS 挂根块的 `target_arch="x86_64"` 门控(改架构中立)
+  后: (a) aarch64 **无盘** → `EGFS memory mode` + `Entering EL0` ✓ 无回归; (b) aarch64 + 空白 virtio-blk 盘 →
+  virtio-blk 识别 128MB、EGFS 发现 1 设备、读 uberblock→**旧无效→`formatting first drive`→`FORMAT: Writing
+  fresh EGFS v2`**(空盘自格式化机制在 EGFS 层走通, 无需 host mkfs), **但随即 `virtio-blk: 请求超时`(5s 多条)**
+  ⇒ **aarch64 virtio-blk I/O 超时, 格式/读写无法完成、挂载阻塞**. ⇒ **D5 真前置 = 修 aarch64 virtio-blk 请求
+  超时**(与历史 aarch64 virtio-net TX 超时 P-31 同族, blk 版), 属驱动层根因工程, 单独立项**(D5-PR)**; 门控去
+  x86-only 本身安全(无盘路径无回归), 但 with-disk 到 virtio-blk 超时前不成立, 不能宣称 D5 完成.
 
 ### D6: 收口 (七门槛 + 文档 + 台账)
 

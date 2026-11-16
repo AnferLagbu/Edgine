@@ -953,12 +953,11 @@ fn boot_deferred_init() {
 /// EGFS/根文件系统挂载 → aarch64 tick 开跑 → 跨核 TLB 失效探针.
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 fn boot_rootfs_and_probes() {
-    // EGFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk)
-    // 门控语义 (T1 G7): 与上方真机引导块一致, 真机路径 = not(any(kernel_test, host-test)).
-    #[cfg(all(
-        not(any(feature = "kernel_test", feature = "host-test")),
-        target_arch = "x86_64"
-    ))]
+    // EGFS + 磁盘挂载 — BlockDevice 注册表自动发现多块磁盘 (支持 ATA/NVMe/virtio-blk).
+    // 双架构真机路径 (D5): aarch64 经 virtio-blk (QEMU -M virt 主战场) 消费, 去 x86-only 门控;
+    // 空盘由内核自格式化 (egfs 无有效 uberblock 即 format), 故无需 host mkfs 工具.
+    // 门控语义 (T1 G7): 真机路径 = not(any(kernel_test, host-test)).
+    #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
     {
         let egfs = crate::functions::fs::egfs::entry::get_egfs();
         // init() 会自动扫描所有块设备, 发现 Edgine 签名的磁盘并挂载
