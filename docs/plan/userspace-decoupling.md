@@ -214,6 +214,15 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **详情**: 真删 (F9), 非 `allow(dead_code)`. 与 P1 交互: P1 的「feature 选桩」由「编译期嵌哪个桩」
   改为「initrd 内含哪个桩 + init exec 哪个」; carrier 无关的 P1 资产 (wasmrun/wasmi vendoring/
   wasi fixture) 保留.
+- **D3/D4 强耦合 = 一次原子切换 (D3 准备前发现)**: ① 删 cpio `include_bytes!` 后 initramfs 载体腿
+  (`-kernel flat` 无模块) 即**失去源** —— `-kernel flat -initrd` 不交付模块(D1 实测评), 必须改走
+  GRUB `module2` 启动(=D4). ② 消费者切模块**必须先删 cpio 嵌入才可验证**: 只要嵌入 cpio 在,
+  initramfs 构建镜像含 ~237KB cpio → K-08 先 panic, 到不了消费者. ③ 删 init.bin / wasm 桩同理牵连
+  exec `\0asm`(改读 VFS) 与默认启动腿. ⇒ 正确落地 = **一次性原子切换**: 删三类嵌入 + 消费者切模块
+  + exec 读 VFS + 全部启动腿改 GRUB 携 module(含 wasm 桩入 cpio) + build.rs 护栏收口, 不可拆半
+  (拆半必留红腿). ④ 前置: x86 GRUB initrd 落 `0x6C0000` 与堆预留区重叠 —— 消费前须解放置冲突
+  (候选: 堆改址避开 initrd / 读进安全缓冲 / 调 GRUB 布局); 实测堆峰值仅 ~16KB、initrd 距堆起点
+  ~800KB, 故当前实际未覆盖, 但须加固.
 
 ### D4: 启动腿改造 (-initrd 携载)
 
