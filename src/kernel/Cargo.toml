@@ -80,7 +80,10 @@ debug_mutex = ["kernel-privileged/debug_mutex"]
 # 详见 docs/plan/multithreading-project.md A-1..A-4 与 P-29 根因诊断.
 lockdep = ["kernel-privileged/lockdep"]
 # initramfs: 从 other/build/x86_64/user/initramfs.cpio 加载根文件系统 (产物按架构分目录)
-initramfs = ["kernel-functions/initramfs"]
+initramfs = ["kernel-functions/initramfs", "kernel-privileged/initramfs"]
+# P1 wasm 退用户态选桩 (转发 functions, 消费点 wasm/stub.rs): 点亮改嵌 wasmrun.bin
+# (用户态 wasmi), 默认 wasmstub.bin (内核解释器). 非 capabilities 位, 不进 P-62 能力腿.
+wasm_userspace = ["kernel-functions/wasm_userspace"]
 log = ["kernel-privileged/log"]
 json_export = ["kernel-privileged/json_export"]
 preempt = ["kernel-privileged/preempt"]

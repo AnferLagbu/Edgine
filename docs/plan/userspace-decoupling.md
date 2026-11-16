@@ -223,6 +223,11 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   (拆半必留红腿). ④ 前置: x86 GRUB initrd 落 `0x6C0000` 与堆预留区重叠 —— 消费前须解放置冲突
   (候选: 堆改址避开 initrd / 读进安全缓冲 / 调 GRUB 布局); 实测堆峰值仅 ~16KB、initrd 距堆起点
   ~800KB, 故当前实际未覆盖, 但须加固.
+- **D3 子步已落 (2026-11-16)**: privileged 新增 `boot::initrd_blob()` (feature `initramfs` 前转
+  至 privileged, 避 feature-off 死代码), `phys_to_virt` 高半区直射取 initrd 为只读切片供 functions;
+  `load_init_from_initramfs` 改为**优先模块、回落内嵌 cpio**. 默认构建/双架构 build 6/6/quick 审计/host
+  契约测试全绿(两处 feature needle 同批重指). 余项 = 删三类嵌入 + 启动腿改 GRUB 携 module + exec 读
+  VFS 的**原子批**(见上条耦合), 未做.
 
 ### D4: 启动腿改造 (-initrd 携载)
 

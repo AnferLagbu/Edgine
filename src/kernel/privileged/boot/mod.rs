@@ -206,6 +206,27 @@ pub fn get_boot_info() -> &'static BootInfo {
         .expect("[BOOT] accessed before initialization")
 }
 
+/// 取回引导器交付的 initrd (引导模块) 字节切片; 无模块时返回 `None`.
+///
+/// 该区由引导器装入并经 PMM 预留 (见 `boot_memory_init`), 生命周期覆盖内核运行;
+/// 经高半区直射区映射为只读切片, 供 functions 层解包 (functions 零 unsafe, 见 F1).
+#[cfg(feature = "initramfs")]
+pub fn initrd_blob() -> Option<&'static [u8]> {
+    let info = get_boot_info();
+    if info.initrd_size == 0 {
+        return None;
+    }
+    let size = crate::privileged::glue::usize_from_u64(info.initrd_size);
+    // SAFETY: initrd 区由引导器装入并经 PMM 预留, 生命周期覆盖内核运行; `phys_to_virt`
+    // 经高半区直射区给出唯一内核映射 (x86 直射区不受低半区恒等窗口约束, aarch64 直射区
+    // 覆盖 DRAM), 只读借用且无别名写.
+    let blob = unsafe {
+        let ptr = crate::privileged::mm::phys_to_virt(info.initrd_base) as *const u8;
+        core::slice::from_raw_parts(ptr, size)
+    };
+    Some(blob)
+}
+
 /// 保存引导器传入的魔数与启动信息指针 (由汇编引导入口在跳转前调用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]

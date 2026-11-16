@@ -77,11 +77,23 @@ const INITRAMFS_CPIO: &[u8] = &[];
 /// 是 K-07b 用户态运行射程的入口.
 #[cfg(feature = "initramfs")]
 fn load_init_from_initramfs() -> i32 {
-    if INITRAMFS_CPIO.is_empty() {
-        crate::klog_boot_info!("[USER] initramfs archive is empty");
-        return -1;
-    }
-    let count = match crate::functions::fs::initramfs::unpack(INITRAMFS_CPIO) {
+    // 优先取引导器交付的 initrd 模块 (boot-module); 无模块时回退内嵌 cpio (切模块过渡).
+    let module = crate::privileged::boot::initrd_blob();
+    let blob: &[u8] = match module {
+        Some(b) => {
+            crate::klog_boot_info!("[USER] initramfs from boot module ({} bytes)", b.len());
+            b
+        }
+        None => {
+            if INITRAMFS_CPIO.is_empty() {
+                crate::klog_boot_info!("[USER] initramfs archive is empty");
+                return -1;
+            }
+            crate::klog_boot_info!("[USER] initramfs from embedded cpio");
+            INITRAMFS_CPIO
+        }
+    };
+    let count = match crate::functions::fs::initramfs::unpack(blob) {
         Ok(count) => count,
         Err(e) => {
             crate::klog_boot_info!("[USER] initramfs unpack failed: {}", e);

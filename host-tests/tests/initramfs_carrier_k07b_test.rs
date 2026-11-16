@@ -401,7 +401,7 @@ fn test_initramfs_feature_is_off_by_default() {
     let glue = read_src(KERNEL_CARGO);
     assert_contains(
         &glue,
-        "initramfs = [\"kernel-functions/initramfs\"]",
+        "initramfs = [\"kernel-functions/initramfs\", \"kernel-privileged/initramfs\"]",
         "glue 必须逐项转发 feature, 否则子 crate 分支静默消失 (P-71)",
     );
     let funcs = read_src(FUNC_CARGO);
