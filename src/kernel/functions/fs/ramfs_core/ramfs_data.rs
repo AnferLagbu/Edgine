@@ -10,6 +10,7 @@ use super::{
     RAMFS_BLOCK_SIZE, RAMFS_MAX_ACES, RAMFS_MAX_BLOCKS, RAMFS_MAX_NODES, SENSITIVITY_PUBLIC,
 };
 use crate::functions::fs::KernelError;
+use crate::functions::fs::authorize::{self, AccessDecision, ObjectLabel, SubjectId};
 use crate::functions::fs::dcache;
 use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
@@ -380,49 +381,33 @@ impl RamFsData {
         self.block_set_free(double_indirect_block);
     }
 
-    fn check_permission(&self, node: &RamFsNode, pwm: u64, cap: u64) -> bool {
-        let level = pwm_api::pwm_get_privilege_level(pwm);
-
-        if level == 0xFF {
-            return false;
-        }
-
-        if level > 0 && node.sensitivity > 0 {
-            let clearance = match level {
-                0 | 1 => 255u8,
-                2 => 128u8,
-                _ => 64u8,
-            };
-            if clearance < node.sensitivity {
-                return false;
-            }
-        }
-
-        let ino = node.node_id;
+    /// ACE 显式判定 — 纯数据查询 (遍历本实例的 ACE 表), 不含策略组合
+    fn ace_verdict(&self, node_id: u32, subject: SubjectId, cap: u64) -> Option<bool> {
         for ace in &self.aces {
-            if ace.used && ace.node_id == ino && (ace.pwm == 0 || ace.pwm == pwm) {
+            if ace.used && ace.node_id == node_id && (ace.pwm == 0 || ace.pwm == subject.0) {
                 if (ace.deny_mask & cap) != 0 {
-                    return false;
+                    return Some(false);
                 }
                 if (ace.allow_mask & cap) != 0 {
-                    return true;
+                    return Some(true);
                 }
             }
         }
+        None
+    }
 
-        let caps = pwm_api::pwm_get_fs_capability(pwm);
-        if (caps & cap) == cap {
-            return true;
-        }
-
-        if node.owner_pwm != 0 && node.owner_pwm != pwm {
-            let has_cap = pwm_api::pwm_has_capability(pwm, 1, cap);
-            if has_cap {
-                return true;
-            }
-        }
-
-        false
+    fn check_permission(&self, node: &RamFsNode, pwm: u64, cap: u64) -> bool {
+        let subject = SubjectId(pwm);
+        let acl = self.ace_verdict(node.node_id, subject, cap);
+        authorize::decide(
+            subject,
+            ObjectLabel {
+                sensitivity: node.sensitivity,
+                owner: SubjectId(node.owner_pwm),
+                acl,
+            },
+            cap,
+        ) == AccessDecision::Allow
     }
 
     /// 解析路径为节点号 (dcache 命中加速; 未命中时线性扫描目录项并回填缓存)

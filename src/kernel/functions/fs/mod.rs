@@ -14,6 +14,8 @@ pub mod access;
 pub mod anonymous;
 /// VFS 对外 API (syscall 边界, 汇聚 handle/vfs_mount/vfs_path)
 pub mod api;
+/// 访问判定算法单点 (T-2)
+pub mod authorize;
 /// T-05: VFS 后端决策 trait
 pub mod backend_trait;
 pub mod cgroupfs;

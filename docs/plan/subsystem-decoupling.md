@@ -141,7 +141,13 @@
 
 - **描述**: 落地 [sgeg-design.md:183-190](../design/sgeg-design.md) 已裁的「主体标签解析 + 客体标签查询」两 trait。
 - **方案**: 定义两 trait，文件系统与进程各自实现; 检验标准同设计册 —— **删掉文件系统后 SGEG 的类型、判定、策略表、审计仍在**。
-- **状态**: []
+- **状态**: [X] (薄抽象主体/客体已落 [functions/fs/authorize.rs](../../src/kernel/functions/fs/authorize.rs):
+  `SubjectId`（不透明主体, 解释权在判定方）+ `ObjectLabel`（敏感级 / 属主 / ACE 显式判定）
+  + `decide()` 五段次序 (特权级 → MLS 敏感级 → 显式 ACE → FS 能力位 → 属主回落),
+  与 ramfs 原 `check_permission` 逐分支等价 (**搬迁非改判**)。ramfs 侧只剩
+  `ace_verdict`（纯数据查询）+ 调 `decide`, 不再持有判定策略。
+  **trait 形态**（按对象类型实现的标签查询）随 T-3 的 `FileSystem` 签名改造一并落地。
+  读数: build all 6/0 · quick RC=0 · kernel-host 3 套全 ok · x86_64 QEMU 1/1)
 
 ### T-3: ramfs 判定上提 + 载体中立化
 
