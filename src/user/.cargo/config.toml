@@ -7,3 +7,15 @@ rustflags = [
 rustflags = [
     "-C", "relocation-model=static",
 ]
+
+# P1 wasmi vendored 源替换 (类比 smoltcp 治理): wasmi 2.0.0 全树锁定于 vendor/,
+# 离线可复现构建, 升级须用户授权 + 重跑 cargo vendor. 目录源形态让 cargo 对
+# vendored 第三方 crate 自动 --cap-lints allow (wasmparser 等的 rustc warning 不
+# 漏入 F5 读数). user 双目标 (x86_64/aarch64-unknown-none) 预编译含 alloc, 故 user
+# 构建不注入 build-std, 本源替换不会劫持 sysroot 依赖. 仅作用于 src/user 子树,
+# 不影响 src/kernel (其有自己的 .cargo/config.toml).
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

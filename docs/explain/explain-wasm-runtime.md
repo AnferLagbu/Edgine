@@ -36,8 +36,8 @@ wasm 运行时是内核内的一个**字节码解释器**，不是 JIT（Just-In
 
 一个 wasm 模块从 `execve` 到退出码的完整路径：
 
-1. **魔数派发**：[exec.rs:106-119](../../src/kernel/functions/proc/exec.rs#L106-L119) 读入文件后按前 4 字节单点 match——`\0asm`（`WASM_MAGIC`）走 wasm 分支，否则走既有 ELF 路径。wasm 分支不装载模块本体，而是取出内嵌入口桩映像（[stub.rs](../../src/kernel/functions/wasm/stub.rs) 的 `stub_image()`），桩为空则返 `Enoexec`；模块路径随 `argv[0]` 交给桩。
-2. **进程替换**：桩映像经 [exec.rs:122](../../src/kernel/functions/proc/exec.rs#L122) 的 `proc_exec_replace`（privileged 机制）装成新映像，wasm 进程由此成为普通可调度用户进程。
+1. **魔数派发**：[exec.rs:110-121](../../src/kernel/functions/proc/exec.rs#L110-L121) 读入文件后按前 4 字节单点 match——`\0asm`（`WASM_MAGIC`）走 wasm 分支，否则走既有 ELF 路径。wasm 分支不装载模块本体，而是**从 VFS 读**用户态入口桩（D4 严格零嵌入，不再编译期嵌入）：[stub.rs](../../src/kernel/functions/wasm/stub.rs) 的 `stub_path()` 按 `wasm_userspace` feature 选 `/bin/wasmrun`（用户态 wasmi 运行时桩）或 `/bin/wasmstub`（内核解释器桩，默认），经 `read_file_kernel` 读入（上限同 `ELF_MAX_SIZE` 1 MiB），读不到则返 `Enoexec`；模块路径随 `argv[0]` 交给桩。两桩恒由 `make user` 产出并打进 initramfs cpio，内核镜像不嵌任何用户态字节。
+2. **进程替换**：桩映像经 [exec.rs:130](../../src/kernel/functions/proc/exec.rs#L130) 的 `proc_exec_replace`（privileged 机制）装成新映像，wasm 进程由此成为普通可调度用户进程。
 3. **装载**：桩经 `EG_WASM_LOAD` 让内核读模块——[registry.rs:254](../../src/kernel/functions/wasm/registry.rs#L254) `load_syscall` 经 VFS 读字节（上限 1 MiB）、`parse_wasm` 解析、登记实例并复制 argv/envp 进 WASI 上下文，返回句柄。
 4. **运行**：桩经 `EG_WASM_RUN` 驱动 [registry.rs:286](../../src/kernel/functions/wasm/registry.rs#L286) `run_syscall`，把实例交给解释器跑到结束。
 5. **取终态 + 释放**：桩经 `EG_WASM_GET_INFO` 取状态/退出码/gas，经 `EG_WASM_UNLOAD` 释放实例。
@@ -103,7 +103,7 @@ fd 表（[wasi/fd_table.rs](../../src/kernel/functions/wasm/wasi/fd_table.rs)）
 
 [wasmstub](../../src/user/wasmstub/src/main.rs) 是 `execve` 识别 wasm 后实际装载的用户态程序。入口 `_start` 用架构汇编把入口栈指针 `sp` 作为首参转发（x86_64 `mov rdi, rsp` / aarch64 `mov x0, sp`，[wasmstub/src/main.rs:23-37](../../src/user/wasmstub/src/main.rs#L23-L37)），因为 `extern "C"` 函数读不到入口 SP。
 
-[wasmstub/src/main.rs:57](../../src/user/wasmstub/src/main.rs#L57) `wasmstub_main` 按内核布置的栈布局（`argc` → `argv[0..argc]` → NULL → `envp[0..]` → NULL）取 `argv[0]` 即模块路径，随后顺序执行：`wasm_load`（[main.rs:72](../../src/user/wasmstub/src/main.rs#L72)）→ `wasm_run`（[main.rs:82](../../src/user/wasmstub/src/main.rs#L82)）→ `wasm_get_info`（[main.rs:88](../../src/user/wasmstub/src/main.rs#L88)）→ `wasm_unload`（[main.rs:89](../../src/user/wasmstub/src/main.rs#L89)）→ `proc_exit`（[main.rs:96](../../src/user/wasmstub/src/main.rs#L96)）。退出码取 `FINISHED` 态的 `info.exit_code`，否则 1。桩映像按架构 `include_bytes!` 内嵌（[stub.rs](../../src/kernel/functions/wasm/stub.rs)，host 目标为空切片），产物落 `other/build/<arch>/user/wasmstub.bin`，与内核同架构嵌入（S-6 三条防线）。
+[wasmstub/src/main.rs:57](../../src/user/wasmstub/src/main.rs#L57) `wasmstub_main` 按内核布置的栈布局（`argc` → `argv[0..argc]` → NULL → `envp[0..]` → NULL）取 `argv[0]` 即模块路径，随后顺序执行：`wasm_load`（[main.rs:72](../../src/user/wasmstub/src/main.rs#L72)）→ `wasm_run`（[main.rs:82](../../src/user/wasmstub/src/main.rs#L82)）→ `wasm_get_info`（[main.rs:88](../../src/user/wasmstub/src/main.rs#L88)）→ `wasm_unload`（[main.rs:89](../../src/user/wasmstub/src/main.rs#L89)）→ `proc_exit`（[main.rs:96](../../src/user/wasmstub/src/main.rs#L96)）。退出码取 `FINISHED` 态的 `info.exit_code`，否则 1。桩映像**不编译期嵌入内核**（D4 严格零嵌入）：`make user` 产出 `other/build/<arch>/user/wasmstub.bin`，由 [make_initramfs_cpio.py](../../scripts/make_initramfs_cpio.py) 打进 initramfs cpio 的 `bin/wasmstub`，引导器作 boot-module 交付后解包进 ramfs。`execve` 识别 `\0asm` 时经 [stub.rs](../../src/kernel/functions/wasm/stub.rs) 的 `stub_path()` 取路径、再以无 fd 的 `read_file_kernel` 从 VFS 读出桩字节替换进程映像；`wasm_userspace` feature 点亮时该路径改指 `bin/wasmrun`（用户态 wasmi 运行时桩，两桩恒在归档内）。
 
 ## 资源上限
 
@@ -126,4 +126,4 @@ fd 表（[wasi/fd_table.rs](../../src/kernel/functions/wasm/wasi/fd_table.rs)）
 
 wasm 目录内联测试合计 **75** 例（`module` 26 / `interpreter` 26 / `leb128` 6 / `registry` 4 / `instance` 2 / `wasi/fd_table` 2 / `wasi/inject` 1 / `types` 1 / `runtime` 7），覆盖畸形输入矩阵（全前缀/全单字节突变两条穷举式全函数性证明）、控制流、表调用、WASI 注入与端到端 stdout 落盘。`types` 的 1 例对 `WasmError`→`Errno` 做 34 变体穷举，`runtime` 的 7 例钉栈/内存/调用帧 helper 的边界。
 
-host 侧集成测试两册：[wasm_syscall_test.rs](../../host-tests/tests/wasm_syscall_test.rs) 5 例（ABI 编号同源 / 四编号 dispatch 接管 / 10 组错误映射 / VFS→LOAD→RUN→GET_INFO→UNLOAD 全链 / 畸形模块 `ENOEXEC`），[wasi_behavior_test.rs](../../host-tests/tests/wasi_behavior_test.rs) 11 例（WASI 公共面行为级端到端：args/environ 往返、clock/random、proc_exit/sched_yield、fd read/seek/tell/close/prestat、path_open）。QEMU 双架构 exec 端到端断言默认启动 `[WASM] SKIP: no carrier`、initramfs 载体腿 `[WASM] PASS: exec+run`。
+host 侧集成测试两册：[wasm_syscall_test.rs](../../host-tests/tests/wasm_syscall_test.rs) 5 例（ABI 编号同源 / 四编号 dispatch 接管 / 10 组错误映射 / VFS→LOAD→RUN→GET_INFO→UNLOAD 全链 / 畸形模块 `ENOEXEC`），[wasi_behavior_test.rs](../../host-tests/tests/wasi_behavior_test.rs) 11 例（WASI 公共面行为级端到端：args/environ 往返、clock/random、proc_exit/sched_yield、fd read/seek/tell/close/prestat、path_open）。QEMU 双架构 exec 端到端断言 `[WASM]` 探针处于合规载体态（`SKIP: no carrier` 或 `PASS: exec+run` 二者之一，一律不容忍 `FAIL`）；headline 与 initramfs 载体腿自 D4 起都经 boot-module 携 cpio，故实跑打印 `[WASM] PASS: exec+run`。

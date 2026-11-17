@@ -1,0 +1,11 @@
+[package]
+name = "wasmrun"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+userlib = { path = "../lib" }
+# wasmi vendored (P1, 锁定 2.0.0, 类比 smoltcp 治理): no_std 纯解释器,
+# 关 std/wat 默认 feature, 开 libm 供 no_std 浮点, 开 validate 走安全校验
+# (Module::new 门控于 validate; 不用 unsafe 的 new_unchecked); 源替换见 ../.cargo/config.toml.
+wasmi = { version = "2.0.0", default-features = false, features = ["libm", "validate"] }
