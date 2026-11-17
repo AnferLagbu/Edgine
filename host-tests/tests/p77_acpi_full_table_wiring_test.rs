@@ -5,11 +5,15 @@
 //! 启动路径只调 `parse_madt` ⇒ `has_fadt()` 恒 false、`get_hpet_info()` 恒 `None`、
 //! `DMAR_DRHD_LIST` 恒空, 电源管理 / HPET / IOMMU 发现面全是空值.
 //!
-//! 修复形态: `smp_init::init` 改调 `parse_all_tables(0)` (单次遍历, 内含 MADT),
+//! 修复形态: `smp_init::init` 改调 `parse_all_tables` (单次遍历, 内含 MADT),
 //! DMAR 表发现状态回填 `has_dmar()`, functions 侧去掉恒 false 占位;
 //! 接线同时暴露并修复 HPET 表布局错位 (GAS 偏移 40 被读成 42), FADT 按
 //! ACPI 1.0 前缀 (116 字节) 接纳、复位字段单独按 ACPI 2.0+ 长度闸门;
 //! QEMU 启动日志断言 FADT 解析与 HPET 基址里程碑. 本文件锁定接线形态本身.
+//!
+//! D4-i 甲 重指: 原钉面是 `parse_all_tables(0)` —— 那个 `0` 本身是缺陷 (UEFI 下
+//! RSDP 只经 MB2 tag 14/15 内联副本交付, 传 0 使 ACPI 发现面整条失效 → 单核).
+//! 现钉真传 `boot::multiboot_info_ptr()`, 并加硬编码 0 的反向针.
 
 use std::fs;
 use std::path::PathBuf;
@@ -18,6 +22,10 @@ const ACPI: &str = "src/kernel/privileged/arch/x86_64/acpi.rs";
 const SMP_INIT: &str = "src/kernel/privileged/arch/x86_64/smp_init.rs";
 const FUN_ACPI: &str = "src/kernel/functions/driver/acpi.rs";
 const QEMU: &str = "scripts/qemu_boot_test.sh";
+
+/// 启动路径的全表遍历调用形态 (MB2 信息指针真传, 见 D4-i 甲).
+const PARSE_ALL_CALL: &str =
+    "super::acpi::parse_all_tables(crate::privileged::boot::multiboot_info_ptr())";
 
 fn repo_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -86,21 +94,58 @@ fn section<'a>(src: &'a str, start: &str, end: &str) -> &'a str {
 fn boot_path_parses_all_acpi_tables_once() {
     let smp = code_only(&read_src(SMP_INIT));
     assert_eq!(
-        occurrences(&smp, "super::acpi::parse_all_tables(0)"),
+        occurrences(&smp, PARSE_ALL_CALL),
         1,
         "启动路径必须恰调一次 parse_all_tables (单次 SDT 遍历)"
+    );
+    assert!(
+        !has(&smp, "parse_all_tables(0)"),
+        "MB2 信息指针不得硬编码 0: UEFI 下 RSDP 只经 tag 14/15 内联副本交付, 传 0 即单核"
     );
     assert!(
         !has(&smp, "super::acpi::parse_madt(0)"),
         "启动路径不得再直调 parse_madt: 与 parse_all_tables 叠加会重复登记 AP/IOAPIC 列表"
     );
     assert!(
-        before(
-            &smp,
-            "super::acpi::parse_all_tables(0)",
-            "super::ioapic::init_from_acpi()"
-        ),
+        before(&smp, PARSE_ALL_CALL, "super::ioapic::init_from_acpi()"),
         "IOAPIC 初始化必须晚于 ACPI 表解析 (依赖 parse_all_tables 内的 MADT 枚举结果)"
+    );
+}
+
+#[test]
+fn functions_rsdp_query_plumbs_mb2_pointer() {
+    // functions 侧的 has_rsdp() 同样不得传 0 —— 它供 sysinfo/procfs 查询,
+    // 传 0 会让 OVMF 上恒报「无 ACPI」.
+    let fun = code_only(&read_src(FUN_ACPI));
+    assert!(
+        has(
+            &fun,
+            "find_rsdp(crate::privileged::boot::multiboot_info_ptr())"
+        ),
+        "has_rsdp() 必须真传 MB2 信息指针"
+    );
+    assert!(!has(&fun, "find_rsdp(0)"), "has_rsdp() 不得硬编码 0");
+}
+
+#[test]
+fn mb2_rsdp_is_interpreted_as_inline_copy() {
+    // MB2 spec §3.6.16/17: tag 14/15 载荷是 RSDP 内联副本, 不是指针.
+    // 原实现 `ptr.add(offset + 8).cast::<u64>().read_unaligned()` 会把签名
+    // "RSD PTR " 读成地址 0x2052_5450_2044_5352 (非规范 → #GP).
+    let acpi = code_only(&read_src(ACPI));
+    let mb2 = section(&acpi, "fn rsdp_offset_in_mb2", "fn scan_ebda");
+    assert!(
+        has(mb2, "tag_type == 14 || tag_type == 15"),
+        "必须同时识别旧版 (14) 与新版 (15) ACPI 标签"
+    );
+    assert!(
+        !has(mb2, "cast::<u64>().read_unaligned()"),
+        "MB2 载荷不得按 u64 指针读: 它是内联副本"
+    );
+    let carrier = section(&acpi, "fn find_rsdp_from_mb2", "fn scan_ebda");
+    assert!(
+        has(carrier, "Some(mb2_ptr + offset as u64)"),
+        "RSDP 地址 = 信息块基址 + 块内偏移"
     );
 }
 

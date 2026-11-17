@@ -123,7 +123,9 @@ pub fn init() {
     // 单次 SDT 遍历: `parse_all_tables` 内含 MADT 解析 (LAPIC/IOAPIC/ISO),
     // 并同时填充 FADT/HPET/DMAR. 不要另调 `parse_madt` —— 它只扫 MADT,
     // 再调一次会让 AP/IOAPIC 列表重复登记 (P-77).
-    super::acpi::parse_all_tables(0);
+    // MB2 信息指针必须真传: UEFI 下 RSDP 只经 tag 14/15 内联副本交付, 传 0 会
+    // 让 ACPI 整条发现面失效 (RSDP not found → 单核 → SMP 探针全跑不到).
+    super::acpi::parse_all_tables(crate::privileged::boot::multiboot_info_ptr());
     // MADT 解析完成后立即初始化 IOAPIC: 设备 INTx 接线 (net 探测) 依赖
     // `gsi_to_ioapic` 的区间信息, 而区间上界只能读 IOAPICVER 回填.
     // 必须在 `ap_count <= 1` 提前返回之前执行 (单核同样需要中断路由).

@@ -154,7 +154,7 @@ boot_and_check() {
 # ---------------------------------------------------------------------------
 ensure_arch_artifacts() {
     local target_arch="$1"
-    # D4: initramfs-feature 核 (cpio 经 boot-module 交付); x86 另组 GRUB module2 ISO
+    # D4: 默认核 (cpio 经 boot-module 交付); x86 另组 GRUB module2 ISO
     if ! boot_module_build "$target_arch" 2>&1 | tail -3; then
         err "[$target_arch] boot-module 构建失败"
         return 1
@@ -232,7 +232,7 @@ feature_caps_boot() {
     esac
 
     info "[x86_64] P-62: KERNEL_FEATURES=${feat} 构建..."
-    if ! make ARCH=x86_64 KERNEL_FEATURES="$feat initramfs" all 2>&1 | tail -3; then
+    if ! make ARCH=x86_64 KERNEL_FEATURES="$feat" all 2>&1 | tail -3; then
         err "[x86_64] P-62 ${feat}: 构建失败"
         return 1
     fi

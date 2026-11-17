@@ -168,43 +168,85 @@ pub fn find_rsdp(multiboot2_info_ptr: u64) -> Option<u64> {
     scan_bios_rom()
 }
 
-fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
-    let ptr = mb2_ptr as *const u8;
-    // SAFETY: `ptr` 指向已验证有效的 ACPI/BIOS 表头 (长度 ≥ sizeof(u32)); 只读访问
-    let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
+/// 从小端字节镜像取一个 `u32`; 越界返回 `None` (不 panic, 不截断).
+fn le_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
 
+/// 校验一段 RSDP 字节副本.
+///
+/// 签名 `"RSD PTR "` + 前 20 字节 (v1 面) 校验和为 0; revision ≥ 2 时另按 `length`
+/// 字段 (@20) 校验 v2 扩展面整段和. 长度不足以容纳所声明的面即判否 —— fail-closed,
+/// 不按短面静默放行.
+fn rsdp_bytes_valid(bytes: &[u8]) -> bool {
+    if bytes.len() < 20 || bytes[..8] != *b"RSD PTR " {
+        return false;
+    }
+    let sum = |slice: &[u8]| slice.iter().fold(0u8, |acc, b| acc.wrapping_add(*b));
+    if sum(&bytes[..20]) != 0 {
+        return false;
+    }
+    if bytes[15] >= 2 {
+        let Some(declared) = le_u32(bytes, 20).map(|v| v as usize) else {
+            return false;
+        };
+        if declared < 36 || declared > bytes.len() {
+            return false;
+        }
+        return sum(&bytes[..declared]) == 0;
+    }
+    true
+}
+
+/// 在 MB2 标签表字节镜像里定位 ACPI RSDP, 返回其**块内字节偏移**.
+///
+/// MB2 spec §3.6.16/17: tag 14 (旧版) / tag 15 (新版) 的载荷是 RSDP 的**内联副本**
+/// (分别 20 / 36 字节), **不是**指向 RSDP 的指针. 原实现把载荷按 `u64` 读成地址,
+/// 读到的是签名 `"RSD PTR "` 的小端整数 `0x2052_5450_2044_5352` —— 非规范地址,
+/// 解引用即 #GP. 故本函数返回偏移, 由调用方加回块基址.
+///
+/// 两标签并存时优先 tag 15 (v2, 带 XSDT), 且**与标签出现次序无关**: GRUB 在
+/// `SeaBIOS` 与 OVMF 下都同时给出两条, 次序不构成优先级.
+fn rsdp_offset_in_mb2(blob: &[u8]) -> Option<usize> {
+    let end = (le_u32(blob, 0)? as usize).min(blob.len());
+    let mut v1: Option<usize> = None;
     let mut offset: usize = 8;
-    while offset + 8 <= total_size as usize {
-        // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 4+sizeof(u32)); 只读访问
-        let tag_type = unsafe { ptr.add(offset).cast::<u32>().read_unaligned() };
-        // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 4 + 1+sizeof(u32)); 只读访问
-        let tag_size = unsafe { ptr.add(offset + 4).cast::<u32>().read_unaligned() };
-
-        if tag_type == 0 || tag_size == 0 {
+    while offset + 8 <= end {
+        let tag_type = le_u32(blob, offset)?;
+        let tag_size = le_u32(blob, offset + 4)? as usize;
+        if tag_type == 0 || tag_size < 8 {
             break;
         }
-
-        // Multiboot2 tag 14 = 旧版 ACPI RSDP, tag 15 = 新版 RSDP
-        if tag_type == 14 || tag_type == 15 {
-            // SAFETY: 指针指向有效的 ACPI/Multiboot2 表 (长度已校验 ≥ offset / 8 + 1+sizeof(u64)); 只读访问
-            let rsdp_ptr = unsafe { ptr.add(offset + 8).cast::<u64>().read_unaligned() };
-            if is_valid_rsdp(rsdp_ptr) {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                unsafe {
-                    crate::privileged::klog::klog_info(
-                        c"[ACPI] RSDP found via Multiboot2".as_ptr(),
-                    );
-                }
-                return Some(rsdp_ptr);
+        let payload = offset + 8;
+        let payload_end = (offset + tag_size).min(end);
+        if (tag_type == 14 || tag_type == 15)
+            && payload < payload_end
+            && rsdp_bytes_valid(&blob[payload..payload_end])
+        {
+            if tag_type == 15 {
+                return Some(payload);
             }
+            v1 = Some(payload);
         }
-
-        offset += tag_size as usize;
-        // 对齐到 8 字节边界
-        offset = (offset + 7) & !7;
+        offset = (offset + tag_size + 7) & !7;
     }
+    v1
+}
 
-    None
+fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
+    let ptr = mb2_ptr as *const u8;
+    // SAFETY: MB2 信息块由引导器装入, 经 PMM 早期预留 (label "mb2-info") 后生命周期
+    // 覆盖内核运行; 首 4 字节为 total_size. 启动期低半区恒等映射覆盖 0-4 GiB, 而
+    // MB2 spec 保证引导器把信息块放在 4 GiB 以下, 故物理地址可直读.
+    let total_size = unsafe { ptr.cast::<u32>().read_unaligned() } as usize;
+    // SAFETY: 同上; total_size 由引导器写入并描述整块长度, 只读借用且无别名写.
+    let blob = unsafe { core::slice::from_raw_parts(ptr, total_size) };
+    let offset = rsdp_offset_in_mb2(blob)?;
+    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    unsafe {
+        crate::privileged::klog::klog_info(c"[ACPI] RSDP found via Multiboot2".as_ptr());
+    }
+    Some(mb2_ptr + offset as u64)
 }
 
 fn scan_ebda() -> Option<u64> {
@@ -241,6 +283,10 @@ fn scan_memory_range(start: u64, len: u64) -> Option<u64> {
     None
 }
 
+/// 校验物理地址 `addr` 处的 RSDP 签名与 v1 面校验和 (BIOS/EBDA 扫描面).
+///
+/// 扫描面逐 16 字节试候选, 故先只读 20 字节 (v1 面) 以压低 ROM 扫描开销;
+/// MB2 内联副本面另按 [`rsdp_bytes_valid`] 校验 (含 v2 扩展面).
 fn is_valid_rsdp(addr: u64) -> bool {
     let ptr = addr as *const u8;
     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -1288,5 +1334,150 @@ mod tests {
         assert_eq!(lookup_irq_override(&table, 0).map(|o| o.gsi), Some(2));
         assert_eq!(lookup_irq_override(&table, 9).map(|o| o.gsi), Some(9));
         assert!(lookup_irq_override(&table, 11).is_none());
+    }
+
+    // ---- MB2 内联 RSDP 副本解析 (D4-i 甲) ----
+
+    /// 补齐 RSDP 的两面校验和 (v1 面 @8 覆盖前 20 B; v2 扩展面 @32 覆盖整段).
+    fn fix_rsdp_checksums(b: &mut [u8]) {
+        b[8] = 0;
+        let s1 = b[..20].iter().fold(0u8, |a, x| a.wrapping_add(*x));
+        b[8] = 0u8.wrapping_sub(s1);
+        if b.len() >= 36 {
+            b[32] = 0;
+            let s2 = b.iter().fold(0u8, |a, x| a.wrapping_add(*x));
+            b[32] = 0u8.wrapping_sub(s2);
+        }
+    }
+
+    /// RSDP v1 副本 (20 B, revision 0, 只带 RSDT 地址).
+    fn rsdp_v1(rsdt: u32) -> Vec<u8> {
+        let mut b = b"RSD PTR ".to_vec();
+        b.push(0); // checksum @8
+        b.extend_from_slice(b"EDGINE"); // OEMID @9..15
+        b.push(0); // revision @15
+        b.extend_from_slice(&rsdt.to_le_bytes()); // rsdt_address @16
+        fix_rsdp_checksums(&mut b);
+        b
+    }
+
+    /// RSDP v2 副本 (36 B, revision 2, 带 length / XSDT 地址 / 扩展校验和).
+    fn rsdp_v2(xsdt: u64) -> Vec<u8> {
+        let mut b = rsdp_v1(0);
+        b[15] = 2;
+        b.extend_from_slice(&36u32.to_le_bytes()); // length @20
+        b.extend_from_slice(&xsdt.to_le_bytes()); // xsdt_address @24
+        b.push(0); // extended_checksum @32
+        b.extend_from_slice(&[0u8; 3]); // reserved @33..36
+        fix_rsdp_checksums(&mut b);
+        b
+    }
+
+    /// tag 14 / 15: 8 字节头 + RSDP **内联副本** (实测 size 分别 28 / 44).
+    fn acpi_tag(kind: u32, rsdp: &[u8]) -> Vec<u8> {
+        let size = u32::try_from(8 + rsdp.len()).expect("ACPI 标签长度溢出 u32");
+        let mut t = kind.to_le_bytes().to_vec();
+        t.extend_from_slice(&size.to_le_bytes());
+        t.extend_from_slice(rsdp);
+        t
+    }
+
+    /// 拼装 MB2 标签表 (8 字节头 + 逐标签补到 8 字节对齐 + 终止标签).
+    fn mb2_blob(tags: &[Vec<u8>]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for tag in tags {
+            body.extend_from_slice(tag);
+            while body.len() % 8 != 0 {
+                body.push(0);
+            }
+        }
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&8u32.to_le_bytes());
+        let total = u32::try_from(8 + body.len()).expect("标签表长度溢出 u32");
+        let mut out = total.to_le_bytes().to_vec();
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    #[test]
+    fn mb2_rsdp_payload_is_inline_copy_not_pointer() {
+        // 核心回归锁: 载荷首 8 字节就是签名本身. 原实现把它按 u64 读成"RSDP 地址",
+        // 得到 0x2052_5450_2044_5352 —— 非规范地址, 解引用即 #GP.
+        let blob = mb2_blob(&[acpi_tag(15, &rsdp_v2(0xFED0_0000))]);
+        let offset = rsdp_offset_in_mb2(&blob).expect("tag 15 内联副本应被识别");
+        assert_eq!(
+            offset, 16,
+            "8 块头 + 8 标签头 → 副本在 16, 不是载荷里存的地址"
+        );
+        let as_pointer = u64::from_le_bytes(blob[offset..offset + 8].try_into().unwrap());
+        assert_eq!(as_pointer, 0x2052_5450_2044_5352, "签名的小端整数即误读值");
+        assert_eq!(&blob[offset..offset + 8], b"RSD PTR ");
+    }
+
+    #[test]
+    fn mb2_rsdp_prefers_v2_regardless_of_tag_order() {
+        let v1 = acpi_tag(14, &rsdp_v1(0x1F00_0000));
+        let v2 = acpi_tag(15, &rsdp_v2(0x1F10_0000));
+        // GRUB 实测次序是 14 在前 15 在后; 两种次序都必须取 v2 (带 XSDT).
+        for tags in [[v1.clone(), v2.clone()], [v2, v1]] {
+            let blob = mb2_blob(&tags);
+            let offset = rsdp_offset_in_mb2(&blob).expect("两标签并存应识别");
+            assert_eq!(blob[offset + 15], 2, "必须取 revision 2 的那份");
+        }
+    }
+
+    #[test]
+    fn mb2_rsdp_v1_only_uses_tag14() {
+        let blob = mb2_blob(&[acpi_tag(14, &rsdp_v1(0x1F00_0000))]);
+        let offset = rsdp_offset_in_mb2(&blob).expect("只有旧版标签时取 tag 14");
+        assert_eq!(offset, 16);
+        assert_eq!(blob[offset + 15], 0);
+    }
+
+    #[test]
+    fn mb2_rsdp_offset_accounts_for_tag_padding() {
+        // tag 1 (cmdline) 长度非 8 倍数, 其后标签须按 8 字节对齐后才开始.
+        let mut cmdline = 1u32.to_le_bytes().to_vec();
+        cmdline.extend_from_slice(&9u32.to_le_bytes());
+        cmdline.push(b'x');
+        let blob = mb2_blob(&[cmdline, acpi_tag(15, &rsdp_v2(0x1F10_0000))]);
+        let offset = rsdp_offset_in_mb2(&blob).expect("补齐后仍应定位到副本");
+        assert_eq!(
+            offset, 32,
+            "8 块头 + 9 字节 tag1 补到 16 + 8 标签头 → 副本在 32"
+        );
+        assert_eq!(&blob[offset..offset + 8], b"RSD PTR ");
+    }
+
+    #[test]
+    fn mb2_rsdp_bad_v2_checksum_falls_back_to_v1() {
+        let mut bad = rsdp_v2(0x1F10_0000);
+        bad[32] = bad[32].wrapping_add(1); // 破坏扩展校验和
+        let blob = mb2_blob(&[acpi_tag(15, &bad), acpi_tag(14, &rsdp_v1(0x1F00_0000))]);
+        let offset = rsdp_offset_in_mb2(&blob).expect("v2 校验失败应退回 v1");
+        assert_eq!(blob[offset + 15], 0, "取的是 tag 14 的 v1 副本");
+        // 只有坏 v2 时无可用副本 —— 不静默放行.
+        assert!(rsdp_offset_in_mb2(&mb2_blob(&[acpi_tag(15, &bad)])).is_none());
+    }
+
+    #[test]
+    fn mb2_rsdp_without_acpi_tags_returns_none() {
+        let blob = mb2_blob(&[acpi_tag(21, &[0u8; 4])]);
+        assert!(rsdp_offset_in_mb2(&blob).is_none());
+        assert!(rsdp_offset_in_mb2(&mb2_blob(&[])).is_none());
+    }
+
+    #[test]
+    fn rsdp_bytes_valid_rejects_truncated_v2_face() {
+        // revision 声称 2 但只给 20 字节: v2 扩展面无从校验, 判否而非按 v1 放行.
+        let mut short = rsdp_v1(0x1F00_0000);
+        short[15] = 2;
+        fix_rsdp_checksums(&mut short);
+        assert!(!rsdp_bytes_valid(&short));
+        assert!(rsdp_bytes_valid(&rsdp_v1(0x1F00_0000)));
+        assert!(rsdp_bytes_valid(&rsdp_v2(0x1F10_0000)));
+        assert!(!rsdp_bytes_valid(b"RSD PTR "));
+        assert!(!rsdp_bytes_valid(&[]));
     }
 }

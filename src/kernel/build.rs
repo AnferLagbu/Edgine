@@ -1,22 +1,19 @@
 //! 内核 crate 的构建脚本 — 嵌入产物的存在性护栏与重编译触发器.
 //!
-//! 裸机 target 下检查本架构 `other/build/<arch>/user/` 下仍被 `include_bytes!` 嵌入的
-//! 产物 —— 用户态 wasm 载体桩 `wasmstub.bin` / `wasmrun.bin` (W-7 / P1) 与 x86_64
-//! 专属引导码 `stage1.bin` —— 缺失即 panic (DECISION-H15: 不再生成全 0 占位符, 以免
-//! 遮蔽真实产物缺失状态); 并对它们发出**绝对路径**的 `cargo:rerun-if-changed` ——
-//! cargo 以包根 `src/kernel` 解析相对路径, 而 `include_bytes!` 以源文件为基准, 两者
-//! 不同源时该指令会静默失效. D4 严格零嵌入后 init.bin / initramfs cpio 不再嵌入内核,
-//! 故不再对其做护栏/重编译触发. host target (host-tests 触发) 不做上述检查,
-//! 避免干净 checkout 形成隐式 `make` 依赖.
+//! D4 严格零嵌入后内核镜像不再嵌任何用户态字节 (init / initramfs cpio / wasm 桩
+//! 均由引导器作 boot-module 交付, 经 VFS 取用), 唯一仍 `include_bytes!` 的产物是
+//! x86_64 专属引导码 `other/build/x86_64/stage1.bin`. 裸机 x86_64 target 下检查其
+//! 存在性, 缺失即 panic (DECISION-H15: 不再生成全 0 占位符, 以免遮蔽真实产物缺失
+//! 状态); 并对它发出**绝对路径**的 `cargo:rerun-if-changed` —— cargo 以包根
+//! `src/kernel` 解析相对路径, 而 `include_bytes!` 以源文件为基准, 两者不同源时该
+//! 指令会静默失效. host target (host-tests 触发) 与 aarch64 不做上述检查, 避免干净
+//! checkout 形成隐式 `make` 依赖.
 
 use std::path::Path;
 
 /// DECISION-H15: 构建产物缺失时直接报错, 不再生成全 0 占位符.
 ///
-/// 原因: 被嵌入的用户态桩产物由 Makefile 从真实 ELF 产物生成
-/// (Makefile:132/177 `cp` 自 `USER_WASMSTUB_ELF` / `USER_WASMRUN_ELF`,
-/// stage1.bin 由 stage1.asm 汇编).
-/// (Makefile:221 由 stage1.asm 汇编, Makefile:132/177 cp 自 `USER_INIT_ELF`).
+/// 原因: stage1.bin 由 Makefile 从真实汇编产物生成 (Makefile:221 由 stage1.asm 汇编).
 /// 若此处静默写入全 0 占位, 会覆盖/遮蔽真实产物或让缺失状态被掩盖,
 /// 且与 Makefile 产物存在顺序冲突 (全 0 镜像被当成真实引导码).
 fn require_exists(path: &Path) {
@@ -32,40 +29,18 @@ fn main() {
     let base = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
 
     // G-06 (2026-09-06): 产物存在性检查仅对裸机 target 生效.
-    // other/build/<arch>/user/init.bin + other/build/x86_64/stage1.bin 由 Makefile 生成,
-    // other/build/ 目录被 .gitignore 忽略. host 构建 (host-tests 经 edgine path 依赖
-    // 触发) 的 CARGO_CFG_TARGET_OS 为 linux, 不应检查裸机产物 — 否则干净 checkout
-    // 直接 cargo test 会因产物缺失 panic, 形成未记录的隐式 make 依赖.
+    // other/build/x86_64/stage1.bin 由 Makefile 生成, other/build/ 目录被 .gitignore
+    // 忽略. host 构建 (host-tests 经 edgine path 依赖触发) 的 CARGO_CFG_TARGET_OS 为
+    // linux, 不应检查裸机产物 — 否则干净 checkout 直接 cargo test 会因产物缺失 panic,
+    // 形成未记录的隐式 make 依赖.
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "none" {
         let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-        // S-6 防线①: 用户态产物按架构分目录 (Makefile: USER_BUILD_DIR), 与
-        // `include_bytes!` 读取路径同源; stage1.bin 是 x86_64 专属引导码
-        // (boot/stage1.asm → nasm -f bin). aarch64 引导走 boot/aarch64/start.S,
-        // 不生成也不依赖 stage1.bin.
+        // stage1.bin 是 x86_64 专属引导码 (boot/stage1.asm → nasm -f bin);
+        // aarch64 引导走 boot/aarch64/start.S, 不生成也不依赖 stage1.bin.
+        // 它已随内核产物迁入 other/build/<arch>/ (P-10), 路径自带架构段,
+        // 不存在异架构残留, 故无需 arch-switch-clean 之类的补丁机制.
         //
-        // stage1.bin 已随内核产物一同迁入 other/build/<arch>/ (P-10): 旧写法放在
-        // 两架构共用的 other/build/ 根下, 靠 Makefile 的 arch-switch-clean 在切架构
-        // 时删掉它来防异架构残留 —— 该补丁机制已随目录隔离退役, 此处不再需要它:
-        // 路径自带 x86_64 段, aarch64 构建既不会读到异架构产物, 也不存在“被删以
-        // 后缺失”的正常情形 (本函数仅在 target_arch == "x86_64" 分支检查).
-        // D4 零嵌入: init.bin 不再编译期嵌入内核镜像 (init 经 boot-module 交付),
-        // 故内核构建不再对其做存在性护栏/重编译触发 (仍由 `make user` 产出供 verify_image_arch 架构自检).
-        // W-7: wasm 用户态入口桩按架构嵌入 (函数侧 `wasm/stub.rs` 的
-        // include_bytes! 同源); 缺失即报错, 不生成占位符.
-        let wasm_stub = base
-            .join("other/build")
-            .join(&target_arch)
-            .join("user/wasmstub.bin");
-        require_exists(&wasm_stub);
-        // P1: 用户态 wasmi 运行时桩 wasmrun.bin 与 wasmstub.bin 同由 `make user` 产出
-        // (两 workspace 成员恒构建); `wasm_userspace` feature 选桩嵌入其一 (wasm/stub.rs
-        // 互斥 cfg), 两者恒存在, 故一并做存在性护栏与重编译触发.
-        let wasm_run = base
-            .join("other/build")
-            .join(&target_arch)
-            .join("user/wasmrun.bin");
-        require_exists(&wasm_run);
         // S-6 防线③附带: rerun-if-changed 必须给**绝对路径**. cargo 对相对路径以
         // 包根 (CARGO_MANIFEST_DIR = src/kernel) 为基准解析, 而 include_bytes! 以
         // 源文件为基准 —— 旧写法 `other/build/user/init.bin` 实际指向不存在的
@@ -76,10 +51,5 @@ fn main() {
             require_exists(&stage1);
             println!("cargo:rerun-if-changed={}", stage1.display());
         }
-        println!("cargo:rerun-if-changed={}", wasm_stub.display());
-        println!("cargo:rerun-if-changed={}", wasm_run.display());
-        // D3 零嵌入: initramfs cpio 不再编译期嵌入内核镜像, 改由引导器作 boot-module
-        // 交付 (经 privileged::boot::initrd_blob 取用). 故内核构建不再对 cpio 产物做
-        // 存在性护栏/重编译触发; cpio 仍由 `make user` 生产, 供引导介质打包.
     }
 }

@@ -980,14 +980,12 @@ if [ "$MODE" = "full" ]; then
             err "线程组多轮压力失败 (exit=$STRESS_RC, 全量输出见 $STRESS_EVIDENCE)"
         fi
 
-        # K-07b 批1: initramfs 载体专项 feature 腿 (scripts/initramfs_boot_test.sh).
-        # initramfs 是**默认关闭**的 feature —— 上面两子腿跑的都是内嵌 init.bin 镜像,
-        # 载体链 (cpio → ramfs → VFS 读 /init → ELF 装载) 在默认门禁里一行都不执行.
-        # 与 P-62 甲 同形: 真构建 (KERNEL_FEATURES=initramfs) + 真启动 + 断言里程碑,
-        # 脚本尾部自行复原默认构建, 故排在本步骤最后, 不污染后续腿的镜像口径.
-        # 载体腿以 KERNEL_NO_DEFAULT=1 构建: A-1 常开 lockdep 后 x86_64 载体镜像
-        # 末尾 0x413000 越过 K-08 的 USER_CODE_BASE=0x400000; 载体是诊断 feature、
-        # 非出货形态, 出货默认镜像的 lockdep 由上面默认启动腿与下方探针独立覆盖.
+        # K-07b: initramfs 载体腿 (scripts/initramfs_boot_test.sh).
+        # D4 严格零嵌入后内嵌 init.bin 路径已删除, 载体链 (boot-module cpio → ramfs →
+        # VFS 读 /init → ELF 装载) 就是**出货启动形态**; D4-e 起 `initramfs` feature
+        # 退役 (解包无条件执行), 本腿构建默认镜像 (lockdep 常开), 不切 KERNEL_FEATURES.
+        # 仍单列一腿: 它断言载体链五条里程碑 (解包条目数 / init from /init / THREAD /
+        # EXEC / SCHED 守恒), 比默认启动腿的判据更细.
         # 依赖 python3 (verify_image_arch.py), 与上一子腿同样已在 QEMU 可用分支内.
         CPIO_EVIDENCE="$EVIDENCE_DIR/audit_initramfs_boot.log"
         set +e
@@ -1033,7 +1031,7 @@ if [ "$MODE" = "full" ]; then
         # 位极性 / 表根 / 重试链 / 射程四类写反都能编译且 host 全绿; 本腿证机器码语义真在跑.
         # 判据四条: `[COW] PASS` 三腿全过 + 无 `[COW] FAIL` + EC=0x25 同 EL 数据异常硬零
         # (核态 uaccess 破 COW 支路) + EC=0x24 读数 >=1 且 KPTI 收割行在 (反向: 射程未放宽).
-        # 排在本步骤最后: 前面的 feature 腿已把镜像复原成默认构建, 本腿自带构建与自检.
+        # 排在 feature 腿之后: 前面的 feature 腿已把镜像复原成默认构建, 本腿自带构建与自检.
         COW_EVIDENCE="$EVIDENCE_DIR/audit_aarch64_cow_boot.log"
         set +e
         COW_OUT=$("$PROJECT_ROOT/scripts/aarch64_cow_boot_test.sh" 2>&1)
@@ -1046,6 +1044,62 @@ if [ "$MODE" = "full" ]; then
             ok "aarch64 缺页/COW 恢复路径真跑腿: 四判据全符合 (#108 丙)"
         else
             err "aarch64 缺页/COW 真跑腿失败 (exit=$COW_RC, 全量输出见 $COW_EVIDENCE)"
+        fi
+
+        # D4-i 丙: UEFI(OVMF) 引导真跑腿 (专项脚本 scripts/uefi_boot_test.sh).
+        # 既有启动腿全经 SeaBIOS, 而 D4-g/D4-i 修的三处缺陷 (MB2 信息块指针硬编码 0 /
+        # tag4 覆盖 tag6 内存图 / inline RSDP 被当指针读) **只在 UEFI 下暴露** ——
+        # BIOS 腿全绿证不了它们, 故单列本腿. 判据 = ACPI 经 MB2 + 三表 + 双核上线 +
+        # firmware 预留声明/登记两侧对账 + 内存图权威 + 载体链 + 用户态探针可达面.
+        # `[THREAD]` 腿按用户裁定「登记独立工程 + 腿按可达面接线」**显式不判**:
+        # 预存缺陷已登记 docs/plan/uefi-thread-exit-hang.md, 脚本无条件打印横幅点名该册
+        # (非静默跳过 —— 静默跳过在 full 档读起来和通过一样).
+        # OVMF 发现单源在脚本的 `--probe`: 门禁侧不另抄候选路径清单 (两份必漂移);
+        # 固件缺失走 skip_leg 三态 (零读数, 不当绿).
+        # 排在 aarch64 COW 腿之后: 本腿构建 x86_64 出货默认镜像, 不切 feature, 无需尾部复原.
+        UEFI_EVIDENCE="$EVIDENCE_DIR/audit_uefi_boot.log"
+        set +e
+        UEFI_PROBE=$("$PROJECT_ROOT/scripts/uefi_boot_test.sh" --probe 2>&1)
+        UEFI_PROBE_RC=$?
+        set -e
+        if [ "$UEFI_PROBE_RC" -eq 0 ]; then
+            set +e
+            UEFI_OUT=$("$PROJECT_ROOT/scripts/uefi_boot_test.sh" x86_64 2>&1)
+            UEFI_RC=$?
+            set -e
+            printf '%s\n' "$UEFI_OUT" > "$UEFI_EVIDENCE"
+            printf '%s\n' "$UEFI_OUT" | tail -8
+            printf '   全量输出: %s\n' "$UEFI_EVIDENCE"
+            if [ "$UEFI_RC" -eq 0 ]; then
+                ok "UEFI(OVMF) 引导真跑腿: 可达面判据全符合 (D4-i 丙; [THREAD] 显式不判)"
+            else
+                err "UEFI 引导真跑腿失败 (exit=$UEFI_RC, 全量输出见 $UEFI_EVIDENCE)"
+            fi
+        else
+            printf '%s\n' "$UEFI_PROBE" > "$UEFI_EVIDENCE"
+            skip_leg "uefi" "$UEFI_PROBE"
+        fi
+
+        # D5-b: aarch64 EGFS 磁盘挂载真跑腿 (专项脚本 scripts/aarch64_egfs_disk_boot_test.sh).
+        # 既有启动腿一律**不带盘**, 故全绿证不了磁盘挂载成立 —— D5 的三处修复 (virtio-blk
+        # legacy 初始化序 / 挂载调用处 NUL 终止 / 去 x86-only 门控) 只在带盘真启动下暴露.
+        # 拓扑 (D5-e): 引导根恒为 ramfs/initramfs, EGFS 只挂 /disk, 由用户态 init 切根.
+        # 三相判据: 空盘首启 (注册 1 块 + 自格式化 + 挂 /disk + EL0, 请求超时与挂载失败硬零)
+        # + 同盘二启 (/disk 仍挂上且不得重新格式化 ⇒ uberblock 真落盘) + 无盘负控制
+        # (memory mode 在且 /disk 挂载行硬零 ⇒ 分支未被无条件接管).
+        # 排在本步骤最后: 本腿构建 aarch64 出货默认镜像, 不切 feature, 无需尾部复原.
+        EGFS_DISK_EVIDENCE="$EVIDENCE_DIR/audit_aarch64_egfs_disk_boot.log"
+        set +e
+        EGFS_DISK_OUT=$("$PROJECT_ROOT/scripts/aarch64_egfs_disk_boot_test.sh" aarch64 2>&1)
+        EGFS_DISK_RC=$?
+        set -e
+        printf '%s\n' "$EGFS_DISK_OUT" > "$EGFS_DISK_EVIDENCE"
+        printf '%s\n' "$EGFS_DISK_OUT" | tail -8
+        printf '   全量输出: %s\n' "$EGFS_DISK_EVIDENCE"
+        if [ "$EGFS_DISK_RC" -eq 0 ]; then
+            ok "aarch64 EGFS 磁盘挂载真跑腿: 三相判据全符合 (D5)"
+        else
+            err "aarch64 EGFS 磁盘挂载真跑腿失败 (exit=$EGFS_DISK_RC, 全量输出见 $EGFS_DISK_EVIDENCE)"
         fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"

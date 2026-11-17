@@ -4,9 +4,9 @@
 #
 # 用途: 将双架构内核制品打包为可写入 USB 的真机引导介质.
 #   - x86_64 : GRUB2 multiboot2 ISO (BIOS/UEFI 兼容, 复用 `make iso` 逻辑)
-#   - aarch64: 整盘镜像 (MBR + 单个 FAT32 分区), 内含 arm64 Image 与
-#              U-Boot 引导配置 (extlinux/extlinux.conf); 由 U-Boot distro boot
-#              (`sysboot` -> `booti`) 引导.
+#   - aarch64: 整盘镜像 (MBR + 单个 FAT32 分区), 内含 arm64 Image、initramfs cpio
+#              (boot-module) 与 U-Boot 引导配置 (extlinux/extlinux.conf); 由 U-Boot
+#              distro boot (`sysboot` -> `booti`) 引导, initrd 经 DTB /chosen 交出.
 #
 # 用法:
 #   ./scripts/make_boot_medium.sh x86_64
@@ -56,6 +56,9 @@ IMG_OUT="${OUT_DIR}/edgine-aarch64.img"
 # aarch64 默认参数: 装载地址须与 Image 头 text_offset 一致
 # (DRAM 基址 0x40000000 + text_offset 0x80000 = 0x40080000).
 AARCH64_LOAD_ADDR="0x40080000"
+# initrd (boot-module cpio) 装载地址: DRAM 基址 + 128 MiB, 避开 Image / 内核 BSS 与
+# U-Boot 自搬迁区 (要求目标板 DRAM ≥ 256 MiB). D4 严格零嵌入后 PID 1 只来自该模块.
+AARCH64_INITRD_ADDR="0x48000000"
 AARCH64_SIZE_MIB=128
 
 ok()   { echo -e "${GREEN}\u2713 $1${NC}"; }
@@ -170,11 +173,16 @@ build_aarch64() {
     require_cmd mkfs.vfat "dosfstools"
     require_cmd mcopy "mtools"
 
-    info "构建 aarch64 内核 Image (make ARCH=aarch64 all)..."
-    make ARCH=aarch64 all
+    info "构建 aarch64 内核 Image + 用户态 cpio (make ARCH=aarch64 all user)..."
+    make ARCH=aarch64 all user
 
     if [ ! -f other/build/aarch64/kernel-aarch64.img ]; then
         err "未生成 other/build/aarch64/kernel-aarch64.img, 请检查 make all 输出"
+        exit 1
+    fi
+    # D4 严格零嵌入: 内核不嵌 init/cpio, 介质必须自带 boot-module, 否则真机无 PID 1.
+    if [ ! -f other/build/aarch64/user/initramfs.cpio ]; then
+        err "未生成 other/build/aarch64/user/initramfs.cpio, 请检查 make user 输出"
         exit 1
     fi
 
@@ -187,6 +195,8 @@ build_aarch64() {
     #    extlinux.conf: U-Boot distro boot (sysboot) 原生读取, 无外部工具依赖;
     #    装载地址不显式给出 — U-Boot 按 Image 头 text_offset (0x80000) 放置到
     #    DRAM 基址 + text_offset = 0x40080000, 与内核链接地址一致.
+    #    `initrd` 行把 cpio 作 boot-module 交出: U-Boot 据此填 DTB /chosen 的
+    #    linux,initrd-start/end, 与 QEMU `-initrd` 同一条内核解析路径 (D2).
     #    boot.cmd: 等价的手工 `booti` 脚本, 供自定义 bootcmd 的板子使用.
     cat > "$work/extlinux.conf" <<EOF
 # Edgine aarch64 U-Boot extlinux 配置 (由 U-Boot distro boot / sysboot 读取)
@@ -195,13 +205,15 @@ timeout 30
 label edgine
     menu label Edgine (aarch64)
     linux /Image
+    initrd /initramfs.cpio
 EOF
     cat > "$work/boot.cmd" <<EOF
 # Edgine aarch64 U-Boot 手工引导脚本 (等价路径, 供自定义 bootcmd 使用)
 # 打包为 boot.scr: mkimage -A arm64 -O linux -T script -C none -n "Edgine" -d boot.cmd boot.scr
 echo "Booting Edgine (aarch64) ..."
 fatload mmc 0:1 ${AARCH64_LOAD_ADDR} Image
-booti ${AARCH64_LOAD_ADDR} - \${fdtcontroladdr}
+fatload mmc 0:1 ${AARCH64_INITRD_ADDR} initramfs.cpio
+booti ${AARCH64_LOAD_ADDR} ${AARCH64_INITRD_ADDR} \${fdtcontroladdr}
 EOF
 
     # 2) 整盘镜像: 空白 -> MBR 分区表 -> FAT32 (偏移 1MiB) -> 拷入文件
@@ -220,6 +232,7 @@ EOF
 
     # mtools `@@<offset>` 语法定位分区内偏移 (1MiB = 1048576 字节)
     mcopy -i "${disk}@@1M" other/build/aarch64/kernel-aarch64.img ::Image
+    mcopy -i "${disk}@@1M" other/build/aarch64/user/initramfs.cpio ::initramfs.cpio
     mmd   -i "${disk}@@1M" ::extlinux
     mcopy -i "${disk}@@1M" "$work/extlinux.conf" ::extlinux/extlinux.conf
     mcopy -i "${disk}@@1M" "$work/boot.cmd" ::boot.cmd
@@ -230,7 +243,7 @@ EOF
     echo "    --- 分区内文件列表 ---"
     mdir -i "${IMG_OUT}@@1M" :: || true
     echo "    ----------------------"
-    warn "使用前提: 目标板 U-Boot 具备 MMC + FAT + distro boot (sysboot/booti) 能力, 且 DRAM 基址为 0x40000000"
+    warn "使用前提: 目标板 U-Boot 具备 MMC + FAT + distro boot (sysboot/booti) 能力, DRAM 基址 0x40000000 且容量 ≥ 256 MiB (initrd 装载于 ${AARCH64_INITRD_ADDR})"
     warn "串口 checklist 与 SoC 契约边界见 docs/explain/guide-hardware-boot.md"
 }
 

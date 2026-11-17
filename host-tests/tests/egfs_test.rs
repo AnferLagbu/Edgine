@@ -126,11 +126,23 @@ fn comprehensive_crud(egfs: &EgfsData) {
 
     test!(mkdir, {
         let result = egfs.mkdir("/mydir", test_pwm());
-        assert!(result >= 0, "mkdir should succeed, got {result}");
+        // 契约是「成功返回 0」: 曾返回新对象号, 被 fs_mkdir 适配器读成失败,
+        // 而目录其实已建 ⇒ 查返回码的调用方 (init 切根前建 put_old) 恒判失败.
+        assert_eq_egfs!(result, 0, "mkdir should return 0 on success");
         let stat = egfs.stat("/mydir", test_pwm());
         assert!(stat.is_some(), "stat should find mydir");
         let obj = stat.unwrap();
         assert!(obj.obj_type as u8 == 2, "mydir should be directory type");
+        // 平坦命名空间无 "" 键, 但挂载根必须可 stat (pivot_root 判新根是否目录).
+        let root = egfs.stat("/", test_pwm());
+        assert!(
+            root.is_some(),
+            "stat / should find the root directory object"
+        );
+        assert!(
+            root.unwrap().obj_type as u8 == 2,
+            "root should be directory type"
+        );
     });
 
     test!(create_file_in_dir, {

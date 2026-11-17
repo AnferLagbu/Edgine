@@ -39,6 +39,7 @@ pub const SYS_GETGID: u64 = 104;
 pub const SYS_GETEUID: u64 = 107;
 pub const SYS_GETEGID: u64 = 108;
 pub const SYS_GETPPID: u64 = 110;
+pub const SYS_PIVOT_ROOT: u64 = 155;
 pub const SYS_CHROOT: u64 = 161;
 pub const SYS_SYNC: u64 = 162;
 pub const SYS_MOUNT: u64 = 165;
@@ -560,6 +561,18 @@ pub fn env_chdir(path: &[u8]) -> i32 {
 #[must_use]
 pub fn env_chroot(path: &[u8]) -> i32 {
     unsafe { ret_i32(sys1(SYS_CHROOT, path.as_ptr() as u64)) }
+}
+/// `pivot_root(new_root, put_old)` — 把视图根换成挂载点 `new_root` 并摘除旧根
+/// (需 `CAP_SYS_ADMIN`). 两路径都须 NUL 结尾; `put_old` 须严格位于 `new_root` 之下.
+#[must_use]
+pub fn env_pivot_root(new_root: &[u8], put_old: &[u8]) -> i32 {
+    unsafe {
+        ret_i32(sys2(
+            SYS_PIVOT_ROOT,
+            new_root.as_ptr() as u64,
+            put_old.as_ptr() as u64,
+        ))
+    }
 }
 
 pub fn gethostname(buf: &mut [u8]) -> i32 {

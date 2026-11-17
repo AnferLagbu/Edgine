@@ -44,8 +44,10 @@ default = []
 async = []
 e1000-real-hw = []
 host-test = []
-initramfs = []
 kernel_test = []
+# P1 wasm 退用户态: 点亮后 exec `\0asm` 派发从 VFS 读 /bin/wasmrun (用户态 wasmi
+# 运行时桩), 默认关闭读 /bin/wasmstub (内核解释器桩). 选桩见 wasm/stub.rs 的 stub_path().
+wasm_userspace = []
 
 # P-71: 此处原有 `[lints.rust]` / `[lints.clippy]` 豁免表, 已迁至 crate 根
 # (`functions/mod.rs` 的 `#![allow(...)]` 块). 原因: 命令行 `-D clippy::pedantic`

@@ -178,6 +178,73 @@ impl BootInfo {
     }
 }
 
+/// 一条 firmware 保留区 (引导器内存图里 `type != 1` 的条目).
+///
+/// MB2 spec §3.6.6 的类型语义: 1 = 可用 RAM, 3 = 承载 ACPI 信息的可回收内存,
+/// 4 = 休眠须保留, 5 = 坏 RAM, 其余值一律 reserved. 除 1 之外都**不得**当空闲页
+/// 分配出去 —— ACPI 表 (RSDT/XSDT/MADT/FADT) 与 EFI runtime 就住在这些区里.
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirmwareRegion {
+    /// 起始物理地址.
+    pub base: u64,
+    /// 字节长度.
+    pub size: u64,
+}
+
+/// firmware 保留区定长表 (引导期无分配器, 故定长; 容量单源见 `limits`).
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FirmwareRegions {
+    regions: [FirmwareRegion; crate::privileged::constants::limits::MAX_FIRMWARE_REGIONS],
+    count: usize,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl FirmwareRegions {
+    /// 空表 (供 `const` 初始化与解析起点使用).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            regions: [FirmwareRegion { base: 0, size: 0 };
+                crate::privileged::constants::limits::MAX_FIRMWARE_REGIONS],
+            count: 0,
+        }
+    }
+
+    /// 登记一条保留区; 零长度区是空集, 直接忽略.
+    ///
+    /// # Panics
+    /// 表满时停机 (fail-closed): 丢一条等于把该 firmware 区当空闲页分配出去.
+    pub fn push(&mut self, base: u64, size: u64) {
+        if size == 0 {
+            return;
+        }
+        assert!(
+            self.count < self.regions.len(),
+            "[BOOT] firmware region table full ({}), cannot reserve 0x{:X}+{}",
+            self.regions.len(),
+            base,
+            size
+        );
+        self.regions[self.count] = FirmwareRegion { base, size };
+        self.count += 1;
+    }
+
+    /// 已登记条目的只读视图.
+    #[must_use]
+    pub fn as_slice(&self) -> &[FirmwareRegion] {
+        &self.regions[..self.count]
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Default for FirmwareRegions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct MultibootPtr(*const u8);
 // SAFETY: MultibootPtr 包装一个指向启动信息数据的裸指针, 启动早期写入
 // 一次, 之后只读. 访问受 MULTIBOOT_INFO_PTR Mutex 保护.
@@ -185,9 +252,19 @@ unsafe impl Send for MultibootPtr {}
 unsafe impl Sync for MultibootPtr {}
 
 static BOOT_INFO: OnceLock<BootInfo> = OnceLock::new();
+/// 搬移后的 initrd 载体区 (base, size).
+///
+/// `BOOT_INFO` 记录的是**引导器交付的事实**, 一经解析不再改写; 而 D4-h 的早期
+/// 搬移会把归档挪到与固定堆窗互斥的新址. 两个事实分开存, 消费者经 [`initrd_blob`]
+/// 统一取"当前有效"的那一份.
+static INITRD_CARRIER: OnceLock<(u64, u64)> = OnceLock::new();
 static MULTIBOOT_INFO_PTR: IrqSpinLock<MultibootPtr> =
     IrqSpinLock::new(MultibootPtr(core::ptr::null()));
 static MULTIBOOT_MAGIC: IrqSpinLock<u32> = IrqSpinLock::new(0);
+
+/// 引导器内存图里的 firmware 保留区 (x86_64; aarch64 走 DTB, 不经 Multiboot).
+#[cfg(target_arch = "x86_64")]
+static FIRMWARE_REGIONS: OnceLock<FirmwareRegions> = OnceLock::new();
 
 // SAFETY: C ABI 互操作，函数签名与外部代码约定一致
 // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, `init()` 走常量桩取值,
@@ -206,24 +283,82 @@ pub fn get_boot_info() -> &'static BootInfo {
         .expect("[BOOT] accessed before initialization")
 }
 
+/// 登记搬移后的 initrd 载体区 (写一次; 重复调用保留首值).
+///
+/// 由 `boot_memory_init` 在 PMM 位图建立后调用 —— 此时早期预留表里的 base 已是
+/// 与内核映像 / 固定堆窗 / 元数据六区互斥的最终地址.
+pub fn set_initrd_carrier(base: u64, size: u64) {
+    let _ = INITRD_CARRIER.set((base, size));
+}
+
 /// 取回引导器交付的 initrd (引导模块) 字节切片; 无模块时返回 `None`.
 ///
-/// 该区由引导器装入并经 PMM 预留 (见 `boot_memory_init`), 生命周期覆盖内核运行;
-/// 经高半区直射区映射为只读切片, 供 functions 层解包 (functions 零 unsafe, 见 F1).
+/// 该区由引导器装入, 经早期预留表登记 (与固定堆窗相交时已搬移到互斥区), 生命周期
+/// 覆盖内核运行; 经高半区直射区映射为只读切片, 供 functions 层解包 (functions 零
+/// unsafe, 见 F1).
+#[must_use]
 pub fn initrd_blob() -> Option<&'static [u8]> {
-    let info = get_boot_info();
-    if info.initrd_size == 0 {
+    let (base, size) = INITRD_CARRIER
+        .get()
+        .copied()
+        .unwrap_or_else(|| (get_boot_info().initrd_base, get_boot_info().initrd_size));
+    if size == 0 {
         return None;
     }
-    let size = crate::privileged::glue::usize_from_u64(info.initrd_size);
-    // SAFETY: initrd 区由引导器装入并经 PMM 预留, 生命周期覆盖内核运行; `phys_to_virt`
-    // 经高半区直射区给出唯一内核映射 (x86 直射区不受低半区恒等窗口约束, aarch64 直射区
-    // 覆盖 DRAM), 只读借用且无别名写.
+    let len = crate::privileged::glue::usize_from_u64(size);
+    // SAFETY: initrd 区由引导器装入并经 PMM 早期预留表置位 (搬移后的新址同样置位),
+    // 生命周期覆盖内核运行; `phys_to_virt` 经高半区直射区给出唯一内核映射 (x86 直射区
+    // 不受低半区恒等窗口约束, aarch64 直射区覆盖 DRAM), 只读借用且无别名写.
     let blob = unsafe {
-        let ptr = crate::privileged::mm::phys_to_virt(info.initrd_base) as *const u8;
-        core::slice::from_raw_parts(ptr, size)
+        let ptr = crate::privileged::mm::phys_to_virt(base) as *const u8;
+        core::slice::from_raw_parts(ptr, len)
     };
     Some(blob)
+}
+
+/// 取回引导器传入的启动信息块物理地址; 未经引导入口登记时为 0.
+///
+/// ACPI 发现面 (`arch::x86_64::acpi::find_rsdp`) 由此拿 Multiboot2 信息块 ——
+/// tag 14/15 内联携带 RSDP 副本, 是 UEFI 下唯一可用的 RSDP 来源 (OVMF 无 EBDA,
+/// BIOS ROM 窗内也没有 RSDP). 硬编码 0 会让该路径整条失效而静默退化成单核.
+#[must_use]
+pub fn multiboot_info_ptr() -> u64 {
+    MULTIBOOT_INFO_PTR.lock().0 as u64
+}
+
+/// 取回 Multiboot2 信息块**自身**占用的物理区 `(base, size)`; 非 MB2 引导时 `None`.
+///
+/// 信息块由引导器装在它自选的地址上, 而 ACPI 发现面在 PMM 建立**之后**还要读它
+/// (tag 14/15 内联的 RSDP 副本), 故该区必须与 firmware 保留区一并进早期预留表,
+/// 否则 buddy 会把它当空闲页分配出去. MB1 信息块无自描述长度, 不走此面.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn multiboot2_info_region() -> Option<(u64, u64)> {
+    if *MULTIBOOT_MAGIC.lock() != MULTIBOOT2_MAGIC {
+        return None;
+    }
+    let ptr = MULTIBOOT_INFO_PTR.lock().0;
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: 该指针由引导入口 `boot_set_multiboot_info` 登记, 指向引导器装入的
+    // MB2 信息块; 首 4 字节按协议是 total_size. 启动期低半区恒等映射覆盖 0-4 GiB,
+    // 而 MB2 spec 保证信息块位于 4 GiB 以下, 故物理地址可直读; 只读且无别名写.
+    let total_size = u64::from(unsafe { ptr.cast::<u32>().read_unaligned() });
+    Some((ptr as u64, total_size))
+}
+
+/// 取回引导器内存图里的 firmware 保留区 (MB2 tag 6 / MB1 mmap 中 `type != 1` 项).
+///
+/// PMM 把 `[0, mem_size)` 建模成平坦 RAM, 若不把这些区登记进早期预留表, ACPI 表
+/// (RSDT/XSDT/MADT/FADT) 与 EFI runtime 所在的页会被 buddy 当空闲页分配出去并覆写.
+/// 未经引导解析 (aarch64 / 无 Multiboot) 时返回空切片.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn firmware_regions() -> &'static [FirmwareRegion] {
+    FIRMWARE_REGIONS
+        .get()
+        .map_or(&[], FirmwareRegions::as_slice)
 }
 
 /// 保存引导器传入的魔数与启动信息指针 (由汇编引导入口在跳转前调用)
@@ -235,11 +370,12 @@ pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64)) {
+fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions) {
     // SAFETY: `ptr` 由调用方保证指向有效 Multiboot1Info; 只读借用
     let mbi = unsafe { ptr.cast::<Multiboot1Info>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
+    let mut firmware = FirmwareRegions::new();
 
     // 引导模块 (initrd): flags bit3 且 mods_count>0 时取首模块的物理区间.
     let initrd = if mbi.flags & MBOOT1_FLAG_MODS != 0 && mbi.mods_count > 0 && mbi.mods_addr != 0 {
@@ -273,6 +409,9 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64)) {
             if end > max_addr && entry.is_available() {
                 max_addr = end;
             }
+            if !entry.is_available() {
+                firmware.push(entry.base_addr(), entry.length());
+            }
             mmap_entries += 1;
             // SAFETY: 调用方保证指针/类型有效 (详见上下文)
             current = unsafe {
@@ -285,16 +424,24 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64)) {
         }
     }
 
-    (mem_size, mmap_entries, initrd)
+    (mem_size, mmap_entries, initrd, firmware)
 }
 
 #[cfg(target_arch = "x86_64")]
-fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
+fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions) {
     // SAFETY: `ptr` 由调用方保证指向有效 u32; 只读借用
     let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
-    let mut mem_size: u64 = 128 * 1024 * 1024;
+    // D4-g: 内存图 (tag 6) 权威, 基本内存信息 (tag 4) 仅在无图时兜底.
+    // 两者必须**与标签出现次序无关**: GRUB 在 SeaBIOS 与 OVMF 下都把 tag 4 排在
+    // tag 6 之后, 原先 tag 4 无条件赋值会把已算出的图结果覆盖掉 —— UEFI 上
+    // mem_upper 只描述 1 MiB 以上首个连续块 (实测 7168 KB), 于是 512 MiB 的机器
+    // 被读成 8 MB, PMM 零空闲页, 启动期分配即 panic. 与 Linux 以 e820/EFI 图为准
+    // 同构: 有图用图, 无图才退回 firmware 的粗粒度读数.
+    let mut map_mem_size: Option<u64> = None;
+    let mut basic_mem_size: Option<u64> = None;
     let mut mmap_entries: usize = 0;
     let mut initrd: Option<(u64, u64)> = None;
+    let mut firmware = FirmwareRegions::new();
 
     let mut offset: usize = 8;
     let end = total_size as usize;
@@ -330,7 +477,7 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
                 let _mem_lower = unsafe { basic_ptr.cast::<u32>().read_unaligned() };
                 // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
                 let mem_upper = unsafe { basic_ptr.add(4).cast::<u32>().read_unaligned() };
-                mem_size = (u64::from(mem_upper) + 1024) * 1024;
+                basic_mem_size = Some((u64::from(mem_upper) + 1024) * 1024);
             }
             6 => {
                 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
@@ -366,6 +513,12 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
                         if end_addr > max_addr {
                             max_addr = end_addr;
                         }
+                    } else {
+                        // D4-i 乙: 非可用项一律登记为 firmware 保留区. PMM 把
+                        // [0, mem_size) 当平坦 RAM, 不登记就会把 ACPI 表 / EFI
+                        // runtime / MMIO 洞当空闲页分配出去 (与 Linux 按 e820/EFI
+                        // 图逐项 reserve 同构). 区位置由 firmware 钉死, 故只预留不搬移.
+                        firmware.push(base, len);
                     }
                     mmap_entries += 1;
                     // SAFETY: 调用方保证指针/类型有效 (详见上下文)
@@ -373,7 +526,7 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
                 }
 
                 if max_addr > 0 {
-                    mem_size = max_addr;
+                    map_mem_size = Some(max_addr);
                 }
             }
             8 => {
@@ -390,7 +543,8 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64)) {
         offset = (offset + 7) & !7;
     }
 
-    (mem_size, mmap_entries, initrd.unwrap_or((0, 0)))
+    let mem_size = map_mem_size.or(basic_mem_size).unwrap_or(128 * 1024 * 1024);
+    (mem_size, mmap_entries, initrd.unwrap_or((0, 0)), firmware)
 }
 
 // 符号桩化 (host-test): kernel_end 取值已分叉, 触发 borrow_as_ptr 的
@@ -437,24 +591,34 @@ pub fn init() -> BootInfo {
         let mut ms: u64 = 128 * 1024 * 1024;
         let mut me: usize = 0;
         let mut initrd: (u64, u64) = (0, 0);
+        let mut firmware = FirmwareRegions::new();
 
         if !ptr.is_null() {
             match magic {
                 MULTIBOOT1_MAGIC => {
-                    let (m, e, i) = parse_multiboot1(ptr);
+                    let (m, e, i, f) = parse_multiboot1(ptr);
                     ms = m;
                     me = e;
                     initrd = i;
+                    firmware = f;
                 }
                 MULTIBOOT2_MAGIC => {
-                    let (m, e, i) = parse_multiboot2(ptr);
+                    let (m, e, i, f) = parse_multiboot2(ptr);
                     ms = m;
                     me = e;
                     initrd = i;
+                    firmware = f;
                 }
                 _ => {}
             }
         }
+        crate::klog_boot_info!(
+            "Boot firmware reserved regions: {}",
+            firmware.as_slice().len()
+        );
+        FIRMWARE_REGIONS.get_or_init(|slot| {
+            slot.write(firmware);
+        });
         (ms, me, initrd)
     };
 
@@ -507,4 +671,216 @@ pub extern "C" fn boot_get_mem_size() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn boot_get_kernel_end() -> u64 {
     get_boot_info().kernel_end
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::parse_multiboot2;
+
+    /// 拼装 MB2 标签表: 8 字节头 + 各标签 (逐个补到 8 字节对齐) + 终止标签.
+    fn build_mb2(tags: &[Vec<u8>]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for tag in tags {
+            body.extend_from_slice(tag);
+            while body.len() % 8 != 0 {
+                body.push(0);
+            }
+        }
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&8u32.to_le_bytes());
+        let total = u32::try_from(8 + body.len()).expect("标签表长度溢出 u32");
+        let mut out = total.to_le_bytes().to_vec();
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// tag 4 = 基本内存信息 (mem_lower / mem_upper, 单位 KB).
+    fn tag4(mem_lower: u32, mem_upper: u32) -> Vec<u8> {
+        let mut t = 4u32.to_le_bytes().to_vec();
+        t.extend_from_slice(&16u32.to_le_bytes());
+        t.extend_from_slice(&mem_lower.to_le_bytes());
+        t.extend_from_slice(&mem_upper.to_le_bytes());
+        t
+    }
+
+    /// tag 6 = 内存图 (entry_size=24, version=0; 每项 base/len/type/reserved).
+    fn tag6(entries: &[(u64, u64, u32)]) -> Vec<u8> {
+        let size = u32::try_from(16 + 24 * entries.len()).expect("内存图标签长度溢出 u32");
+        let mut t = 6u32.to_le_bytes().to_vec();
+        t.extend_from_slice(&size.to_le_bytes());
+        t.extend_from_slice(&24u32.to_le_bytes());
+        t.extend_from_slice(&0u32.to_le_bytes());
+        for (base, len, kind) in entries {
+            t.extend_from_slice(&base.to_le_bytes());
+            t.extend_from_slice(&len.to_le_bytes());
+            t.extend_from_slice(&kind.to_le_bytes());
+            t.extend_from_slice(&0u32.to_le_bytes());
+        }
+        t
+    }
+
+    /// tag 3 = 引导模块 (mod_start / mod_end + NUL 结尾名字).
+    fn tag3(mod_start: u32, mod_end: u32, name: &str) -> Vec<u8> {
+        let size = u32::try_from(16 + name.len() + 1).expect("模块标签长度溢出 u32");
+        let mut t = 3u32.to_le_bytes().to_vec();
+        t.extend_from_slice(&size.to_le_bytes());
+        t.extend_from_slice(&mod_start.to_le_bytes());
+        t.extend_from_slice(&mod_end.to_le_bytes());
+        t.extend_from_slice(name.as_bytes());
+        t.push(0);
+        t
+    }
+
+    /// 实测形态: 512 MiB 机器, UEFI 下 mem_upper 只描述 1 MiB 以上首个连续块
+    /// (7168 KB → 8 MB), 内存图才给出全部可用 RAM 的上界.
+    const UEFI_BASIC: (u32, u32) = (640, 7168);
+    const MAP_512MB: [(u64, u64, u32); 2] = [(0x0, 0x9FC00, 1), (0x10_0000, 0x1FF0_0000, 1)];
+
+    #[test]
+    fn mb2_tag4_before_tag6_map_is_authoritative() {
+        // GRUB 在 SeaBIOS 与 OVMF 下都把 tag 4 排在 tag 6 之后 —— 这是真机次序.
+        let blob = build_mb2(&[tag6(&MAP_512MB), tag4(UEFI_BASIC.0, UEFI_BASIC.1)]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 0x2000_0000, "内存图权威: 不得被 tag 4 的 8 MB 覆盖");
+        assert_eq!(entries, 2);
+    }
+
+    #[test]
+    fn mb2_tag6_before_tag4_map_is_authoritative() {
+        let blob = build_mb2(&[tag4(UEFI_BASIC.0, UEFI_BASIC.1), tag6(&MAP_512MB)]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 0x2000_0000);
+        assert_eq!(entries, 2);
+    }
+
+    #[test]
+    fn mb2_mem_size_independent_of_tag_order() {
+        // 核心回归锁: 两种次序必须给出同一读数 (修复前 tag 4 无条件赋值,
+        // 次序一交换结果就从 512 MB 掉到 8 MB).
+        let a = build_mb2(&[tag6(&MAP_512MB), tag4(UEFI_BASIC.0, UEFI_BASIC.1)]);
+        let b = build_mb2(&[tag4(UEFI_BASIC.0, UEFI_BASIC.1), tag6(&MAP_512MB)]);
+        assert_eq!(
+            parse_multiboot2(a.as_ptr()),
+            parse_multiboot2(b.as_ptr()),
+            "MB2 内存读数必须与标签出现次序无关"
+        );
+    }
+
+    #[test]
+    fn mb2_tag4_only_falls_back_to_basic() {
+        let blob = build_mb2(&[tag4(640, 7168)]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(
+            mem,
+            (7168 + 1024) * 1024,
+            "无内存图时退回 firmware 粗粒度读数"
+        );
+        assert_eq!(entries, 0);
+    }
+
+    #[test]
+    fn mb2_map_without_available_entry_falls_back() {
+        // 图里只有 reserved 项 → max_addr=0, 不构成权威读数, 仍退回 tag 4.
+        let blob = build_mb2(&[tag6(&[(0x0, 0x1000, 2)]), tag4(640, 7168)]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, (7168 + 1024) * 1024);
+        assert_eq!(entries, 1, "reserved 项也计入图条目数");
+    }
+
+    #[test]
+    fn mb2_no_mem_tags_uses_default() {
+        let blob = build_mb2(&[]);
+        let (mem, entries, initrd, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 128 * 1024 * 1024);
+        assert_eq!(entries, 0);
+        assert_eq!(initrd, (0, 0));
+    }
+
+    #[test]
+    fn mb2_module_region_parsed_with_mem_tags() {
+        let blob = build_mb2(&[
+            tag3(0x6B_2000, 0x6B_2000 + 0x1234, "initramfs"),
+            tag6(&MAP_512MB),
+            tag4(UEFI_BASIC.0, UEFI_BASIC.1),
+        ]);
+        let (mem, _, initrd, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 0x2000_0000);
+        assert_eq!(initrd, (0x6B_2000, 0x1234));
+    }
+
+    #[test]
+    fn mb2_first_module_wins() {
+        let blob = build_mb2(&[
+            tag3(0x6B_2000, 0x6B_3000, "initramfs"),
+            tag3(0x70_0000, 0x70_1000, "second"),
+        ]);
+        let (_, _, initrd, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(initrd, (0x6B_2000, 0x1000), "取首模块为 initrd 载体");
+    }
+
+    /// 实测形态 (OVMF 512 MiB): 可用 RAM 之外还有 ACPI 可回收区 (type 3) /
+    /// EFI runtime (type 4) / 缺陷页 (type 5) / 保留洞 (type 2).
+    const MAP_MIXED: [(u64, u64, u32); 6] = [
+        (0x0, 0x9FC00, 1),
+        (0x9FC00, 0x400, 2),
+        (0x10_0000, 0x1F00_0000, 1),
+        (0x1F10_0000, 0x10_0000, 3),
+        (0x1F20_0000, 0x20_0000, 4),
+        (0x1F40_0000, 0x1000, 5),
+    ];
+
+    #[test]
+    fn mb2_non_available_entries_become_firmware_regions() {
+        let blob = build_mb2(&[tag6(&MAP_MIXED), tag4(UEFI_BASIC.0, UEFI_BASIC.1)]);
+        let (mem, entries, _, firmware) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 0x1F10_0000, "上界只由 type 1 项决定");
+        assert_eq!(entries, 6);
+        let regions = firmware.as_slice();
+        assert_eq!(regions.len(), 4, "非可用项一律登记, 可用项一律不登记");
+        assert_eq!(regions[0].base, 0x9FC00);
+        assert_eq!(regions[0].size, 0x400);
+        assert_eq!(regions[1].base, 0x1F10_0000);
+        assert_eq!(regions[2].base, 0x1F20_0000);
+        assert_eq!(regions[3].base, 0x1F40_0000);
+        assert_eq!(regions[3].size, 0x1000);
+    }
+
+    #[test]
+    fn mb2_firmware_regions_independent_of_tag_order() {
+        // 与内存读数同一把锁: 保留区表也不得随标签次序漂移 (表非空才有判别力).
+        let a = build_mb2(&[tag6(&MAP_MIXED), tag4(UEFI_BASIC.0, UEFI_BASIC.1)]);
+        let b = build_mb2(&[tag4(UEFI_BASIC.0, UEFI_BASIC.1), tag6(&MAP_MIXED)]);
+        let ra = parse_multiboot2(a.as_ptr());
+        let rb = parse_multiboot2(b.as_ptr());
+        assert_eq!(ra, rb, "MB2 保留区表必须与标签出现次序无关");
+        assert_eq!(ra.3.as_slice().len(), 4);
+    }
+
+    #[test]
+    fn mb2_zero_length_reserved_entry_is_ignored() {
+        // 零长度区是空集: 登记它只会白占表槽, 且 PMM 早期预留对 size=0 直接断言.
+        let blob = build_mb2(&[tag6(&[(0x1000, 0, 2), (0x2000, 0x1000, 1)])]);
+        let (_, entries, _, firmware) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(entries, 2, "图条目数仍按原样计 (零长度项也是一条)");
+        assert!(firmware.as_slice().is_empty());
+    }
+
+    #[test]
+    fn mb2_all_available_map_has_no_firmware_regions() {
+        let blob = build_mb2(&[tag6(&MAP_512MB)]);
+        let (_, _, _, firmware) = parse_multiboot2(blob.as_ptr());
+        assert!(firmware.as_slice().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "firmware region table full")]
+    fn firmware_region_table_overflow_is_fail_closed() {
+        // 丢一条登记 = 该 firmware 区被当空闲页分配出去 (ACPI 表被覆写), 属静默
+        // 腐败, 故满表必须停机而不是截断.
+        let mut table = super::FirmwareRegions::new();
+        for i in 0..=crate::privileged::constants::limits::MAX_FIRMWARE_REGIONS {
+            table.push(0x1000 * (i as u64 + 1), 0x1000);
+        }
+    }
 }

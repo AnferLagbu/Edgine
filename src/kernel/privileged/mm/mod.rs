@@ -99,6 +99,8 @@ pub mod cow;
 pub mod cross_process;
 /// 跨架构共用的 TLB shootdown 延迟释放机制 (x86_64 与 aarch64 共用, 禁平行实现)
 pub(crate) mod deferred_free;
+/// 引导交付区早期预留与搬移 (memblock 式, 见该模块顶部口径)
+pub mod early_reserve;
 pub mod frame;
 pub mod kmalloc;
 /// 惰性页池 — 按需分配 4KB 物理页的后备存储 (替代子系统级静态容量数组)

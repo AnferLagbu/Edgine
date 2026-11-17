@@ -4,8 +4,9 @@
 //! 口径来源: `docs/plan/multithreading-project.md` K-07b 批1.
 //!
 //! 本批将「PID 1 从文件系统来」这条链第一次接通并锁死: cpio newc 归档由
-//! `scripts/make_initramfs_cpio.py` 在构建期生成 → `make` 把它作为内核镜像的依赖
-//! → 内核以 `include_bytes!` 按**本架构**嵌入 → 启动末尾解析归档、逐级建父目录、
+//! `scripts/make_initramfs_cpio.py` 在构建期生成 → `make` 把它作为用户态产物集
+//! 的一员 → 引导器作 **boot-module** 交付 (x86_64 GRUB `module2` / aarch64
+//! `-initrd` 经 DTB `/chosen`) → 启动末尾解析归档、逐级建父目录、
 //! 落盘到 ramfs → 从 VFS 读出 `/init` → ELF 装载进 Ring 3 / EL0.
 //!
 //! 该链的三处形态各自都有静默失效通道, 故逐处钉死:
@@ -20,9 +21,9 @@
 //!    实测症状正是"归档解析成功但只落 1 个条目、`/init` 不存在". 落盘与读取因此
 //!    必须走 `fs_create` / `Inode::write` / `Inode::read` 的无 fd 形态.
 //!
-//! D4 严格零嵌入后内嵌 `init.bin` 回退已删除, feature 腿即出货启动形态; 真跑判据
-//! 不在默认门禁里, 由 `ci/audit.sh` full 档的专项 feature 腿
-//! (`scripts/initramfs_boot_test.sh`) 承担.
+//! D4 严格零嵌入后内嵌 `init.bin` 回退已删除, D4-e 起 `initramfs` feature 亦退役
+//! (解包无条件执行) ⇒ 本腿构建的就是出货默认镜像; 真跑判据由 `ci/audit.sh` full 档
+//! 的载体腿 (`scripts/initramfs_boot_test.sh`) 承担.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -39,8 +40,13 @@ const KERNEL_CARGO: &str = "src/kernel/Cargo.toml";
 const FUNC_CARGO: &str = "src/kernel/functions/Cargo.toml";
 const CPIO_SH: &str = "scripts/initramfs_boot_test.sh";
 const AUDIT_SH: &str = "ci/audit.sh";
+const LIB_RS: &str = "src/kernel/lib.rs";
+const MEDIUM_SH: &str = "scripts/make_boot_medium.sh";
 
 /// 归档必须覆盖的用户态程序 (与 `ARCHIVE_LAYOUT` 同源).
+///
+/// 两 wasm 桩恒入归档 (D4-d): exec 的 `\0asm` 派发按 `wasm_userspace` feature
+/// 选读 `/bin/wasmstub` 或 `/bin/wasmrun`, 少打一个即该腿 ENOEXEC.
 const CARRIER_MEMBERS: &[&str] = &[
     "init.bin",
     "eash.bin",
@@ -49,6 +55,8 @@ const CARRIER_MEMBERS: &[&str] = &[
     "install.bin",
     "fbterm.bin",
     "httpsrv.bin",
+    "wasmstub.bin",
+    "wasmrun.bin",
 ];
 
 /// Makefile 里的 ELF → `.bin` 文件规则对 (左为 ELF 变量名, 右为落地产物名).
@@ -60,6 +68,8 @@ const USER_BIN_RULES: &[(&str, &str)] = &[
     ("USER_INSTALL_ELF", "install.bin"),
     ("USER_FBTERM_ELF", "fbterm.bin"),
     ("USER_HTTPSRV_ELF", "httpsrv.bin"),
+    ("USER_WASMSTUB_ELF", "wasmstub.bin"),
+    ("USER_WASMRUN_ELF", "wasmrun.bin"),
 ];
 
 fn repo_root() -> PathBuf {
@@ -76,6 +86,14 @@ fn read_src(rel: &str) -> String {
 fn code_only(src: &str) -> String {
     src.lines()
         .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 去掉整行 `#` 注释 (shell / TOML 共用): 锁定项是代码形态, 不是"注释里不许提旧事".
+fn code_only_hash(src: &str) -> String {
+    src.lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -214,8 +232,8 @@ fn test_makefile_user_and_kernel_targets_depend_on_cpio() {
     );
     assert_eq!(
         count_needle(&mk, "$(USER_CPIO)"),
-        5,
-        "归档引用点 = 2 条 user 目标 + 2 条 $(RUST_LIB) 规则 + 归档规则自身"
+        6,
+        "归档引用点 = 2 条 user 目标 + 2 条 $(RUST_LIB) 规则 + 归档规则自身 + iso 载体拷贝 (D4-f)"
     );
     // ELF → .bin 的文件规则对 (两架构各一份, 内容同形). 用内联 @cp 落产物不能成为
     // 归档规则的依赖边 —— 归档会静默少打几个文件而 make 依旧绿.
@@ -235,8 +253,23 @@ fn test_unpack_normalizes_names_and_creates_parents() {
     let code = code_only(&read_src(INITRAMFS_RS));
     assert_contains(
         &code,
-        "fn normalize_entry_path(name: &[u8], out: &mut [u8]) -> Option<usize>",
-        "条目名必须先归一为根内绝对路径",
+        "fn normalize_entry_path(name: &[u8], prefix: &[u8], out: &mut [u8]) -> Option<usize>",
+        "条目名必须先归一为目标根内绝对路径 (前缀由挂载点决定)",
+    );
+    assert_contains(
+        &code,
+        "pub fn unpack(data: &[u8], target_root: &str, pwm: u64) -> Result<usize, &'static str>",
+        "解包目标必须参数化 (引导根 / 与磁盘根 /disk 共用同一份归档, D5-g)",
+    );
+    assert_contains(
+        &code,
+        "let prefix = target_root.trim_end_matches('/');",
+        "前缀须剥末尾分隔符 (\"/\" → \"\"), 否则条目路径出现双斜杠或漏首段",
+    );
+    assert_contains(
+        &code,
+        "normalize_entry_path(entry.name, prefix.as_bytes(), &mut path_buf)",
+        "解包必须把目标根前缀真传进归一化 (写死空前缀会让 /disk 安装落回引导根)",
     );
     assert_contains(
         &code,
@@ -365,7 +398,7 @@ fn test_init_loads_init_from_filesystem_on_both_arms() {
     assert_eq!(
         count_needle(&code, "init from /init"),
         2,
-        "两架构的成功里程碑各一条 (专项 feature 腿按该串断言)"
+        "两架构的成功里程碑各一条 (载体腿与 headline 腿按该串断言)"
     );
 }
 
@@ -383,34 +416,74 @@ fn test_build_rs_no_longer_requires_embedded_cpio() {
     assert_absent(&code, "cpio.display()", "不再对 cpio 发 rerun-if-changed");
 }
 
-// ── 6. feature 默认关闭 ────────────────────────────────────────────────────
+/// D4-d: 内核构建脚本只剩 x86_64 引导码一项嵌入护栏.
+///
+/// 护栏与 `include_bytes!` 必须同生共死: 桩已改由 cpio 交付, 若 build.rs 仍按
+/// feature 要求 `wasmstub.bin` / `wasmrun.bin` 存在, 干净 checkout 的 host 构建
+/// 会被无关产物缺失打断; 反之若 stage1 护栏被顺手删掉, 全 0 占位镜像又会静默出货.
+#[test]
+fn test_build_rs_guards_only_x86_stage1() {
+    let code = code_only(&read_src(BUILD_RS));
+    for gone in [
+        "wasmstub",
+        "wasmrun",
+        "CARGO_FEATURE_WASM_USERSPACE",
+        "init.bin",
+    ] {
+        assert_absent(&code, gone, &format!("用户态产物护栏须已删除: {gone}"));
+    }
+    assert_contains(
+        &code,
+        "other/build/x86_64/stage1.bin",
+        "x86_64 引导码仍是唯一嵌入产物, 护栏必须保留",
+    );
+    assert_contains(
+        &code,
+        "println!(\"cargo:rerun-if-changed={}\", stage1.display());",
+        "rerun-if-changed 必须给绝对路径 (S-6 防线③)",
+    );
+}
+
+// ── 6. initramfs feature 已退役 (D4-e) ─────────────────────────────────────
 
 #[test]
-fn test_initramfs_feature_is_off_by_default() {
-    let glue = read_src(KERNEL_CARGO);
-    assert_contains(
-        &glue,
-        "initramfs = [\"kernel-functions/initramfs\", \"kernel-privileged/initramfs\"]",
-        "glue 必须逐项转发 feature, 否则子 crate 分支静默消失 (P-71)",
-    );
-    let funcs = read_src(FUNC_CARGO);
-    assert_contains(&funcs, "initramfs = []", "functions 侧声明同名 feature");
-    for (name, src) in [("kernel", &glue), ("kernel-functions", &funcs)] {
-        let default_line = src
-            .lines()
-            .find(|l| l.trim_start().starts_with("default ="))
-            .unwrap_or_else(|| panic!("{name} 缺 default 行"));
-        // A-1 (2026-11-08 裁定甲): kernel 的 default 已含 lockdep, 故判据收窄到本测试
-        // 的真实意图 (initramfs 不在默认 features 里), 不再要求整行恒为 [].
-        let defaults = default_line.split('=').nth(1).unwrap().trim();
-        assert!(
-            !defaults.contains("initramfs"),
-            "{name} 的 default 不得点亮 initramfs: 内嵌 init.bin 才是出货路径 (实得 {defaults})"
+fn test_initramfs_feature_retired() {
+    // 零嵌入后解包无条件执行, 该 feature 不改任何代码路径 ⇒ 空旋钮一律删净,
+    // 四份 Cargo.toml (glue / functions / privileged / edgine 壳) 都不得再声明.
+    for rel in [
+        KERNEL_CARGO,
+        FUNC_CARGO,
+        "src/kernel/privileged/Cargo.toml",
+        "src/rust/Cargo.toml",
+    ] {
+        assert_absent(
+            &code_only_hash(&read_src(rel)),
+            "initramfs =",
+            "{rel} 不得再声明 initramfs feature (D4-e 退役: 空门控旋钮)",
         );
+    }
+    // 树级发现式: 任何启动腿都不得再往 KERNEL_FEATURES 里塞 initramfs
+    // (cargo 对未声明 feature 直接报错, 但 scripts 面的残留会先在这里被钉住).
+    let scripts = repo_root().join("scripts");
+    for entry in fs::read_dir(&scripts).expect("scripts 目录须可读") {
+        let path = entry.expect("目录项须可读").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sh") {
+            continue;
+        }
+        let src = fs::read_to_string(&path).expect("脚本须可读");
+        for line in code_only_hash(&src).lines() {
+            if line.contains("KERNEL_FEATURES") {
+                assert!(
+                    !line.contains("initramfs"),
+                    "{} 仍向 KERNEL_FEATURES 传已退役的 initramfs: {line}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
-// ── 7. 门禁接线: 专项 feature 腿真构建 + 真启动 + 复原默认构建 ─────────────
+// ── 7. 门禁接线: 载体腿真构建出货默认镜像 + 真启动 ─────────────────────────
 
 #[test]
 fn test_carrier_boot_script_asserts_milestones() {
@@ -422,9 +495,8 @@ fn test_carrier_boot_script_asserts_milestones() {
     );
     assert_contains(
         &sh,
-        "make ARCH=\"$arch\" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all",
-        "必须真构建带 feature 的镜像; A-1 常开 lockdep 后还须显式关默认 features —— \
-         否则 x86_64 镜像末尾越过 K-08 的 USER_CODE_BASE (启动期 fail-closed)",
+        "make ARCH=\"$arch\" all",
+        "必须真构建**出货默认**镜像 (D4-e: initramfs feature 退役, 载体链即默认启动形态)",
     );
     assert_contains(
         &sh,
@@ -440,10 +512,18 @@ fn test_carrier_boot_script_asserts_milestones() {
     );
     // 内核串口日志含 NUL (日志与探针逐字符并发写), grep 按二进制处理则不输出匹配行
     assert_contains(&sh, "grep -aq", "里程碑匹配必须用 grep -a (日志含 NUL)");
-    assert_contains(
-        &sh,
-        "make ARCH=\"$arch\" all",
-        "跑完必须复原默认构建 (否则后续门禁跑在带 feature 的镜像上)",
+    // D4-e: 零嵌入后 K-08 理由消失 ⇒ 本腿不得再切 feature / 关默认 features.
+    // 既不切换, 也就无需尾部复原; 判据改为负向钉住"跑的就是出货配置".
+    let sh_code = code_only_hash(&sh);
+    assert_absent(
+        &sh_code,
+        "KERNEL_FEATURES",
+        "载体腿即出货启动形态, 切 feature 就不再覆盖默认配置 (D4-e)",
+    );
+    assert_absent(
+        &sh_code,
+        "KERNEL_NO_DEFAULT",
+        "关默认 features 的历史理由是内嵌 cpio 顶破 K-08, 零嵌入后已消失 (D4-e)",
     );
 }
 
@@ -455,7 +535,7 @@ fn test_ci_audit_wires_carrier_leg_in_full_mode() {
         "initramfs_boot_test.sh",
         "full 档必须接载体 feature 腿",
     );
-    // 顺序约束: 载体腿切换过 KERNEL_FEATURES, 必须排在压力腿之后
+    // 顺序约束: 载体腿会重建默认镜像, 排在压力腿之后避免与其构建交错
     let stress = audit
         .find("thread_stress_test.sh")
         .expect("K-07a 压力腿必须在位");
@@ -464,6 +544,146 @@ fn test_ci_audit_wires_carrier_leg_in_full_mode() {
         .expect("载体腿必须在位");
     assert!(
         carrier > stress,
-        "载体腿须排在压力腿之后 (它自带复原默认构建, 之后不得再跑 feature 镜像)"
+        "载体腿须排在压力腿之后 (它重建默认镜像, 不与压力腿的构建交错)"
+    );
+}
+
+// ── 8. 真机介质: 归档作 boot-module 交出 (D4-f) ─────────────────────────────
+
+/// x86_64 ISO 必须把 cpio 作 GRUB `module2` 交出, 而不是只拷进 ISO 却不声明.
+///
+/// 只拷不声明 = 归档在介质上但引导器不交付 ⇒ MB2 tag3 缺失, 内核侧静默走"无载体"
+/// 分支; 只声明不拷 = GRUB 直接报文件不存在. 两侧必须同时在位.
+#[test]
+fn test_iso_delivers_cpio_as_grub_module2() {
+    let mk = norm(&read_src(MAKEFILE).replace('\\', " "));
+    assert_contains(
+        &mk,
+        "cp $(USER_CPIO) $(ISODIR)/boot/initramfs.cpio",
+        "iso 目标必须把本架构归档拷进介质 (D4-f)",
+    );
+    assert_contains(
+        &mk,
+        "multiboot2 /boot/kernel.bin",
+        "内核经 multiboot2 装载 (与 module2 同一引导协议)",
+    );
+    assert_contains(
+        &mk,
+        "module2 /boot/initramfs.cpio initramfs",
+        "归档必须作 module2 声明, 否则引导器不交付 (MB2 tag3 缺失)",
+    );
+}
+
+/// aarch64 FAT 介质: extlinux `initrd` 行 + boot.cmd `booti` 第二参数 + mcopy 落盘.
+///
+/// 三处缺一即载体断链: 少了 `initrd` 行, U-Boot 不填 DTB `/chosen` 的
+/// linux,initrd-start/end; 少了 mcopy, 文件根本不在盘上; boot.cmd 少第二参数则
+/// 手工 booti 路径不带 initrd (与 distro boot 路径行为分叉).
+#[test]
+fn test_aarch64_medium_delivers_cpio_via_chosen() {
+    let sh = read_src(MEDIUM_SH);
+    let meta = fs::metadata(repo_root().join(MEDIUM_SH)).expect("真机介质脚本须存在");
+    assert!(
+        meta.permissions().mode() & 0o111 != 0,
+        "真机介质脚本必须可执行 (用户直接按路径调用)"
+    );
+    assert_contains(
+        &sh,
+        "make ARCH=aarch64 all user",
+        "aarch64 介质必须同时构建内核 Image 与用户态归档",
+    );
+    assert_contains(
+        &sh,
+        "initrd /initramfs.cpio",
+        "extlinux.conf 必须有 initrd 行 (U-Boot 据此填 /chosen)",
+    );
+    assert_contains(
+        &sh,
+        "fatload mmc 0:1 ${AARCH64_INITRD_ADDR} initramfs.cpio",
+        "boot.cmd 必须把归档装载到独立地址",
+    );
+    assert_contains(
+        &sh,
+        "booti ${AARCH64_LOAD_ADDR} ${AARCH64_INITRD_ADDR}",
+        "booti 第二参数须为 initrd 地址 (否则手工路径不带载体)",
+    );
+    assert_contains(
+        &sh,
+        "other/build/aarch64/user/initramfs.cpio ::initramfs.cpio",
+        "归档必须真落进 FAT 分区 (mcopy)",
+    );
+    assert_contains(
+        &sh,
+        "≥ 256 MiB",
+        "须提示 DRAM 容量前提 (initrd 装载于 DRAM 基址 + 128 MiB)",
+    );
+}
+
+// ── 9. 载体物理区: 早期预留 + 搬移 + 建堆次序 (D4-h) ────────────────────────
+
+/// `boot_memory_init` 的四步次序必须钉死: 登记 → 位图(含搬移) → 载体发布 → kmalloc.
+///
+/// 任一步换序都有一条静默失效通道:
+/// - 登记晚于位图 ⇒ 交付区不被置位, buddy 把它当空闲页分出去;
+/// - 载体发布早于位图 ⇒ 发布的是搬移**前**的原址, 消费者读到已被堆覆写的字节;
+/// - kmalloc 早于位图 ⇒ 堆首 `HeapHeader` 直接写在归档上 (实测 GRUB 落点正在堆窗内).
+#[test]
+fn test_boot_memory_init_orders_reserve_bitmap_publish_heap() {
+    let body = norm(&fn_body(
+        &code_only(&read_src(LIB_RS)),
+        "fn boot_memory_init()",
+    ));
+    let reserve = body
+        .find("pmm_early_reserve_relocatable(")
+        .expect("initrd 必须登记为可搬移早期预留区");
+    let bitmap = body
+        .find("pmm_init_bitmap(reserved_after_kernel)")
+        .expect("位图初始化必须在位");
+    let publish = body
+        .find("set_initrd_carrier(region.base, region.size)")
+        .expect("载体必须按早期预留表的最终地址发布");
+    let kmalloc = body
+        .find("get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE)")
+        .expect("kmalloc 初始化必须在位");
+    assert!(
+        reserve < bitmap,
+        "早期预留登记必须先于位图建立 (否则交付区不被置位)"
+    );
+    assert!(
+        bitmap < publish,
+        "载体发布必须后于位图 (搬移在位图建立期完成, 早发布即发布原址)"
+    );
+    assert!(
+        publish < kmalloc,
+        "kmalloc 必须最后建堆 (堆首 HeapHeader 会覆写落在堆窗内的归档)"
+    );
+    assert_contains(
+        &body,
+        "crate::privileged::dtb::dtb_region()",
+        "aarch64 的 DTB blob 自身也须登记 (只预留不搬移)",
+    );
+    assert_contains(
+        &body,
+        "pmm_early_reserve(base, size, \"dtb\")",
+        "DTB 走不可搬移登记 (PMM 存在前已解析完并持久化)",
+    );
+}
+
+/// 事后补预留路径必须已删除: 它只能"发现"冲突而消解不了冲突.
+///
+/// `reserve_range` 对已置位页返回 `Err(overlap)` —— 读起来像保护生效, 实际载荷仍与
+/// 堆窗共址. 保留该调用等于把假警报当防线, 故在载体编排里一律不得再出现.
+#[test]
+fn test_boot_memory_init_has_no_post_hoc_reserve() {
+    let body = fn_body(&code_only(&read_src(LIB_RS)), "fn boot_memory_init()");
+    assert_absent(
+        &body,
+        "reserve_range(",
+        "交付区预留的唯一置位点是早期预留表 (D4-h), 不得保留事后补预留",
+    );
+    assert_absent(
+        &body,
+        "initrd reserve failed",
+        "事后补预留的失败日志须随调用一并删除 (否则残留假警报口径)",
     );
 }

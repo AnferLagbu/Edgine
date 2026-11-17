@@ -69,8 +69,8 @@ BUILD_LOG="$LOG_DIR/aarch64_cow_build.log"
 # D4: 统一 boot-with-module 载体 (cpio 经引导器交付, 不嵌入内核).
 source scripts/boot_module.sh
 
-# ── 构建 (initramfs feature; cpio 经 boot-module 交付, 不嵌入内核) ────────────
-info "[aarch64] boot-module 构建 (KERNEL_FEATURES=initramfs)..."
+# ── 构建 (默认核; cpio 经 boot-module 交付, 不嵌入内核) ──────────────────────
+info "[aarch64] boot-module 构建 (出货默认核)..."
 if ! boot_module_build aarch64 >"$BUILD_LOG" 2>&1; then
     err "[aarch64] 构建失败 (日志: $BUILD_LOG)"
     exit 1

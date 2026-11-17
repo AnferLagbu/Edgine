@@ -509,7 +509,7 @@ fn kernel_init_test_memory() {
     crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
     crate::privileged::mm::vmm::vmm_init();
     let heap_start = crate::privileged::mm::VirtAddr(
-        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x0020_0000,
+        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + GAP_SIZE,
     );
 
     crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
@@ -643,6 +643,41 @@ fn boot_memory_init() {
     crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);
     crate::klog_boot_info!("PMM initialized");
 
+    // 2.1 引导交付区早期预留登记 (D4-h, memblock 式).
+    // 引导器把载荷放在它自选的物理地址上, 与内核固定布局 (映像 + 堆窗 + 元数据六区)
+    // 无协商机制. 登记须在 pmm_init_bitmap 之前: 位图建立时按表统一置位, 且与引导窗
+    // 相交的 initrd 会在置位前被搬移到互斥新址. 事后补 reserve_range 只能"发现"冲突
+    // (返回 Err(overlap)) 而消解不了冲突, 故那条路径已删除.
+    let initrd_slot = if boot_info.initrd_size > 0 {
+        Some(crate::privileged::mm::pmm::pmm_early_reserve_relocatable(
+            boot_info.initrd_base,
+            boot_info.initrd_size,
+            "initrd",
+        ))
+    } else {
+        None
+    };
+    // DTB blob 自身也占一段引导器自选的物理区; 它在 PMM 存在之前就已解析完并持久化
+    // 了拓扑/PSCI/initrd, 故只预留不搬移.
+    #[cfg(target_arch = "aarch64")]
+    if let Some((base, size)) = crate::privileged::dtb::dtb_region() {
+        let _ = crate::privileged::mm::pmm::pmm_early_reserve(base, size, "dtb");
+    }
+    // firmware 保留区 (D4-i 乙): 引导器内存图里 `type != 1` 的条目. PMM 把
+    // [0, mem_size) 建模成平坦 RAM, 不登记就会把 ACPI 表 (RSDT/XSDT/MADT/FADT) /
+    // EFI runtime / MMIO 洞所在的页当空闲页分配出去并覆写 —— 与 Linux 按 e820/EFI
+    // 内存图逐项 reserve 同构. 位置由 firmware 钉死, 搬移即失效, 故只预留不搬移.
+    #[cfg(target_arch = "x86_64")]
+    for region in crate::privileged::boot::firmware_regions() {
+        let _ = crate::privileged::mm::pmm::pmm_early_reserve(region.base, region.size, "firmware");
+    }
+    // MB2 信息块本体同理: ACPI 发现面在 PMM 建立**之后**才读它的 tag 14/15
+    // (RSDP 内联副本), 该区必须活到内核运行期结束.
+    #[cfg(target_arch = "x86_64")]
+    if let Some((base, size)) = crate::privileged::boot::multiboot2_info_region() {
+        let _ = crate::privileged::mm::pmm::pmm_early_reserve(base, size, "mb2-info");
+    }
+
     // 3. VMM — 虚拟内存管理器初始化 (必须在PMM之后)
     crate::privileged::mm::vmm::vmm_init();
     crate::klog_boot_info!("VMM initialized");
@@ -657,24 +692,7 @@ fn boot_memory_init() {
          VMM init may have panicked or been interrupted."
     );
 
-    // 4. kmalloc — 内核堆初始化
-    // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
-    // (仍自 kernel_end + 0x0020_0000 起), 仅访问别名改走高半区直射区,
-    // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
-    // (aarch64 原先直取物理地址, 依赖低半区恒等, 见 L1-05)。
-    let heap_start = crate::privileged::mm::VirtAddr(
-        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + 0x0020_0000,
-    );
-
-    crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
-
-    crate::klog_boot_info!(
-        "kmalloc initialized at 0x{:X}, size={} MB",
-        heap_start.0,
-        KMALLOC_HEAP_SIZE / (1024 * 1024)
-    );
-
-    // 5. PMM Bitmap — 初始化位图分配器
+    // 4. PMM Bitmap — 初始化位图分配器
     // 必须包含 kernel_end 与 heap_start 之间的 2MB 间隙,
     // 否则 PMM 位图会从 kmalloc 堆内分配
     // (页 7165+), alloc_table() 清零新分配页表页时会导致堆破坏
@@ -687,27 +705,41 @@ fn boot_memory_init() {
     // 故堆最大容量 = KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE = 10MB.
     let reserved_after_kernel = GAP_SIZE + KMALLOC_HEAP_SIZE + BITMAP_GAP_SIZE;
     crate::privileged::mm::pmm::pmm_init_bitmap(reserved_after_kernel);
-
-    // 3.6 引导模块 initrd 预留: 引导器交付的 cpio/载荷所在物理区, 经 PMM 预留
-    // 防止后续分配覆盖 (须在位图/buddy 就绪后调用). aarch64 当前 initrd_size=0
-    // (DTB /chosen 接法待 D2), 故本块在 aarch64 为 no-op.
-    if boot_info.initrd_size > 0 {
-        let page = crate::privileged::config::memory::PAGE_SIZE;
-        let aligned_base = boot_info.initrd_base & !(page - 1);
-        let aligned_end = (boot_info.initrd_base + boot_info.initrd_size + page - 1) & !(page - 1);
-        let reserve_bytes = crate::privileged::glue::usize_from_u64(aligned_end - aligned_base);
-        match crate::privileged::mm::pmm::get_pmm()
-            .reserve_range(crate::privileged::mm::PhysAddr(aligned_base), reserve_bytes)
-        {
-            Ok(()) => crate::klog_boot_info!(
-                "initrd region reserved: base=0x{:X} size={}",
-                aligned_base,
-                reserve_bytes
-            ),
-            Err(e) => crate::klog_err!(Boot, "[BOOT] initrd reserve failed: {}", e),
-        }
-    }
     crate::klog_boot_info!("PMM bitmap initialized");
+
+    // 4.1 载体发布: 早期预留表里的 initrd base 此时已是最终地址 (与引导窗相交时
+    // 已搬移). BootInfo 保留引导器交付的原始事实, 消费者经 initrd_blob 取当前有效区.
+    if let Some(idx) = initrd_slot {
+        let region = crate::privileged::mm::pmm::pmm_early_region(idx);
+        crate::privileged::boot::set_initrd_carrier(region.base, region.size);
+        crate::klog_boot_info!(
+            "initrd carrier ready: base=0x{:X} size={} (boot module 0x{:X})",
+            region.base,
+            region.size,
+            boot_info.initrd_base
+        );
+    }
+
+    // 5. kmalloc — 内核堆初始化
+    // 双架构统一为 KERNEL_BASE + 物理偏移: 堆的**物理布局**不变
+    // (仍自 kernel_end + 0x0020_0000 起), 仅访问别名改走高半区直射区,
+    // 从而在 TTBR0/CR3 切至 per-process 视图时堆仍经内核高半区可达
+    // (aarch64 原先直取物理地址, 依赖低半区恒等, 见 L1-05)。
+    //
+    // 次序约束 (D4-h): 必须在 pmm_init_bitmap **之后** —— init 会往堆首写
+    // HeapHeader, 而引导模块可能恰好落在堆首; 先搬移再建堆头, 归档才不会被覆写.
+    // 两者互不依赖 (位图/元数据六区不经 kmalloc, 堆初始化不经 PMM), 故可换序.
+    let heap_start = crate::privileged::mm::VirtAddr(
+        crate::privileged::mm::KERNEL_BASE + boot_info.kernel_end + GAP_SIZE,
+    );
+
+    crate::privileged::mm::kmalloc::get_kmalloc_mut().init(heap_start, KMALLOC_HEAP_SIZE);
+
+    crate::klog_boot_info!(
+        "kmalloc initialized at 0x{:X}, size={} MB",
+        heap_start.0,
+        KMALLOC_HEAP_SIZE / (1024 * 1024)
+    );
 }
 
 /// FREG 恢复域 → Swap → functions 内存策略 → IPC 机制与策略 (全部在中断使能前).
@@ -968,19 +1000,26 @@ fn boot_rootfs_and_probes() {
                 .spa
                 .disk_present
                 .store(true, core::sync::atomic::Ordering::Release);
+            // 引导根恒为 ramfs/initramfs (Linux 式): EGFS 只挂非根挂载点 /disk, 由用户态
+            // init 经 pivot_root 切进去. 抢占 "/" 会让随后的 ramfs 挂载撞 AlreadyExists,
+            // initramfs 解包与 /init 读取全部落空 ⇒ 带盘反而进不了用户态.
             // 用安全接口 (自动 NUL 终止); 原 b"/".as_ptr() / b"egfs".as_ptr() 无终止符,
             // ptr_to_str 越界读 → fs_name 非 "egfs" → from_name Unknown → -EOPNOTSUPP(潜藏 bug).
-            let r = crate::functions::fs::api::vfs_mount_safe("/", "egfs");
+            let r = crate::functions::fs::api::vfs_mount_safe("/disk", "egfs");
             if r == 0 {
                 let n_drives = crate::functions::fs::egfs::entry::get_egfs()
                     .drives_discovered
                     .lock()
                     .len() as u64;
                 if n_drives > 1 {
-                    crate::klog_boot_info!("Root filesystem: EGFS ({} drives)", n_drives);
+                    crate::klog_boot_info!("EGFS mounted at /disk ({} drives)", n_drives);
                 } else {
-                    crate::klog_boot_info!("Root filesystem: EGFS (disk)");
+                    crate::klog_boot_info!("EGFS mounted at /disk (disk)");
                 }
+                // D5-g: 盘上首启把载体全量安装到 /disk, 用户态 init 切根后才有可执行体.
+                // 放在挂载成功之后、ramfs 挂根之前: /disk 前缀已可被 find_mount 命中,
+                // 与引导根是否就位无关 (最长前缀匹配不要求 "/" 先挂).
+                crate::functions::init::install_disk_root();
             } else {
                 crate::klog_boot_info!("EGFS mount failed (r={})", r);
             }

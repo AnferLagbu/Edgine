@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """initramfs 载体生成器 —— 把用户态 ELF 打包成 cpio (newc) 归档 (K-07b).
 
-背景: 内核的 initramfs 通路 (`kernel-functions` 的 `initramfs` feature) 把
-`other/build/<arch>/user/initramfs.cpio` 编译期 `include_bytes!` 进镜像, 启动时
+背景: 内核的 initramfs 通路把 `other/build/<arch>/user/initramfs.cpio` 由引导器以
+boot-module 交付 (严格零嵌入 D4: 不再编译期 `include_bytes!` 进镜像), 启动时
 解压进 ramfs 根, 再从 `/init` 载入 PID 1 —— 即"用户态程序经文件系统载体进入",
-是 `execve` 运行时射程的前提. 该 feature 默认关闭: 出货路径仍是内嵌 `init.bin`.
+是 `execve` 运行时射程的前提. 内核侧无条件解包 (D4-e: `initramfs` feature 已退役).
 
 为什么自带打包器而不调用系统 `cpio`:
 1. **确定性** —— ino 顺序编号、mtime/uid/gid 固定 0, 同一份输入两次得到同一份字节,
@@ -82,7 +82,12 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/fbterm", "file", "fbterm.bin"),
     ("bin/httpsrv", "file", "httpsrv.bin"),
     ("bin/wasmstub", "file", "wasmstub.bin"),
+    # D4 零嵌入: 两桩恒入归档, exec 按 wasm_userspace feature 选读其一 (wasm/stub.rs).
+    ("bin/wasmrun", "file", "wasmrun.bin"),
     ("bin/hello.wasm", "file", "hello.wasm"),
+    # P1 wasmi stdio demo 载荷 (wasi-sdk 真产物, 见 scripts/make_wasi_demo.py);
+    # 最小 WASI 子集 (fd_write + proc_exit), 由 wasm_userspace feature 腿消费.
+    ("bin/hello_wasi.wasm", "file", "hello_wasi.wasm"),
 )
 # 必需条目 (源文件缺失即失败)
 REQUIRED_SRC = "init.bin"

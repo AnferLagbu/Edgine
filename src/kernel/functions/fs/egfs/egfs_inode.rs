@@ -195,6 +195,21 @@ impl crate::functions::fs::FileSystem for EgfsData {
         }
     }
 
+    fn fs_create(
+        &self,
+        parent_path: &str,
+        name: &str,
+        pwm: u64,
+    ) -> crate::functions::fs::KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>>
+    {
+        // EGFS 为平坦命名空间: 父路径与文件名拼成单一 ZAP 键, 与 fs_open 同一权威.
+        // 缺此 override 会走 trait 默认 NotSupported, 令 VFS 建文件路径 (write_file_kernel /
+        // initramfs 解包) 对每个常规文件静默失败.
+        let path = alloc::format!("{}/{}", parent_path.trim_end_matches('/'), name);
+        // 0x0102 = O_CREAT | O_RDWR
+        self.fs_open(&path, 0x0102, pwm)
+    }
+
     fn fs_read(
         &self,
         handle: u32,

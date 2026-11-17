@@ -13,7 +13,6 @@ use crate::functions::fs::egfs::txg::EgfsTxgGroup;
 use crate::functions::fs::egfs::zil::{EgfsZil, EgfsZilRecord};
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use crate::privileged::driver::block;
-use crate::privileged::sgeg::api as pwm_api;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -43,7 +42,7 @@ fn egfs_reset() {
 pub const EGFS_MAX_FDS: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
-/// 打开文件描述符: 关联对象、数据集、偏移、标志与属主.
+/// 打开文件描述符: 关联对象、数据集、偏移与标志.
 pub struct EgfsFd {
     /// 描述符编号.
     pub fd: u32,
@@ -55,8 +54,6 @@ pub struct EgfsFd {
     pub offset: u64,
     /// 打开标志.
     pub flags: u32,
-    /// 属主 PWM 身份字.
-    pub pwm: u64,
     /// 槽位是否占用.
     pub used: bool,
 }
@@ -72,6 +69,11 @@ pub enum EgfsMode {
 }
 
 /// EGFS 全局状态: 存储池、事务组、数据集、快照、意图日志与描述符表.
+///
+/// SIMPLIFIED: 本 FS 层不自带访问判定 (与 ramfs 同口径), `pwm` 只用于记录对象属主;
+/// 影响面: SGEG v2 落地前 EGFS 无访问控制, 任何身份可读写改他人对象;
+/// 何时需扩展: v2 把判定收敛到唯一出口后由该出口承担, 不再回到各 FS 内部散落检查点
+/// (见 `docs/design/sgeg-design.md` 的出口收敛前置工程).
 pub struct EgfsData {
     /// 存储池抽象.
     pub spa: EgfsSpa,
@@ -128,7 +130,6 @@ pub fn get_egfs() -> &'static EgfsData {
                     ds_id: 0,
                     offset: 0,
                     flags: 0,
-                    pwm: 0,
                     used: false,
                 }; EGFS_MAX_FDS],
             ),
@@ -220,9 +221,6 @@ impl EgfsData {
             for (drive_id, part_start) in &discovered {
                 self.disk_drive.store(*drive_id, Ordering::Release);
                 self.partition_start.store(*part_start, Ordering::Release);
-                self.spa
-                    .partition_start
-                    .store(*part_start, Ordering::Release);
 
                 if self.mount_drive(*drive_id, *part_start) {
                     mounted_any = true;
@@ -270,7 +268,12 @@ impl EgfsData {
                 ));
         }
 
-        self.setup_zil_datasets();
+        // mount_drive 成功时已建立 txg/zil/datasets 并恢复盘上元数据 (它把 initialized
+        // 置真); 重做会 push 出第二个 root 数据集, 并把 txg 从盘上值回退到 1 ⇒ 新写入
+        // 落回旧槽位. 只有格式化路径与内存模式需要在这里补齐.
+        if !self.is_initialized() {
+            self.setup_zil_datasets();
+        }
         self.root_ds_id.store(0, Ordering::Release);
         self.current_dir.store(HV_DMU_OBJ_ROOT, Ordering::Release);
         self.mounted.store(true, Ordering::Release);
@@ -323,21 +326,19 @@ impl EgfsData {
             *txg_guard = Some(txg_group);
         }
         self.zil.init();
-        let mut has_persisted = false;
         {
             let mut datasets = self.datasets.lock();
             let root_ds = EgfsDataset::new(0, "root", 0);
             datasets.push(root_ds);
         }
-        {
+        let ub_copy = *self.spa.uberblock.lock();
+        // deserialize → restore_metadata 自取 datasets 锁, 而 IrqSpinLock 不可重入:
+        // 持锁期间调用会在同一核上自旋死等 (二启恢复路径挂死的根因).
+        let has_persisted =
+            !ub_copy.root_bp.is_null() && self.deserialize_dataset_metadata(&ub_copy.root_bp);
+        if !has_persisted {
             let datasets = self.datasets.lock();
-            let ub_copy = *self.spa.uberblock.lock();
-            if !ub_copy.root_bp.is_null() && self.deserialize_dataset_metadata(&ub_copy.root_bp) {
-                has_persisted = true;
-            }
-            if !has_persisted {
-                datasets[0].init(0);
-            }
+            datasets[0].init(0);
         }
     }
 
@@ -351,9 +352,6 @@ impl EgfsData {
         }
         // 读取 Edgine 配置扇区获取 EGFS 分区起始 LBA
         self.partition_start.store(part_start, Ordering::Release);
-        self.spa
-            .partition_start
-            .store(part_start, Ordering::Release);
         crate::slog_info!(
             FS,
             "[EGFS] FORMAT: Writing fresh EGFS v2 to disk (partition @LBA {})...",
@@ -368,9 +366,18 @@ impl EgfsData {
         vdev_cfg.asize = Self::probe_partition_size_for_drive(drive_id, part_start);
         vdev_cfg.partition_start = part_start;
         self.spa.add_vdev(vdev_cfg);
-        self.spa.formatted.store(true, Ordering::Release);
         self.mode.store(EgfsMode::Disk as u8, Ordering::Release);
-        self.spa.write_uberblock_to_disk();
+        let rc = self.spa.write_uberblock_to_disk();
+        if rc != 0 {
+            crate::slog_err!(
+                FS,
+                "[EGFS] FORMAT: uberblock 落盘失败 rc={}, 池不可持久化",
+                rc
+            );
+            self.spa.formatted.store(false, Ordering::Release);
+            return;
+        }
+        self.spa.formatted.store(true, Ordering::Release);
         crate::slog_info!(FS, "[EGFS] FORMAT: Complete");
     }
 
@@ -474,9 +481,16 @@ impl EgfsData {
             return false;
         }
         self.partition_start.store(part_start, Ordering::Release);
-        self.spa
-            .partition_start
-            .store(part_start, Ordering::Release);
+        // vdev 必须先于 uberblock 读注册: SPA 扇区 I/O 的 drive 唯一权威来源是 vdev 列表,
+        // 未注册即无 drive ⇒ 128 个槽位全读失败 → 每次启动误判空盘并重新格式化.
+        let mut vdev_cfg = crate::functions::fs::egfs::vdev::EgfsVdevConfig::new_disk(
+            u16::from(drive_id),
+            "disk",
+            12,
+        );
+        vdev_cfg.asize = Self::probe_partition_size_for_drive(drive_id, part_start);
+        vdev_cfg.partition_start = part_start;
+        self.spa.add_vdev(vdev_cfg);
         crate::slog_info!(
             FS,
             "[EGFS] MOUNT: Reading uberblock from disk (partition @LBA {})...",
@@ -495,14 +509,6 @@ impl EgfsData {
         self.spa.formatted.store(true, Ordering::Release);
         self.spa.disk_present.store(true, Ordering::Release);
         self.mode.store(EgfsMode::Disk as u8, Ordering::Release);
-        let mut vdev_cfg = crate::functions::fs::egfs::vdev::EgfsVdevConfig::new_disk(
-            u16::from(drive_id),
-            "disk",
-            12,
-        );
-        vdev_cfg.asize = Self::probe_partition_size_for_drive(drive_id, part_start);
-        vdev_cfg.partition_start = part_start;
-        self.spa.add_vdev(vdev_cfg);
         {
             let mut txg_guard = self.txg_group.lock();
             let mut txg_group = EgfsTxgGroup::new();
@@ -565,30 +571,13 @@ impl EgfsData {
         None
     }
 
-    fn check_permission(obj: &EgfsDmuObject, pwm: u64, cap: u64) -> bool {
-        if pwm == 0 {
-            return false;
-        }
-        // Framekernel P2.2.2: 使用 safe 包装
-        let level = pwm_api::pwm_get_privilege_level(pwm);
-        if level == 0xFF {
-            return false;
-        }
-        if level == 0 {
-            return true;
-        }
-        if obj.owner_pwm == pwm {
-            return true;
-        }
-        // domain=3 (DS = dataset)
-        pwm_api::pwm_has_capability(pwm, 3, cap)
-    }
-
     /// 打开 egfs 中的对象并分配文件描述符.
+    ///
+    /// `pwm` 仅在新建对象时记为属主 (`owner_pwm`), 不参与放行判定.
     ///
     /// # Errors
     /// 未初始化时返回 `NotInitialized`; 对象不存在时返回 `FileNotFound`;
-    /// 权限不足时返回 `PermissionDenied`; fd 表满时返回 `NoSpace`.
+    /// fd 表满时返回 `NoSpace`.
     pub fn open(&self, path: &str, flags: u32, pwm: u64) -> Result<i32, KernelError> {
         if !self.is_initialized() {
             return Err(KernelError::NotInitialized);
@@ -618,9 +607,6 @@ impl EgfsData {
         let Some(obj) = obj else {
             return Err(KernelError::FileNotFound);
         };
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return Err(KernelError::PermissionDenied);
-        }
         let Some(fd_idx) = self.alloc_fd() else {
             return Err(KernelError::NoSpace);
         };
@@ -630,7 +616,6 @@ impl EgfsData {
             fds[fd_idx].ds_id = self.root_ds_id.load(Ordering::Acquire);
             fds[fd_idx].offset = if flags & 0x0400 != 0 { obj.size } else { 0 };
             fds[fd_idx].flags = flags;
-            fds[fd_idx].pwm = pwm;
         }
         self.zil.add_record(EgfsZilRecord::new_create(0, 0, name));
         Ok(crate::functions::intcast::low_i32_from_usize(fd_idx))
@@ -657,13 +642,13 @@ impl EgfsData {
 
     /// 从描述符当前偏移读取数据并推进偏移, 返回实际读取字节数.
     pub fn read(&self, fd: u32, buf: &mut [u8], count: u32) -> i32 {
-        let (obj_id, offset, pwm) = {
+        let (obj_id, offset) = {
             let fds = self.fds.lock();
             let idx = fd as usize;
             if idx >= EGFS_MAX_FDS || !fds[idx].used {
                 return KernelError::InvalidArgument.as_i32();
             }
-            (fds[idx].obj_id, fds[idx].offset, fds[idx].pwm)
+            (fds[idx].obj_id, fds[idx].offset)
         };
         let obj = {
             let datasets = self.datasets.lock();
@@ -672,9 +657,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return KernelError::PermissionDenied.as_i32();
-        }
         let available = if offset < obj.size {
             crate::functions::intcast::usize_from_u64(obj.size - offset)
         } else {
@@ -721,18 +703,13 @@ impl EgfsData {
 
     /// 向描述符当前偏移写入数据并推进偏移, 返回实际写入字节数.
     pub fn write(&self, fd: u32, buf: &[u8], count: u32) -> i32 {
-        let (obj_id, offset, pwm, flags) = {
+        let (obj_id, offset, flags) = {
             let fds = self.fds.lock();
             let idx = fd as usize;
             if idx >= EGFS_MAX_FDS || !fds[idx].used {
                 return KernelError::InvalidArgument.as_i32();
             }
-            (
-                fds[idx].obj_id,
-                fds[idx].offset,
-                fds[idx].pwm,
-                fds[idx].flags,
-            )
+            (fds[idx].obj_id, fds[idx].offset, fds[idx].flags)
         };
         if flags & 0x0001 != 0 && flags & 0x0002 == 0 {
             return KernelError::PermissionDenied.as_i32();
@@ -744,9 +721,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
-        }
         let to_write = (count as usize).min(buf.len());
         if to_write == 0 {
             return 0;
@@ -810,16 +784,18 @@ impl EgfsData {
         let ds = &datasets[0];
         ds.create_dir(name, pwm).map_or_else(
             || KernelError::Io.as_i32(),
-            |obj_id| {
+            |_| {
                 let txg = self.spa.current_txg();
                 self.zil.add_record(EgfsZilRecord::new_mkdir(txg, 0, name));
-                crate::functions::intcast::low_i32_from_u64(obj_id)
+                // 返回对象号会被 fs_mkdir 适配器读成失败 (它只认 0), 而目录其实已建:
+                // 查返回码的调用方 (init 切根前建 put_old) 因此恒判 mkdir 失败.
+                0
             },
         )
     }
 
     /// 删除文件或目录项, 成功返回 0.
-    pub fn unlink(&self, path: &str, pwm: u64) -> i32 {
+    pub fn unlink(&self, path: &str, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -838,9 +814,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
-        }
         {
             let datasets = self.datasets.lock();
             if !datasets[0].unlink(name) {
@@ -855,24 +828,25 @@ impl EgfsData {
         0
     }
 
-    /// 查询路径对应对象元数据, 不存在或无权限时返回 None.
-    pub fn stat(&self, path: &str, pwm: u64) -> Option<EgfsDmuObject> {
+    /// 查询路径对应对象元数据, 不存在时返回 None.
+    pub fn stat(&self, path: &str, _pwm: u64) -> Option<EgfsDmuObject> {
         if !self.is_initialized() {
             return None;
         }
         let name = path.trim_start_matches('/');
         let datasets = self.datasets.lock();
         let ds = &datasets[0];
-        let obj_id = ds.lookup(name)?;
-        let obj = ds.objset.get_obj(obj_id)?;
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return None;
+        // 平坦命名空间里没有 "" 这个 ZAP 键, 但挂载根 "/" 必须可 stat:
+        // pivot_root 的 require_directory 判的就是新根 (挂载点) 本身.
+        if name.is_empty() {
+            return ds.objset.get_root();
         }
-        Some(obj)
+        let obj_id = ds.lookup(name)?;
+        ds.objset.get_obj(obj_id)
     }
 
     /// 修改文件权限位, 成功返回 0.
-    pub fn chmod(&self, path: &str, mode: u16, pwm: u64) -> i32 {
+    pub fn chmod(&self, path: &str, mode: u16, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -887,14 +861,6 @@ impl EgfsData {
         let Some(mut obj) = ds.objset.get_obj(obj_id) else {
             return KernelError::FileNotFound.as_i32();
         };
-
-        if obj.owner_pwm != pwm {
-            // Framekernel P2.2.2: safe 包装
-            let level = pwm_api::pwm_get_privilege_level(pwm);
-            if level != 0 {
-                return KernelError::PermissionDenied.as_i32();
-            }
-        }
 
         obj.pwm_perm = mode;
         // Framekernel P2.2.2: 安全时间戳
@@ -914,17 +880,11 @@ impl EgfsData {
     }
 
     /// 同时修改文件属主与属组, 成功返回 0.
-    pub fn chown_ext(&self, path: &str, owner_pwm: u64, group_pwm: u64, pwm: u64) -> i32 {
+    pub fn chown_ext(&self, path: &str, owner_pwm: u64, group_pwm: u64, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
         let name = path.trim_start_matches('/');
-
-        // Framekernel P2.2.2: safe 包装
-        let level = pwm_api::pwm_get_privilege_level(pwm);
-        if level != 0 {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         let mut datasets = self.datasets.lock();
         let ds = &mut datasets[0];
@@ -954,17 +914,17 @@ impl EgfsData {
     /// 设置文件时间戳 (utimensat, POSIX 语义)
     ///
     /// `atime` / `mtime` 为 `u64::MAX` 时表示该字段不修改 (对应 utimensat 的
-    /// `UTIME_OMIT` 语义). 权限判据与 `chmod` 一致 (属主或特权级 0).
+    /// `UTIME_OMIT` 语义).
     ///
     /// # Errors
     /// 未初始化时返回 `NotInitialized`; 路径不存在返回 `FileNotFound`;
-    /// 非属主且无特权返回 `PermissionDenied`; 元数据落盘失败返回 `Io`.
+    /// 元数据落盘失败返回 `Io`.
     pub fn set_times(
         &self,
         path: &str,
         atime: u64,
         mtime: u64,
-        pwm: u64,
+        _pwm: u64,
     ) -> Result<(), KernelError> {
         if !self.is_initialized() {
             return Err(KernelError::NotInitialized);
@@ -980,13 +940,6 @@ impl EgfsData {
         let Some(mut obj) = ds.objset.get_obj(obj_id) else {
             return Err(KernelError::FileNotFound);
         };
-
-        if obj.owner_pwm != pwm {
-            let level = pwm_api::pwm_get_privilege_level(pwm);
-            if level != 0 {
-                return Err(KernelError::PermissionDenied);
-            }
-        }
 
         if atime != u64::MAX {
             obj.atime = atime;
@@ -1005,7 +958,7 @@ impl EgfsData {
     }
 
     /// 重命名文件或目录, 成功返回 0.
-    pub fn rename(&self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
+    pub fn rename(&self, old_path: &str, new_path: &str, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1019,17 +972,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-
-        let obj = {
-            let datasets = self.datasets.lock();
-            match datasets[0].objset.get_obj(obj_id) {
-                Some(o) => o,
-                None => return KernelError::FileNotFound.as_i32(),
-            }
-        };
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         {
             let datasets = self.datasets.lock();
@@ -1114,7 +1056,7 @@ impl EgfsData {
     }
 
     /// 创建硬链接, 成功返回 0.
-    pub fn link(&self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
+    pub fn link(&self, old_path: &str, new_path: &str, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1138,10 +1080,6 @@ impl EgfsData {
         };
         if obj.obj_type == EgfsObjType::Dir {
             return KernelError::IsDirectory.as_i32();
-        }
-
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
         }
 
         {
@@ -1174,7 +1112,7 @@ impl EgfsData {
     }
 
     /// 读取符号链接目标, 返回写入缓冲区的字节数.
-    pub fn readlink(&self, path: &str, buf: &mut [u8], pwm: u64) -> i32 {
+    pub fn readlink(&self, path: &str, buf: &mut [u8], _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1200,10 +1138,6 @@ impl EgfsData {
             return KernelError::InvalidArgument.as_i32();
         }
 
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return KernelError::PermissionDenied.as_i32();
-        }
-
         if obj.bp.is_null() {
             return 0;
         }
@@ -1224,7 +1158,7 @@ impl EgfsData {
     }
 
     /// 设置扩展属性
-    pub fn setxattr(&self, path: &str, name: &str, value: &[u8], pwm: u64) -> i32 {
+    pub fn setxattr(&self, path: &str, name: &str, value: &[u8], _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1237,17 +1171,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-
-        let obj = {
-            let datasets = self.datasets.lock();
-            match datasets[0].objset.get_obj(obj_id) {
-                Some(o) => o,
-                None => return KernelError::FileNotFound.as_i32(),
-            }
-        };
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         {
             let mut datasets = self.datasets.lock();
@@ -1271,7 +1194,7 @@ impl EgfsData {
     }
 
     /// 获取扩展属性
-    pub fn getxattr(&self, path: &str, name: &str, buf: &mut [u8], pwm: u64) -> i32 {
+    pub fn getxattr(&self, path: &str, name: &str, buf: &mut [u8], _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1292,10 +1215,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         let name_hash = Self::hash_xattr_name(name);
         if name_hash < 4 {
@@ -1312,7 +1231,7 @@ impl EgfsData {
     }
 
     /// 列出扩展属性
-    pub fn listxattr(&self, path: &str, buf: &mut [u8], pwm: u64) -> i32 {
+    pub fn listxattr(&self, path: &str, buf: &mut [u8], _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1333,10 +1252,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-
-        if !Self::check_permission(&obj, pwm, 0x01) {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         let mut offset = 0;
         for (i, hash) in obj.data_hash.iter().enumerate() {
@@ -1354,7 +1269,7 @@ impl EgfsData {
     }
 
     /// 删除扩展属性
-    pub fn removexattr(&self, path: &str, name: &str, pwm: u64) -> i32 {
+    pub fn removexattr(&self, path: &str, name: &str, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -1367,17 +1282,6 @@ impl EgfsData {
                 None => return KernelError::FileNotFound.as_i32(),
             }
         };
-
-        let obj = {
-            let datasets = self.datasets.lock();
-            match datasets[0].objset.get_obj(obj_id) {
-                Some(o) => o,
-                None => return KernelError::FileNotFound.as_i32(),
-            }
-        };
-        if !Self::check_permission(&obj, pwm, 0x02) {
-            return KernelError::PermissionDenied.as_i32();
-        }
 
         {
             let mut datasets = self.datasets.lock();
@@ -1417,12 +1321,23 @@ impl EgfsData {
     }
 
     /// 同步所有未提交数据 (提交事务组并落盘), 成功返回 0.
+    ///
+    /// 磁盘模式下元数据序列化失败或 uberblock 落盘失败均返回错误码 ——
+    /// 恒返 0 会把"数据没落盘"读成"已同步" (数据丢失级静默失败).
     pub fn sync(&self) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
         let txg = self.spa.advance_txg();
         let meta_bp = self.serialize_dataset_metadata(txg);
+        if self.is_disk_mode() && meta_bp.is_none() {
+            crate::slog_err!(
+                FS,
+                "[EGFS] sync: 元数据序列化/落盘失败 (txg={}), 本次提交未持久化",
+                txg
+            );
+            return KernelError::Io.as_i32();
+        }
         {
             let mut ub = self.spa.uberblock.lock();
             ub.txg = txg;
@@ -1432,9 +1347,11 @@ impl EgfsData {
             }
         }
         self.zil.sync(txg);
-        if self.is_disk_mode() {
-            self.spa.write_uberblock_to_disk();
-        }
+        let rc = if self.is_disk_mode() {
+            self.spa.write_uberblock_to_disk()
+        } else {
+            0
+        };
         {
             let mut txg_guard = self.txg_group.lock();
             if let Some(ref mut txg_group) = *txg_guard {
@@ -1442,7 +1359,7 @@ impl EgfsData {
             }
         }
         self.spa.arc.flush_dirty();
-        0
+        rc
     }
 
     /// 序列化数据集元数据为块指针 (仅磁盘模式有效, 失败返回 `None`)
@@ -1536,8 +1453,8 @@ impl EgfsData {
         for obj in objects {
             off = Self::write_object_record(&mut buf, off, obj)?;
         }
-        for (name, _value) in dir_entries {
-            off = Self::write_dir_entry_record(&mut buf, off, name)?;
+        for (name, value) in dir_entries {
+            off = Self::write_dir_entry_record(&mut buf, off, name, value)?;
         }
 
         Some(buf)
@@ -1644,12 +1561,22 @@ impl EgfsData {
         Some(off)
     }
 
-    /// 写入单条目录条目记录, 返回下一个写入偏移; 越界返回 `None`
-    fn write_dir_entry_record(buf: &mut [u8], mut off: usize, name: &str) -> Option<usize> {
+    /// 写入单条目录条目记录, 返回下一个写入偏移; 越界或值形态非法返回 `None`
+    ///
+    /// 值 = 目录项绑定的对象号 (小端 u64, 与 `EgfsZap::insert_u64` 同形). 读侧
+    /// `parse_dir_entry_record` 一直按对象号解析, 故写侧丢值会让冷恢复后所有名字
+    /// 绑到对象 0 —— 名字还在而文件全打不开.
+    fn write_dir_entry_record(
+        buf: &mut [u8],
+        mut off: usize,
+        name: &str,
+        value: &[u8],
+    ) -> Option<usize> {
         let name_bytes = name.as_bytes();
         if off + 2 + name_bytes.len() + 8 > buf.len() {
             return None;
         }
+        let obj_id = u64::from_le_bytes(*value.first_chunk::<8>()?);
         if !Self::write_le16(
             buf,
             off,
@@ -1660,7 +1587,7 @@ impl EgfsData {
         off += 2;
         buf[off..off + name_bytes.len()].copy_from_slice(name_bytes);
         off += name_bytes.len();
-        if !Self::write_le64(buf, off, 0) {
+        if !Self::write_le64(buf, off, obj_id) {
             return None;
         }
         off += 8;
@@ -1753,6 +1680,9 @@ impl EgfsData {
             ds.dir_zap.insert_u64(name, obj_id);
             off = next_off;
         }
+
+        // 只翻状态位: 此处调 init 会重建根目录对象并复位 next_obj_id, 抹掉刚恢复的表.
+        ds.activate();
 
         true
     }

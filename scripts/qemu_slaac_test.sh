@@ -293,9 +293,9 @@ done
 # D4: boot-with-module helper (x86 GRUB module2 交付 cpio)
 source scripts/boot_module.sh
 
-# D4: initramfs-feature 核 (cpio 经 boot-module 交付); x86 组 GRUB module2 ISO
+# D4: 默认核 (cpio 经 boot-module 交付); x86 组 GRUB module2 ISO
 if [ "$SKIP_BUILD" != "1" ]; then
-    info "构建 x86_64 initramfs-feature 核 + GRUB module2 ISO"
+    info "构建 x86_64 默认核 + GRUB module2 ISO"
     if ! { boot_module_build x86_64 && boot_module_iso_x86; } >/dev/null 2>&1; then
         err "boot-module 构建/组包失败, 请手动排查"
         exit 1

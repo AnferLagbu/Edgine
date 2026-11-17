@@ -226,14 +226,29 @@ fn fn_body<'a>(src: &'a str, sig: &str) -> &'a str {
     &rest[..end]
 }
 
+/// 丙批 B1 门槛的豁免名单 (用户裁定: SGEG 冻结, 提前执行 v2 的出口收敛减法).
+///
+/// 裁定依据 `docs/design/sgeg-design.md`: 现状散落在 functions/fs 的能力检查是
+/// 「库不是强制点」(漏写一处不会让任何审计腿变红), v2 把判定收敛到唯一出口;
+/// 且 `pwm == 0` 一律拒违反「必须有无约束默认域」红线. 故 EGFS 回到与 ramfs
+/// 一致的「FS 层不自带判定」形态, 该不变式改由
+/// `egfs_subtree_carries_no_scattered_gate` 正向锁接管.
+///
+/// 名单与扫描结果**双向对账**: 豁免了却没扫到 (落盘动作消失/文件改名) 判红,
+/// 扫到了却不在名单 (新增散落门的落盘 FS) 也判红 — 豁免面不得静默漂移.
+const B1_GATE_FREE_EXEMPT: &[&str] = &["../src/kernel/functions/fs/egfs/egfs_data.rs"];
+
 /// 丙批审查 B1 门槛: 凡真实落盘时间戳的 `set_times` 必须含属主/特权判据.
 ///
-/// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳), 与
-/// egfs 同层实装分歧. 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型,
-/// 且会把判据与写回拆成两次路径解析 (TOCTOU) — 故一致性由本测试面收口:
-/// 扫描 privileged/functions 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作
-/// (`save_inode`/`update_obj`) 者, 必须同体出现 `pwm_get_privilege_level` 与
-/// `PermissionDenied`. 纯内存 FS 的 `Ok(())` 桩与默认 `NotSupported` 不在门槛内.
+/// 背景: ext2 `set_times` 曾只写回不判权限 (任意 pwm 可改他人文件时间戳).
+/// 判据必须与写回同锁域 — 上提到 VFS 层无 owner 模型, 且会把判据与写回拆成
+/// 两次路径解析 (TOCTOU) — 故一致性由本测试面收口: 扫描 privileged/functions
+/// 两侧 fs 源码, 凡 `set_times` 函数体含落盘动作 (`save_inode`/`update_obj`)
+/// 者, 必须同体出现 `pwm_get_privilege_level` 与 `PermissionDenied`.
+/// 纯内存 FS 的 `Ok(())` 桩与默认 `NotSupported` 不在门槛内.
+///
+/// 覆盖面: ext2 由本门槛点名硬锁 (强度不降); EGFS 按上述裁定走
+/// `B1_GATE_FREE_EXEMPT` 豁免, 其「零散落门」不变式由正向锁承担.
 ///
 /// 维护提示: 若判据日后被抽取为共享谓词 (不再内联 `pwm_get_privilege_level`),
 /// 请同步更新本测试的谓词断言, 勿直接删除门槛.
@@ -250,6 +265,7 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
     assert!(!files.is_empty(), "fs 源码扫描路径失效, B1 门槛未生效");
 
     let mut checked = Vec::new();
+    let mut exempted = Vec::new();
     for file in &files {
         let src = fs::read_to_string(file).unwrap_or_else(|e| panic!("读取 {file:?} 失败: {e}"));
         if !src.contains("fn set_times(") {
@@ -259,7 +275,12 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
         if !body.contains("save_inode") && !body.contains("update_obj") {
             continue;
         }
-        checked.push(file.display().to_string());
+        let rel = file.display().to_string();
+        if B1_GATE_FREE_EXEMPT.contains(&rel.as_str()) {
+            exempted.push(rel);
+            continue;
+        }
+        checked.push(rel);
         assert!(
             body.contains("pwm_get_privilege_level"),
             "{file:?} 的 set_times 落盘前必须判属主/特权级 (丙批 B1)",
@@ -269,8 +290,58 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
             "{file:?} 的 set_times 无权限必须返回 PermissionDenied (丙批 B1)",
         );
     }
+    let mut expect: Vec<String> = B1_GATE_FREE_EXEMPT
+        .iter()
+        .copied()
+        .map(str::to_owned)
+        .collect();
+    expect.sort();
+    exempted.sort();
+    assert_eq!(
+        exempted, expect,
+        "B1 豁免名单必须与扫描到的落盘 set_times 双向对账 (裁定面不得静默漂移)"
+    );
     assert!(
-        checked.len() >= 2,
-        "B1 门槛应至少覆盖 ext2 与 egfs 两条落盘路径, 实得 {checked:?}",
+        checked.iter().any(|p| p.ends_with("fs/ext2/mount.rs")),
+        "B1 门槛必须仍点名覆盖 ext2 落盘路径 (豁免只针对 EGFS), 实得 {checked:?}",
+    );
+}
+
+/// EGFS 与 ramfs 同口径: FS 层不自带访问判定 (SGEG 冻结期裁定, v2 唯一出口接管).
+///
+/// 反向针: EGFS 子树与 ramfs 均零散落 pwm 门 token — 任何一处重新内联判定即红,
+/// 补上 B1 豁免后留下的覆盖缺口 (豁免只免「必须有门」, 不免「不得有门」).
+/// 正向锚: 扫描面文件数达下界 (防空扫描恒真), 且 `EgfsData` 文档必须保留
+/// SIMPLIFIED 偏离记录 — 裁定与 v2 替代物不得被抹掉.
+#[test]
+fn egfs_subtree_carries_no_scattered_gate() {
+    const GATE_TOKENS: &[&str] = &[
+        "check_permission",
+        "pwm_api::",
+        "pwm_get_privilege_level",
+        "pwm_has_capability",
+    ];
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("../src/kernel/functions/fs/egfs"), &mut files);
+    assert!(
+        files.len() >= 20,
+        "EGFS 子树扫描面失效 (实得 {} 个 .rs), 反向针未生效",
+        files.len(),
+    );
+    files.push(PathBuf::from("../src/kernel/functions/fs/ramfs.rs"));
+    for file in &files {
+        let src = fs::read_to_string(file).unwrap_or_else(|e| panic!("读取 {file:?} 失败: {e}"));
+        for token in GATE_TOKENS {
+            assert!(
+                !src.contains(token),
+                "{file:?} 不得内联散落 pwm 门 `{token}` — 判定归 SGEG v2 唯一出口 (冻结期裁定)",
+            );
+        }
+    }
+    let egfs_data = fs::read_to_string("../src/kernel/functions/fs/egfs/egfs_data.rs")
+        .unwrap_or_else(|e| panic!("读取 egfs_data.rs 失败: {e}"));
+    assert!(
+        egfs_data.contains("SIMPLIFIED: 本 FS 层不自带访问判定"),
+        "EgfsData 的 SIMPLIFIED 偏离记录 (裁定 + v2 替代物) 不得被抹掉",
     );
 }

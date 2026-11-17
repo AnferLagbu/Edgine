@@ -126,7 +126,7 @@ echo "[thread-stress] 里程碑断言: '$MARKER' + '[THREAD] PASS:' + conserve=o
 [ -n "$QEMU_EXTRA" ] && echo "[thread-stress] 附加 QEMU 参数: $QEMU_EXTRA"
 
 for arch in $ARCH_LIST; do
-    # D4: 构建 initramfs-feature 核; x86 另组 GRUB module2 ISO (cpio 经 boot-module 交付)
+    # D4: 构建默认核; x86 另组 GRUB module2 ISO (cpio 经 boot-module 交付)
     if ! boot_module_build "$arch" >/dev/null 2>&1; then
         echo "[$arch] boot-module 构建失败" >&2
         FAILED=$((FAILED + 1)); continue

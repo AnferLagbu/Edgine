@@ -24,7 +24,10 @@
 #[inline]
 #[must_use]
 pub fn has_rsdp() -> bool {
-    crate::privileged::arch::acpi::find_rsdp(0).is_some()
+    // MB2 信息指针真传: UEFI 下 RSDP 只经 tag 14/15 内联副本交付, 传 0 会让
+    // 本查询在 OVMF 上恒假 (sysinfo/procfs 随之报「无 ACPI」).
+    crate::privileged::arch::acpi::find_rsdp(crate::privileged::boot::multiboot_info_ptr())
+        .is_some()
 }
 
 /// 是否解析过 MADT (Multiple APIC Description Table)

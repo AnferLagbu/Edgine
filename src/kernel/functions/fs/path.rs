@@ -185,14 +185,14 @@ fn is_strictly_under(child: &str, parent: &str) -> bool {
 ///
 /// K-03: 根前缀存于进程 FS 上下文 (`CLONE_FS` 线程共享), 只影响本进程.
 ///
-// SIMPLIFIED: 仅切换根前缀, 不摘除旧根挂载点 (无 per-process mount namespace
-// 可摘); 影响面: `put_old` 仅参与关系校验, 旧根经绝对路径仍可达; 何时需扩展:
-// 需要 Linux "旧根不可达" 强语义时, 在 `VfsManager` 摘除旧根挂载点.
+// SIMPLIFIED: 摘除旧根挂载点是全局的 (无 per-process mount namespace), 且旧根
+// 不搬到 `put_old`; 影响面: 同进程组外共享挂载表的进程也失去旧根, `put_old` 仅
+// 参与关系校验; 何时需扩展: 引入 mount namespace 后改为按命名空间摘除 + 搬移.
 ///
 /// # Errors
 /// 指针为空/越界返回 `EFAULT`; 缺少 `CAP_SYS_ADMIN` 返回 `EACCES`;
-/// 路径不存在返回 `ENOENT`; 非目录返回 `ENOTDIR`; 关系非法返回 `EINVAL`;
-/// `new_root` 即当前根返回 `EBUSY`.
+/// 路径不存在返回 `ENOENT`; 非目录返回 `ENOTDIR`; 关系非法、`new_root` 不是
+/// 挂载点或当前根不是挂载点返回 `EINVAL`; `new_root` 即当前根返回 `EBUSY`.
 pub fn pivot_root_syscall(new_root_ptr: u64, put_old_ptr: u64) -> Result<usize, Errno> {
     let new_view = checked_user_path(new_root_ptr)?;
     let old_view = checked_user_path(put_old_ptr)?;
@@ -211,6 +211,13 @@ pub fn pivot_root_syscall(new_root_ptr: u64, put_old_ptr: u64) -> Result<usize, 
 
     let current_root = VFS_MANAGER.current_root_string();
     pivot_root_plan(new_real, old_real, &current_root)?;
+    if !VFS_MANAGER.is_mount_point(new_real) {
+        return Err(Errno::Einval);
+    }
+    // 先摘旧根再切前缀: 摘除失败即整体失败, 不留下"根已切但旧根仍可达"的半完成态.
+    VFS_MANAGER
+        .unmount(&current_root)
+        .map_err(|_| Errno::Einval)?;
     VFS_MANAGER.set_current_root(new_real);
     Ok(0)
 }

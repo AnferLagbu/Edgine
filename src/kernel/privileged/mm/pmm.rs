@@ -24,6 +24,9 @@ macro_rules! klog_pmm {
     };
 }
 
+use super::early_reserve::{
+    EarlyRegion, MAX_EARLY_REGIONS, align_down_region, align_up_region, ranges_overlap,
+};
 use super::{MemoryInfo, NonNull, PAGE_SIZE, PageSize, PhysAddr, phys_to_virt};
 use crate::privileged::sync::{IrqSaveFlags, disable_interrupts, restore_interrupts};
 use core::cell::{Cell, UnsafeCell};
@@ -147,6 +150,18 @@ pub(crate) mod raw {
             core::ptr::write_bytes(ptr, val, len);
         }
     }
+
+    /// 整段复制内存 (两区不得重叠).
+    ///
+    /// # Safety
+    /// - `dst` 必须指向 `len` 字节的合法可写区, `src` 指向 `len` 字节的合法可读区
+    /// - 两区互不重叠
+    #[inline]
+    pub unsafe fn copy_memory(dst: *mut u8, src: *const u8, len: usize) {
+        unsafe {
+            core::ptr::copy_nonoverlapping(src, dst, len);
+        }
+    }
 }
 
 // ============================================================================
@@ -239,6 +254,13 @@ pub trait MetaStore {
     fn heads_get(&self, order: u8) -> u64;
     /// 写第 `order` 阶空闲链表头 (存块头 pfn)
     fn heads_set(&self, order: u8, pfn: u64);
+
+    /// 整段复制引导交付区载荷 (`src_phys` → `dst_phys`, `bytes` 字节).
+    ///
+    /// 供早期搬移使用 (见 `PhysicalMemoryManager::relocate_early_regions`):
+    /// 与元数据六区一样, 载荷所在的物理内存也经载体访问, 使搬移路径在 host 侧
+    /// 以同一份算法运行. 调用方保证两区均已映射且互不重叠.
+    fn copy_payload(&self, dst_phys: u64, src_phys: u64, bytes: usize);
 }
 
 /// 生产 `MetaStore` 实现 — 基于 `phys + KERNEL_BASE` 裸指针
@@ -512,6 +534,19 @@ impl MetaStore for RawMetaStore {
             (*self.heads)[order as usize] = pfn;
         }
     }
+
+    fn copy_payload(&self, dst_phys: u64, src_phys: u64, bytes: usize) {
+        // SAFETY: 调用方 (relocate_early_regions) 保证源区由引导器装入且经引导
+        // 页表映射、目的区刚从 early_current 拨出仍在直射区窗口内, 两区互斥
+        // (源在引导窗内, 目的在窗外); 启动期单核无并发写者.
+        unsafe {
+            raw::copy_memory(
+                phys_to_virt(dst_phys) as *mut u8,
+                phys_to_virt(src_phys) as *const u8,
+                bytes,
+            );
+        }
+    }
 }
 
 /// host 测试 `MetaStore` 实现 — 基于 `Vec<u8>` 堆载体 (构造注入)
@@ -541,6 +576,8 @@ pub struct VecMetaStore {
     links: RefCell<Option<Vec<u8>>>,
     /// `buddy_heads` 载体 (每阶一个 u64 pfn; 惰性扩容, 未写阶 = SENTINEL)
     heads: RefCell<Vec<u64>>,
+    /// 物理内存影子 (按物理地址线性索引; 惰性扩容), 供引导交付区搬移的载荷复制
+    ram: RefCell<Vec<u8>>,
 }
 
 #[cfg(any(test, feature = "host-test"))]
@@ -557,7 +594,31 @@ impl VecMetaStore {
             cow: RefCell::new(None),
             links: RefCell::new(None),
             heads: RefCell::new(Vec::new()),
+            ram: RefCell::new(Vec::new()),
         }
+    }
+
+    /// 向物理内存影子预置一段载荷 (模拟引导器把归档装入它自选的地址).
+    ///
+    /// 须在 `inject_meta_store` 之前调用 —— 注入后载体归 PMM 所有.
+    pub fn seed_ram(&self, phys: u64, bytes: &[u8]) {
+        let start = crate::privileged::glue::usize_from_u64(phys);
+        let mut ram = self.ram.borrow_mut();
+        if ram.len() < start + bytes.len() {
+            ram.resize(start + bytes.len(), 0);
+        }
+        ram[start..start + bytes.len()].copy_from_slice(bytes);
+    }
+
+    /// 读回物理内存影子的一段 (越界部分补 0, 与惰性扩容语义一致).
+    #[must_use]
+    pub fn ram_read(&self, phys: u64, len: usize) -> Vec<u8> {
+        let start = crate::privileged::glue::usize_from_u64(phys);
+        let ram = self.ram.borrow();
+        let mut out = vec![0u8; len];
+        let avail = ram.len().saturating_sub(start).min(len);
+        out[..avail].copy_from_slice(&ram[start..start + avail]);
+        out
     }
 }
 
@@ -788,6 +849,16 @@ impl MetaStore for VecMetaStore {
         }
         h[idx] = pfn;
     }
+
+    fn copy_payload(&self, dst_phys: u64, src_phys: u64, bytes: usize) {
+        let dst = crate::privileged::glue::usize_from_u64(dst_phys);
+        let src = crate::privileged::glue::usize_from_u64(src_phys);
+        let mut ram = self.ram.borrow_mut();
+        if ram.len() < dst + bytes {
+            ram.resize(dst + bytes, 0);
+        }
+        ram.copy_within(src..src + bytes, dst);
+    }
 }
 
 // H-04 优化项方案 B (2026-09-09): 编译期选择载体, 消除 `Box<dyn MetaStore>` 的
@@ -844,6 +915,11 @@ pub struct PhysicalMemoryManager {
     buddy_heads: UnsafeCell<[u64; MAX_BUDDY_ORDER as usize + 1]>,
     /// B05-55: reserve 摘除块的暂存 (待位图置位后压回, 防止合并吞掉 reserve 区)
     buddy_reserve_deferred: UnsafeCell<alloc::vec::Vec<(u64, u64, u64, u64)>>,
+    // ---- 引导交付区早期预留表 (memblock 式, 见 `early_reserve` 模块) ----
+    /// 位图建立前登记的引导交付区; `init_bitmap` 消费本表统一置位.
+    /// 与 `early_allocs` 同法: 定长数组 + 原子计数, 启动期单写者.
+    early_regions: UnsafeCell<[EarlyRegion; MAX_EARLY_REGIONS]>,
+    early_region_count: AtomicUsize,
 }
 
 // SAFETY: PhysicalMemoryManager 使用 Cell/UnsafeCell 实现内部可变性.
@@ -907,6 +983,8 @@ impl PhysicalMemoryManager {
             store: UnsafeCell::new(None),
             buddy_heads: UnsafeCell::new([SENTINEL; MAX_BUDDY_ORDER as usize + 1]),
             buddy_reserve_deferred: UnsafeCell::new(alloc::vec::Vec::new()),
+            early_regions: UnsafeCell::new([EarlyRegion::const_default(); MAX_EARLY_REGIONS]),
+            early_region_count: AtomicUsize::new(0),
         }
     }
 
@@ -948,6 +1026,20 @@ impl PhysicalMemoryManager {
         unsafe { *self.store.get() = Some(store) };
     }
 
+    /// 读回物理内存影子的一段 (host 测试验证搬移后的载荷字节).
+    ///
+    /// 仅 `host-test` / `test` 配置编译. 须在 `inject_meta_store` 之后调用.
+    ///
+    /// # Panics
+    /// 载体未注入时 panic (属错误用法).
+    #[cfg(any(test, feature = "host-test"))]
+    #[must_use]
+    pub fn host_read_ram(&self, phys: u64, len: usize) -> Vec<u8> {
+        self.meta_store()
+            .expect("[PMM] host_read_ram before inject_meta_store")
+            .ram_read(phys, len)
+    }
+
     /// 初始化 PMM: 记录内存规模与内核结束地址, 建立位图/元数据载体并置 buddy 就绪.
     ///
     /// 启动期单线程调用; 已初始化时直接返回.
@@ -972,6 +1064,143 @@ impl PhysicalMemoryManager {
         );
     }
 
+    /// 登记一条引导交付区, 原地预留 (不搬移).
+    ///
+    /// 适用于**启动后不再被读**的交付物 (如 DTB: 在 PMM 存在之前就已解析完并
+    /// 持久化了拓扑/PSCI/initrd). 返回表内索引, 供 [`Self::early_region`] 读回.
+    ///
+    /// # Panics
+    /// 表满 (`MAX_EARLY_REGIONS`) 或 `size == 0` 时停机 — 丢一条登记等于把该区
+    /// 当空闲页分配出去, 属静默腐败, 故 fail-closed.
+    pub fn early_reserve(&self, base: u64, size: u64, label: &'static str) -> usize {
+        self.push_early_region(base, size, label, false)
+    }
+
+    /// 登记一条引导交付区, 并授权在与引导窗相交时搬移到互斥区.
+    ///
+    /// 适用于**启动后仍要被读**的载荷 (initrd 归档). 搬移发生在 `init_bitmap`
+    /// 内、位图置位之前, 新址从 `early_current` 线性拨出, 故与内核映像 / 固定堆窗 /
+    /// 元数据六区全部互斥. 返回表内索引, 搬移后的 base 经 [`Self::early_region`] 读回.
+    ///
+    /// # Panics
+    /// 同 [`Self::early_reserve`].
+    pub fn early_reserve_relocatable(&self, base: u64, size: u64, label: &'static str) -> usize {
+        self.push_early_region(base, size, label, true)
+    }
+
+    /// 读回一条早期预留区记录 (拷贝出, 不借用内部可变单元).
+    ///
+    /// # Panics
+    /// `idx` 越界时停机.
+    #[must_use]
+    pub fn early_region(&self, idx: usize) -> EarlyRegion {
+        assert!(
+            idx < self.early_region_count.load(Ordering::Acquire),
+            "[PMM] early_region index {idx} out of range"
+        );
+        // SAFETY: idx 已对 early_region_count 做上界检查, 且该计数只在启动期
+        // 单写者递增; 定长数组由构造时初始化, 读取为拷贝出, 无别名写.
+        unsafe { (*self.early_regions.get())[idx] }
+    }
+
+    /// 早期预留区表已登记条数.
+    #[must_use]
+    pub fn early_region_count(&self) -> usize {
+        self.early_region_count.load(Ordering::Acquire)
+    }
+
+    /// 早期预留区表的唯一写入点.
+    fn push_early_region(
+        &self,
+        base: u64,
+        size: u64,
+        label: &'static str,
+        relocate: bool,
+    ) -> usize {
+        assert!(size > 0, "[PMM] early_reserve '{label}' with zero size");
+        let idx = self.early_region_count.fetch_add(1, Ordering::AcqRel);
+        assert!(
+            idx < MAX_EARLY_REGIONS,
+            "[PMM] early region table full ({MAX_EARLY_REGIONS}), cannot reserve '{label}'"
+        );
+        // SAFETY: idx < MAX_EARLY_REGIONS 上界检查保证不越界; 启动期单写者,
+        // 位图尚未建立, 无并发读者.
+        unsafe {
+            (*self.early_regions.get())[idx] = EarlyRegion {
+                base,
+                size,
+                label,
+                relocate,
+            };
+        }
+        klog_pmm!(
+            "[PMM] Early reserve '{}': base=0x{:X} size={} relocate={}",
+            label,
+            base,
+            size,
+            relocate
+        );
+        idx
+    }
+
+    /// 把与引导窗相交的可搬移交付区整段复制到互斥新址.
+    ///
+    /// 引导窗 = `[RAM_BASE, early_current)`, 即内核映像 + 固定堆窗 + 元数据六区
+    /// 的全部所有地 (`plan_meta_layout` 跑完后 `early_current` 恰为其上界).
+    /// 新址同样从 `early_current` 拨出并推进之, 随后由 `mark_reserved_pages`
+    /// 按表内置位, 故 buddy 空闲链表不会包含它.
+    ///
+    /// 原址**不**解除预留: 它落在引导窗内, 本就被 blanket 置位覆盖.
+    ///
+    /// 须在 `install_meta_store` **之后**调用 (载荷复制经载体), 且在
+    /// `mark_reserved_pages` **之前** (新址要按表置位).
+    fn relocate_early_regions(&self) {
+        let window_size = self
+            .early_current
+            .load(Ordering::Relaxed)
+            .saturating_sub(RAM_BASE);
+        let count = self.early_region_count.load(Ordering::Acquire);
+        for idx in 0..count {
+            // SAFETY: idx < count ≤ MAX_EARLY_REGIONS (push 侧上界检查), 启动期单写者.
+            let region = unsafe { (*self.early_regions.get())[idx] };
+            if !region.relocate || !ranges_overlap(region.base, region.size, RAM_BASE, window_size)
+            {
+                continue;
+            }
+            let bytes = region.size.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+            let dst = self.early_current.fetch_add(bytes, Ordering::Relaxed);
+            assert!(
+                dst.is_multiple_of(PAGE_SIZE),
+                "[PMM] early_current not page-aligned: 0x{dst:X}"
+            );
+            assert!(
+                dst + bytes <= RAM_BASE + self.read_mem_size(),
+                "[PMM] early relocate '{}' OOM: dst=0x{:X} bytes={}",
+                region.label,
+                dst,
+                bytes
+            );
+            // 载荷复制经 MetaStore 载体 (与元数据六区同法): 生产走 phys_to_virt
+            // 裸指针, host 测试走 Vec 影子, 搬移算法本身仅一份代码.
+            self.meta_store()
+                .expect("[PMM] early relocate before meta store install")
+                .copy_payload(
+                    dst,
+                    region.base,
+                    crate::privileged::glue::usize_from_u64(region.size),
+                );
+            // SAFETY: 同 region 读取; 本处是该条目的唯一搬移写入点.
+            unsafe { (*self.early_regions.get())[idx].base = dst };
+            klog_pmm!(
+                "[PMM] Early relocate '{}': 0x{:X} -> 0x{:X} ({} B, 与引导窗互斥)",
+                region.label,
+                region.base,
+                dst,
+                region.size
+            );
+        }
+    }
+
     /// 初始化 buddy 元数据 (bitmap / `buddy_meta` / `FREE_LINKS`) 并建立空闲链表
     ///
     /// `reserved_after_kernel`: 内核镜像末尾之后额外预留的字节数 (向上取整到页),
@@ -987,6 +1216,10 @@ impl PhysicalMemoryManager {
 
         let layout = self.plan_meta_layout(reserved_after_kernel);
         self.install_meta_store(&layout);
+        // 搬移须在置位之前: 新址要经 mark_reserved_pages 按表置位, 否则会被
+        // buddy_init_free_lists 当空闲页收进链表. 载体先就位, 搬移才能经它复制载荷;
+        // 六区地址均在 early_current 之下, 与搬移目的区 (其上) 天然互斥.
+        self.relocate_early_regions();
         let total_reserved = self.mark_reserved_pages(&layout);
 
         // ---- 从空闲 bitmap 页构建 buddy 空闲链表 ----
@@ -1261,6 +1494,25 @@ impl PhysicalMemoryManager {
                 .min(layout.total_pages)
         {
             self.set_bit(i);
+        }
+
+        // 标记引导交付区已用 (早期预留表; 可搬移条目此时已指向互斥新址).
+        // 这是交付区预留的**唯一**置位点 —— 不再有事后 reserve_range 补预留,
+        // 那条路径只能发现冲突 (返回 Err(overlap)) 而消解不了冲突.
+        let region_count = self.early_region_count.load(Ordering::Acquire);
+        for idx in 0..region_count {
+            // SAFETY: idx < region_count ≤ MAX_EARLY_REGIONS (push 侧上界检查);
+            // 启动期单写者, 拷贝出读取, 无别名写.
+            let region = unsafe { (*self.early_regions.get())[idx] };
+            let start = align_down_region(region.base, PAGE_SIZE);
+            let end = align_up_region(region.base, region.size, PAGE_SIZE);
+            let start_page =
+                crate::privileged::glue::usize_from_u64(start.saturating_sub(RAM_BASE) / PAGE_SIZE);
+            let end_page =
+                crate::privileged::glue::usize_from_u64(end.saturating_sub(RAM_BASE) / PAGE_SIZE);
+            for i in start_page..end_page.min(layout.total_pages) {
+                self.set_bit(i);
+            }
         }
 
         total_reserved
@@ -2693,6 +2945,40 @@ pub fn pmm_init_bitmap(reserved_after_kernel: u64) {
 /// 获取全局 PMM 单例 (未初始化则 panic).
 pub fn get_pmm() -> &'static PhysicalMemoryManager {
     GLOBAL_PMM.get_or_panic("PMM")
+}
+
+/// 登记引导交付区并原地预留 (不搬移), 返回表内索引.
+///
+/// 须在 `pmm_init_bitmap` **之前**调用 (位图建立时统一置位).
+///
+/// # Panics
+///
+/// PMM 单例未建立时 panic; 表满或零长度时停机 (见 `PhysicalMemoryManager::early_reserve`).
+#[must_use]
+pub fn pmm_early_reserve(base: u64, size: u64, label: &'static str) -> usize {
+    get_pmm().early_reserve(base, size, label)
+}
+
+/// 登记引导交付区并授权搬移, 返回表内索引.
+///
+/// 须在 `pmm_init_bitmap` **之前**调用; 搬移后的 base 经 [`pmm_early_region`] 读回.
+///
+/// # Panics
+///
+/// 同 [`pmm_early_reserve`].
+#[must_use]
+pub fn pmm_early_reserve_relocatable(base: u64, size: u64, label: &'static str) -> usize {
+    get_pmm().early_reserve_relocatable(base, size, label)
+}
+
+/// 读回一条早期预留区记录 (搬移后为新址).
+///
+/// # Panics
+///
+/// PMM 单例未建立或索引越界时 panic.
+#[must_use]
+pub fn pmm_early_region(idx: usize) -> EarlyRegion {
+    get_pmm().early_region(idx)
 }
 
 /// 帧退役归因的模块级入口 (供 `deferred_free::defer_free` 调用).

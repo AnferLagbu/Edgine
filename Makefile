@@ -30,11 +30,13 @@ LOG_DIR := $(BUILD_DIR)/log
 # 分目录后这些通道物理上不存在, 上述补丁机制整体退役 (跨架构切换不再全量
 # cargo clean, 构建也不需先清上架构产物).
 ARCH_BUILD_DIR := $(BUILD_DIR)/$(ARCH)
-# 用户态产物按架构分目录 (S-6 防线①): 内核经 include_bytes! 在编译期嵌入
-# other/build/$(ARCH)/user/init.bin, 旧写法两架构共用 other/build/user/ 同一路径
+# 用户态产物按架构分目录 (S-6 防线①): 旧写法两架构共用 other/build/user/ 同一路径
 # 原地覆盖, `build.sh all` 特别是以 link_kernel x86_64 结尾时, 会将 aarch64 用户态
-# ELF 嵌进 x86_64 镜像且全程 0 error / 0 warning / rc=0 (无任何防线可拦).
+# ELF 当作 x86_64 产物交付且全程 0 error / 0 warning / rc=0 (无任何防线可拦).
 # 分目录后跨架构构建不再相互覆盖; 内核侧校验见 elf::verify::EXPECTED_E_MACHINE.
+# D4 起内核零嵌入, 产物只经 boot-module cpio 交付 (scripts/boot_module.sh).
+# .bin 规则一律 --strip-all: 加载器只用 PT_LOAD, 符号表纯占体积 —— 未剥离的
+# wasmrun 1.2 MiB 会顶穿 exec 整文件读的 ELF_MAX_SIZE (1 MiB) 上限而 ENOEXEC.
 USER_BUILD_DIR := $(BUILD_DIR)/$(ARCH)/user
 
 ifeq ($(ARCH),aarch64)
@@ -88,11 +90,10 @@ BUILD_STD_CFG := --config 'unstable.build-std=["core","compiler_builtins","alloc
 KERNEL_FEATURES ?=
 
 # 内核 cargo 构建的默认 features 关闭钩子 (默认空 → 常规构建零改变).
-# 唯一使用点: initramfs 载体腿 (`scripts/initramfs_boot_test.sh`). A-1 让 lockdep
-# 进默认 features 后, x86_64 `initramfs` 镜像末尾达 0x413000, 越过 K-08 的
-# `USER_CODE_BASE=0x400000` (恒等窗口将覆盖用户映射区) ⇒ 启动期 fail-closed.
-# 载体是诊断 feature、非出货形态, 故该腿以 `--no-default-features --features initramfs`
-# 构建 (实测末尾 0x3EA000); 出货默认镜像仍 lockdep 常开. 取值须为 1 才生效.
+# 唯一使用点: liveness 探针 (`scripts/qemu_liveness_probe.sh` 经 boot_module_build_nolockdep)
+# —— 关 lockdep 是为降低观测开销失真, 与镜像尺寸无关. 历史上 initramfs 载体腿也用它
+# 绕 K-08 (内嵌 cpio 使 x86_64 镜像末尾达 0x413000 > USER_CODE_BASE=0x400000);
+# D4 零嵌入后该理由消失, 载体腿已改跑出货默认配置 (D4-e). 取值须为 1 才生效.
 KERNEL_NO_DEFAULT ?=
 
 # P-62 甲: feature 值切换必须使 RUST_LIB 失效. RUST_LIB 规则只以源文件为前置,
@@ -191,16 +192,23 @@ USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 USER_EXECTEST_ELF = $(RUST_USER_TARGET)/exectest
 USER_WASMSTUB_ELF = $(RUST_USER_TARGET)/wasmstub
+# P1: 用户态 wasmi 运行时桩 (wasm_userspace feature 选桩, 见 functions/wasm/stub.rs)
+USER_WASMRUN_ELF = $(RUST_USER_TARGET)/wasmrun
 
 # initramfs 载体归档 (K-07b): 由 scripts/make_initramfs_cpio.py 从本架构 user/*.bin
-# 打包成 cpio(newc); 内核 `initramfs` feature 编译期 include_bytes! 它. 归档恒生成
-# (feature 关闭时不嵌入, 镜像不受影响), 使 feature 腿与默认腿共用同一条依赖链,
-# 不会出现"开了 feature 才发现归档缺失".
+# 打包成 cpio(newc). D4 严格零嵌入后内核**不嵌**它 —— 归档由引导器作 boot-module
+# 交付 (x86_64 GRUB module2 / aarch64 -initrd), 见 scripts/boot_module.sh.
+# 归档恒生成, 使全部启动腿共用同一条依赖链, 不会出现"起跑才发现归档缺失".
 USER_CPIO = $(USER_BUILD_DIR)/initramfs.cpio
 MK_CPIO_PY = scripts/make_initramfs_cpio.py
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
+# P1 wasmi stdio demo 载荷 (wasi-sdk 真产物 fixture, 架构无关), 打为 bin/hello_wasi.wasm;
+# 仅 wasm_userspace feature 腿消费. fixture 预编译入库 (无 wasi-sdk 构建期依赖),
+# 再生成见 scripts/make_wasi_demo.py.
+USER_WASI_DEMO = $(USER_BUILD_DIR)/hello_wasi.wasm
+WASI_DEMO_FIXTURE = scripts/fixtures/hello_wasi.wasm
 
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/edgine.img
@@ -236,44 +244,48 @@ ifeq ($(ARCH),x86_64)
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
       $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
-      $(USER_BUILD_DIR)/wasmstub.bin $(USER_PROBE_WASM) $(USER_CPIO)
+      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin $(USER_PROBE_WASM) $(USER_CPIO)
 	@echo "User programs built successfully (Rust)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
 $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/eash.bin: $(USER_SHELL_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/install.bin: $(USER_INSTALL_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/fbterm.bin: $(USER_FBTERM_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/wasmstub.bin: $(USER_WASMSTUB_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
+
+$(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@$(OBJCOPY) --strip-all $< $@
 endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
@@ -303,44 +315,48 @@ ifeq ($(ARCH),aarch64)
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
       $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
-      $(USER_BUILD_DIR)/wasmstub.bin $(USER_PROBE_WASM) $(USER_CPIO)
+      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin $(USER_PROBE_WASM) $(USER_CPIO)
 	@echo "User programs built (Rust aarch64)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
 $(USER_BUILD_DIR)/init.bin: $(USER_INIT_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/eash.bin: $(USER_SHELL_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/install.bin: $(USER_INSTALL_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/fbterm.bin: $(USER_FBTERM_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/httpsrv.bin: $(USER_HTTPSRV_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/proctest.bin: $(USER_TEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/exectest.bin: $(USER_EXECTEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
 
 $(USER_BUILD_DIR)/wasmstub.bin: $(USER_WASMSTUB_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
+	@$(OBJCOPY) --strip-all $< $@
+
+$(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@$(OBJCOPY) --strip-all $< $@
 
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
@@ -358,16 +374,22 @@ $(RUST_LIB): $(STAGE1_BIN) $(USER_BUILD_DIR)/init.bin $(USER_CPIO) $(shell find 
 	@cd src/kernel && cargo build --release --target $(RUST_TARGET_KERNEL) $(BUILD_STD_CFG) $(if $(filter 1,$(KERNEL_NO_DEFAULT)),--no-default-features) $(if $(KERNEL_FEATURES),--features "$(KERNEL_FEATURES)") --target-dir ../../other/target
 endif
 
-# initramfs 载体归档 (K-07b): 两架构共用一条规则, 归档名按本架构目录落盘, 与内核
-# `include_bytes!("../../../other/build/<arch>/user/initramfs.cpio")` 同源.
+# initramfs 载体归档 (K-07b): 两架构共用一条规则, 归档名按本架构目录落盘, 由引导器
+# 作 boot-module 交付给内核 (D4 零嵌入, 内核侧不再有 include_bytes! 同源点).
 $(USER_PROBE_WASM): $(MK_PROBE_WASM_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_PROBE_WASM_PY) --out $@
 
+# P1 wasmi demo 载荷: 架构无关 fixture, 两架构各复制一份进本架构 user 目录供 cpio 打包.
+$(USER_WASI_DEMO): $(WASI_DEMO_FIXTURE)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $(WASI_DEMO_FIXTURE) $@
+
 $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
               $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
               $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
-              $(USER_PROBE_WASM) $(MK_CPIO_PY)
+              $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
+              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
 
@@ -430,20 +452,19 @@ run-disk: $(DISK_IMAGE)
 	$(QEMU) -drive file=$(DISK_IMAGE),format=raw -serial stdio
 endif
 
+# 真机介质 (x86_64 GRUB ISO): D4 严格零嵌入后用户态内容只经 boot-module 交付 ——
+# cpio 作 `module2` (MB2 tag 3) 交出, 与 scripts/boot_module.sh 的 CI 载体同形.
+# 内核不读 ISO9660, 故不再往 isodir/bin 拷裸二进制 (拷了也进不了 VFS).
 iso: all user
 	@mkdir -p $(ISODIR)/boot/grub
 	cp $(ARCH_BUILD_DIR)/kernel.bin $(ISODIR)/boot/kernel.bin
-	mkdir -p $(ISODIR)/bin
-	cp $(USER_BUILD_DIR)/init.bin $(ISODIR)/bin/init
-	cp $(USER_BUILD_DIR)/eash.bin $(ISODIR)/bin/eash
-	cp $(USER_BUILD_DIR)/install.bin $(ISODIR)/bin/install
-	cp $(USER_BUILD_DIR)/fbterm.bin $(ISODIR)/bin/fbterm
-	cp $(USER_BUILD_DIR)/httpsrv.bin $(ISODIR)/bin/httpsrv
+	cp $(USER_CPIO) $(ISODIR)/boot/initramfs.cpio
 	echo 'set timeout=0' > $(ISODIR)/boot/grub/grub.cfg
 	echo 'set default=0' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '' >> $(ISODIR)/boot/grub/grub.cfg
 	echo 'menuentry "Edgine" {' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '    multiboot2 /boot/kernel.bin' >> $(ISODIR)/boot/grub/grub.cfg
+	echo '    module2 /boot/initramfs.cpio initramfs' >> $(ISODIR)/boot/grub/grub.cfg
 	echo '}' >> $(ISODIR)/boot/grub/grub.cfg
 	grub2-mkrescue -o $(ARCH_BUILD_DIR)/edgine.iso $(ISODIR)
 

@@ -241,7 +241,7 @@ done
 # 走 ci/build.sh 而非直接 make: 它自带跨架构中间产物陈旧处理 (上一次构建为
 # aarch64 时, 裸 `make ARCH=x86_64 user all` 会因子命令串扰而失败).
 if [ "$SKIP_BUILD" != "1" ]; then
-    info "构建 x86_64 initramfs-feature 核 + GRUB module2 ISO (cpio 经 boot-module 交付)"
+    info "构建 x86_64 默认核 + GRUB module2 ISO (cpio 经 boot-module 交付)"
     build_log="$(mktemp)"
     if ! { boot_module_build x86_64 && boot_module_iso_x86; } >"$build_log" 2>&1; then
         err "boot-module 构建/组包失败, 末 10 行:"

@@ -7,24 +7,22 @@
 # `-kernel Image -initrd` 经 DTB /chosen)。各默认启动腿须统一改走本 helper 交付 cpio,
 # 才能在不嵌 cpio 的镜像上把 init 从 boot-module 载起来 (D4-b 逐腿接线)。
 #
-# 说明: 内核构建仍带 `initramfs` feature (消费者 load_init_from_initramfs 读 boot-module),
-# 但 cpio 不嵌入 (见 functions/init.rs)。KERNEL_NO_DEFAULT=1 沿用载体腿惯例 (关 lockdep 缩镜像)。
+# 说明: D4-e 起 `initramfs` feature 已退役 (零嵌入后解包无条件执行, 该 feature 不改任何
+# 代码路径), 载体腿一律构建**出货默认**镜像 (lockdep 常开), cpio 只经 boot-module 交付。
 #
 # 用法: 在启动腿里 `source scripts/boot_module.sh`, 调用下列函数。
 # ============================================================================
 
-# 构建带 initramfs feature 的内核 (cpio 不嵌入; 消费者读 boot-module)。
-# 保留默认 features (A-1 lockdep 常开) 以与既有默认腿口径一致; cpio 出镜像后 initramfs-feature
-# 镜像仍在 K-08 (USER_CODE_BASE=0x400000) 之内, 故不再需要 KERNEL_NO_DEFAULT。
+# 构建出货默认内核 (cpio 不嵌入; 消费者 load_init_from_initramfs 读 boot-module)。
 boot_module_build() {
     local arch="$1"
-    make ARCH="$arch" KERNEL_FEATURES=initramfs all
+    make ARCH="$arch" all
 }
 
 # 非-lockdep 变体 (liveness / perf 测量专用: 关 lockdep 降观测开销失真).
 boot_module_build_nolockdep() {
     local arch="$1"
-    make ARCH="$arch" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all
+    make ARCH="$arch" KERNEL_NO_DEFAULT=1 all
 }
 
 # x86_64: 组 GRUB module2 ISO (multiboot2 kernel.bin + module2 cpio),

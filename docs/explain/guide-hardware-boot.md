@@ -34,13 +34,16 @@
 
 ### x86_64：GRUB2 multiboot2 ISO
 
-脚本执行 `make ARCH=x86_64 iso`，该目标把内核与用户态程序装入 `other/isodir/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/x86_64/edgine.iso`，脚本再拷贝为 `edgine-x86_64.iso`。GRUB 配置（由 [Makefile](../../Makefile) `iso` 目标生成）以 multiboot2 协议加载内核：
+脚本执行 `make ARCH=x86_64 iso`，该目标把内核 ELF 与用户态 initramfs cpio 装入 `other/isodir/boot/`，生成 GRUB 配置并以 `grub2-mkrescue` 打包为 `other/build/x86_64/edgine.iso`，脚本再拷贝为 `edgine-x86_64.iso`。**严格零嵌入**：内核镜像不含任何用户态字节，PID 1 只来自引导器交付的 boot-module，故 GRUB 配置必须同时给出 `multiboot2` 与 `module2` 两行（由 [Makefile](../../Makefile) `iso` 目标生成）：
 
 ```
 menuentry "Edgine" {
     multiboot2 /boot/kernel.bin
+    module2 /boot/initramfs.cpio initramfs
 }
 ```
+
+`module2` 即 multiboot2 的模块标签（tag 3），内核在 [boot/mod.rs](../../src/kernel/privileged/boot/mod.rs) 中解析其 `mod_start` / `mod_end` 得到 cpio 物理区间，与 CI 载体 [boot_module.sh](../../scripts/boot_module.sh) 走的是同一条路径。内核不读 ISO9660，因此介质里放裸二进制（`/bin/*.bin`）不会被看到——用户态内容只能经 cpio 进入 VFS。
 
 写入 USB 后，在目标机 BIOS/UEFI 启动菜单选择该 USB 设备即可。若要直接写入块设备：
 
@@ -52,7 +55,7 @@ sudo ./scripts/make_boot_medium.sh x86_64 --write /dev/sdX
 
 ### aarch64：整盘 FAT32 + U-Boot
 
-脚本执行 `make ARCH=aarch64 all`，产出 `other/build/aarch64/kernel-aarch64.img`，再把它打成一整块磁盘镜像。分区布局：
+脚本执行 `make ARCH=aarch64 all user`，产出 `other/build/aarch64/kernel-aarch64.img` 与 `other/build/aarch64/user/initramfs.cpio`，再把两者打成一整块磁盘镜像。**严格零嵌入**：内核 Image 不含任何用户态字节，PID 1 只来自引导器交付的 boot-module，故归档必须与 Image 一并落盘并在引导配置中声明。分区布局：
 
 | 项 | 值 |
 |---|---|
@@ -66,6 +69,7 @@ sudo ./scripts/make_boot_medium.sh x86_64 --write /dev/sdX
 | 路径 | 内容 |
 |---|---|
 | `/Image` | arm64 Linux Image（含内嵌 Image 头，见下文） |
+| `/initramfs.cpio` | 用户态 initramfs 归档（boot-module 载体，PID 1 与全部用户程序由此进入 VFS） |
 | `/extlinux/extlinux.conf` | U-Boot distro boot 引导配置（主路径） |
 | `/boot.cmd` | 等价的手工 `booti` 脚本（供自定义 `bootcmd` 的板子参考） |
 
@@ -77,9 +81,12 @@ timeout 30
 label edgine
     menu label Edgine (aarch64)
     linux /Image
+    initrd /initramfs.cpio
 ```
 
 U-Boot 的 distro boot（`sysboot`）会自动在分区上扫描 `/extlinux/extlinux.conf`，按 `linux /Image` 找到 arm64 Image，据 Image 头 `text_offset` 把它放置到 DRAM 基址 + `text_offset`，随后经 `booti` 跳转。由于未在 `extlinux.conf` 中显式给出 `fdt` 行，`booti` 会使用 U-Boot 自身的控制设备树（`${fdtcontroladdr}`）——内核由此获得 DTB。
+
+`initrd` 行让 U-Boot 把归档装载到独立地址，并在交给内核的 DTB `/chosen` 节点里填 `linux,initrd-start` / `linux,initrd-end`。内核在 [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs) 的 `apply_fdt_overrides()` 中读这两项得到 cpio 物理区间，与 QEMU `-kernel Image -initrd cpio` 走的是**同一条解析路径**（D2），因此真机介质与 QEMU 验证不存在两套载体约定。少了这一行，DTB 里没有 initrd 属性，内核侧判为"无载体"，PID 1 无处可来。
 
 `aarch64.ld` 与 QEMU `-kernel`、U-Boot `booti` 共用**同一个 Image 契约**（见 [aarch64.ld](../../src/kernel/privileged/link/aarch64.ld)），因此真机介质与 QEMU 验证是单一来源，不存在两套启动约定漂移的问题：
 
@@ -87,7 +94,7 @@ U-Boot 的 distro boot（`sysboot`）会自动在分区上扫描 `/extlinux/extl
 sudo ./scripts/make_boot_medium.sh aarch64 --load-addr 0x40080000 --write /dev/sdX
 ```
 
-> **使用前提**：目标板 U-Boot 需具备 MMC + FAT + distro boot（`sysboot` / `booti`）能力，且 DRAM 基址为 `0x40000000`。不满足时的处理见「aarch64 移植边界」。
+> **使用前提**：目标板 U-Boot 需具备 MMC + FAT + distro boot（`sysboot` / `booti`）能力，DRAM 基址为 `0x40000000` 且容量 **≥ 256 MiB**（归档装载于 `0x48000000` = 基址 + 128 MiB，须避开 Image / 内核 BSS 与 U-Boot 自搬迁区）。不满足时的处理见「aarch64 移植边界」。
 
 ## 串口 checklist
 
@@ -118,7 +125,61 @@ aarch64 启动日志按以下顺序出现（前几行来自 [entry.rs](../../src
 
 x86_64 侧关键里程碑为 `VFS ready` → `e1000: 初始化完成` → `Entering Ring 3`（以及 KPTI 断言）。
 
+**载体链里程碑（双架构同串）**：严格零嵌入后，用户态能否起来完全取决于 boot-module 是否被交付并解包，故以下三行是真机验证的必查项（出自 [init.rs](../../src/kernel/functions/init.rs)）：
+
+```
+[USER] initramfs from boot module (<N> bytes)
+[USER] initramfs: <M> files unpacked
+[USER] Entering EL0 (init from /init, pid=<P>)...    # x86_64 为 Entering Ring 3
+```
+
+第一行缺失 = 引导器没交付载体（x86_64 查 GRUB `module2` 行，aarch64 查 `initrd` 行与 DTB `/chosen`）；第二行的 `<M>` 明显偏小 = 归档条目名归一或父目录补建出了问题；第三行缺失而前两行在位 = `/init` 未落盘或 ELF 装载失败。`<P>` 是数值 pid，双架构实测均为 5（内核侧任务先占号），故判据认 `init from /init` 串而非 pid 数值——门禁里的「PID 1」指的是首个用户进程这一语义，不是号。
+
 **看不到 `[BOOT] Edgine starting...`** = 内核尚未执行到 UART 输出，问题在更早（固件装载 / Image 头 / 异常级 / MMU），不在内核逻辑。
+
+### 带盘 aarch64 的磁盘根与用户态切根
+
+引导根恒为 ramfs（boot-module cpio 解包到 `/`），EGFS 只挂**非根挂载点** `/disk`；内核随后把同一份 cpio 全量安装进磁盘根（[init.rs](../../src/kernel/functions/init.rs) 的 `install_disk_root`，按 `/disk/init` 是否已在做幂等），用户态 init 则在所有探针之前 `pivot_root("/disk", "/disk/oldroot")` 把视图根切进磁盘根（Linux 式 `switch_root`）。切根会摘除旧根挂载，故此后视图路径 `/init` 只能解析到 EGFS —— 读回字节即证明用户态文件访问真落在盘上，而不是只改了根前缀。带盘首启的必查项：
+
+```
+[BOOT] EGFS mounted at /disk (disk)
+[BOOT] [USER] disk root installed: <F> files, /disk/init read back <B> bytes
+[SWROOT] PASS: pivot to /disk, read /init bytes=<N>
+```
+
+同一块盘二启时第二行换成 `/disk/init present (skip disk-root install)`，且不得再现 `formatting first drive`（再现即 uberblock 或磁盘根没真落盘）。无盘时走 `EGFS: running in memory mode (no disk)` + `[SWROOT] SKIP: no disk root`，探针仍在引导根下跑。三相判据（空盘首启 / 同盘二启 / 摘盘负控制）由 [aarch64_egfs_disk_boot_test.sh](../../scripts/aarch64_egfs_disk_boot_test.sh) 消费；x86_64 走 PCI AHCI/NVMe，不在该腿射程。
+
+## 引导交付区的地址布局与固件表
+
+严格零嵌入把「用户态内容落在哪」整个交给了引导器：GRUB / U-Boot 把 cpio 放在**它自己选的**物理地址上，与内核的固定布局（映像 + kmalloc 堆窗 + PMM 元数据六区）之间没有任何协商机制。因此内核既不能假设载体落在窗外，也不能靠事后补预留消解冲突——对已置位区调 `reserve_range` 只返回 `Err(overlap)`，读起来像保护生效，实际载荷仍与堆共址，堆一旦分配到那一段就把归档覆写掉。现在的口径是 memblock 式两段式：**先登记，再在位图建立时统一置位并搬移**（[early_reserve.rs](../../src/kernel/privileged/mm/early_reserve.rs)），交付区不再走事后补预留那条路径。
+
+登记方共四类，都在 [lib.rs](../../src/kernel/lib.rs#L646-L679) 里、`pmm_init_bitmap` 之前完成：
+
+| 区 | 架构 | 标签 | 与引导窗相交时 |
+|---|---|---|---|
+| initramfs cpio（boot-module） | 双架构 | `initrd` | **搬移**到互斥新址并逐字节复制载荷 |
+| DTB blob 自身 | aarch64 | `dtb` | 只预留（PMM 存在前已解析完并持久化拓扑 / PSCI / initrd） |
+| 内存图 `type != 1` 项（ACPI 表 / EFI runtime / MMIO 洞） | x86_64 | `firmware` | 只预留（位置由 firmware 钉死，搬移即失效） |
+| MB2 信息块本体 | x86_64 | `mb2-info` | 只预留（ACPI 发现面在 PMM 之后才读它的 tag 14/15） |
+
+「引导窗」= `[RAM_BASE, early_current)`，即内核映像 + 固定堆窗（`GAP_SIZE` 2 MiB + `KMALLOC_HEAP_SIZE` 8 MiB + `BITMAP_GAP_SIZE` 2 MiB）+ 元数据六区的全部所有地。搬移目的址自 `early_current` 线性拨出，因此天然互斥（[pmm.rs](../../src/kernel/privileged/mm/pmm.rs#L1157)）。表容量单源 `MAX_EARLY_REGIONS = MAX_FIRMWARE_REGIONS + 8`（[early_reserve.rs](../../src/kernel/privileged/mm/early_reserve.rs#L35) / [limits.rs](../../src/kernel/privileged/constants/limits.rs#L27)）；**表满 / 零长度 / 索引越界一律启动期 fail-closed 停机**，不静默丢条目——丢一条就等于该区被当空闲页分配出去。
+
+四步次序本身是不变式，由 [initramfs_carrier_k07b_test.rs](../../host-tests/tests/initramfs_carrier_k07b_test.rs) 钉住：登记 → 位图（含搬移与置位）→ 载体发布 → kmalloc。任一步换序都有一条静默失效通道：登记晚于位图则交付区不被置位；载体发布早于位图则发布的是搬移**前**的原址（[lib.rs](../../src/kernel/lib.rs#L710-L721) 读回的是表内最终 base）；kmalloc 早于位图则堆首 `HeapHeader` 直接写在归档上——实测 GRUB 把模块放在 `0x6B2000`，正落在堆窗内。`BootInfo` 保留引导器交付的原始事实，消费者一律经 [initrd_blob()](../../src/kernel/privileged/boot/mod.rs#L300) 取当前有效区。
+
+### x86_64 内存图与 ACPI 表的权威来源
+
+MB2 的 tag 6（内存图）是**权威**，tag 4（基本内存信息）只在无图时兜底，且**与标签出现次序无关**（[boot/mod.rs](../../src/kernel/privileged/boot/mod.rs#L546)）。这条优先级曾经反过：tag 4 无条件赋值 `mem_size`，而 GRUB 在 SeaBIOS 与 OVMF 下都把 tag 4 排在 tag 6 之后；OVMF 的 tag 4 `mem_upper` 只描述 1 MiB 以上首个连续块（实测 7168 KB），于是 `-m 512` 的机器被读成 8 MB，PMM 零空闲页、启动期分配即 panic。现口径与 Linux 以 e820 / EFI 内存图为准同构。
+
+ACPI 的 RSDP 在 UEFI 下只经 MB2 tag 14/15 交付，而这两个标签的载荷是 RSDP 的**内联副本**，不是指针（Multiboot2 spec §3.6.16/17）。按指针读会把签名 `"RSD PTR "` 读成地址 `0x2052_5450_2044_5352`（非规范 → #GP）。现在按内联副本解析，两标签并存时优先 tag 15（v2，带 XSDT）且与次序无关，v1/v2 各按自身面校验和校验，v2 校验和坏则回落 v1（[acpi.rs](../../src/kernel/privileged/arch/x86_64/acpi.rs#L210)）。前提是 MB2 信息块指针真接线到 ACPI 发现面（[multiboot_info_ptr()](../../src/kernel/privileged/boot/mod.rs#L325)）——它曾硬编码 0，后果是 UEFI 下固件表全不可见、AP 枚举为零即单核。
+
+### UEFI 真跑验证与已知边界
+
+BIOS 与 UEFI 是两条不同的固件交付路径，故 [uefi_boot_test.sh](../../scripts/uefi_boot_test.sh) 用 OVMF pflash（CODE 只读 + VARS 每轮私有可写副本）真跑一遍，判据覆盖载体链 / ACPI 经 MB2（反向禁 BIOS 扫描回退）/ 双核上线与 TLB / firmware 声明数与登记数两侧对账 / 内存图权威 / initrd 搬移 / 用户态探针可达面 / 驱动与网络。其中 firmware 区数下界 `MIN_FW_REGIONS=10`（[uefi_boot_test.sh](../../scripts/uefi_boot_test.sh#L72)）兼作 **UEFI/BIOS 判别器**：SeaBIOS e820 实测 7 区、OVMF 13–14 区，pflash 未生效退化成 BIOS 启动即红，不产生假绿。该腿已接 [ci/audit.sh](../../ci/audit.sh) full 步骤 4，OVMF 缺失走 `skip_leg` 三态而非静默通过。
+
+两条边界写在这里以免被读成已验证：
+
+- **aarch64 DTB `/reserved-memory` 尚未纳入早期预留**——[dtb.rs](../../src/kernel/privileged/dtb.rs) 不解析该节点，当前只预留 DTB blob 自身。真机若把固件保留区放在 DRAM 内，该区仍可能被 buddy 当空闲页分配出去。
+- **`[THREAD]` 探针在 UEFI 下显式不判**：init 线程组探针确定性挂死，已归因为预存缺陷（BIOS 同镜像 5/5 PASS），另立 [uefi-thread-exit-hang.md](../plan/uefi-thread-exit-hang.md)。脚本无条件打印横幅点名该册，不是静默跳过；修复后须把 PASS 行加回硬断言并删横幅。
 
 ## aarch64 SoC 契约与边界
 
@@ -203,7 +264,7 @@ x86_64 侧无 DTB 契约，由 GRUB2 经 multiboot2 装载，真机仅需目标�
 | 1 | 串口驱动 | 仅 PL011（`arm,pl011`）；基址默认 `0x0900_0000`；波特率除数写死 `IBRD=13, FBRD=0`（按 24 MHz 算） | 瑞芯微为 `snps,dw-apb-uart`（16550 兼容，寄存器 4 字节步长，`reg-shift=2`），实例基址如 RK3568 UART0 `0xfdd5_0000`、RK3588 调试口 UART2 `0xfeb5_0000`；UARTCLK 由板级时钟树决定 | **硬阻塞** | [uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs#L1-L5) / [uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs#L15-L16) / [uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs#L97-L99)；DTB 仅识别 `arm,pl011`：[dtb.rs](../../src/kernel/privileged/dtb.rs#L412) |
 | 2 | GIC 版本 | 完整 GICv3：GICD + GICR（RD/SGI frame，128 KiB 步长）、`GICR_TYPER` 亲和匹配、`ICC_*` 系统寄存器 | 三款 SoC 均为 GICv3：RK356x GICD `0xfd40_0000` / GICR `0xfd46_0000`（`0x80000`，4 帧）；RK3588 GICD `0xfe60_0000` / GICR `0xfe68_0000`（`0x100000`，8 帧） | **小**（架构匹配，仅基址与安全态配置） | [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs#L25-L29) / [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs#L174-L184) / [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs#L373-L389)；DTB 仅识别 `arm,gic-v3`：[dtb.rs](../../src/kernel/privileged/dtb.rs#L419)；外部证据为主线 Linux DTS |
 | 3 | 中断 / 定时器 | ARM Generic Timer，用 `CNTPCT_EL0` / `CNTFRQ_EL0` / `CNTP_TVAL_EL0` / `CNTP_CTL_EL0`；运行时读频率，仅在 `CNTFRQ=0` 时回退 62.5 MHz；定时器 PPI 固定 30 | 真机同样用 NS-EL1 物理定时器，INTID 30 是 GICv3 架构定义；Linux 设备树写作 `ppi 14`，经 GICv3 irq domain 的 +16 偏移即 30。`CNTFRQ` 由固件设置（常见 24 MHz） | **无** | [timer.rs](../../src/kernel/privileged/arch/aarch64/timer.rs#L14-L21) / [timer.rs](../../src/kernel/privileged/arch/aarch64/timer.rs#L100-L118) / [gic_logic.rs](../../src/kernel/privileged/arch/gic_logic.rs#L61) / [exception.rs](../../src/kernel/privileged/arch/aarch64/exception.rs#L756) |
-| 4 | 引导链 | 文件偏移 0 为 arm64 Linux Image 头（`ARM\x64`、`text_offset=0x80000`、`flags=0`、`code0=b _start`）；`x0` 传 DTB；U-Boot `booti` 兼容；aarch64 无 UEFI / multiboot 路径 | 瑞芯微 U-Boot 走 `booti`；但 DRAM 自 `0x0` 起，`kernel_addr_r` 默认值不保证等于 `0x40080000`；DTB 经 `x0` 传入且必须落在内核窗口内 | **中** | [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L22-L35) / [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L40-L45) / [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L57-L58) / [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L203-L204) |
+| 4 | 引导链 | 文件偏移 0 为 arm64 Linux Image 头（`ARM\x64`、`text_offset=0x80000`、`flags=0`、`code0=b _start`）；`x0` 传 DTB；U-Boot `booti` 兼容；aarch64 无 UEFI / multiboot 路径 | 瑞芯微 U-Boot 走 `booti`；但 DRAM 自 `0x0` 起，`kernel_addr_r` 默认值不保证等于 `0x40080000`；DTB 经 `x0` 传入且必须落在内核窗口内 | **中** | [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L22-L35) / [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L40-L45) / [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L57-L58) / [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L207-L208) |
 | 5 | 平台假设 | 低 1 GiB 全 Device、`0x4000_0000-0x8000_0000` 为 DRAM；PMM `RAM_BASE=0x4000_0000`；默认 512 MiB；DTB 与 UART/GIC 基址均受窗口过滤 | 外设位于 `0xF...`；DRAM 自 `0x0` 起；DTB 由 U-Boot 放在任意 DRAM 地址 | **硬阻塞** | [mmu.rs](../../src/kernel/privileged/arch/aarch64/mmu.rs#L111-L120) / [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs#L17-L21) / [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs#L158-L170) / [pmm.rs](../../src/kernel/privileged/mm/pmm.rs#L53-L59) / [boot/mod.rs](../../src/kernel/privileged/boot/mod.rs#L390-L392) |
 | 6 | PSCI | conduit 从设备树 `/psci` 的 `method` 读取，缺失时回退 SMC；`CPU_ON` 用 SMC64 函数 ID | 瑞芯微三款均为 `method="smc"`（ATF 驻 EL3） | **无**（前提是 DTB 能被解析，见第 5 项） | [psci.rs](../../src/kernel/privileged/arch/aarch64/psci.rs#L20-L27) / [psci.rs](../../src/kernel/privileged/arch/aarch64/psci.rs#L37-L66) / [dtb.rs](../../src/kernel/privileged/dtb.rs#L362-L365) |
 | 7 | 多核上限与亲和 | `MAX_CPUS=1024`；DTB 侧 `CPU_MPIDR_MAX=8`；拓扑取自 `/cpus/cpu@N/reg` 首个条目；`affinity_pack` 打包 Aff3..Aff0 四级亲和；Redistributor 按 `GICR_TYPER` 亲和匹配而非线性索引；PSCI `CPU_ON` 用原始 MPIDR；AP 入口只接受 EL1 | RK3588 为 8 核、跨 3 个 cluster（4×A55 + 2+2 A76），MPIDR 亲和值跨簇；RK356x 为 4 核 | **小**（8 核恰好覆盖，无余量；跨簇理论可行，需实测） | [capacity.rs](../../src/kernel/privileged/config/capacity.rs#L20) / [dtb.rs](../../src/kernel/privileged/dtb.rs#L65) / [dtb.rs](../../src/kernel/privileged/dtb.rs#L384) / [mod.rs](../../src/kernel/privileged/arch/aarch64/mod.rs#L48-L54) / [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs#L174-L184) / [smp_init.rs](../../src/kernel/privileged/arch/aarch64/smp_init.rs#L199) / [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L250-L255) |
@@ -227,6 +288,7 @@ x86_64 侧无 DTB 契约，由 GRUB2 经 multiboot2 装载，真机仅需目标�
 | DTB 落位约束 | 必须在 `[0x4000_0000, 0x8000_0000)` 内 | [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs#L158-L170) | 瑞芯微 U-Boot 默认 `fdtcontroladdr` 未必落在该区间 |
 | UART / GIC 基址过滤 | 必须 `< 0x4000_0000` | [entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs#L186-L194) | 瑞芯微基址全部被丢弃，回退 QEMU 默认值 |
 | 链接 / 装载地址 | `0x40080000` | [aarch64.ld](../../src/kernel/privileged/link/aarch64.ld#L21) / [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L57-L58) | 与 `text_offset=0x80000` + 假定 DRAM 基址 `0x40000000` 绑定 |
+| initrd 装载地址 | `0x48000000` | [make_boot_medium.sh](../../scripts/make_boot_medium.sh#L59-L61) | DRAM 基址 + 128 MiB；要求板载 DRAM ≥ 256 MiB，瑞芯微 DRAM 自 `0x0` 起时该地址含义完全不同 |
 | 物理内存基址 | `RAM_BASE=0x4000_0000` | [pmm.rs](../../src/kernel/privileged/mm/pmm.rs#L53-L59) | 瑞芯微 DRAM 自 `0x0` 起；该常量决定 PMM 覆盖哪一段 |
 | 默认 RAM 大小 | 512 MiB（可用 `AARCH64_MEM_MB` 覆盖） | [boot/mod.rs](../../src/kernel/privileged/boot/mod.rs#L390-L392) | 与窗口上限一致 |
 | 定时器频率回退 | `62_500_000` | [timer.rs](../../src/kernel/privileged/arch/aarch64/timer.rs#L9) | 仅 `CNTFRQ=0` 时生效 |
@@ -242,7 +304,7 @@ x86_64 侧无 DTB 契约，由 GRUB2 经 multiboot2 装载，真机仅需目标�
 |---|---|---|---|---|
 | 驱动 | 新增 `snps,dw-apb-uart`（16550 兼容）控制台驱动：THR/IER/FCR/LCR/MCR/LSR 偏移（4 字节步长）、波特率按实际 UARTCLK 计算、与现有 `uart::puts` 接口对齐 | 2–4 人日 | 现有驱动寄存器布局是 PL011（[uart.rs](../../src/kernel/privileged/arch/aarch64/uart.rs#L41-L48)），与 dw-apb 完全不兼容；无串口即无任何可观测性 | **是**（第一优先） |
 | 平台适配 | 扩引导页表覆盖 `0xF...` MMIO（如 L1[3] 1 GiB Device 块或二级表）；放宽 `apply_fdt_overrides` 的 UART/GIC 基址过滤；放宽或迁移 DTB 落位约束；核对 `RAM_BASE` / 默认内存大小与板载 DRAM 实际区间 | 3–5 人日 | [mmu.rs](../../src/kernel/privileged/arch/aarch64/mmu.rs#L94-L120) 只建 L1[0]/L1[1]；[entry.rs](../../src/kernel/privileged/boot/aarch64/entry.rs#L186-L194) 主动过滤；[pmm.rs](../../src/kernel/privileged/mm/pmm.rs#L59) 假定 RAM 基址 | **是**（第二优先） |
-| 引导 | 固定装载地址到 `0x40080000`（覆盖 U-Boot `kernel_addr_r` 或显式 `booti 0x40080000`）；控制 `fdtcontroladdr` / DTB 放置；准备板级启动介质 | 1–2 人日 | Image 头与链接地址已兼容 `booti`（[start.S](../../src/kernel/privileged/boot/aarch64/start.S#L22-L35)），剩余是装载地址与 DTB 地址的工程约束 | 是（可与平台适配并行） |
+| 引导 | 固定装载地址到 `0x40080000`（覆盖 U-Boot `kernel_addr_r` 或显式 `booti 0x40080000`）；为 initrd 另选一个不与 Image / BSS / U-Boot 自搬迁区冲突的装载地址；控制 `fdtcontroladdr` / DTB 放置；准备板级启动介质 | 1–2 人日 | Image 头与链接地址已兼容 `booti`（[start.S](../../src/kernel/privileged/boot/aarch64/start.S#L22-L35)），剩余是装载地址、initrd 地址与 DTB 地址的工程约束 | 是（可与平台适配并行） |
 | 中断 / GIC 验证 | 补写 `ICC_SRE_EL1.SRE`（当前未写，见 [gic.rs](../../src/kernel/privileged/arch/aarch64/gic.rs#L373-L389)）；确认 GICD_CTLR 的 `DS` / 安全态配置允许 NS 写 `ARE_NS` 与 Group1；验证多簇 GICR 扫描与 PPI 30 | 1–2 人日 | 架构已匹配，但真机安全态与 QEMU 不同，属"能跑起来之后"的调试项 | 否（但失败会阻断中断与定时器） |
 | 多核 / PSCI 验证 | 8 核逐核上线、AP 实际入场 EL 检查、跨簇 SGI/重调度 | 1–2 人日 | [smp_init.rs](../../src/kernel/privileged/arch/aarch64/smp_init.rs#L164-L218) 与 [start.S](../../src/kernel/privileged/boot/aarch64/start.S#L250-L255) 的 EL1-only 约束需要实测确认 | 否（单核可先跑通） |
 
@@ -287,10 +349,11 @@ mkimage -A arm64 -O linux -T script -C none -n "Edgine" -d boot.cmd boot.scr
 ```
 echo "Booting Edgine (aarch64) ..."
 fatload mmc 0:1 ${AARCH64_LOAD_ADDR} Image
-booti ${AARCH64_LOAD_ADDR} - ${fdtcontroladdr}
+fatload mmc 0:1 ${AARCH64_INITRD_ADDR} initramfs.cpio
+booti ${AARCH64_LOAD_ADDR} ${AARCH64_INITRD_ADDR} ${fdtcontroladdr}
 ```
 
-`AARCH64_LOAD_ADDR` 默认 `0x40080000`（与 Image 头 `text_offset` 一致，可用 `--load-addr` 覆盖）。`booti` 第三参数为 DTB 地址，此处用 U-Boot 控制设备树 `${fdtcontroladdr}`；若板子有专用 DTB，替换为对应地址或文件即可。该路径需要 `u-boot-tools`（提供 `mkimage`），属于可选增强，不影响主路径。
+`AARCH64_LOAD_ADDR` 默认 `0x40080000`（与 Image 头 `text_offset` 一致，可用 `--load-addr` 覆盖）；`AARCH64_INITRD_ADDR` 默认 `0x48000000`（DRAM 基址 + 128 MiB）。`booti` 第二参数为 initrd 地址——U-Boot 据此在 DTB `/chosen` 填 `linux,initrd-start/end`，与 extlinux `initrd` 行等效；写成 `-` 即不带载体，PID 1 无处可来。第三参数为 DTB 地址，此处用 U-Boot 控制设备树 `${fdtcontroladdr}`；若板子有专用 DTB，替换为对应地址或文件即可。该路径需要 `u-boot-tools`（提供 `mkimage`），属于可选增强，不影响主路径。
 
 ## 故障排查
 
@@ -301,6 +364,9 @@ booti ${AARCH64_LOAD_ADDR} - ${fdtcontroladdr}
 | 出现 `[BOOT] DTB unavailable ...` | DTB 未被采纳：`x0` 未传 DTB、DTB 地址越界、或解析失败 | 确认 U-Boot 传入控制设备树；确认 DTB 物理地址落在 `[0x4000_0000, 0x8000_0000)` |
 | 卡在 `Initializing GICv3...` | 板非 GICv3，或 GIC 基址未被探测 / 越界 | 核对设备树 `interrupt-controller` 兼容串为 `arm,gic-v3`，基址在 Device 窗口内 |
 | 启动到某里程碑后挂起 | 缺少该里程碑所需的设备 / 驱动路径 | 对照上文观察点定位到具体子系统 |
+| 无 `initramfs from boot module` 行 | 引导器未交付载体：x86_64 GRUB 配置缺 `module2` 行；aarch64 extlinux 缺 `initrd` 行或 `booti` 第二参数写成 `-` | 核对介质内 `/boot/initramfs.cpio`（x86_64）或 `/initramfs.cpio`（aarch64）确实存在，再核对引导配置声明；aarch64 可在 U-Boot 侧确认 DTB `/chosen` 有 `linux,initrd-start/end` |
+| 归档字节数对但解包条目数偏小 | 条目名前缀不统一或嵌套目录父链未补建 | 对照 [initramfs.rs](../../src/kernel/functions/fs/initramfs.rs) 的归一与 `ensure_parent_dirs`；用 `scripts/make_initramfs_cpio.py --self-test` 复核归档本身 |
+| 载体在位但 init 起不来 / 归档内容被改写 | 交付区与内核固定堆窗共址（引导器自选落点恰在堆窗内） | 查启动日志是否有 `[PMM] Early relocate 'initrd': 0x… -> 0x…` 与 `initrd carrier ready: base=0x…`；两行都在即说明已搬移到互斥区，消费者读到的是搬移后地址 |
 | x86_64 无引导 | USB 未按 UEFI/BIOS 模式引导，或 GRUB 未找到内核 | 在固件启动菜单选择正确模式；用 `file` 确认 ISO 为 bootable |
 
 ## 关联文档与源码

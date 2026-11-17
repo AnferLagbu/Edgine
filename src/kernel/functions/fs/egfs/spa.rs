@@ -10,7 +10,7 @@ use crate::functions::fs::egfs::vdev::{EgfsVdev, EgfsVdevConfig, EgfsVdevState};
 use crate::functions::sync::irq_lock::IrqSpinLock as Mutex;
 use crate::privileged::driver::block;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 /// SPA uberblock 魔数 (小端 "HVSF"), 用于识别本池的根元数据块.
 pub const HV_SPA_MAGIC: u32 = 0x4856_4653;
@@ -240,8 +240,6 @@ pub struct EgfsSpa {
     pub scrub_in_progress: AtomicBool,
     /// 最近一次 scrub 覆盖的事务组.
     pub scrub_last_txg: AtomicU64,
-    /// 池所在分区的起始扇区偏移.
-    pub partition_start: AtomicU32,
 }
 
 // SAFETY (Framekernel P2.2.2): EgfsSpa 全部字段 (Mutex<T>, Atomic*, Vec) 自动 Send + Sync。
@@ -269,7 +267,6 @@ impl EgfsSpa {
             last_sync_time: AtomicU64::new(0),
             scrub_in_progress: AtomicBool::new(false),
             scrub_last_txg: AtomicU64::new(0),
-            partition_start: AtomicU32::new(0),
         }
     }
 
@@ -283,10 +280,17 @@ impl EgfsSpa {
         h | 1
     }
 
-    /// 获取第一个 vdev 的磁盘 ID (无 vdev 时返回 0)
-    fn vdev_0_drive_id(&self) -> u8 {
-        self.vdevs.lock().first().map_or(0, |v| {
-            crate::functions::intcast::low_u8_from_u16(v.config.vdev_id)
+    /// 取 uberblock 扇区 I/O 的目标 (EGDF 全局驱动器下标, 分区起始 LBA).
+    ///
+    /// 唯一权威来源是已注册的 vdev 列表: 未注册 vdev 时返回 `None`, 由调用方显式失败.
+    /// 不得回落 drive 0 —— 0 号全局下标未必是块设备, 静默兜底会把 I/O 打到错设备上;
+    /// 分区偏移亦取自同一 vdev, 避免多盘循环把独立计数器漂移到非首盘.
+    fn sector_io_target(&self) -> Option<(u8, u32)> {
+        self.vdevs.lock().first().map(|v| {
+            (
+                crate::functions::intcast::low_u8_from_u16(v.config.vdev_id),
+                v.config.partition_start,
+            )
         })
     }
 
@@ -294,8 +298,10 @@ impl EgfsSpa {
         if buf.len() < 512 {
             return KernelError::InvalidArgument.as_i32();
         }
-        let phys = sector + self.partition_start.load(Ordering::Acquire);
-        let drive = self.vdev_0_drive_id();
+        let Some((drive, part_start)) = self.sector_io_target() else {
+            return KernelError::NotInitialized.as_i32();
+        };
+        let phys = sector + part_start;
         block::hdd_read_sector(drive, u64::from(phys), buf)
     }
 
@@ -303,8 +309,10 @@ impl EgfsSpa {
         if buf.len() < 512 {
             return KernelError::InvalidArgument.as_i32();
         }
-        let phys = sector + self.partition_start.load(Ordering::Acquire);
-        let drive = self.vdev_0_drive_id();
+        let Some((drive, part_start)) = self.sector_io_target() else {
+            return KernelError::NotInitialized.as_i32();
+        };
+        let phys = sector + part_start;
         block::hdd_write_sector(drive, u64::from(phys), buf)
     }
 
@@ -331,8 +339,14 @@ impl EgfsSpa {
     }
 
     /// 加入 vdev 并按容量切分 metaslab; 超过 `max_vdevs` 时返回 `false`.
+    ///
+    /// 同一 `vdev_id` 重复加入为幂等 no-op (返回 `true`): mount 失败转 format 时
+    /// 两条路径都会注册同一驱动器, 重复 push 会令 metaslab 与空闲计数翻倍.
     pub fn add_vdev(&self, config: EgfsVdevConfig) -> bool {
         let mut vdevs = self.vdevs.lock();
+        if vdevs.iter().any(|v| v.config.vdev_id == config.vdev_id) {
+            return true;
+        }
         let max_vdevs = self.config.lock().max_vdevs;
         if vdevs.len() >= max_vdevs as usize {
             return false;
@@ -457,7 +471,18 @@ impl EgfsSpa {
                 if let Some(vdev) = vdevs.iter_mut().find(|v| v.config.vdev_id == dva.vdev_id) {
                     let sector = dva.offset / 512;
                     let count = dva.asize.div_ceil(512);
-                    let result = vdev.write_sectors(sector, count, buf);
+                    // 块设备按整扇区写: 逻辑长度不是 512 倍数时补零到块物理尺寸,
+                    // 否则 write_sectors 的缓冲区下界校验会拒写 (数据丢失级).
+                    let need = crate::functions::intcast::usize_from_u64(u64::from(count) * 512);
+                    let mut padded = Vec::new();
+                    let payload: &[u8] = if buf.len() >= need {
+                        buf
+                    } else {
+                        padded.resize(need, 0);
+                        padded[..buf.len()].copy_from_slice(buf);
+                        &padded
+                    };
+                    let result = vdev.write_sectors(sector, count, payload);
                     if result != 0 {
                         return result;
                     }
@@ -469,12 +494,17 @@ impl EgfsSpa {
     }
 
     /// 计算校验和, 把当前 uberblock 写入环形槽位, 并更新落盘时间戳.
-    pub fn write_uberblock_to_disk(&self) {
+    ///
+    /// 成功返回 0; uberblock 无效或扇区写失败时返回错误码并打印诊断,
+    /// 且**不**推进 `last_sync_time` (避免失败被读成"已同步").
+    pub fn write_uberblock_to_disk(&self) -> i32 {
         let ub = self.uberblock.lock();
         if !ub.is_valid() {
-            return;
+            crate::slog_err!(FS, "[EGFS] uberblock 落盘失败: magic 无效 (池未初始化)");
+            return KernelError::NotInitialized.as_i32();
         }
         let mut copy = *ub;
+        drop(ub);
         copy.compute_checksum();
         let ub_bytes = copy.as_bytes();
         let ub_sector =
@@ -484,9 +514,19 @@ impl EgfsSpa {
         let mut sector_buf = [0u8; 512];
         let copy_len = ub_bytes.len().min(512);
         sector_buf[..copy_len].copy_from_slice(&ub_bytes[..copy_len]);
-        let _ = self.write_sector(sector, &sector_buf);
+        let rc = self.write_sector(sector, &sector_buf);
+        if rc != 0 {
+            crate::slog_err!(
+                FS,
+                "[EGFS] uberblock 落盘失败: sector={} rc={} (drive 未绑定或 I/O 错误)",
+                sector,
+                rc
+            );
+            return rc;
+        }
         self.last_sync_time
             .store(crate::arch!(timestamp()), Ordering::Relaxed);
+        0
     }
 
     /// 从最新槽位向前扫描, 返回首个 magic 与校验和均有效的 uberblock.
@@ -507,9 +547,9 @@ impl EgfsSpa {
         None
     }
 
-    /// 把当前 uberblock 同步落盘.
-    pub fn sync_uberblock(&self) {
-        self.write_uberblock_to_disk();
+    /// 把当前 uberblock 同步落盘, 返回底层错误码 (0 表示成功).
+    pub fn sync_uberblock(&self) -> i32 {
+        self.write_uberblock_to_disk()
     }
 
     /// 返回计数器快照: (分配数, 释放数, 读次数, 写次数, 当前 txg).

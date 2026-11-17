@@ -1,28 +1,24 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
-//! 内嵌 wasm 用户态入口桩镜像 (W-7 批次 B)
+//! wasm 入口桩选择与魔数判定 (W-7 批次 B; D4 严格零嵌入)
 //!
-//! `exec.rs` 按魔数识别 `\0asm` 后, 以本镜像替换进程映像; 桩在用户态经
-//! `EG_WASM_*` 驱动内核侧解释器 (见 `src/user/wasmstub`)。
+//! `exec.rs` 按魔数识别 `\0asm` 后, 从 VFS 读出入口桩 ELF 替换进程映像; 桩在用户态
+//! 经 `EG_WASM_*` 驱动内核侧解释器 (见 `src/user/wasmstub`)。
 //!
-//! 产物按架构分目录 (S-6 三条防线): `other/build/<arch>/user/wasmstub.bin` 由
-//! Makefile 从本架构 ELF 复制, `include_bytes!` 与 build.rs 的
-//! `rerun-if-changed` 使用同一路径 (绝对路径由 build.rs 发出)。
-//!
-//! host target 取空切片: host-test / kernel_test 两维与 host-tests 都会编译本
-//! 模块, 不桩化即让 host 编译硬依赖 `other/build/` 下的裸机产物。
+//! 选桩 (`wasm_userspace` feature): 默认读 `/bin/wasmstub` (内核解释器桩); 点亮后读
+//! `/bin/wasmrun` (用户态 wasmi 运行时桩, 见 `src/user/wasmrun`, wasmi vendored)。
+//! 两桩恒由 `make user` 产出并打进 initramfs cpio (`bin/wasmstub` / `bin/wasmrun`),
+//! 内核镜像不嵌任何用户态字节 (D4), 故本模块只给路径与魔数判定, 不含镜像常量。
+//! P4 将翻转默认到 wasmrun。
 
-#[cfg(all(target_os = "none", target_arch = "x86_64"))]
-const WASM_STUB_IMAGE: &[u8] = include_bytes!("../../../../other/build/x86_64/user/wasmstub.bin");
-#[cfg(all(target_os = "none", target_arch = "aarch64"))]
-const WASM_STUB_IMAGE: &[u8] = include_bytes!("../../../../other/build/aarch64/user/wasmstub.bin");
-#[cfg(not(target_os = "none"))]
-const WASM_STUB_IMAGE: &[u8] = &[];
-
-/// 取本架构的 wasm 桩 ELF 镜像 (host 构建为空切片).
+/// 本构建选用的 wasm 入口桩在 initramfs 里的路径 (经 VFS 读, 不编译期嵌入).
 #[must_use]
-pub fn stub_image() -> &'static [u8] {
-    WASM_STUB_IMAGE
+pub fn stub_path() -> &'static str {
+    if cfg!(feature = "wasm_userspace") {
+        "/bin/wasmrun"
+    } else {
+        "/bin/wasmstub"
+    }
 }
 
 /// 判定字节流是否为 wasm 模块头 (`\0asm` 魔数, WASM 1.0).

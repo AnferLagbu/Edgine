@@ -171,6 +171,24 @@ pub fn initrd_region() -> Option<(u64, u64)> {
     INITRD_REGION.get().copied()
 }
 
+/// 设备树 blob 自身占用的物理区 (base, size); 供 PMM 早期预留登记
+static DTB_REGION: OnceLock<(u64, u64)> = OnceLock::new();
+
+/// 保存设备树 blob 自身的物理区 (仅引导阶段写入一次, 重复写入被忽略).
+///
+/// DTB 由引导器放在它自选的地址上, 与内核固定布局无协商; 登记后由 PMM 早期预留表
+/// 统一置位, 防止被当空闲页分配出去. DTB 在 PMM 存在之前就已解析完并持久化了
+/// 拓扑/PSCI/initrd 三项, 故只预留不搬移.
+pub fn set_dtb_region(base: u64, size: u64) {
+    let _ = DTB_REGION.set((base, size));
+}
+
+/// 读取设备树 blob 自身的物理区; 未探测到时返回 `None`
+#[must_use]
+pub fn dtb_region() -> Option<(u64, u64)> {
+    DTB_REGION.get().copied()
+}
+
 /// 解码 DTB 单元格值 (大端): 4 字节 = 1 cell (u32), 8 字节 = 2 cells (u64).
 fn decode_be_cells(value: &[u8]) -> Option<u64> {
     match value.len() {

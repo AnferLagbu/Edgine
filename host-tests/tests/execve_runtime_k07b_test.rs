@@ -17,14 +17,15 @@
 //!    回写, exec 判定要求常规文件至少一位 x (Linux 对 root 也不放宽).
 //!
 //! 真跑判据分两条腿: 载体腿 (`scripts/initramfs_boot_test.sh`) 要求 `[EXEC] PASS`
-//! 且无 `[EXEC] FAIL`; 默认构建 (空 ramfs、无 cpio 解包) 由 `scripts/qemu_boot_test.sh`
-//! 要求 `[EXEC] SKIP: no carrier` 且无 `[EXEC] FAIL` —— A-14 把「无载体」钉成显式
-//! 第三态, 预期失败不再与真回归在日志里同形.
+//! 且无 `[EXEC] FAIL`; headline 腿 (`scripts/qemu_boot_test.sh`) 要求 SKIP 与 PASS
+//! 二者之一且无 `[EXEC] FAIL` —— D4 起两腿都经 boot-module 交付 cpio (载体在场即
+//! 应 PASS), SKIP 保留为显式第三态 (A-14), 预期失败不再与真回归在日志里同形.
 
 use std::fs;
 use std::path::PathBuf;
 
 const EXEC_RS: &str = "src/kernel/functions/proc/exec.rs";
+const STUB_RS: &str = "src/kernel/functions/wasm/stub.rs";
 const PROC_OPS_RS: &str = "src/kernel/privileged/proc/proc_ops.rs";
 const USER_PROC_RS: &str = "src/kernel/privileged/proc/user_proc.rs";
 const INITRAMFS_RS: &str = "src/kernel/functions/fs/initramfs.rs";
@@ -205,10 +206,58 @@ fn test_execve_passes_envp_to_privileged() {
         "crate::functions::wasm::stub::is_wasm_image(&image)",
         "exec 必须按 \\0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
     );
+    // D4 严格零嵌入: 桩不再编译期嵌入, 改按选桩路径从 VFS 读出 (无 fd 形态).
     assert_contains(
         &flat,
-        "crate::functions::wasm::stub::stub_image()",
-        "wasm 分支必须装载内嵌用户态入口桩",
+        "crate::functions::fs::api::read_file_kernel( crate::functions::wasm::stub::stub_path(), 0, ELF_MAX_SIZE,",
+        "wasm 分支必须经 VFS 读入口桩 (D4 零嵌入)",
+    );
+    assert_absent(
+        &flat,
+        "stub::stub_image()",
+        "不得残留内嵌桩取数器 (D4 已删 include_bytes!)",
+    );
+}
+
+/// D4-d: wasm 桩去嵌入后的两处静默失效通道.
+///
+/// 1. **选桩面** —— `stub.rs` 若还留 `include_bytes!`, 内核镜像就仍带用户态字节
+///    (K-08 / PMM 预留随之回来); 若两条路径写反, `wasm_userspace` 腿会静默跑内核
+///    解释器桩而 `[WASMI]` 判据恰好不出现, 看起来像"探针没跑"而非选桩错.
+/// 2. **生命周期** —— 桩字节是 `read_file_kernel` 新读的 `Vec`, 必须在 `if` 块
+///    **外**绑定: 块内 `let` 到块尾即析构, 交给 `proc_exec_replace` 的
+///    `as_ptr()` 随即悬垂 (装载到已释放内存, 症状是随机 exec 失败而非编译错).
+#[test]
+fn test_wasm_stub_is_selected_by_path_and_outlives_exec() {
+    let stub = code_only(&read_src(STUB_RS));
+    assert_absent(&stub, "include_bytes!", "wasm 桩不得编译期嵌入 (D4 零嵌入)");
+    assert_contains(
+        &stub,
+        "pub fn stub_path() -> &'static str",
+        "选桩必须以路径形态给出 (供 VFS 读)",
+    );
+    let flat_stub = norm(&stub);
+    assert_contains(
+        &flat_stub,
+        "if cfg!(feature = \"wasm_userspace\") { \"/bin/wasmrun\" } else { \"/bin/wasmstub\" }",
+        "feature 点亮读 wasmrun, 默认读 wasmstub (两桩恒在 cpio 内)",
+    );
+
+    let flat = norm(&code_only(&read_src(EXEC_RS)));
+    assert_contains(
+        &flat,
+        "let stub = if crate::functions::wasm::stub::is_wasm_image(&image) {",
+        "桩 Vec 必须在分派块外绑定 (块内 let 到块尾析构 ⇒ 指针悬垂)",
+    );
+    assert_contains(
+        &flat,
+        "let (image_ptr, image_len) = if let Some(stub) = &stub { (stub.as_ptr() as u64, stub.len() as u64)",
+        "交给 privileged 的桩指针必须取自外层绑定 (存活到 proc_exec_replace 之后)",
+    );
+    assert_contains(
+        &flat,
+        "return Err(Errno::Enoexec);",
+        "桩缺失即 ENOEXEC (不静默回落成 ELF 装载 wasm 字节)",
     );
 }
 
@@ -314,7 +363,7 @@ fn test_unpack_preserves_archive_mode_bits() {
     // chmod 必须发生在节点建成之后, 否则 ENOENT 被 `let _ =` 静默吞掉.
     let unpack = fn_body(
         &code,
-        "pub fn unpack(data: &[u8]) -> Result<usize, &'static str>",
+        "pub fn unpack(data: &[u8], target_root: &str, pwm: u64) -> Result<usize, &'static str>",
     );
     let dir_arm = unpack.find("CPIO_S_IFDIR =>").expect("目录分支");
     let reg_arm = unpack.find("CPIO_S_IFREG =>").expect("常规文件分支");

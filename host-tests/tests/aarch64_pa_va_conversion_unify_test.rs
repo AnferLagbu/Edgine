@@ -182,8 +182,8 @@ fn test_kmalloc_heap_base_goes_through_kernel_base() {
         let tail = &search[idx..];
         let window = &tail[..tail.len().min(160)];
         assert!(
-            window.contains("KERNEL_BASE + boot_info.kernel_end + 0x0020_0000"),
-            "lib.rs 的 heap_start 必须为 `KERNEL_BASE + boot_info.kernel_end + 0x0020_0000` \
+            window.contains("KERNEL_BASE + boot_info.kernel_end + GAP_SIZE"),
+            "lib.rs 的 heap_start 必须为 `KERNEL_BASE + boot_info.kernel_end + GAP_SIZE` \
              (双架构统一, 不得直取物理地址): {window}"
         );
         found += 1;
@@ -193,6 +193,14 @@ fn test_kmalloc_heap_base_goes_through_kernel_base() {
     assert!(
         found >= 2,
         "lib.rs 应有两处 heap_start (kernel_test 路径 + 真机路径), 实测 {found} 处"
+    );
+
+    // 间隙值改由 GAP_SIZE 单源承担 (与 reserved_after_kernel 共用同一常量), 故数值不变式
+    // 锁在声明处: 两条路径各一份, 值必须仍是 2 MiB.
+    assert!(
+        n.matches("const GAP_SIZE: u64 = 0x0020_0000;").count() >= 2,
+        "lib.rs 两条路径的 `GAP_SIZE` 必须各声明为 0x0020_0000 (2 MiB), 实测 {} 处",
+        n.matches("const GAP_SIZE: u64 = 0x0020_0000;").count()
     );
 }
 

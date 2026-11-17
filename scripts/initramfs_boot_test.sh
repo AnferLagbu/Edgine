@@ -1,13 +1,14 @@
 #!/bin/bash
 # ============================================================================
-# initramfs 载体启动测试 (K-07b 专项 feature 腿: 批1 载体 + 批2 execve 射程)
+# initramfs 载体启动测试 (K-07b: 批1 载体 + 批2 execve 射程 + 批3 EEVDF 观测)
 #
-# 用途: 以 `KERNEL_FEATURES=initramfs` 真构建 + 真启动, 断言 PID 1 是经**文件系统**
+# 用途: 真构建 + 真启动, 断言 PID 1 是经**文件系统**
 #       (cpio 归档 → ramfs `/init` → VFS 读出 → ELF 装载) 起来的.
 #
-#       D4 严格零嵌入后内嵌 `init.bin` 路径已删除, 本 feature 腿即出货启动形态;
-#       与 P-62 甲 的 feature 运行维同形: 只有真构建才暴露断链.
-#       本腿断言四条判据 (缺一即红):
+#       D4 严格零嵌入后内嵌 `init.bin` 路径已删除, 本腿即**出货启动形态**;
+#       D4-e 起 `initramfs` feature 已退役 (解包无条件执行), 故本腿构建默认镜像
+#       (lockdep 常开), 不再切 KERNEL_FEATURES / KERNEL_NO_DEFAULT.
+#       本腿断言五条判据 (缺一即红):
 #         1. `[INITRAMFS] Unpacked N files` 且 N >= 7 —— 归档被解析且真落盘
 #            (数量下限把"只有根目录/只有 /init 落盘"的嵌套目录回归钉住);
 #         2. `init from /init` —— PID 1 的镜像来自 VFS 读取 (回退路径打印的是
@@ -21,15 +22,12 @@
 #         5. `[SCHED] SNAP END` 且 `conserve=ok` 无 `conserve=BAD` —— K-07b 批3
 #            的 EEVDF 观测面在载体装载路径下同样可达且账目守恒.
 #
-# 跑完复原默认构建: 本脚本切换过 KERNEL_FEATURES, 若不复原, 后续门禁会跑在
-# 带 feature 的镜像上 (与 §2.3 默认构建口径不符). 复原放在判定之后, 失败也已复原.
-#
-# 构建面取 `--no-default-features --features initramfs` (KERNEL_NO_DEFAULT=1):
-# A-1 (2026-11-08 裁定甲) 把 lockdep 放进默认 features 后, x86_64 载体镜像末尾
-# 达 0x413000, 越过 K-08 的 USER_CODE_BASE=0x400000 (kview 恒等窗口将覆盖用户
-# 映射区) ⇒ 启动期 fail-closed 停机. 载体是诊断 feature、非出货形态, 故本腿
-# 显式关闭默认 features (实测末尾 0x3EA000, 五条判据全绿); 出货默认镜像仍
-# lockdep 常开, 由 P-62 构建面探针与默认启动腿独立覆盖.
+# 构建面 = 出货默认 (D4-e): 历史上本腿取 `--no-default-features --features initramfs`
+# (KERNEL_NO_DEFAULT=1), 理由是 A-1 常开 lockdep 后**内嵌 cpio** 的 x86_64 载体镜像
+# 末尾达 0x413000, 越过 K-08 的 USER_CODE_BASE=0x400000 ⇒ 启动期 fail-closed.
+# D3/D4 把 cpio 与 init.bin 全部移出镜像后该理由消失 (零嵌入镜像末尾远低于 4 MiB),
+# 故本腿改跑出货默认配置: 载体链与 lockdep 常开面由同一次真启动一起覆盖.
+# 既不切 feature, 也就无需尾部复原默认构建.
 #
 # 用法:
 #   ./scripts/initramfs_boot_test.sh [x86_64|aarch64|all]   # 默认 all
@@ -227,13 +225,11 @@ boot_and_check() {
 FAILED=0
 for arch in $ARCH_LIST; do
     echo "================================================================"
-    info "[$arch] KERNEL_FEATURES=initramfs KERNEL_NO_DEFAULT=1 构建..."
-    # KERNEL_NO_DEFAULT=1: A-1 常开 lockdep 后, x86_64 载体镜像末尾 0x413000 越过
-    # K-08 的 USER_CODE_BASE=0x400000 (恒等窗口覆盖用户映射). 载体是诊断 feature、
-    # 非出货形态, 故本腿显式关闭默认 features (实测末尾 0x3EA000); 出货默认镜像
-    # 仍 lockdep 常开, 由 P-62 构建面探针与默认启动腿独立覆盖.
-    if ! make ARCH="$arch" KERNEL_NO_DEFAULT=1 KERNEL_FEATURES=initramfs all >"$LOG_DIR/initramfs_build_${arch}.log" 2>&1; then
-        err "[$arch] 带 feature 构建失败 (日志: $LOG_DIR/initramfs_build_${arch}.log)"
+    info "[$arch] 出货默认构建 (boot-module 载体)..."
+    # D4-e: 不切 KERNEL_FEATURES / KERNEL_NO_DEFAULT —— 零嵌入后 K-08 理由已消失,
+    # 本腿直接跑出货默认镜像 (lockdep 常开), 载体链与默认配置同一次真启动覆盖.
+    if ! make ARCH="$arch" all >"$LOG_DIR/initramfs_build_${arch}.log" 2>&1; then
+        err "[$arch] 默认构建失败 (日志: $LOG_DIR/initramfs_build_${arch}.log)"
         FAILED=$((FAILED + 1))
         continue
     fi
@@ -258,14 +254,7 @@ for arch in $ARCH_LIST; do
     fi
 done
 
-# 复原默认构建 (KERNEL_FEATURES 空 ⇒ Makefile 内容戳记失配触发重建)
-for arch in $ARCH_LIST; do
-    info "[$arch] 复原默认构建 (KERNEL_FEATURES 空)..."
-    if ! make ARCH="$arch" all >"$LOG_DIR/initramfs_restore_${arch}.log" 2>&1; then
-        err "[$arch] 默认构建复原失败 (日志: $LOG_DIR/initramfs_restore_${arch}.log)"
-        FAILED=$((FAILED + 1))
-    fi
-done
+# D4-e: 本腿构建的就是出货默认镜像, 无 feature 切换 ⇒ 无需尾部复原.
 
 echo "================================================================"
 if [ "$FAILED" -ne 0 ]; then

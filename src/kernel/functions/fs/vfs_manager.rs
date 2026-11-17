@@ -361,6 +361,18 @@ impl VfsManager {
         Err(KernelError::NoSpace)
     }
 
+    /// 指定路径是否恰为某个已用挂载点 (精确匹配, 不做最长前缀归并).
+    ///
+    /// 与 [`VfsManager::find_mount`] 的区别: 后者把任意子路径归并到覆盖它的挂载,
+    /// 本判据只认挂载点本身 —— `pivot_root` 要求 `new_root` 是挂载点 (Linux 语义).
+    #[must_use]
+    pub fn is_mount_point(&self, path: &str) -> bool {
+        let mounts = self.mounts.lock();
+        mounts
+            .iter()
+            .any(|mount| mount.used && mount.get_path() == path)
+    }
+
     /// 卸载指定路径的挂载.
     ///
     /// # Errors

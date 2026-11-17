@@ -12,7 +12,7 @@
 //! ## 启动流程 (由本模块 [`launch_first_user_process`] 编排驱动)
 //!
 //! 1. 挂载 ramfs 为 `/`
-//! 2. 解压 initramfs cpio 到 ramfs (feature = "initramfs")
+//! 2. 解压 boot-module 交付的 initramfs cpio 到 ramfs
 //! 3. 加载 `/init` ELF, 创建 PID 1
 //! 4. 加入调度器, 切换 Ring 3
 
@@ -69,7 +69,7 @@ fn load_init_from_initramfs() -> i32 {
         return -1;
     };
     crate::klog_boot_info!("[USER] initramfs from boot module ({} bytes)", blob.len());
-    let count = match crate::functions::fs::initramfs::unpack(blob) {
+    let count = match crate::functions::fs::initramfs::unpack(blob, "/", 0) {
         Ok(count) => count,
         Err(e) => {
             crate::klog_boot_info!("[USER] initramfs unpack failed: {}", e);
@@ -95,6 +95,55 @@ fn load_init_from_initramfs() -> i32 {
 }
 
 // ============================================================================
+// 磁盘根首启安装 (D5-g: Linux 式 switch_root 的前置, 载体全量落到 EGFS 盘)
+// ============================================================================
+
+/// 磁盘首启时把 boot-module 的 initramfs 全量安装到 `/disk`, 供用户态 init 切根.
+///
+/// 引导根恒为 ramfs (D5-e 裁定), EGFS 只挂非根挂载点 `/disk`; 盘上若无 `/init`,
+/// 用户态切根后就没有可执行体, 故挂载成功后把同一份 cpio 归档再解压一遍到 `/disk`.
+///
+/// 幂等: 盘上已有 `/disk/init` 即整段跳过 —— 磁盘根是持久化的, 二启重装会覆盖
+/// 用户改动 (与 uberblock 持久化同一立场).
+///
+/// 失败只记日志不中止启动: 引导根仍是 ramfs, 用户态照跑; 切根侧按失败继续.
+pub fn install_disk_root() {
+    if crate::functions::fs::api::vfs_stat_safe(c"/disk/init".as_ptr().cast(), 0).is_some() {
+        crate::klog_boot_info!("[USER] /disk/init present (skip disk-root install)");
+        return;
+    }
+    let Some(blob) = crate::privileged::boot::initrd_blob() else {
+        crate::klog_boot_info!("[USER] disk-root install skipped: no boot-module initrd");
+        return;
+    };
+    let count = match crate::functions::fs::initramfs::unpack(blob, "/disk", 0) {
+        Ok(count) => count,
+        Err(e) => {
+            crate::klog_boot_info!("[USER] disk-root unpack failed: {}", e);
+            return;
+        }
+    };
+    let _ = crate::functions::fs::api::vfs_sync();
+    // 写路径曾静默丢数据 (#345/#348): 只数解压条目证不了字节真落盘, 必须回读.
+    let readback = crate::functions::fs::api::read_file_kernel(
+        "/disk/init",
+        0,
+        crate::functions::proc::exec::ELF_MAX_SIZE,
+    );
+    match readback {
+        Some(elf) if !elf.is_empty() => crate::klog_boot_info!(
+            "[USER] disk root installed: {} files, /disk/init read back {} bytes",
+            count,
+            elf.len()
+        ),
+        _ => crate::klog_boot_info!(
+            "[USER] disk root install incomplete: {} files unpacked, /disk/init unreadable",
+            count
+        ),
+    }
+}
+
+// ============================================================================
 // boot 启动编排 (阶段 4b: 自 privileged::proc::launch_first_user_process 下沉)
 // ============================================================================
 
@@ -102,7 +151,7 @@ fn load_init_from_initramfs() -> i32 {
 ///
 /// 编排步骤:
 /// 1. 挂载 ramfs 为 `/`
-/// 2. 解压 initramfs cpio 到 ramfs (`feature = "initramfs"`)
+/// 2. 解压 boot-module 交付的 initramfs cpio 到 ramfs
 /// 3. 加载 `/init` ELF (仅 boot-module, 无内嵌回退), 创建 PID 1
 /// 4. 经 privileged 机制入口进入 Ring 3 / EL0
 ///
@@ -117,7 +166,7 @@ pub fn launch_first_user_process() -> ! {
         crate::klog_boot_info!("[USER] Warning: ramfs mount on / failed ({})", mount_result);
     }
 
-    // 2. 解压 initramfs 并/或加载内嵌 init (x86_64)
+    // 2. 解压 boot-module initramfs 并从 ramfs 加载 /init (双架构同形)
     crate::privileged::proc::set_init_status(INIT_STATUS_UNPACKING);
 
     #[cfg(target_arch = "x86_64")]

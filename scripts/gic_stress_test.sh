@@ -41,7 +41,7 @@ IMAGE="other/build/aarch64/kernel-aarch64.img"
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
 
-# D4: boot-with-module 载体 (initramfs feature 构建, cpio 经 -initrd 交付, 不嵌入内核).
+# D4: boot-with-module 载体 (默认核构建, cpio 经 -initrd 交付, 不嵌入内核).
 source scripts/boot_module.sh
 boot_module_build aarch64
 

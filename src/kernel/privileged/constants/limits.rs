@@ -16,6 +16,16 @@
 /// `Err("MMIO alias registry full")` (iomem.rs:55), 调用方按需处理.
 pub const MAX_MMIO_MAPPINGS: usize = 64;
 
+/// 引导期内存图里 firmware 保留区 (MB2 tag 6 中 `type != 1` 的条目) 最大登记数
+///
+/// 引导期尚无分配器, 故表定长. 实测 OVMF 512 MiB 机型 tag 6 共 21 条 (含可用项),
+/// `SeaBIOS` e820 更少; 取 64 留出三倍余量.
+///
+/// **超限行为**: `boot::FirmwareRegions::push` 以启动期断言停机 (fail-closed) ——
+/// 丢一条登记等于把该 firmware 区当空闲页分配出去, ACPI 表 / EFI runtime 会被覆写,
+/// 属静默腐败, 故不允许截断或跳过.
+pub const MAX_FIRMWARE_REGIONS: usize = 64;
+
 /// Lockdep 锁类最大数量
 ///
 /// **超限行为**: 满表时 `LockDepMap::register` 返回 `LockClassId::INVALID` 并累加

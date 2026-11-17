@@ -168,6 +168,9 @@ unsafe fn apply_fdt_overrides() -> Option<dtb::DtbInfo> {
         if dtb_phys.checked_add(total as u64)? > DRAM_WINDOW_END {
             return None;
         }
+        // 持久化 DTB blob 自身占用的物理区, 供 boot_memory_init 登记 PMM 早期预留
+        // (引导器自选地址, 与内核固定布局无协商; 不登记就会被当空闲页分配出去).
+        dtb::set_dtb_region(dtb_phys, total as u64);
         // SAFETY: `total` 经 `decode_header_prefix` 校验 (头部长度 ≤ total ≤ 1 MiB),
         // 且 `[dtb_mapped, dtb_mapped + total)` 已确认落在已映射的 DRAM 窗口内.
         let blob = core::slice::from_raw_parts(dtb_mapped as *const u8, total);

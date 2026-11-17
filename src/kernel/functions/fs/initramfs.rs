@@ -1,7 +1,11 @@
 //! initramfs — cpio newc 格式解析与加载
 //!
-//! 在内核启动末尾, 把编译期 `include_bytes!` 进镜像的 initramfs cpio 归档解压到
-//! ramfs 挂载点, 作为根文件系统 `/`.
+//! 把引导器作 boot-module 交付的 initramfs cpio 归档解压到指定挂载点
+//! (D4 严格零嵌入: 归档不编译期进镜像). 两个调用面:
+//!
+//! - 引导根: 解压到 ramfs 的 `/`, 由 `functions::init::launch_first_user_process` 驱动;
+//! - 磁盘首启安装: 解压到 EGFS 的 `/disk`, 由 `functions::init::install_disk_root`
+//!   驱动, 供用户态 init 切根后使用 (Linux 式 `switch_root`).
 //!
 //! ## cpio newc 格式
 //!
@@ -157,22 +161,26 @@ fn parse_next_entry(data: &[u8], offset: usize) -> Option<(CpioEntry<'_>, usize)
     ))
 }
 
-/// 把 cpio 条目名归一为根内绝对路径, 写入 `out` 并返回其长度 (不含末尾 NUL).
+/// 把 cpio 条目名归一为 `prefix` 根内的绝对路径, 写入 `out` 并返回其长度 (不含末尾 NUL).
+///
+/// `prefix` 是目标挂载点的前缀字节 (根 `"/"` 传 `b""`, `/disk` 传 `b"/disk"`),
+/// 不含末尾分隔符 —— 分隔符由本函数在每段前统一补出.
 ///
 /// 归一规则:
 /// - 逐段丢弃空段与 `.` 段 ⇒ `./bin/eash` / `bin//eash/` / `/./bin/eash` 均归一为
-///   `/bin/eash`;
+///   `<prefix>/bin/eash`;
 /// - 出现 `..` 段整条拒收 (返回 `None`): 归档不得借相对段逃出根前缀;
-/// - 结果为空 (归档里的 `.` 根条目) 返回 `None` —— 根目录由 [`unpack`] 预建;
-/// - 加前导 `/` 与末尾 NUL 后超出 `out` 长度则返回 `None`.
+/// - 结果为空 (归档里的 `.` 根条目) 返回 `None` —— 目标根由 [`unpack`] 预建;
+/// - 加前缀、分隔符与末尾 NUL 后超出 `out` 长度则返回 `None`.
 ///
 /// `out` 由调用方零初始化, 本函数只写路径字节, 末尾 NUL 由零初始化保证.
-fn normalize_entry_path(name: &[u8], out: &mut [u8]) -> Option<usize> {
-    if out.len() < 2 {
+fn normalize_entry_path(name: &[u8], prefix: &[u8], out: &mut [u8]) -> Option<usize> {
+    // +2 = 首段分隔符 + 末尾 NUL 占位
+    if out.len() < prefix.len() + 2 {
         return None;
     }
-    out[0] = b'/';
-    let mut len = 1usize;
+    out[..prefix.len()].copy_from_slice(prefix);
+    let mut len = prefix.len();
     let mut wrote_any = false;
     for comp in name.split(|&byte| byte == b'/') {
         match comp {
@@ -180,15 +188,12 @@ fn normalize_entry_path(name: &[u8], out: &mut [u8]) -> Option<usize> {
             b".." => return None,
             _ => {}
         }
-        let sep = usize::from(wrote_any);
-        // +1 = 末尾 NUL 占位, 路径不得写满整个缓冲区
-        if len + sep + comp.len() + 1 > out.len() {
+        // 两个 +1 = 段前分隔符与末尾 NUL 占位, 路径不得写满整个缓冲区
+        if len + 1 + comp.len() + 1 > out.len() {
             return None;
         }
-        if wrote_any {
-            out[len] = b'/';
-            len += 1;
-        }
+        out[len] = b'/';
+        len += 1;
         out[len..len + comp.len()].copy_from_slice(comp);
         len += comp.len();
         wrote_any = true;
@@ -216,25 +221,30 @@ fn ensure_parent_dirs(path: &mut [u8], path_len: usize, pwm: u64) {
     }
 }
 
-/// 将 cpio 归档解压到 ramfs 根文件系统
+/// 将 cpio 归档解压到 `target_root` 挂载点
 ///
-/// 此函数在内核启动末尾调用, 将 initramfs 内容解压到 `/`.
+/// 引导根 (`target_root = "/"`) 在内核启动末尾调用, 把 initramfs 内容解压到 ramfs;
+/// 磁盘首启安装 (`target_root = "/disk"`) 把同一份归档全量落到 EGFS 盘上, 供用户态
+/// init 切根后使用 (Linux 式 `switch_root`, 见 `functions::init::install_disk_root`).
 ///
 /// # Arguments
 /// * `data` - cpio 归档数据切片
+/// * `target_root` - 目标挂载点绝对路径 (`"/"` 或 `"/disk"`); 末尾 `/` 会被剥掉
+/// * `pwm` - 建节点用的属主标识 (FS 层不自带访问判定, 只记属主)
 /// # Errors
 /// 归档为空或 cpio 归档格式非法时返回 Err。
-pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
+pub fn unpack(data: &[u8], target_root: &str, pwm: u64) -> Result<usize, &'static str> {
     if data.is_empty() {
         return Err("initramfs: empty data");
     }
 
+    // 前缀不含末尾分隔符: "/" → "" (条目归一后自带前导 /), "/disk" → "/disk"
+    let prefix = target_root.trim_end_matches('/');
     let mut offset = 0;
     let mut file_count = 0usize;
 
-    // 确保根目录存在
-    let pwm = 0; // 内核权限
-    let _ = crate::functions::fs::vfs_mkdir(c"/".as_ptr().cast(), pwm);
+    // 确保目标根目录存在
+    let _ = super::api::vfs_mkdir_safe(target_root, pwm);
 
     while offset < data.len() {
         let Some((entry, next_offset)) = parse_next_entry(data, offset) else {
@@ -243,9 +253,10 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
 
         offset = next_offset;
 
-        // 条目名 → 根内绝对路径 (剥 `./` 前缀、折叠 `.`/空段、拒收 `..`)
+        // 条目名 → 目标根内绝对路径 (剥 `./` 前缀、折叠 `.`/空段、拒收 `..`)
         let mut path_buf = [0u8; VFS_MAX_PATH];
-        let Some(path_len) = normalize_entry_path(entry.name, &mut path_buf) else {
+        let Some(path_len) = normalize_entry_path(entry.name, prefix.as_bytes(), &mut path_buf)
+        else {
             continue; // 根条目 / 越界相对段 / 路径过长: 整条跳过
         };
         // 先补齐父目录链, 否则嵌套条目会因父目录缺失而落不了盘
@@ -291,9 +302,10 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
     }
 
     crate::klog_boot_info!(
-        "[INITRAMFS] Unpacked {} files from {} bytes",
+        "[INITRAMFS] Unpacked {} files from {} bytes into {}",
         file_count,
-        data.len()
+        data.len(),
+        target_root
     );
 
     Ok(file_count)
@@ -310,16 +322,21 @@ pub fn unpack(data: &[u8]) -> Result<usize, &'static str> {
 mod tests {
     use super::*;
 
-    /// 归一化后应得到 `expect` (不含前导 `/` 之外的分隔差异).
+    /// 归一化后应得到 `expect` (引导根形态, 前缀为空).
     fn norm_to(name: &[u8], expect: &[u8]) -> bool {
-        let mut buf = [0u8; VFS_MAX_PATH];
-        normalize_entry_path(name, &mut buf).is_some_and(|len| &buf[..len] == expect)
+        norm_to_with(name, b"", expect)
     }
 
-    /// 归一化应整条拒收 (返回 `None`).
+    /// 带目标根前缀的归一化断言.
+    fn norm_to_with(name: &[u8], prefix: &[u8], expect: &[u8]) -> bool {
+        let mut buf = [0u8; VFS_MAX_PATH];
+        normalize_entry_path(name, prefix, &mut buf).is_some_and(|len| &buf[..len] == expect)
+    }
+
+    /// 归一化应整条拒收 (返回 `None`), 引导根形态.
     fn norm_rejected(name: &[u8]) -> bool {
         let mut buf = [0u8; VFS_MAX_PATH];
-        normalize_entry_path(name, &mut buf).is_none()
+        normalize_entry_path(name, b"", &mut buf).is_none()
     }
 
     #[test]
@@ -343,11 +360,62 @@ mod tests {
         assert!(norm_rejected(&[b'a'; VFS_MAX_PATH]), "满长度名字拒收");
         let mut edge = [0u8; VFS_MAX_PATH];
         assert_eq!(
-            normalize_entry_path(&[b'b'; VFS_MAX_PATH - 2], &mut edge),
+            normalize_entry_path(&[b'b'; VFS_MAX_PATH - 2], b"", &mut edge),
             Some(VFS_MAX_PATH - 1),
             "VFS_MAX_PATH-2 长度名字应刚好落盘"
         );
         assert_eq!(edge[VFS_MAX_PATH - 1], 0, "路径后一位必须保持 NUL");
+    }
+
+    #[test]
+    fn test_cpio_normalize_entry_path_with_disk_prefix() {
+        // 磁盘首启安装 (D5-g): 同一归档落到 /disk 下, 前缀不得吞掉分隔符或漏掉首段
+        assert!(
+            norm_to_with(b"./init", b"/disk", b"/disk/init"),
+            "./init -> /disk/init"
+        );
+        assert!(
+            norm_to_with(b"init", b"/disk", b"/disk/init"),
+            "init -> /disk/init"
+        );
+        assert!(
+            norm_to_with(b"/init", b"/disk", b"/disk/init"),
+            "/init -> /disk/init"
+        );
+        assert!(
+            norm_to_with(b"./bin/eash", b"/disk", b"/disk/bin/eash"),
+            "嵌套名保序"
+        );
+        assert!(
+            norm_to_with(b"./bin//eash/", b"/disk", b"/disk/bin/eash"),
+            "空段与尾斜杠折叠"
+        );
+        // 根条目仍整条跳过 (目标根由 unpack 预建, 不得把条目写成 /disk 自身)
+        let mut buf = [0u8; VFS_MAX_PATH];
+        assert!(
+            normalize_entry_path(b".", b"/disk", &mut buf).is_none(),
+            "根条目 . 跳过"
+        );
+        assert!(
+            normalize_entry_path(b"../etc", b"/disk", &mut buf).is_none(),
+            ".. 不得逃出前缀"
+        );
+        // 前缀 + 首段分隔符 + 末尾 NUL 的边界: 装不下必须拒收, 刚好装下必须留 NUL
+        let mut tight = [0u8; 8];
+        assert!(
+            normalize_entry_path(b"init", b"/disk", &mut tight).is_none(),
+            "缓冲区不足拒收"
+        );
+        let mut fit = [0u8; 11];
+        assert_eq!(
+            normalize_entry_path(b"init", b"/disk", &mut fit),
+            Some(10),
+            "刚好落盘"
+        );
+        assert_eq!(&fit[..10], b"/disk/init");
+        assert_eq!(fit[10], 0, "路径后一位必须保持 NUL");
+        // 空前缀与引导根旧形态逐字节同形 (泛化不得让既有根路径漂移)
+        assert!(norm_to_with(b"init", b"", b"/init"), "空前缀 = 引导根形态");
     }
 
     #[test]

@@ -101,7 +101,7 @@ GDB
     echo ""
 }
 
-# D4: 构建非-lockdep initramfs-feature 核 + GRUB module2 ISO (cpio 经 boot-module 交付)
+# D4: 构建非-lockdep 默认核 + GRUB module2 ISO (cpio 经 boot-module 交付)
 source scripts/boot_module.sh
 boot_module_build_nolockdep x86_64 >/dev/null 2>&1
 if ! boot_module_iso_x86; then echo "ERROR: boot-module ISO 组包失败"; exit 2; fi

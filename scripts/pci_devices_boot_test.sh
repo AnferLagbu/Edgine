@@ -60,7 +60,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
         err "other/build/x86_64/kernel.flat 缺失, 跳过"
         RESULT=1
     else
-        # D4: 构建 initramfs-feature 核 + 组 GRUB module2 ISO (cpio 经 boot-module 交付)
+        # D4: 构建默认核 + 组 GRUB module2 ISO (cpio 经 boot-module 交付)
         boot_module_build x86_64 || { err "boot-module 构建失败"; RESULT=1; }
         boot_module_iso_x86 || { err "GRUB module2 ISO 组包失败"; RESULT=1; }
         LOG="$LOG_DIR/pci_boot_x86_64.log"

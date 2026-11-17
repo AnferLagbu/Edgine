@@ -105,13 +105,21 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
 
     // §3 丙 裁定: 单点按 magic 的 match, 不抽 ImageLoader trait.
     // - ELF: 走既有 PT_INTERP 改写 + 进程替换;
-    // - wasm (`\0asm`): 装载内嵌用户态入口桩, 模块路径随 argv[0] 交给桩,
-    //   桩再经 `EG_WASM_LOAD` 让内核读模块 (W-7).
-    let (image_ptr, image_len) = if crate::functions::wasm::stub::is_wasm_image(&image) {
-        let stub = crate::functions::wasm::stub::stub_image();
-        if stub.is_empty() {
+    // - wasm (`\0asm`): 从 VFS 读用户态入口桩 (D4 严格零嵌入, 不再编译期嵌入),
+    //   模块路径随 argv[0] 交给桩, 桩再经 `EG_WASM_LOAD` 让内核读模块 (W-7).
+    let stub = if crate::functions::wasm::stub::is_wasm_image(&image) {
+        let Some(bytes) = crate::functions::fs::api::read_file_kernel(
+            crate::functions::wasm::stub::stub_path(),
+            0,
+            ELF_MAX_SIZE,
+        ) else {
             return Err(Errno::Enoexec);
-        }
+        };
+        Some(bytes)
+    } else {
+        None
+    };
+    let (image_ptr, image_len) = if let Some(stub) = &stub {
         (stub.as_ptr() as u64, stub.len() as u64)
     } else {
         crate::privileged::proc::elf::prepare_elf_image(&mut image);

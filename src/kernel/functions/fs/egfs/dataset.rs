@@ -178,6 +178,17 @@ impl EgfsDataset {
         self.mounted.store(true, Ordering::Release);
     }
 
+    /// 恢复既有对象集后转为 Active 并标记已挂载 (不重建根目录对象).
+    ///
+    /// `init` 会 `objset.init()` 推入全新根目录并复位 `next_obj_id`, 用在反序列化之后
+    /// 会抹掉盘上恢复的对象表; 而只恢复数据不翻状态位, `state` 停在 `Creating` ⇒
+    /// `is_writeable()` 恒假, 二启恢复出来的磁盘根是只读的.
+    pub fn activate(&self) {
+        self.state
+            .store(EgfsDsState::Active as u8, Ordering::Release);
+        self.mounted.store(true, Ordering::Release);
+    }
+
     /// 是否处于 Active 状态.
     pub fn is_active(&self) -> bool {
         self.state.load(Ordering::Acquire) == EgfsDsState::Active as u8

@@ -10,11 +10,11 @@ use userlib::sys::{
     CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD,
     CLONE_VM, IPPROTO_TCP, InAddr, O_RDONLY, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM,
     SOL_SOCKET, SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime,
-    clone_thread, close_socket, env_chdir, env_chroot, exit_group, fork, fs_close, fs_open,
-    fs_read, fs_write, futex_wait, futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill,
-    listen, nanosleep, pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot,
-    sched_yield, send, setsockopt, shutdown, socket, tgkill, wait_pid, wait_pid_status,
-    wait_pid_status_nohang,
+    clone_thread, close_socket, env_chdir, env_chroot, env_pivot_root, exit_group, fork, fs_close,
+    fs_mkdir, fs_open, fs_read, fs_write, futex_wait, futex_wait_bitset, futex_wake, getpid,
+    getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec, proc_exit, recv,
+    rt_sigaction, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill,
+    wait_pid, wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -58,6 +58,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 pub extern "C" fn _start() -> ! {
     print_char(b'X');
     print_char(b'\n');
+    // ── D5-h: Linux 式 switch_root (须在所有探针之前) ──────────────────────
+    // 带盘时把视图根从引导根 (ramfs) pivot 到磁盘真实根 /disk, 此后下方所有
+    // 探针的路径都落到 EGFS; 无盘时打印 SKIP, 探针仍在引导根下跑 (既有腿不变).
+    switch_root_probe();
     // IPC 机制探针: 覆盖 `kernel_init` 的 `ipc_init()` 接线 (未接线时首次
     // `pipe()` 会按 0..IPC_MAX_PIPES 索引空 Vec 而越界 panic). 须在 fork 前
     // 同步完成, 避免与 echo 子进程的 fd 分配交错.
@@ -121,16 +125,24 @@ pub extern "C" fn _start() -> ! {
     sig_probe();
 
     // ── K-07b 批2: execve 运行时探针 ────────────────────────────────────
-    // 载荷 `/bin/exectest` 只在 initramfs 载体启动时存在; 默认启动 (无文件
-    // 系统载体) 会打印 FAIL, 与网络探针"无宿主服务即 FAIL 并继续"同口径.
+    // 载荷 `/bin/exectest` 只来自 boot-module cpio; 载体缺失时自检打印 SKIP
+    // (A-14 三态), 载荷在而腿失败才打印 FAIL, 与网络探针"无宿主服务即 FAIL
+    // 并继续"同口径.
     // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
     exec_probe();
 
     // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
-    // 自写最小 wasm 模块 → fork → execve 该路径 (命中 `\0asm` 分派, 改装用户态
-    // 桩) → 父进程按 wstatus == 0 判定 (模块 `_start` 正常返回 0). 不依赖
-    // initramfs 载体, 默认启动与载体启动都会跑; 失败打印 `[WASM] FAIL` 并继续.
+    // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
+    // 改装用户态桩) → 父进程按 wstatus == 0 判定 (模块 `_start` 正常返回 0).
+    // 载体缺失时自检打印 SKIP; 失败打印 `[WASM] FAIL` 并继续.
     wasm_probe();
+
+    // ── P1: 用户态 wasmi stdio demo 探针 ─────────────────────────────────
+    // wasi-sdk 真产物 hello_wasi.wasm (最小 WASI: fd_write + proc_exit) → fork →
+    // execve (命中 `\0asm` 分派). wasm_userspace feature 腿装用户态 wasmi 桩
+    // wasmrun, stdio 输出 "hello from wasmi" 且退出码 0. 事实报告退出码 (不判
+    // PASS/FAIL), 由专项 QEMU 腿按 feature 消费.
+    wasmi_probe();
 
     // ── #108 丙: aarch64 缺页 / COW 恢复路径真链探针 ─────────────────────
     // 必须在 busy 忙等子进程 fork 之前同步完成: 三腿都靠父进程 wait4 收割子进程,
@@ -204,6 +216,65 @@ pub extern "C" fn _start() -> ! {
         }
     }
     busy_wait(b'+');
+}
+
+/// `mkdir` 的 `EEXIST` 返回码 (内核 `Errno::Eexist = 17`, syscall 取负).
+const EEXIST: i32 = 17;
+
+/// D5-h: Linux 式 `switch_root` — 把视图根从引导根换成磁盘真实根.
+///
+/// 拓扑由 D5-e 裁定: 内核恒把 ramfs 挂 "/", EGFS 只挂非根挂载点 "/disk", 并把
+/// boot-module cpio 全量安装进去 (`functions/init.rs::install_disk_root`). 本函数
+/// 在**所有探针之前** pivot 到 "/disk", 此后用户态路径一律落到磁盘根.
+///
+/// A-14 同口径三态: 磁盘根未安装 (无盘) 打印 SKIP; 装了盘但 mkdir/pivot/读回失败
+/// 打印 FAIL 并继续 —— 不 panic, 后续探针仍在引导根下跑, 失败信号由
+/// `scripts/aarch64_egfs_disk_boot_test.sh` 消费.
+///
+/// SIMPLIFIED: 不 re-exec 新根的 `/init` (Linux `switch_root` 会 exec); 影响面:
+/// 本进程映像仍来自引导根, 只有文件访问改走磁盘根; 何时需扩展: 磁盘根 init 与
+/// 引导 init 分叉时补 `proc_exec(b"/init\0")`.
+fn switch_root_probe() {
+    if !file_present(b"/disk/init\0") {
+        println("[SWROOT] SKIP: no disk root");
+        return;
+    }
+    // put_old 二启时已存在, EEXIST 即复用 (与 Linux switch_root 工具同口径).
+    let mkdir_rc = fs_mkdir(b"/disk/oldroot\0");
+    if mkdir_rc != 0 && mkdir_rc != -EEXIST {
+        print("[SWROOT] FAIL: mkdir /disk/oldroot rc=");
+        print_dec(i64::from(mkdir_rc));
+        print_char(b'\n');
+        return;
+    }
+    let pivot_rc = env_pivot_root(b"/disk\0", b"/disk/oldroot\0");
+    if pivot_rc != 0 {
+        print("[SWROOT] FAIL: pivot_root rc=");
+        print_dec(i64::from(pivot_rc));
+        print_char(b'\n');
+        return;
+    }
+    // 切根后以**视图路径** "/init" 读回: 旧根挂载已被摘除, 该路径只能解析到磁盘根,
+    // 故读到字节即证明用户态文件访问真落到 EGFS, 而不是"只改了根前缀".
+    let fd = fs_open(b"/init\0", O_RDONLY, 0);
+    if fd < 0 {
+        print("[SWROOT] FAIL: open /init after pivot rc=");
+        print_dec(i64::from(fd));
+        print_char(b'\n');
+        return;
+    }
+    let mut buf = [0u8; 64];
+    let n = fs_read(fd, &mut buf);
+    let _ = fs_close(fd);
+    if n <= 0 {
+        print("[SWROOT] FAIL: read /init after pivot rc=");
+        print_dec(i64::from(n));
+        print_char(b'\n');
+        return;
+    }
+    print("[SWROOT] PASS: pivot to /disk, read /init bytes=");
+    print_dec(i64::from(n));
+    print_char(b'\n');
 }
 
 /// IPC 管道端到端探针 (回归锁: 管道已纳入 VFS fd 对象模型).
@@ -326,9 +397,9 @@ fn tls_read_word() -> u64 {
 /// 3. 父子进程各持不同基址并交替 `sched_yield`, 每次重新被调度后读回的仍是
 ///    自己的 magic —— 切换漏恢复即读到对方的块 (或基址 0).
 ///
-/// `execve` 清零路径不在本探针内: 默认启动环境只加载内嵌 init 一个 ELF
-/// (未启用 initramfs), 无法构造成功的 `execve` 目标; 该路径由 host 侧源码
-/// 契约测试 (`host-tests/tests/tls_base_restore_test.rs`) 锁定.
+/// `execve` 清零路径不在本探针内: 本探针不构造 `execve` 目标 (exec 射程由
+/// `exec_probe` 单独覆盖); exec 后基址清零的源码面由 host 侧契约测试
+/// (`host-tests/tests/tls_base_restore_test.rs`) 锁定.
 fn tls_probe() {
     let addr_a = tls_addr(&TLS_BLOCK_A);
     let addr_b = tls_addr(&TLS_BLOCK_B);
@@ -1114,8 +1185,8 @@ const EXEC_LEG_ROOT: &[u8] = b"root";
 /// 任一腿失败打印 `[EXEC] FAIL` 并继续启动 (与网络探针同口径), 两条腿全过才
 /// 打印 `[EXEC] PASS`.
 ///
-/// A-14: 两腿的靶子 `/bin/exectest` 只来自 initramfs cpio, 默认启动的根是空
-/// ramfs ⇒ 无载体时按设计不可能成功. 故先自检载体, 无载体打印 `[EXEC] SKIP:
+/// A-14: 两腿的靶子 `/bin/exectest` 只来自 boot-module cpio, 载体缺失时根是空
+/// ramfs ⇒ 按设计不可能成功. 故先自检载体, 无载体打印 `[EXEC] SKIP:
 /// no carrier` 并跳过两腿 —— 否则三行「预期失败」与真回归在日志里同形.
 fn exec_probe() {
     if !carrier_present() {
@@ -1136,7 +1207,7 @@ fn exec_probe() {
 }
 
 /// 载体自检: 两腿最终解析到的都是真实路径 `/bin/exectest`, 该文件在不在即可
-/// 判定载体 (`feature = "initramfs"` 解包) 是否就位. 用 `open` 而非 `stat` ——
+/// 判定载体 (boot-module cpio 解包) 是否就位. 用 `open` 而非 `stat` ——
 /// 用户态没有 stat 包装, 且 `open` 走的正是两腿要验证的那套路径解析.
 ///
 /// SIMPLIFIED: 只判能否打开, 不校验常规文件位与 x 位; 影响面: 载体存在但权限
@@ -1169,7 +1240,7 @@ const WASM_PROBE_PATH: &[u8] = b"/bin/hello.wasm\0";
 /// `EG_WASM_LOAD/RUN` 把模块跑到正常结束, 退出码才为 0. 任一环节断裂都会落到
 /// 非 0 (子进程侧 exec 失败统一 `proc_exit(3)`, 桩失败 `proc_exit(1)`).
 ///
-/// A-14 同口径: 载荷只来自 initramfs 载体, 默认启动的空 ramfs 下自检后打印
+/// A-14 同口径: 载荷只来自 boot-module cpio, 载体缺失时自检后打印
 /// `[WASM] SKIP: no carrier`, 避免「无载体导致的预期失败」与真回归同形。
 fn wasm_probe() {
     if !file_present(WASM_PROBE_PATH) {
@@ -1192,6 +1263,43 @@ fn wasm_probe() {
         println("[WASM] PASS: exec+run");
     } else {
         println("[WASM] FAIL: status");
+    }
+}
+
+/// P1 wasmi stdio demo 载荷路径: 只来自 initramfs cpio (`bin/hello_wasi.wasm`).
+const WASMI_PROBE_PATH: &[u8] = b"/bin/hello_wasi.wasm\0";
+
+/// P1 用户态 wasmi stdio demo 探针: fork → `execve(hello_wasi.wasm)` → 父进程收割.
+///
+/// 与 [`wasm_probe`] 的区别: 载荷是 wasi-sdk 编译的真实工具链模块 (最小 WASI 子集
+/// `fd_write` + `proc_exit`), 经用户态 wasmi 桩 wasmrun 解释执行, `fd_write` 翻译到
+/// `write` syscall, "hello from wasmi" 直达串口. 本探针**事实报告**子进程退出码
+/// (`[WASMI] exit=N`), 不判 PASS/FAIL —— 由专项 QEMU 腿 (`scripts/wasmi_boot_test.sh`)
+/// 消费 `exit=0` + stdio 输出. 该腿以 `wasm_userspace` feature 构建, exec 派发只读
+/// `/bin/wasmrun`, 故 stdio 输出必出自 wasmi (证明力来自选桩, 非载荷不兼容).
+fn wasmi_probe() {
+    if !file_present(WASMI_PROBE_PATH) {
+        println("[WASMI] SKIP: no carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [WASMI_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let _ = proc_exec(WASMI_PROBE_PATH, &argv, &[]);
+        proc_exit(3);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[WASMI] exit=fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) {
+        print("[WASMI] exit=");
+        print_dec(i64::from(status));
+        print_char(b'\n');
+    } else {
+        println("[WASMI] exit=reap");
     }
 }
 
