@@ -516,18 +516,18 @@
 ### 目标
 
 - **docs/plan 全量 plan 文档与实装对齐表**
-  - 描述: 一表覆盖 `docs/plan/` 全部非归档 plan（19 份 = 甲 16 + 乙 3；已完成册归档至 `archive/`，乙表保留其历史闭环记录），含主题 + 口径 C 实测计数 + 仍开放条目 + 一致性评估
+  - 描述: 一表覆盖 `docs/plan/` 全部非归档 plan（20 份 = 甲 17 + 乙 3；2026-11-17 新增 subsystem-decoupling；已完成册归档至 `archive/`，乙表保留其历史闭环记录），含主题 + 口径 C 实测计数 + 仍开放条目 + 一致性评估
   - 方案: 见 §现状 总览表（甲：仍开放项；乙：已闭环）+ 5 张早期基线详情表
   - 状态: [X] (见 §现状总览表 + 5 张详情表；总览表已按轮次整表重新对账)
 
 ### 现状 (2026-08-03)
 
 - **总览表（整表重新对账）**
-  - 描述: `docs/plan/` 非归档 19 份 plan 与实装的对齐情况（甲 16 / 乙 3 非归档），乙表另有归档 26 份历史闭环（乙表合计 29 行）。**2026-11-16/17 整表重算（解耦批 D6 收口）**：`ls docs/plan/*.md` 实测 19 份，原表只列 14 份 ⇒ 补齐 5 行（甲 4：userspace-decoupling / wasm-userspace-migration / mm-lifecycle-project / uefi-thread-exit-hang；乙 1：dhcpv6-client），并订正本册自计 `[X]` 79→80（HEAD 版即 80，属预存漂移）。**2026-11-13 归档批**：将 10 册经源码验证已完成的工程移入 `archive/`（wasm-runtime-wiring / ci-rustdoc-closeout / eevdf-scheduler / fd-object-model-unification / lockdep-observer-liveness-metric / msi-x-complete-project / aarch64-kernel-fp-free / kpti-complete-project / bounded-wait-deadline / aarch64-reap-timeout-rootcause）
+  - 描述: `docs/plan/` 非归档 19 份 plan 与实装的对齐情况（甲 16 / 乙 3 非归档），乙表另有归档 26 份历史闭环（乙表合计 29 行）。**2026-11-16/17 整表重算（解耦批 D6 收口）**：`ls docs/plan/*.md` 实测 19 份，原表只列 14 份 ⇒ 补齐 5 行（甲 4：userspace-decoupling / wasm-userspace-migration / mm-lifecycle-project / uefi-thread-exit-hang；乙 1：dhcpv6-client），并订正本册自计 `[X]` 79→80（HEAD 版即 80，属预存漂移）。**2026-11-17 新增**：`subsystem-decoupling.md` 入甲表 ⇒ `ls` 19→20、甲 16→17（期一 S-1..S-5 + 期二 T-1..T-4 共 9 状态字段全开放）。**2026-11-13 归档批**：将 10 册经源码验证已完成的工程移入 `archive/`（wasm-runtime-wiring / ci-rustdoc-closeout / eevdf-scheduler / fd-object-model-unification / lockdep-observer-liveness-metric / msi-x-complete-project / aarch64-kernel-fp-free / kpti-complete-project / bounded-wait-deadline / aarch64-reap-timeout-rootcause）
   - 方案: 统一按 §对账方法 **口径 C** 计数（状态字段行 + markdown 勾选 + 表格行级状态；镜像/汇总/证据/背景表逐册去重）。甲 12 行（2026-11-13 归档后；移出 8 册已闭行、原 19 行）合计 **307 完成 / 86 开放 / 3 部分**（其中 `unresolved-issues` 的 ≈25 为清单类定性读数，令牌开放为 63）；含乙 1 行共 **366 / 86 / 3**（**2026-11-13 说明**：该合计为历史快照，多册自此前已陆续收口且未逐项重算；当前以甲/乙表逐行状态为准）
   - 状态: [X]
 
-  **甲・仍有开放项（16 份）**
+  **甲・仍有开放项（17 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
   |---|---|---|---|---|---|
@@ -546,6 +546,7 @@
   | wasm-userspace-migration.md | WASM 运行时退用户态（wasmi 先行，内核侧解释器过渡待退役） | 2 / 7（口径 C：9 行首状态字段，无勾选/表格形态；D2 + P0 `[X]`） | D1/D3/D4 三项决策字段未回填；P1（wasmi vendored 集成 + stdio demo）载体接线已随 D4-d 重做但 stdio 端到端暂停；P2 WASI 38 函数翻译层；P3 测试覆盖 + 真实载荷验收；P4 干净退役内核侧 | 部分一致：P0 前提（用户态 alloc + mmap 接线）与 vendoring / 构建接线 / wasmrun 实装已落，P1 阻塞于 mm 生命周期工程 M1 裁定 | `ELF_MAX_SIZE` 1 MiB 整文件读上限余量：wasmrun stripped 后 x86_64 ~348 KiB / aarch64 ~249 KiB，P2 全量 WASI 只会让桩更大（余量记在 mm-lifecycle-project 附项） |
   | mm-lifecycle-project.md | 进程地址空间描述符（mm）生命周期缺口：生产 ELF 装载路径从不安装 `MmStruct` | 1 / 6（口径 C：7 行首状态字段；M0 `[X]`） | M1 实现路径裁定（A 简约 / B 相对完整，待用户）；M2 装载路径安装 mm、M3 mmap/munmap 裸页回退处置（均阻塞于 M1）；M4 回归装备；M5 收口 + P1 恢复；附项 ELF 整文件读上限余量（待用户决定是否单开一批） | 一致：M0 归因与证据固定已出数（源码读数 + wasmi 腿双架构真跑取证），其余按裁定门禁未开工 | 非 wasm 专属 bug，是「用户态动态内存」链的系统性缺口；M1 裁定是 wasm P1 stdio 端到端的前置。用户裁定「单独立项，本轮先收口解耦批」 |
   | uefi-thread-exit-hang.md | UEFI 引导下 init 线程探针挂死（预存缺陷，独立工程） | 0 / 2（口径 C：2 行首状态字段） | U-1 双核 `group_exit_leg` 确定性挂死（5/5 FAIL `reap-timeout code=0`）；U-2 单核下更早的静默挂死（心跳 tick 亦停） | 一致：已负控制直证非 D4-i 乙引入（同一 ISO / 同一内核，BIOS 全绿）；UEFI 门禁腿按用户裁定以显式「已登记预存缺陷」横幅声明**不判** `[THREAD]`，非静默跳过，实测行仍打印供对账 | 取证改装三案（甲 gdbstub / 乙 三出口无条件打印 / 丙 diag 旁增发射面）待用户授权后施工 |
+  | subsystem-decoupling.md | 子系统间解耦（接口中立化 + 注册式挂载 + 判定出口收敛） | 0 / 9（口径 C＝A＝B：9 行首状态字段，无勾选/表格行级状态；期一 S-1..S-5 + 期二 T-1..T-4 全 `[]`） | 期一 S-1 `register_filesystem`、S-2 SHA-256 归位、S-3 删 EGFS 死字段、S-4 设计立场册、S-5 收口；期二 T-1 判定出口收敛 / T-2 主体客体两 trait / T-3 ramfs 判定上提 + 载体中立化 / T-4 盘上字段命名中立化 —— **期二待授权**（SGEG 冻结期开工＝先替 v2 定接口） | 一致：EGFS 判定耦合已为 0（D5-i 摘净），残留仅盘上字段 + 1 处 FREG 域注册 + 1 处 SHA-256 复用；`register_filesystem` 缺失（`vfs_mount.rs:66-81` match 硬编码 + `mod.rs:137-145` 硬编码两行）；载体中立化缺失（`pwm: u64` 进 `FileSystem` trait） | **2026-11-17 新增本行**：用户裁定 B 完整解耦工程单独立项 + 分两期（期二待授权）；调研发现载体中立化受阻于 ramfs 11 处 `check_permission`（`ramfs_data.rs:383-426` 把 pwm 当身份用），故由期一修正到期二，见本册 §五 |
   | progress-active-tasks.md | 本文件：活跃任务进度对比基线 | 80 / 0（+0 `[~]`；口径 C，含本册全部状态字段。**2026-11-16 订正**：HEAD 版实测即 80 `[X]`，原记 79 属预存漂移，本轮整表重算一并更正。**2026-11-13 订正**：原 `+1 [~]` 即 cast 1910 处项，已由 P-64 关闭、line 480 转 `[X]` ⇒ `[X]` 78→79、`[~]` 1→0） | 无活开放项（原 `[~]` cast 1910 处 `try_from` 改造已由 P-64 cast 清零工程关闭、DECISION-041 保留模型作废；line 480 历史 `[~]` 已按 §9.2 转 `[X]` 并追加订正） | 一致；按状态口径统计命中的 1 处 `状态：[]` 是乙表 duplicate-impl 行引用他文档文本，非待办。**计数口径（本轮踩坑后固化）**：① 只统计**行首**状态字段行（`^\s*(?:[-*]\s*)?状态\s*[:：]`），散文内作为被描述对象出现的形态字符串不计入；② 计数前先把 `**状态**：` 归一化成 `状态：`（少这步会把 bold 形态整批漏掉，本轮曾因此得 20/53 与 72/75 两组假读数）；③ 表格单元格形态已由口径 C 纳入：本册 5 张详情表均为镜像/汇总表，按去重规则归属目标册或不计 ⇒ 本册自计只含状态字段；逐表判定见 §对账方法 | 机制项，随轮更新 |
 
   **乙・状态字段已全量闭环（29 份；其中 26 份已归档至 `archive/`）**
