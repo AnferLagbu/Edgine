@@ -31,6 +31,10 @@
 cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) 主导. **剥离符号只买
 ~35 KiB, 是止血不是解**——内核镜像本就不该承载用户态.
 
+> 上述嵌入点与读数是**立项当时**的形态 (历史记录). D3/D4 收口后三类嵌入均已真删, 出货默认
+> 构建 (lockdep 常开) 实测 `kernel_end=0x3E8000` (x86_64, 距 `USER_CODE_BASE=0x400000`
+> 余 96 KiB), 用户态字节零嵌入; 详见 D3/D4 各自的收口条.
+
 **Linux 的三层解耦 (参照)**:
 1. 地址空间层: 内核高半区 (`0xFFFFFFFF80000000+`, KASLR) + 直射区 (`page_offset_base` 线性
    映射全部物理 RAM), 用户低半区 `0x400000`/`0x5555…`/`0x7f…`; 内核经 high-half 直射访问
@@ -76,7 +80,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **方案**: 删 [functions/init.rs](../../src/kernel/functions/init.rs) 与
   [functions/wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs) 的全部用户态 `include_bytes!`
   与内嵌回退分支; exec `\0asm` 派发改「从 VFS 读 `/bin/wasmstub`(或 `wasmrun`)」.
-- **状态**: []
+- **状态**: [X] (由 D3/D4-c/D4-d 落地; 全仓 `include_bytes!` 只剩字体与 x86 `stage1.bin` 两项非用户态产物, exec 的 `\0asm` 派发经 `wasm/stub.rs` 从 VFS 读桩)
 - **详情**: 用户裁定「严格零嵌入 (对齐 Linux)」. 代价: **所有进入用户态的启动腿** (`-kernel`
   裸起) 必须改 `-initrd` 携 cpio, 否则只能停在内核 (对齐 Linux「无 initrd 即 mount 不到 root」).
 
@@ -87,7 +91,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   `parse_multiboot2` 只处理 tag 4/6/8, tag 3 落 `_ => {}`); aarch64 = **DTB
   `/chosen/linux,initrd-start` + `linux,initrd-end`** ([privileged/dtb.rs](../../src/kernel/privileged/dtb.rs) 新增解析).
   二者统一产出 `BootInfo` 的 `initrd_base/size`, PMM 预留下界以保护该区不被复用.
-- **状态**: []
+- **状态**: [X] (由 D1/D2 落地: x86_64 `parse_multiboot2` 的 tag 3 分支 + aarch64 `dtb.rs` 的 `/chosen` `linux,initrd-start/end` 解析, 统一产出 `BootInfo` 的 initrd 区)
 - **详情**: 同概念 (boot 交位置、内核读区、PMM reserve) 两套协议. `privileged` 面新增 unsafe
   (裸指针读 boot 结构) → 必配 `// SAFETY:` (F4). QEMU `-kernel kernel.flat -initrd cpio` 是否
   按 MB2 模块装载须 D0 实测.
@@ -95,10 +99,12 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 ### 决策 C: aarch64 EGFS 磁盘根接入
 
 - **描述**: aarch64 经 virtio-blk 发现并挂 EGFS 根、从磁盘装载用户态, 补齐生产形态.
-- **方案**: 去 [lib.rs:940](../../src/kernel/lib.rs#L940) `target_arch="x86_64"` 门控;
-  接 virtio-blk → EGFS `init()` 自动发现 → `vfs_mount_internal("/", "egfs")`; 补 aarch64
-  EGFS 磁盘镜像生成 (QEMU virt 加 virtio-blk 盘) + 磁盘根启动腿.
-- **状态**: []
+- **方案**: 去 [lib.rs](../../src/kernel/lib.rs) EGFS 挂载块的 `target_arch="x86_64"` 门控;
+  接 virtio-blk → EGFS `init()` 自动发现 → `vfs_mount_safe("/disk", "egfs")` (**D5-e 裁定 B**:
+  引导根恒为 ramfs, EGFS 只挂非根挂载点, 由用户态 init `pivot_root` 切根进磁盘根; 原
+  `vfs_mount_internal("/", "egfs")` 挂根方案作废); 补 aarch64 EGFS 磁盘镜像生成 (QEMU virt
+  加 virtio-blk 空白盘, 内核自格式化) + 磁盘根启动腿.
+- **状态**: [X] (由 D5 落地: 架构中立挂载 + virtio-blk legacy 超时修复 + 挂载 NUL 终止修复 + D5-e 引导根/磁盘根分离 + D5-h 用户态切根; aarch64 三相腿实测 `EGFS mounted at /disk (disk)` → `disk root installed: 12 files` → `[SWROOT] PASS: pivot to /disk` 全绿)
 - **详情**: T-01 现状 (aarch64 有 virtio-blk 无 FS 消费). 镜像生成方案 (主机 `mkfs.egfs` 工具
   或缺则先 x86_64 建盘后复用) 待 D0 定; 现无 EGFS 格式化工具, 是 D0 的开放子项.
 
@@ -149,7 +155,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
     `pci_devices_boot_test.sh` / `lockdep_feature_probe.sh` / `lockdep_overhead_ab.sh` /
     `wasmi_boot_test.sh` / `qemu_liveness_probe.sh` 等) 与各自 `-kernel` 起法.
   - 定 aarch64 EGFS 磁盘镜像生成方案 (无 `mkfs.egfs` 工具).
-- **状态**: []
+- **状态**: [X] (三项调研均已出数: 双架构 initrd 交出方式实测归 D1/D2; 启动腿枚举与迁移归 D4-b; aarch64 镜像方案定为**空盘自格式化**, 无需 host `mkfs.egfs` —— 该工具仍列开放议题, 但不再是 D5 的前置)
 - **详情**: D0 实测结论决定 D1/D2/D3 的具体形态; 不得跳过. L0 spike (2026-11-16) 已确认: 工具
   齐备、GRUB BIOS+UEFI 均到 Ring 3、aarch64 DTB `/chosen` 交出 initrd; 余项 = 各 loader 的
   `MULTIBOOT_MAGIC` 与模块结构确认 (归 D1 落地时以 `MULTIBOOT_MAGIC` 实测 + 回归锁).
@@ -210,7 +216,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   aarch64 [init.rs:200](../../src/kernel/functions/init.rs#L200)); 删 [wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs)
   两架构 `include_bytes!`, exec `\0asm` 派发改从 VFS 读桩 (`/bin/wasmstub` 默认 / `/bin/wasmrun`
   wasm_userspace 腿, cpio 相应含对应桩); `build.rs` 相应护栏/`rerun-if-changed` 收口.
-- **状态**: []
+- **状态**: [X] (三类嵌入全删; cpio 经 D3-cpio 子批, init.bin 经 D4-c, wasm 桩经 D4-d)
 - **详情**: 真删 (F9), 非 `allow(dead_code)`. 与 P1 交互: P1 的「feature 选桩」由「编译期嵌哪个桩」
   改为「initrd 内含哪个桩 + init exec 哪个」; carrier 无关的 P1 资产 (wasmrun/wasmi vendoring/
   wasi fixture) 保留.
@@ -235,13 +241,18 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   全 PASS; **x86 K-08 因 cpio 出镜像而解除**(feature 构建核回小)。build all 6/6、quick 审计绿。**余(严格全
   零嵌入尾项)**: init.bin 与 wasm 桩仍嵌入(约合默认 0x3f5000, 非 K-08 主因) + exec `\0asm` 读 VFS + 默认
   启动腿改 module —— 归后续子批/D4.
+- **D3 收口 (严格零嵌入达成)**: 上述尾项由 D4-c (init.bin) 与 D4-d (wasm 桩 + exec 读 VFS) 补齐.
+  内核侧 `include_bytes!` 只剩**非用户态**两项: 字体 `font8x16.raw` 与 x86_64 引导码 `stage1.bin`
+  (后者随 L0 loader 现代化退役). 出货默认构建实测 `kernel_end=0x3E8000` (x86_64),
+  `verify_image_arch.py` 的「镜像逐字节包含产物」降为信息提示 (硬判据 = 产物 `e_machine`),
+  两架构载体腿均报 `[INFO 零嵌入] …未包含…完整字节 (D4 零嵌入下为常态)`.
 
 ### D4: 启动腿改造 (-initrd 携载)
 
 - **描述**: 全部进入用户态的启动腿改 `-initrd <cpio>`, 使零嵌入后仍能进 Ring 3.
 - **方案**: 逐脚本改 `-kernel` 起法附 `-initrd`; 覆盖门槛 5 (`qemu_boot_test.sh`) / e2e / P-62
   feature 运行腿 / wasmi 腿; `initramfs_boot_test.sh` 由「feature 载体腿」转为默认形态.
-- **状态**: [] (载体迁移全部已落, 余 wasmi 腿随 D4-d)
+- **状态**: [X] (载体迁移全部已落; wasmi 腿属 P1 资产, 暂停于 mm 生命周期工程)
 - **详情**: 波及 12+ 腿 (D0 清单). 每条改后单独真跑一次取证 (红先归因, §QEMU 纪律).
 - **D4-b 载体迁移已落 (2026-11-16)**: 全 user-mode 腿改 boot-module 载体, 单源 helper
   `scripts/boot_module.sh` (`boot_module_build` / `boot_module_iso_x86` / `boot_module_carrier_args`:
@@ -256,13 +267,120 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   `e_machine`, 产物仍是本架构 cpio 来源); (d) K-07b 契约锁改 `assert_absent("falling back to init.bin")`.
   读数: build all 6/6 绿 (含 P-62 needle 同批重指 `KERNEL_FEATURES="$feat initramfs"`),
   headline QEMU 双架构绿 (`init from /init` 经 module), aarch64 COW 腿绿.
+- **D4-d wasm 桩去嵌入 + exec 读 VFS 已落**: (a) [wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs)
+  删两架构 `include_bytes!`, 只留 `stub_path()` (`wasm_userspace` 点亮 → `/bin/wasmrun`, 否则
+  `/bin/wasmstub`; **两桩恒在 cpio 内**) 与 `is_wasm_image()`; (b)
+  [exec.rs](../../src/kernel/functions/proc/exec.rs) 的 `\0asm` 分派改以无 fd 的
+  `read_file_kernel(stub_path(), 0, ELF_MAX_SIZE)` 从 VFS 读桩, 读不到即 `Enoexec` (不静默回落);
+  桩 `Vec` 绑定在分派块**外** (块内 `let` 到块尾析构 ⇒ 交给 `proc_exec_replace` 的指针悬垂);
+  (c) `build.rs` 删 wasm 桩护栏, 只剩 x86_64 `stage1.bin` 一项嵌入护栏;
+  (d) **exec 上限红归因与收口**: `wasmrun` 未剥离符号时 x86_64 1,209,424 B / aarch64 1,427,776 B
+  **双双超 `ELF_MAX_SIZE = 1 MiB`** ⇒ 载体腿 ENOEXEC. 收口方式 = Makefile 全部 18 条
+  ELF → `.bin` 规则改 `$(OBJCOPY) --strip-all` (**按架构 objcopy**; GNU 原生 `strip` 读不了
+  aarch64 ELF), **未抬高任何内核上限**. 剥离后 692,400 B / 793,640 B, 余量 ~348 KiB / ~249 KiB
+  (长期约束记于 [mm-lifecycle-project.md](./mm-lifecycle-project.md) 附条).
+  读数: build all 6/6、双架构载体腿五条判据全绿 (解包 12 条目 / `init from /init` / `[THREAD] PASS` /
+  EEVDF 守恒 / `[EXEC] PASS` / W-7 wasm 端到端).
+- **D4-d 附带发现 = mm 生命周期缺口 (单独立项, 不在本批修)**: wasmi 腿 (P1 资产) 双架构真跑红,
+  归因为「生产 ELF 装载从不安装 `MmStruct` ⇒ `mmap` 无 mm 回退把**物理地址**返给用户态 ⇒
+  首写翻译故障」(x86 `cr2=0x1F800000` / aarch64 `FAR=0x5FA00000`), 同时触碰 I2/I4.
+  用户裁定**单独立项** ⇒ [mm-lifecycle-project.md](./mm-lifecycle-project.md);
+  P1 wasmi 端到端暂停, 其脚本 `scripts/wasmi_boot_test.sh` 保留为未接线资产
+  (**不接 `ci/audit.sh`**: 该脚本 `err()` 致命退出, 接已知红腿会掩盖其余门槛读数).
+- **D4-e 退役空 `initramfs` feature 已落 (用户裁定「本轮退役」)**: D4-c/D4-d 后该 feature
+  门控**零行代码** (解包无条件执行) ⇒ 空旋钮真删. 四份 Cargo.toml (kernel 壳 / functions /
+  privileged / `src/rust` 壳) 删声明; `boot_module.sh` 的 `boot_module_build` 转
+  `make ARCH=<arch> all` (出货默认, lockdep 常开), 另留 `boot_module_build_nolockdep`
+  供 liveness/perf 测量腿 (其理由是**观测开销失真**, 与 K-08 无关, 故 `KERNEL_NO_DEFAULT`
+  只在载体腿退役、测量腿保留); 载体腿删 feature 切换与尾部复原, 直接跑出货默认镜像;
+  wasmi 腿改 `KERNEL_FEATURES="wasm_userspace"`; 八处脚本措辞「initramfs-feature 核」→「默认核」;
+  host 契约锁 `test_initramfs_feature_is_off_by_default` 重写为 `test_initramfs_feature_retired`
+  (四份 Cargo.toml 负向钉 + `scripts/*.sh` 树级扫描拒收向 `KERNEL_FEATURES` 塞 initramfs),
+  载体腿构建针重指 `make ARCH="$arch" all` 并负向钉住不得再出现 `KERNEL_FEATURES` /
+  `KERNEL_NO_DEFAULT`; P-62 needle 同批重指 `KERNEL_FEATURES="$feat" all`.
+  读数: build all **6/6**、`make test-host` **197 个测试二进制全 ok**、双架构载体腿
+  **五条判据全绿** (出货默认镜像, x86 `kernel_end=0x3E8000` ⇒ K-08 未触发, 余 96 KiB).
+- **D4-f 真机介质载体补齐已落 (2026-11-16)**: 零嵌入后介质必须自带 boot-module, 否则真机无 PID 1.
+  (a) x86_64: `Makefile` `iso` 目标 (`iso: all user`) 的 GRUB 配置补 `module2 /boot/initramfs.cpio initramfs`,
+  [make_boot_medium.sh](../../scripts/make_boot_medium.sh) 复用该目标 (不另写一份 GRUB 逻辑);
+  (b) aarch64: 构建改 `make ARCH=aarch64 all user`, cpio 经 `mcopy` 落 FAT 分区 `/initramfs.cpio`,
+  `extlinux.conf` 补 `initrd /initramfs.cpio` 行, `boot.cmd` 补 `fatload … initramfs.cpio` 且
+  `booti` 第二参数由 `-` 改为 initrd 地址 (`-` = 不带载体); 新增 `AARCH64_INITRD_ADDR=0x48000000`
+  (DRAM 基址 + 128 MiB, 避开 Image / BSS / U-Boot 自搬迁区 ⇒ 前提板载 DRAM ≥ 256 MiB);
+  (c) [guide-hardware-boot.md](../explain/guide-hardware-boot.md) 同步介质内容表、载体链三里程碑与三条排障行
+  (里程碑串与 [init.rs](../../src/kernel/functions/init.rs) 逐字同源; 数值 pid 双架构实测均为 5,
+  门禁「PID 1」是首个用户进程的语义而非号, 已在该页写明).
+  回归锁: [initramfs_carrier_k07b_test.rs](../../host-tests/tests/initramfs_carrier_k07b_test.rs) 新增 5 例
+  (共 17), 其中 `test_iso_delivers_cpio_as_grub_module2` 钉「拷入 + 声明」两侧同时在位,
+  `test_aarch64_medium_delivers_cpio_via_chosen` 钉 extlinux 行 / `booti` 第二参数 / `mcopy` 三处.
+  **验证边界 (诚实口径)**: x86_64 ISO 路径由 D4-b 的 GRUB 载体腿真启动覆盖; **aarch64 U-Boot 真机引导未跑**
+  (无板子; QEMU 侧走 `-kernel img -initrd`, 不经 `sysboot`/`booti` 与 FAT 读取), 介质内容与引导配置只有
+  host 形状锁 ⇒ 该真跑面属 L0 loader 现代化议题, 本批不宣称已验证.
+- **D4-g MB2 内存图优先级已修 (2026-11-16, 用户裁定「本轮修复」)**: [boot/mod.rs](../../src/kernel/privileged/boot/mod.rs)
+  `parse_multiboot2` 原以 tag4 (基本内存信息) **无条件赋值** `mem_size`, 而 GRUB 在 SeaBIOS 与 OVMF 下
+  都把 tag4 排在 tag6 之后 ⇒ 已算出的内存图结果被覆盖. OVMF 的 tag4 `mem_upper` 只描述 1 MiB 以上首个
+  连续块 (实测 7168 KB), 于是 `-m 512` 的机器被读成 8 MB, PMM 零空闲页、启动期分配即 panic.
+  改为 `map_mem_size: Option<u64>` / `basic_mem_size: Option<u64>` 双轨, 收尾 `map_mem_size.or(basic_mem_size)`
+  ⇒ **与标签出现次序无关**, 有图用图、无图才兜底 (与 Linux 以 e820/EFI 图为准同构).
+  回归锁 = 该文件内联 6 例 (`mb2_tag4_before_tag6_map_is_authoritative` / `…tag6_before_tag4…` /
+  `…independent_of_tag_order` / `…tag4_only_falls_back_to_basic` / `…without_available_entry_falls_back` /
+  `…no_mem_tags_uses_default`), 两种次序都钉. UEFI 真跑实测 `Boot info: mem=511 MB` (修复前为 8).
+- **D4-h 早期预留区表 + 引导模块搬移已落 (2026-11-16, 用户裁定「方案 B 相对完整」)**: 引导器自选落点
+  可能与内核固定堆窗共址 (initrd 被后续分配覆写). 新增
+  [early_reserve.rs](../../src/kernel/privileged/mm/early_reserve.rs) (memblock 式早期区表:
+  `EarlyRegion` + `MAX_EARLY_REGIONS`, 容量单源 = `limits::MAX_FIRMWARE_REGIONS + 8`, 三个 `const fn`
+  纯函数 `align_down_region` / `align_up_region` / `ranges_overlap`);
+  [pmm.rs](../../src/kernel/privileged/mm/pmm.rs) 接 `early_reserve` (就地预留) /
+  `early_reserve_relocatable` (落在堆窗内则搬到互斥区并**逐字节搬载荷**) / `early_region` /
+  `early_region_count` 与同名自由函数; 表满 / 零长度 / 索引越界一律 **fail-closed 停机**, 不静默丢条目
+  (丢一条 = 该区被当空闲页分配出去). 登记方 = firmware 保留区 + initrd + DTB + MB2 信息块本体.
+  回归锁 = [pmm_early_reserve_test.rs](../../host-tests/tests/pmm_early_reserve_test.rs) 9 例
+  (6 行为: 就地标记 / 窗外不动 / 窗内搬移且载荷存活 / 搬移后页不被 buddy 放出 / 不可搬者留原地 /
+  两次搬移目的地互斥; 3 fail-closed `should_panic`), 另两轮负控制 (摘搬移 / 摘预留) 均转红后逐字节复原.
+  UEFI 真跑实测 `[PMM] Early relocate 'initrd': 0x… -> 0x…` 在位.
+- **D4-i 甲 MB2 指针接线 + inline RSDP 解析已修 (2026-11-16, 用户裁定「本轮相对完整修复」)**: UEFI 真跑
+  暴露两处预存缺陷 —— (a) MB2 信息块指针硬编码 0 ⇒ ACPI 发现面拿不到固件表;
+  (b) MB2 tag14/15 的载荷是 RSDP 的**内联副本** (spec §3.6.16/17), 原代码把它当**指针**读.
+  修法: 指针经 `BootInfo` 真接线; [acpi.rs](../../src/kernel/privileged/arch/x86_64/acpi.rs) 按内联副本解析,
+  两标签并存时优先 tag15 (v2, 带 XSDT) 且**与次序无关**, v1/v2 各按自身面校验和校验, v2 校验和坏则回落 v1.
+  回归锁 = 该文件新增 7 例内联测试 (内联而非指针 / 优先 v2 / 仅 v1 用 tag14 / 偏移计标签对齐填充 /
+  坏 v2 校验和回落 / 无 ACPI 标签返 None / 截断 v2 面拒收).
+- **D4-i 乙 firmware 保留区进 PMM 早期预留已落 (2026-11-16)**: MB2 内存图 `type != 1` 项收进
+  `FirmwareRegions` (容量单源 `limits::MAX_FIRMWARE_REGIONS`, 溢出 fail-closed),
+  [lib.rs](../../src/kernel/lib.rs) 在 PMM 建立后逐区 `pmm_early_reserve(…, "firmware")`,
+  并另预留 MB2 信息块本体 (`"mb2-info"`) —— ACPI 发现面在 PMM 之后才读它, 该区必须活到运行期.
+  回归锁 = boot/mod.rs 内联 5 例 (非 available 项成区 / 与标签次序无关 / 零长度保留项忽略 /
+  全 available 图零区 / 表溢出 fail-closed). UEFI 真跑实测 **声明 14 区 / 登记 14 区** 两侧对账;
+  tag6 覆盖面与 Linux 必须保留的 EFI 区逐项核对见
+  [uefi-thread-exit-hang.md](./uefi-thread-exit-hang.md)「归因」节 (13/13 覆盖).
+- **D4-i 丙 UEFI 真跑腿 + 门禁接线已落 (2026-11-16, 用户裁定「登记独立工程 + 腿按可达面接线」)**:
+  新增 [uefi_boot_test.sh](../../scripts/uefi_boot_test.sh) (OVMF pflash: CODE 只读 + VARS **每轮私有可写副本**;
+  GRUB ISO 经 `boot_module.sh` 单源 helper; 9 组判据 = 载体链 / ACPI 经 MB2 (反向禁 BIOS 扫描回退) /
+  双核上线 + TLB / firmware 两侧对账 / 内存图权威 / initrd 搬移 / 用户态探针可达面 / 驱动与网络 / P-62 能力行).
+  firmware 区数下界 `MIN_FW_REGIONS=10` 兼作 **UEFI/BIOS 判别器** (SeaBIOS e820 实测 7 区, OVMF 13-14 区)
+  ⇒ pflash 未生效退化成 BIOS 启动即红, 不产生假绿. `--probe` 是 OVMF 发现的单源,
+  [ci/audit.sh](../../ci/audit.sh) full 步骤 4 据此决定跑腿或 `skip_leg "uefi"` 三态 (门禁侧不另抄候选路径清单).
+  接线形状锁 = [ci_uefi_boot_leg_test.rs](../../host-tests/tests/ci_uefi_boot_leg_test.rs) 6 例
+  (24 条判据串与 12 个产出方逐字同源 / 每条判据有红分支且取数失败不得读成零 / 双向针与两侧对账 /
+  真 OVMF 产物 + 自检早于启动 + aarch64 显式拒绝 + 里程碑不得截断 / THREAD 显式不判 / audit 真调用 + 三态).
+  **`[THREAD]` 显式不判**: UEFI 下 init 线程组探针确定性挂死, 已归因为预存缺陷 (BIOS 同镜像 5/5 PASS,
+  UEFI 5/5 FAIL `reap-timeout`; 摘掉 firmware 预留的负控制三轮从未通过且 2/3 轮挂得更早 ⇒ 非 D4-i 乙 引入),
+  另立 [uefi-thread-exit-hang.md](./uefi-thread-exit-hang.md) (U-1 双核 `group_exit_leg` / U-2 单核更早静默挂死),
+  本腿无条件打印横幅点名该册 —— **不是静默跳过**; 修复后须把 THREAD PASS 行加回硬断言并删横幅.
+  读数: 真跑 **25 项全绿** (`mem=511 MB` / firmware 14 声明 14 登记 / 解包 12 条目 / AP count=2 /
+  online CPUs=2 / TLS·SIG·EXEC(cwd+root)·WASM·EEVDF 守恒·KPTI·e1000·DHCP 全在位);
+  负控制 5 轮全部转红后逐字节复原 (摘 THREAD 横幅 / 里程碑改 `[THREAD]` 截断 / 判别器下界归零 /
+  摘 audit 三态 `skip_leg` 四轮各只红对应那一例; 真跑轮把下界抬到 20 > 实测 14 ⇒ **恰红 firmware 一项**,
+  其余 23 项仍绿 ⇒ 判据相互独立且非恒真).
 
 ### D5: EGFS 接入 aarch64
 
-- **描述**: aarch64 virtio-blk → EGFS 挂根 → 从磁盘装载用户态.
-- **方案**: 去 [lib.rs:940](../../src/kernel/lib.rs#L940) 门控; 接 EGFS 自动发现挂载; 补 aarch64
-  EGFS 磁盘镜像生成; 新增 aarch64 磁盘根 QEMU 腿.
-- **状态**: [X] (aarch64 空盘 EGFS 盘根实测成立; 全 §2.3 于 D6 收口)
+- **描述**: aarch64 virtio-blk → EGFS 挂 `/disk` → 用户态切根进磁盘根 → 从磁盘装载用户态.
+- **方案**: 去 [lib.rs](../../src/kernel/lib.rs) 门控; 接 EGFS 自动发现挂载 (非根挂载点 `/disk`);
+  补 aarch64 EGFS 磁盘镜像生成 (空白盘自格式化); 新增 aarch64 磁盘根 QEMU 三相腿.
+- **状态**: [X] (D5-a…D5-j 全部落地; 三相腿 30 项判据全绿实测: 空盘首启自格式化 + 12 文件落盘 +
+  用户态切根读回 `/init`, 同盘二启不重格式化不重装且切根仍成立, 摘盘负控制走 memory mode + SKIP;
+  全 §2.3 于 D6 收口)
 - **详情**: D0 定的镜像生成方案落地. 与 D1-D4 正交 (boot 载体 vs 运行时磁盘根); 可并行.
 - **D5-a 实测 (2026-11-16) + 真前置**: 去 [lib.rs] EGFS 挂根块的 `target_arch="x86_64"` 门控(改架构中立)
   后: (a) aarch64 **无盘** → `EGFS memory mode` + `Entering EL0` ✓ 无回归; (b) aarch64 + 空白 virtio-blk 盘 →
@@ -283,13 +401,112 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   `vfs_mount_safe("/","egfs")`(自动 NUL 终止). **aarch64 空盘实测**: `FORMAT: Complete` →
   **`Root filesystem: EGFS (disk)`** → `Entering EL0`; 无盘 → memory mode 无回归; x86 无盘不受影响.
   ⇒ **EGFS 接入 aarch64 成立** (空盘自格式化 + virtio-blk legacy 修复 + 挂根 NUL 修复三件齐备).
+  **后续改判**: 该轮只证到「内核把 EGFS 挂上」, 未证用户态真从磁盘根跑; 挂根拓扑随即被 D5-e 裁定 B
+  取代 (引导根恒为 ramfs, EGFS 挂 `/disk`, 用户态切根), 上面这行 `Root filesystem:` 日志已退役.
+- **D5-b 三相腿落地**: 新增 [aarch64_egfs_disk_boot_test.sh](../../scripts/aarch64_egfs_disk_boot_test.sh)
+  (相 1 空盘首启 / 相 2 同盘二启 / 相 3 摘盘负控制), 接入 [ci/audit.sh](../../ci/audit.sh) `full` 步骤 4;
+  host 侧配套 [egfs_disk_persist_test.rs](../../host-tests/tests/egfs_disk_persist_test.rs). 每次新建空白
+  raw 盘由内核自格式化 (无需 host mkfs, D0 定的方案); 只新增判据, 不改 `qemu_boot_test.sh` 既有判据;
+  x86_64 **明确拒绝**而非跳过 (它走 PCI AHCI/NVMe, 在本腿上只会得到零判据的空绿). 接线形状锁
+  [ci_aarch64_egfs_disk_leg_test.rs](../../host-tests/tests/ci_aarch64_egfs_disk_leg_test.rs) **8 条验收
+  / 9 例**: 判据串与产出方同源 (含用户态 init 的三态 SWROOT 串) · 三相各有红分支且硬零经 `count_of`
+  取数 (非十进制读数即红, 不把「测不出」读成「零条」) · 空白盘只新建一次 (相 2 复用同盘, 否则持久化
+  判据恒真) · 摘盘负控制在 · 载体 + 串口日志 + 架构自检早于启动 + 恰挂 1 块盘 · audit `full` 真调用
+  且失败走 `err` + 独立取证日志 · D5-g 安装接线/幂等/回读三相判据 · D5-h 切根终态标记与三态判别
+  (第 8 条为 D6-c ③ 补钉, 两条负控制各恰红 1 项).
+- **D5-c 调研**: switch_root 面 (chroot / pivot_root / ABI 编号 / 分发 / 根前缀均已存在, 故 B 方案
+  增量远小于原估) + EGFS 写路径缺口清单 (见 D5-g).
+- **D5-d uberblock drive 权威化 + 显式失败 (裁定 B 相对完整)**: 删 `vdev_0_drive_id()` 的
+  `.map_or(0, …)` 静默兜底 (EGFS 的 `drive` 是 **EGDF 全局设备下标**, 0 号未必是块设备);
+  `add_vdev` 移到读 uberblock **之前** (原序使 128 个槽位全读失败 ⇒ 每次启动误判空盘重新格式化);
+  分区偏移取自同一 vdev (原独立计数器在多盘循环里漂移); `write_uberblock_to_disk` 两处静默失败
+  (`!is_valid` 早退返 0 / `let _ = write_sector` 丢错) 改显式报错; `write_bp` 对非 512 倍数载荷补零
+  整扇区写 (原样交给按整扇区校验的 `write_sectors` 会被拒写); `write_dir_entry_record` 恒写 0 改真
+  对象号 (读侧一直按对象号解析 ⇒ 冷恢复后名字全绑到对象 0, 名字还在而文件全打不开). 落点断言 =
+  分区起始 + txg 槽位的物理 LBA, 错 drive 与漏分区偏移双向负控制.
+- **D5-e 引导根恒为 ramfs + EGFS 挂 /disk (裁定 B, Linux 式 switch_root)**: 内核不再让 EGFS 抢占
+  `/`; `boot_rootfs_and_probes` 改挂 `/disk`, 并由 [init.rs](../../src/kernel/functions/init.rs) 的
+  `install_disk_root()` 把 boot-module cpio **全量**安装进磁盘根 (幂等: `/disk/init` 已在则跳过重装,
+  避免覆盖用户改动), 安装后回读 `/disk/init` 验真落盘. 改判理由: 原挂根形态覆盖 initramfs 根使
+  用户态起不来, 且与业界 initramfs → `switch_root` 形态相反.
+- **D5-f pivot_root syscall 面**: 新增 `VfsManager::is_mount_point` (**精确匹配**, 刻意不用
+  `find_mount` 的最长前缀归并 —— 后者把任意子路径都认成挂载点, 判据恒真); `pivot_root_syscall`
+  次序钉为 plan → 挂载点判据 → `unmount(?)` → 切前缀, 摘除失败整体失败, 不留「根已切但旧根仍可达」
+  的半完成态. `pivot_root_plan` 保持纯函数 (`kernel_tests/sys.rs` 6 个用例不动). host 锁
+  [pivot_root_switch_test.rs](../../host-tests/tests/pivot_root_switch_test.rs) 5 例 (真实 VFS +
+  临时进程夹具), 4 条负控制逐条转红后按 sha256 逐字节复原.
+- **D5-g EGFS 写路径可靠性 (四处)**: ① `fs_create` 实装 —— 原走 trait 默认 `NotSupported`, 令 cpio
+  解包对每个常规文件静默失败 (实测 12 条目只落 1 条, 那 1 条还是被无条件计数的目录);
+  ② `EgfsData::mkdir` 返回对象号被 `fs_mkdir` 适配器读成失败 (它只认 0) ⇒ 成功改返 0;
+  ③ 挂载根 `stat("/")` 在平坦命名空间里查 `""` 键恒 `None` ⇒ `pivot_root` 的 `require_directory`
+  判新根 ENOENT, 补 `objset.get_root()` 分支; ④ **二启恢复出来的磁盘根是只读的** ——
+  `EgfsDataset::new` 的 `state` 缺省 `Creating`, 而 `mount_drive` 的成功恢复分支只调
+  `restore_metadata` 换对象表与目录索引, 从不翻状态位 ⇒ `is_writeable()` 恒假, `create_dir` /
+  `create_file` 一律 `None`. 修法 = 新增 `EgfsDataset::activate()` 只翻 state/mounted, 在
+  `restore_metadata` 尾部调用 (**不能改调 `init()`**: 它会 `objset.init()` 推入全新根目录并复位
+  `next_obj_id`, 抹掉刚恢复的表). 归因读数: 相 2 `[SWROOT] FAIL: mkdir /disk/oldroot rc=-1`
+  连测 5 轮 (串口逐字符并发写会吃掉返回码数字, 故重复手动启动取干净行). host 锁
+  `second_boot_restored_disk_root_stays_writeable` 两侧都钉 (盘上既有名字仍在 + 新名字能建能写,
+  只判后者会让「重建空表」冒充修复); 摘 `activate()` 负控制恰红 mkdir 一项 (left -5 / right 0),
+  恢复前提断言仍绿.
+- **D5-h init 用户态切根 + 腿判据**: userlib 补 `SYS_PIVOT_ROOT = 155` 与 `env_pivot_root`;
+  init 的 `switch_root_probe()` 置于**所有探针之前**, 三态 PASS / FAIL / SKIP (A-14 同口径:
+  失败不 panic, 后续探针仍在引导根下跑, 信号由腿消费); 切根后以**视图路径** `/init` 读回 ——
+  旧根挂载已被摘除, 该路径只能解析到磁盘根, 故读到字节即证明用户态文件访问真落到 EGFS.
+  腿每相各等自己的终态标记 (只等 `Entering EL0` 会在切根发生前就收机). SIMPLIFIED: 不 re-exec
+  新根的 `/init`, 本进程映像仍来自引导根, 只有文件访问改走磁盘根. 负控制: 摘 `switch_root_probe()`
+  调用 ⇒ 恰红 3 项 (相 1/2 的 PASS + 相 3 的 SKIP), 全部硬零判据仍绿; 翻转 SKIP 守卫极性 ⇒
+  恰红 6 项 (相 1/2 各红 `need PASS` + `forbid SKIP`, 相 3 红 `need SKIP` + `forbid FAIL`),
+  证明三态判别与 forbid 侧都非恒真. 两条负控制后 init 与腿脚本均按 sha256 逐字节复原.
+- **D5-i SGEG 冻结改判 + 摘 EGFS 散落 pwm 门 (用户裁定)**: 现版本 SGEG **冻结待重设计**, 不为
+  EGFS 去适配一个将来要整体作废的账号/会话层 ⇒ 已落地的 165 行适配 (6 文件) 全部反向 Edit 回退,
+  sha256 与 HEAD 逐字节一致; 改摘 EGFS 内 12 处 `check_permission` 调用点, EGFS 回到与 ramfs 一致的
+  「FS 层不自带判定」形态, 判定整体留给 v2 的唯一出口 (`docs/design/sgeg-design.md` 的出口收敛主张).
+  代价: v2 落地前 EGFS 无访问控制 (与 ramfs 现状同口径, 也与设计册「默认关闭、无策略时零差异」一致).
+- **D5-j 二启恢复路径挂死**: `init()` 曾无条件调 `setup_zil_datasets()`, 后者持 `datasets` 锁跨
+  `deserialize_dataset_metadata` → `restore_metadata` (自取同一把**不可重入** `IrqSpinLock`) ⇒
+  同核自旋死等; 同一次重做还 push 出第二个 root 数据集, 并把 txg 从盘上值回退到 1 (新写入落回旧
+  uberblock 槽位). 只在盘上 `root_bp` 非空 (即成功恢复过的二启) 时可达, 首启格式化写的是 null
+  `root_bp`, 故相 1 恒绿掩盖了它. 修法: `init()` 尾部加 `if !self.is_initialized()` 守卫 +
+  `setup_zil_datasets` 先放锁再 deserialize. host 锁 2 例 (行为 + 源码形状), 负控制两条
+  (数据集数左 2 右 1 / 锁作用域未闭合).
 
 ### D6: 收口 (七门槛 + 文档 + 台账)
 
 - **描述**: 全量验收与文档/台账同步.
 - **方案**: §2.3 七门槛全绿 (audit full + test-host + test-kernel-host + ci-rustdoc 分跑); 同步
   explain/design (载体与地址布局现状) + 本册状态 + 台账; 按路径提交推送.
-- **状态**: []
+- **状态**: [X] (七门槛实测全绿, 读数见下; 本册 12 个状态字段 = 10 `[X]` / 2 `[]`, 仍开放 = 决策 D + L0)
+- **D6-a 七门槛实测读数 (2026-11-17, 同一棵树串行跑; 判据 = 日志内 `*-RC=` 回显, 非后台通知退出码)**:
+  | 门槛 | 命令 | 读数 |
+  |---|---|---|
+  | 1/2/3/5 | `bash ci/audit.sh full` | **AUDIT-RC=0** |
+  | 4 | `make test-host` | **HOST-RC=0** — 202 个测试二进制 / 1597 passed / 0 failed |
+  | 6 | `make test-kernel-host` | **KHOST-RC=0** — workspace 三成员 / 1372 passed / 0 failed |
+  | 7 | `make -f Makefile.ci ci-rustdoc` | **RUSTDOC-RC=0** — x86_64 与 aarch64 两腿都真跑完, 0 源码级 link 错误 + 0 私有项链接 |
+
+  audit `full` 分项: QEMU 双架构真实启动 **2/2** (FAIL_OK=0) · P-62 feature 运行维 **4/4** · lockdep
+  构建面双架构两侧 · thread-stress **6/6 × 3 轮 × 2 架构** · Lockbud **4/4 crate 实编分析零发现** ·
+  性能指标腿条目全部在绝对预算内 · 文档路径新鲜度腿 (反引号 + markdown 链接两形态) 通过 ·
+  `scan_obsolete_naming` / `audit_vacuous_needle` / `audit_selftest` **12/12** 通过 · aarch64 COW 四判据
+  全符合 (#108 丙) · UEFI(OVMF) 可达面判据全符合 (D4-i 丙, `[THREAD]` 明示不判) · aarch64 EGFS 磁盘
+  挂载三相 **30 项判据全符合** (D5) · **本轮因环境缺失未执行腿数: 0**.
+  文档回填后再跑一次 `bash ci/audit.sh full` 复验 (代码树未变, 只动本册与台账): **AUDIT-RC=0**,
+  分项读数同上, 未执行腿数仍 0.
+- **D6-b 台账同步**: `progress-active-tasks.md` 补 D6 收口 blockquote + 甲表新增本册行 (此前「整表重算
+  补齐 5 行」只落 4 行, 本册缺失属 §9.2 漂移) + 本册计数按口径 C 重算 (12 行首状态字段, 无勾选/表格行级
+  状态, 故 A=B=C). 自指行由 79 → 80.
+- **D6-c 本轮门禁红三处 (均由本轮改动直接导致, 按 §11.5 本轮修复, 先归因再改钉)**:
+  ① `scan_obsolete_naming` 判 `egfs_disk_persist_test.rs` 的 `b"ANTX"` 字面量违规 —— ANTX 既是废弃
+  项目代号也是**盘上持久签名魔数**, 仓内既有写侧 (`boot_install`) 与读侧 (`scan_all_drives`) 一律
+  **逐字节拼写**; 测试改用同一形态 + WHY 注释, **不改盘上格式也不给扫描器加豁免**.
+  ② A-3b 覆盖率棘轮判 `vfs_manager.rs::mounts` 新增取锁点未分类 —— `is_mount_point()` (D5-f) 合法
+  新增 1 点, 走 sanctioned `--update-lock-order-baseline` 重录并同步 `ref-lock-order.md` 读数.
+  ③ `make test-host` 判 D5-b 形状锁 `test_no_disk_negative_control_is_present` 红 —— **stale needle
+  而非脚本缺陷**: D5-h 给 `boot_once` 加了 `<终态标记>` 位, 旧针仍要求裸 `boot_once "$P3_LOG"`;
+  改钉整行 `boot_once "$P3_LOG" "$SWROOT_SKIP"` (同时钉住「不带盘」与「等 SKIP 不等 PASS」两面,
+  严格强于旧针), 并补第 8 条验收锁 D5-h 三态判据 (此前**无任何形状锁**). 两条负控制各恰红 1 项
+  (删相 3 `forbid $SWROOT_PASS` ⇒ 第 8 条红; 相 3 标记 SKIP→PASS ⇒ 第 4 条红), 脚本按 sha256 逐字节复原.
 
 ## 验收判据
 
@@ -297,7 +514,9 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 - **解耦**: 内核镜像零用户态字节 (`include_bytes!` 用户态面清零); 内核本体 `_kernel_end` 远低于
   4 MiB; x86_64 K-08 因镜像缩小自然不再触发.
 - **双架构**: x86_64 (MB2 tag 3) 与 aarch64 (DTB `/chosen`) 均从 boot-module 装载 `/init` 并进
-  Ring 3; aarch64 EGFS 磁盘根可挂载并跑用户态.
+  Ring 3; aarch64 带盘时 EGFS 只挂**非根挂载点** `/disk`, 用户态 `pivot_root` 切根进磁盘根并从
+  新根读回 `/init` (三相腿: 空盘首启 / 同盘二启 / 摘盘负控制, 30 项判据); 无盘时探针仍在引导根
+  下跑并判 `[SWROOT] SKIP`.
 - **退役 (决策 D)**: x86_64 低半区 kview 恒等窗口退役后 `user_va_lower_bound` 不再随 kernel_end 增长;
   回归锁保护 copy_*_user 直射区路径.
 
