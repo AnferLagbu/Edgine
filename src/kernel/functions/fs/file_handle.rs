@@ -15,13 +15,10 @@
 //! - Linux name_to_handle_at(2) 手册页
 //! - Linux open_by_handle_at(2) 手册页
 
-use crate::functions::fs::inode::Inode;
-use crate::functions::fs::open_file_table::OPEN_FILE_TABLE;
 use crate::functions::fs::vfs_manager::VFS_MANAGER;
-use crate::functions::fs::vfs_types::{OpenFile, VFS_MAX_PATH};
+use crate::functions::fs::vfs_types::VFS_MAX_PATH;
 use crate::privileged::mm::copy_user::{copy_from_user, copy_to_user};
 use crate::privileged::syscall::Errno;
-use alloc::sync::Arc;
 
 /// 文件句柄类型 (与 Linux 兼容)
 pub const FILE_HANDLE_GHEST_ID: i32 = 0x01; // 通用句柄类型
@@ -148,12 +145,8 @@ pub fn open_by_handle_at_syscall(
         return Err(Errno::Enotsup);
     }
 
-    // 权限检查: open_by_handle_at 按句柄绕过路径权限打开任意 inode, 属特权操作
-    // B06-03: 采用 SYSTEM 域 CAP_SYS_ADMIN (0x01), 与 mount/umount2 先例一致 (functions/fs/mount.rs:52)
-    let pwm = crate::privileged::sgeg::session::get_current_pwm();
-    if !crate::privileged::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
-        return Err(Errno::Eperm);
-    }
+    // 权限判定已收敛到唯一出口 (`publish_opened_inode` → `authorize_open`);
+    // 句柄打开沿用 B06-03 的 SYSTEM 域 CAP_SYS_ADMIN 要求 (见 `open_guard.rs`).
 
     // 从用户空间读取句柄
     let mut handle_data = [0u8; HANDLE_SERIALIZED_SIZE];
@@ -190,24 +183,21 @@ pub fn open_by_handle_at_syscall(
     // fs_resolve_inode 返回原生 Arc<dyn Inode>; 句柄无法解析 (inode_id/mount_idx 失效)
     // 时返回 EINVAL, 与相邻 mount_idx 校验一致。
     let pwm = crate::privileged::sgeg::session::get_current_pwm();
-    let inode: Arc<dyn Inode> = fs
+    let inode = fs
         .fs_resolve_inode(inode_id, mount_idx)
         .ok_or(Errno::Einval)?;
 
-    // 文件类型由 File 对象 (RegularFile) 在构造时经 stat 派生
-    let open_file = OpenFile::new(inode, flags, pwm);
-
-    // 插入全局 OpenFile 表
-    let handle_id = OPEN_FILE_TABLE.alloc(open_file).ok_or(Errno::Enomem)?;
-
-    // 分配 fd (写入当前进程 per-process fd 表)
-    let Some(fd_idx) =
-        crate::privileged::proc::with_current_fd_table(|t| t.alloc_fd(handle_id, false)).flatten()
-    else {
-        // fd 表满或当前进程不可用: 回收已分配的 OpenFile handle, 避免泄漏
-        OPEN_FILE_TABLE.close(handle_id);
-        return Err(Errno::Emfile);
-    };
+    // T-1: 本路径不再自带判定与 FD 发布 —— 统一经唯一出口 `publish_opened_inode`
+    // (`authorize_open` + `OpenFile` + 全局表 + per-process fd), 消除对
+    // `vfs_open_internal` 的绕过。
+    let fd_idx = super::handle::publish_opened_inode(
+        inode,
+        flags,
+        pwm,
+        false,
+        super::open_guard::OpenSource::Handle,
+    )
+    .map_err(|e| Errno::from_ret(i64::from(e.as_i32())))?;
 
     Ok(crate::functions::intcast::i64_from_usize(fd_idx))
 }

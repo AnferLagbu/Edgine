@@ -464,9 +464,14 @@ fn open_by_handle_at_uses_fs_resolve_inode() {
         compact.contains("fs.fs_resolve_inode(inode_id,mount_idx)"),
         "open_by_handle_at 必须使用 fs_resolve_inode 获取原生 Inode"
     );
-    // B-9.5: fd 分配改经 per-process fd 表 (原 VFS_MANAGER.alloc_fd() 已随全局 fd 表退役)
+    // B-9.5 / T-1: fd 分配归唯一 publish 出口 (`publish_opened_inode`),
+    // 该出口内部走 per-process fd 表; 本路径不得自带判定或 fd 分配.
     assert!(
-        src.contains("with_current_fd_table(|t| t.alloc_fd(handle_id, false))"),
-        "open_by_handle_at 必须通过 per-process fd 表分配 fd (B-9.5)"
+        src.contains("publish_opened_inode("),
+        "open_by_handle_at 必须经唯一 publish 出口 (T-1)"
+    );
+    assert!(
+        !src.contains("alloc_fd("),
+        "open_by_handle_at 不得自带 fd 分配 (归 publish_opened_inode)"
     );
 }

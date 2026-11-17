@@ -51,6 +51,8 @@ pub mod mount;
 pub mod open;
 /// 全局 OpenFile 表 (POSIX 打开文件描述)
 pub mod open_file_table;
+/// 文件对象获取的唯一判定出口 (T-1)
+pub mod open_guard;
 /// overlayfs 联合文件系统 (upperdir/lowerdir 合并视图)
 pub mod overlayfs;
 pub mod path;

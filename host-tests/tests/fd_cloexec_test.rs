@@ -16,6 +16,8 @@ use std::fs;
 use std::path::Path;
 
 const VFS_HANDLE: &str = "src/kernel/functions/fs/handle.rs";
+const FILE_HANDLE: &str = "src/kernel/functions/fs/file_handle.rs";
+const OPEN_GUARD: &str = "src/kernel/functions/fs/open_guard.rs";
 const VFS_MOD: &str = "src/kernel/functions/fs/mod.rs";
 const VFS_TYPES: &str = "src/kernel/functions/fs/vfs_types.rs";
 const SYS_IO: &str = "src/kernel/functions/fs/io.rs";
@@ -121,15 +123,66 @@ fn test_vfs_open_internal_consumes_cloexec() {
         body.contains("VfsOpenFlags::CLOEXEC"),
         "vfs_open_internal 必须读取 VfsOpenFlags::CLOEXEC (O_CLOEXEC 直通 ABI 位):\n{body}"
     );
-    // 两处 alloc_fd 分支 (fs_open / CREAT) 均须传入 cloexec, 不得残留硬编码 false.
+    // T-1: 两处分支 (fs_open / CREAT) 均须把 cloexec 交给唯一 publish 出口
+    // (`publish_opened_inode`), 由后者在 alloc_fd 时传入.
     assert_eq!(
-        body.matches("alloc_fd(handle_id, cloexec)").count(),
+        body.matches("publish_opened_inode(").count(),
         2,
-        "vfs_open_internal 两处 alloc_fd 分支均须传 cloexec:\n{body}"
+        "vfs_open_internal 两处分支均须经唯一 publish 出口:\n{body}"
+    );
+    let helper_start = src
+        .find("fn publish_opened_inode")
+        .expect("publish_opened_inode 必须存在");
+    let helper_after = &src[helper_start..];
+    let helper_end = helper_after[1..]
+        .find("\npub ")
+        .map_or(helper_after.len(), |i| 1 + i);
+    let helper = &helper_after[..helper_end];
+    assert_eq!(
+        helper.matches("alloc_fd(handle_id, cloexec)").count(),
+        1,
+        "唯一 publish 出口分配 fd 时必须传 cloexec:\n{helper}"
     );
     assert!(
         !body.contains("alloc_fd(handle_id, false)"),
         "vfs_open_internal 不得残留 alloc_fd(handle_id, false)"
+    );
+    assert!(
+        !helper.contains("alloc_fd(handle_id, false)"),
+        "publish_opened_inode 不得硬编码 alloc_fd(handle_id, false)"
+    );
+}
+
+// T-1: 对象获取的唯一判定出口 — 能发布文件对象的路径只有 `publish_opened_inode`,
+// 判定只有 `authorize_open`. 任一新增绕过 (再写一个 OpenFile::new 或再调一次能力判定)
+// 都会让本锁转红.
+#[test]
+fn test_object_acquisition_has_single_authorize_exit() {
+    let handle = read(VFS_HANDLE);
+    let file_handle = read(FILE_HANDLE);
+    let guard = read(OPEN_GUARD);
+    assert_eq!(
+        handle.matches("OpenFile::new(").count(),
+        1,
+        "OpenFile::new 只允许出现在唯一 publish 出口内"
+    );
+    assert_eq!(
+        file_handle.matches("OpenFile::new(").count(),
+        0,
+        "open_by_handle_at 不得自带发布逻辑 (须经 publish_opened_inode)"
+    );
+    assert!(
+        handle.contains("authorize_open(pwm, source)"),
+        "publish_opened_inode 必须先经 authorize_open"
+    );
+    assert_eq!(
+        file_handle.matches("pwm_has_capability").count(),
+        0,
+        "open_by_handle_at 不得自带能力判定 (判定归 authorize_open)"
+    );
+    assert!(
+        guard.contains("pwm_has_capability"),
+        "能力判定实现须落在 open_guard.rs"
     );
 }
 

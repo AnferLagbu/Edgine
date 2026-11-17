@@ -9,7 +9,9 @@
 use super::api::{
     PCACHE_FAST_MAX_BYTES, PCACHE_FAST_MIN_BYTES, ptr_to_str, split_parent_name, with_cstr,
 };
+use super::inode::Inode;
 use super::open_file_table::OPEN_FILE_TABLE;
+use super::open_guard::{OpenSource, authorize_open};
 use super::vfs_manager::VFS_MANAGER;
 use super::vfs_types::{
     KernelError, OpenFile, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
@@ -51,6 +53,39 @@ fn fd_event_may_change(open_file: &OpenFile) -> bool {
 // VFS 核心接口 (内部)
 // ============================================================================
 
+/// 发布已打开的对象 — 唯一 publish 出口: 判定 → `OpenFile` → 全局表 → per-process fd.
+///
+/// `source` 区分路径打开与句柄打开; 判定统一走 [`authorize_open`] (T-1: 判定入口唯一).
+///
+/// # Errors
+/// 判定拒绝返回对应 `KernelError`; 全局表满返回 `NoMemory`; fd 表满或无进程
+/// 上下文返回 `ProcessFileLimit` (已回收全局表条目).
+pub(super) fn publish_opened_inode(
+    inode: alloc::sync::Arc<dyn Inode>,
+    flags: u32,
+    pwm: u64,
+    cloexec: bool,
+    source: OpenSource,
+) -> Result<usize, KernelError> {
+    authorize_open(pwm, source)?;
+    // Plan B: fs_open / fs_create 直接返回 Inode trait object, 经 RegularFile 适配为 File
+    let open_file = OpenFile::new(inode, flags, pwm);
+    let handle_id = OPEN_FILE_TABLE
+        .alloc(open_file)
+        .ok_or(KernelError::NoMemory)?;
+    // B-9.5: 在 per-process fd 表 (Process.fd_table, 权威表) 分配本地 fd.
+    // 元数据 (node_id/flags/offset) 统一由共享 OpenFile 承载, 不写入全局 fd 表.
+    // 无进程上下文 (host 侧单测) 时按 fd 表满处理并回收全局表条目.
+    if let Some(fd_idx) =
+        crate::privileged::proc::with_current_fd_table(|t| t.alloc_fd(handle_id, cloexec)).flatten()
+    {
+        Ok(fd_idx)
+    } else {
+        OPEN_FILE_TABLE.close(handle_id);
+        Err(KernelError::ProcessFileLimit)
+    }
+}
+
 /// 打开文件 — VFS 核心实现 (trait object 分发).
 ///
 /// 归一化用户路径 + 解析挂载点后调用 `fs_open`; 目标不存在且带 `CREAT`
@@ -75,46 +110,19 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
     // E6-4: trait object 分发 (优先于 fs_type match)
     if let Some(fs) = fs_opt {
         match fs.fs_open(rel_path, flags, pwm) {
-            Ok(inode) => {
-                // Plan B: fs_open 直接返回 Inode trait object, 经 RegularFile 适配为 File
-                let open_file = OpenFile::new(inode, flags, pwm);
-
-                // 插入全局 OpenFile 表
-                let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
-                    return -1;
-                };
-
-                // B-9.5: 在 per-process fd 表 (Process.fd_table, 权威表) 分配本地 fd.
-                // 元数据 (node_id/flags/offset) 统一由共享 OpenFile 承载, 不再写入
-                // 全局 VfsManager.fd_table. 无进程上下文 (host 侧单测) 时返回 -1.
-                let Some(fd_idx) = crate::privileged::proc::with_current_fd_table(|t| {
-                    t.alloc_fd(handle_id, cloexec)
-                })
-                .flatten() else {
-                    OPEN_FILE_TABLE.close(handle_id);
-                    return -1;
-                };
-
-                crate::functions::intcast::low_i32_from_usize(fd_idx)
-            }
+            Ok(inode) => match publish_opened_inode(inode, flags, pwm, cloexec, OpenSource::Path) {
+                Ok(fd_idx) => crate::functions::intcast::low_i32_from_usize(fd_idx),
+                Err(_) => -1,
+            },
             Err(KernelError::FileNotFound) if (flags & VfsOpenFlags::CREAT.bits()) != 0 => {
                 // CREAT: 文件不存在, 尝试创建
                 let (parent_path, name) = split_parent_name(rel_path);
                 match fs.fs_create(parent_path, name, pwm) {
                     Ok(inode) => {
                         let inode_id = inode.node_id();
-                        let open_file = OpenFile::new(inode, flags, pwm);
-
-                        let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
-                            return -1;
-                        };
-
-                        // B-9.5: 同 fs_open 分支, per-process fd 表分配 (元数据改源 OpenFile)
-                        let Some(fd_idx) = crate::privileged::proc::with_current_fd_table(|t| {
-                            t.alloc_fd(handle_id, cloexec)
-                        })
-                        .flatten() else {
-                            OPEN_FILE_TABLE.close(handle_id);
+                        let Ok(fd_idx) =
+                            publish_opened_inode(inode, flags, pwm, cloexec, OpenSource::Path)
+                        else {
                             return -1;
                         };
 

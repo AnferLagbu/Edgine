@@ -128,7 +128,14 @@
 - **方案**: 按 [sgeg-design.md:152](../design/sgeg-design.md) 的三段结构，把散在 syscall 入口的判定上提到唯一出口;
   **验收是可机械检查的**: 统计能获得对象引用的出口数量，要求为 1（或全部经同一 authorize 函数），
   而非逐个人工确认调用点（[sgeg-design.md:742-744](../design/sgeg-design.md)）。
-- **状态**: []
+- **状态**: [X] (文件对象获取面已收敛为唯一出口: [handle.rs `publish_opened_inode`](../../src/kernel/functions/fs/handle.rs)
+  = `authorize_open` → `OpenFile` → 全局表 → per-process fd; `open_by_handle_at` 自带的
+  CAP_SYS_ADMIN 判定与 fd 发布已删, 改经该出口 (`OpenSource::Handle`); 全仓
+  `OpenFile::new` 仅 1 处。新增契约锁 `test_object_acquisition_has_single_authorize_exit`,
+  既有 cloexec 锁改钉为「委派 + helper 内次序」。读数: `./ci/build.sh all` 6/0 · quick RC=0 ·
+  test-kernel-host 1375 passed · x86_64 QEMU 1/1。**射程说明**: exec / link / mount / rename
+  的判定仍在其各自入口 (属进程与元数据面), 不在本次「open_by_handle_at 绕过」射程内;
+  它们的收敛随 T-2/T-3 的标签查询一并处理。)
 
 ### T-2: 主体 / 客体两 trait（薄抽象 A）
 
