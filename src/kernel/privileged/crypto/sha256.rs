@@ -1,15 +1,22 @@
 #![deny(unsafe_code)]
 //! @SAFE: 本文件不含 unsafe 代码。纯算法实现。
-//! SHA-256 哈希实现 — privileged 层权威定义 (安全原语)
+//! SHA-256 哈希实现 — privileged 层通用密码原语 (中立位置)
 //!
 //! ## 归属记录
 //!
-//! 纯算法实现 (SHA-256 哈希), 0 unsafe.
-//! T6-8 曾于 2026-06-16 提取到 functions; 第二十五批 (DECISION-K 项 5 sgeg
-//! 判据: 安全原语归 privileged — `privileged/sgeg/secure_boot` 直接消费) 反转
-//! 归位本文件. functions/sgeg/sha256.rs 为 re-export 壳.
+//! 纯算法实现 (SHA-256 哈希), 0 unsafe. 不承载任何安全策略语义 —— 任何子系统
+//! 都只把它当"一个哈希函数"使用, 这正是它放在 `crypto/` 而非 `sgeg/` 的理由.
+//!
+//! - T6-8 曾于 2026-06-16 提取到 functions;
+//! - 第二十五批 (DECISION-K 项 5): 因 `privileged/sgeg/secure_boot` 直接消费
+//!   而归位 `privileged/sgeg/`;
+//! - 子系统解耦工程 S-2 (2026-11-17): 从 `privileged/sgeg/sha256.rs` 迁至
+//!   `privileged/crypto/sha256.rs` —— EGFS 校验和复用本函数曾让依赖图上出现
+//!   "文件系统依赖安全模块"的假边; 算法原语应留在中立位置 (对照 Linux 把
+//!   通用 hash 放 `crypto/`, 而非 `security/`).
 
-use super::types::PWM_DIGEST_LEN;
+/// SHA-256 摘要字节数 (32)
+pub const SHA256_DIGEST_LEN: usize = 32;
 
 /// SHA-256 轮常量 (前 64 个素数立方根小数部分的前 32 位)
 const K: [u32; 64] = [
@@ -176,7 +183,7 @@ fn sha256_transform(state: &mut [u32; 8], block: &[u8; 64]) {
 /// B07-07: 返回类型由 `[u8; PWM_HASH_LEN]`(48) 修正为标准 32 字节输出.
 /// 原实现返回 48 字节数组但仅填充前 32 字节, 尾部 16 字节恒 0, 属误导性契约.
 #[must_use]
-pub fn sha256(data: &[u8]) -> [u8; PWM_DIGEST_LEN] {
+pub fn sha256(data: &[u8]) -> [u8; SHA256_DIGEST_LEN] {
     let mut state = INITIAL_STATE;
     let len = data.len();
 
@@ -215,7 +222,7 @@ pub fn sha256(data: &[u8]) -> [u8; PWM_DIGEST_LEN] {
     sha256_transform(&mut state, &block);
 
     // 生成最终哈希值 (大端序)
-    let mut hash = [0u8; PWM_DIGEST_LEN];
+    let mut hash = [0u8; SHA256_DIGEST_LEN];
     for j in 0..8 {
         hash[j * 4] = (state[j] >> 24) as u8;
         hash[j * 4 + 1] = crate::privileged::glue::low_u8_from_u32(state[j] >> 16);

@@ -24,7 +24,7 @@
 //! - 文件系统注册表管理
 
 use crate::functions::fs::inode::Inode;
-use crate::functions::fs::vfs_types::{FileSystem, KernelError};
+use crate::functions::fs::vfs_types::{FS_REGISTRY_MAX_ENTRIES, FileSystem, KernelError};
 
 /// 文件系统后端决策接口 — functions 实现, privileged 调用
 ///
@@ -159,6 +159,95 @@ pub fn egfs_fs() -> Option<&'static dyn FileSystem> {
 }
 
 // ============================================================================
+// 通用文件系统注册表 (S-1: 对照 Linux register_filesystem / get_fs_type)
+// ============================================================================
+//
+// SIMPLIFIED: 注册表在 `functions::fs::init()` 期一次性构建, 运行期只读 ——
+// 本内核无运行期可装载模块, 不需要注册/注销的并发面, 故不引入读写锁
+// (Linux 用 file_systems_lock 是因为它允许模块在运行期增删)。
+// 影响面: 新增 FS 需在 init 的注册点加一行 + 不在 vfs_mount 里改分发;
+// 何时需扩展: 引入可装载 FS 模块时改为锁保护的动态表。
+
+/// 按名称索引的文件系统实例表 — 名称到 `FileSystem` trait object 的单源映射
+///
+/// 与 `FsType` 的分工: `FsType` 是挂载记账标签 (枚举, 见 `VfsMount::fs_type`),
+/// 本表是实例解析的唯一来源; 二者不再各自维护一份硬编码清单。
+pub struct FsRegistry {
+    /// 已注册条目 (前 `len` 项有效)
+    entries: [Option<(&'static str, &'static dyn FileSystem)>; FS_REGISTRY_MAX_ENTRIES],
+    /// 已注册条目数
+    len: usize,
+}
+
+impl FsRegistry {
+    /// 构造空注册表
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            entries: [None; FS_REGISTRY_MAX_ENTRIES],
+            len: 0,
+        }
+    }
+
+    /// 按名称查找 `FileSystem` 实例 (未注册返回 None)
+    #[must_use]
+    pub fn lookup(&self, fs_name: &str) -> Option<&'static dyn FileSystem> {
+        self.entries[..self.len]
+            .iter()
+            .flatten()
+            .find(|(name, _)| *name == fs_name)
+            .map(|(_, fs)| *fs)
+    }
+
+    /// 注册一个文件系统实例 (名称重复或表满时返回 Err)
+    ///
+    /// # Errors
+    /// 同名已注册返回 `AlreadyExists`; 条目数已达上限返回 `NoSpace`.
+    pub fn register_filesystem(
+        &mut self,
+        fs_name: &'static str,
+        fs: &'static dyn FileSystem,
+    ) -> Result<(), KernelError> {
+        if self.lookup(fs_name).is_some() {
+            return Err(KernelError::AlreadyExists);
+        }
+        if self.len >= FS_REGISTRY_MAX_ENTRIES {
+            return Err(KernelError::NoSpace);
+        }
+        self.entries[self.len] = Some((fs_name, fs));
+        self.len += 1;
+        Ok(())
+    }
+}
+
+impl Default for FsRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 全局文件系统注册表 — `functions::fs::init` 期一次性安装
+static FS_REGISTRY: crate::privileged::sync::OnceLock<FsRegistry> =
+    crate::privileged::sync::OnceLock::new();
+
+/// 安装文件系统注册表 (仅首次生效; 重复调用返回 `false` 并保留原表)
+///
+/// 以 `bool` 而非 `Result<(), FsRegistry>` 返回: 后者 Err 携带整张表 (>256 字节),
+/// 触发 `clippy::result_large_err`, 而调用方本就只需知道是否安装成功.
+#[must_use]
+pub fn set_fs_registry(registry: FsRegistry) -> bool {
+    FS_REGISTRY.set(registry).is_ok()
+}
+
+/// 按名称解析文件系统实例 (注册表未安装或名称未注册时返回 None — fail-closed)
+#[inline]
+pub fn lookup_filesystem(fs_name: &str) -> Option<&'static dyn FileSystem> {
+    FS_REGISTRY
+        .get()
+        .and_then(|registry| registry.lookup(fs_name))
+}
+
+// ============================================================================
 // 单元测试 (DECISION-080 双轨: 纯逻辑测试归源侧 #[cfg(test)])
 // ============================================================================
 
@@ -193,5 +282,50 @@ mod tests {
         assert_eq!(fs.name(), "egfs", "egfs name mismatch");
         // 注: fs_format 行为不在单测覆盖 (内存模式调 format_drive 有底层 IO 副作用),
         // 语义等价性由 fsformat 路径代码搬移保证, QEMU boot 覆盖挂载分发链路
+    }
+
+    // S-1: 通用注册表行为锁 — 注册/查找/未命中
+    #[test]
+    fn test_fs_registry_register_and_lookup() {
+        let mut registry = FsRegistry::new();
+        assert!(registry.lookup("ramfs").is_none(), "空表不应命中任何名称");
+        registry
+            .register_filesystem("ramfs", crate::functions::fs::ramfs_core::ramfs_fs())
+            .expect("首次注册 ramfs 应成功");
+        let fs = registry.lookup("ramfs").expect("已注册名称应可查找");
+        assert_eq!(fs.name(), "ramfs");
+        assert!(registry.lookup("egfs").is_none(), "未注册名称须返回 None");
+    }
+
+    // S-1: 同名重复注册必须拒绝 (fail-closed, 不允许静默覆盖)
+    #[test]
+    fn test_fs_registry_rejects_duplicate_name() {
+        let mut registry = FsRegistry::new();
+        registry
+            .register_filesystem("ramfs", crate::functions::fs::ramfs_core::ramfs_fs())
+            .expect("首次注册应成功");
+        let dup =
+            registry.register_filesystem("ramfs", crate::functions::fs::ramfs_core::ramfs_fs());
+        assert!(matches!(dup, Err(KernelError::AlreadyExists)));
+    }
+
+    // S-1: 表满后注册 fail-closed (`NoSpace`), 不覆盖既有条目
+    #[test]
+    fn test_fs_registry_capacity_fail_closed() {
+        static NAMES: [&'static str; FS_REGISTRY_MAX_ENTRIES] =
+            ["fs0", "fs1", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7"];
+        let mut registry = FsRegistry::new();
+        for &name in &NAMES {
+            assert!(
+                registry
+                    .register_filesystem(name, crate::functions::fs::ramfs_core::ramfs_fs())
+                    .is_ok(),
+                "容量内注册应成功"
+            );
+        }
+        let overflow =
+            registry.register_filesystem("fs8", crate::functions::fs::ramfs_core::ramfs_fs());
+        assert!(matches!(overflow, Err(KernelError::NoSpace)));
+        assert!(registry.lookup("fs0").is_some(), "表满不应破坏既有条目");
     }
 }

@@ -5,11 +5,11 @@ use super::bootstrap;
 use super::capability::VIABLE_FLOOR;
 use super::csprng;
 use super::grant;
-use super::sha256;
 use super::types::{
     AuditAction, CapBits, CapDomain, GrantRecord, MAX_PWM_ENTRIES, PWM_DIGEST_LEN, PWM_NOTE_LEN,
     PWM_SALT_LEN, PwmEntry, PwmEntrySnapshot, PwmError, PwmFlags, PwmId,
 };
+use crate::privileged::crypto::sha256;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// 常数时间比较两个字节数组 (B08-22: privileged 权威实现, `functions::sgeg::crypto::ct_eq` 委托本函数)

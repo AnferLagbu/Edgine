@@ -83,6 +83,8 @@ pub mod console;
 /// TCB 内部容量常量 (与 privileged::config 职责正交, 见 constants/mod.rs)
 pub mod constants;
 pub mod cpu;
+/// 通用密码原语 (与安全策略无关的纯算法, 如 SHA-256)
+pub mod crypto;
 pub mod debug;
 pub mod dma;
 pub mod driver;

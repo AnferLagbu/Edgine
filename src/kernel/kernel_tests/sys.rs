@@ -1,10 +1,10 @@
 // UT-07 (2026-09-25): mm::slab 注册副本已删 — 其纯逻辑断言以
 // privileged/mm/slab.rs 的 #[cfg(test)] 为唯一归属.
+use crate::privileged::crypto::sha256::sha256;
 use crate::privileged::errno::{Errno, errno_from_i64};
 use crate::privileged::proc::elf::{Elf64Header, Elf64Phdr};
 use crate::privileged::sgeg::constant_time_eq;
 use crate::privileged::sgeg::secure_boot::{sha256_extend, sha256_hash};
-use crate::privileged::sgeg::sha256::sha256;
 use crate::privileged::tests::{TestResult, assert_eq_test, check, runner};
 use crate::register_tests_inner;
 // T1 G7: 文件系统组策略 (functions 侧)

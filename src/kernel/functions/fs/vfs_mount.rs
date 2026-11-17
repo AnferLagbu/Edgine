@@ -7,11 +7,10 @@
 #![deny(missing_docs)]
 
 use super::api::ptr_to_str;
-use super::backend_trait::{current_fs_backend, egfs_fs};
+use super::backend_trait::current_fs_backend;
 use super::vfs_manager::VFS_MANAGER;
-use super::vfs_types::{FileSystem, FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
-use crate::functions::fs::devfs::DEVFS_DATA;
-use crate::functions::fs::ramfs_core::{RAMFS_DATA, ramfs_fs};
+use super::vfs_types::{FsType, IntoI32, KernelError, VFS_MAX_MOUNTS};
+use crate::functions::fs::ramfs_core::RAMFS_DATA;
 
 static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
@@ -23,10 +22,16 @@ static RAMFS_MOUNTED: core::sync::atomic::AtomicBool = core::sync::atomic::Atomi
 pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32 {
     let path = ptr_to_str(path);
     let fs_name = ptr_to_str(fs_name);
+    // `FsType` 只作挂载记账标签; 实例解析一律经注册表 (S-1), 不再各自维护清单.
     let fs_type = FsType::from_name(fs_name);
 
+    // 类型特有的前置动作 (通用生命周期见下方注册表分支)
     match fs_type {
+        // RamFS: 只允许一次有效 mount (`RAMFS_MOUNTED` 去重标志)
         FsType::RamFs => {
+            let Some(fs) = current_fs_backend().resolve_fs(fs_name) else {
+                return KernelError::NotInitialized.as_i32();
+            };
             if !RAMFS_MOUNTED.swap(true, core::sync::atomic::Ordering::SeqCst) {
                 {
                     let mut ramfs = RAMFS_DATA.lock();
@@ -35,49 +40,35 @@ pub extern "C" fn vfs_mount_internal(path: *const u8, fs_name: *const u8) -> i32
                     }
                 } // 显式 drop ramfs 释放锁
             }
+            return VFS_MANAGER.mount_with_fs(path, fs_name, fs).as_i32();
         }
-        FsType::Egfs => {
-            // EGFS 初始化经注册的 FileSystem trait (fs_init 内含 is_initialized 检查);
-            // 未注册 (functions::fs::init 之前) 时静默跳过, 挂载在下方 egfs_fs() 处 fail-closed
-            if let Some(fs) = egfs_fs() {
-                let _ = fs.fs_init();
-            }
+        // DevFS: 设备注册由 init()/init_with_egdf_bridge() 完成, 此处只登记挂载点
+        FsType::DevFs => {
+            let Some(fs) = current_fs_backend().resolve_fs(fs_name) else {
+                return KernelError::NotInitialized.as_i32();
+            };
+            return VFS_MANAGER.mount_with_fs(path, fs_name, fs).as_i32();
         }
-        // DevFS 初始化由 init()/init_with_egdf_bridge() 完成;
-        // ext2 / exfat 挂载分别由 Ext2FileSystem / ExfatFileSystem::fs_mount 处理
-        FsType::DevFs | FsType::Ext2 | FsType::ExFat => {}
-        FsType::TmpFs | FsType::OverlayFs => {
-            // tmpfs/overlayfs 挂载策略归 functions: 经注册表解析 FileSystem trait object
-            // 并调用其 fs_mount 完成挂载; 未注册 (functions::fs::init 之前) 时 fail-closed.
-            match current_fs_backend().resolve_fs(fs_name) {
-                Some(fs) => {
-                    if fs.fs_mount(path).is_err() {
-                        return KernelError::Io.as_i32();
-                    }
-                }
-                None => return KernelError::NotInitialized.as_i32(),
-            }
-        }
-
-        FsType::Unknown => return KernelError::NotSupported.as_i32(),
+        // ext2 / exfat 的实例保存在私有 `Mutex<Option<..>>` (非 `'static dyn FileSystem`),
+        // 无法进注册表; 沿用旧路径只登记挂载点 (无 trait object)
+        FsType::Ext2 | FsType::ExFat => return VFS_MANAGER.mount(path, fs_name).as_i32(),
+        FsType::Egfs | FsType::TmpFs | FsType::OverlayFs | FsType::Unknown => {}
     }
 
-    // 带 trait object 挂载: 各类型经注册表/全局实例解析 FileSystem trait object
-    let fs: &'static dyn FileSystem = match fs_type {
-        FsType::RamFs => ramfs_fs(),
-        FsType::Egfs => match egfs_fs() {
-            Some(fs) => fs,
-            // fail-closed: functions::fs::init 注册前 EGFS 不可挂载
-            None => return KernelError::NotInitialized.as_i32(),
-        },
-        FsType::DevFs => &DEVFS_DATA,
-        FsType::TmpFs | FsType::OverlayFs => match current_fs_backend().resolve_fs(fs_name) {
-            Some(fs) => fs,
-            // fail-closed: functions::fs::init 注册前不可挂载
-            None => return KernelError::NotInitialized.as_i32(),
-        },
-        _ => return VFS_MANAGER.mount(path, fs_name).as_i32(),
+    // 通用分支: 注册表命中即按统一生命周期挂载 (`fs_init` + `fs_mount` + 登记);
+    // 新增 FS 只需在 `fs::init` 的注册点登记, 无需改本函数.
+    let Some(fs) = current_fs_backend().resolve_fs(fs_name) else {
+        // 未注册: 未知类型保持旧语义 (`NotSupported`), 已知类型 = init 之前 (`NotInitialized`)
+        return if matches!(fs_type, FsType::Unknown) {
+            KernelError::NotSupported.as_i32()
+        } else {
+            KernelError::NotInitialized.as_i32()
+        };
     };
+    let _ = fs.fs_init();
+    if fs.fs_mount(path).is_err() {
+        return KernelError::Io.as_i32();
+    }
     VFS_MANAGER.mount_with_fs(path, fs_name, fs).as_i32()
 }
 

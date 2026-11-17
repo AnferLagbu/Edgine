@@ -66,8 +66,8 @@ use edgine::kernel::functions::debug::ebpf_verifier::STANDARD_VERIFIER;
 //   与 `tests/pmm_buddy_host_test.rs` 一致)
 // - `IoMem`: 别名注册表唯一公共入口 (与 `tests/mm_iomem_alias_test.rs` 一致)
 // - `VirtQueue`: 描述符/环区操作用宿主堆块作 DMA 后备 (host 无 PMM, 见 §12 段注释)
+use edgine::kernel::privileged::crypto::sha256::sha256;
 use edgine::kernel::privileged::driver::virtio::queue::{VQ_SIZE, VirtQueue, VqDesc, VqUsedElem};
-use edgine::kernel::privileged::sgeg::sha256::sha256;
 // 描述符标志位仅单测断言使用 (bench 体经 `prepare_desc` 的 write 参数间接设置)
 use edgine::kernel::functions::sgeg::policy::{
     CapBits, CapDomain, CapabilityMatrix, InMemoryMatrix, PolicyEngine, PolicyResult,
@@ -344,7 +344,7 @@ pub fn dma_state_machine_bench(iters: u64) -> u128 {
 // ====== 6. SHA-256 哈希 (来自 privileged/sgeg/sha256.rs) ======
 
 // G-07: 本地 `K`/`rotr`/`sha256_transform` 复刻已删除, 直引内核
-// `privileged::sgeg::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
+// `privileged::crypto::sha256::sha256` — 消息填充 + 压缩函数 + 输出编码的唯一公共入口.
 //
 // 语义与基线变更: 旧 mock 只做单 block 压缩 (无填充); 内核公共入口对 64B 输入做
 // 2 次压缩 (数据块 + 填充块) 并编码输出, 故 1 op 口径改为 1 次完整 `sha256` 调用.

@@ -135,13 +135,9 @@ impl FsBackend for FunctionsFsBackend {
     }
 
     fn resolve_fs(&self, fs_name: &str) -> Option<&'static dyn FileSystem> {
-        // functions 文件系统注册表: 按 fs_type 名称返回对应 FileSystem 实例.
-        // 新增文件系统仅需在此增加一行映射, privileged 无需改动.
-        match fs_name {
-            "tmpfs" => Some(crate::functions::fs::tmpfs::tmpfs_fs()),
-            "overlay" => Some(crate::functions::fs::overlayfs::overlay_fs()),
-            _ => None,
-        }
+        // 通用文件系统注册表查找 (S-1): 新增 FS 只需在 `install_filesystem_registry`
+        // 登记一行, 本函数与 privileged 均无需改动. 未注册 ⇒ None (fail-closed).
+        lookup_filesystem(fs_name)
     }
 }
 
@@ -213,10 +209,37 @@ impl crate::privileged::fs::VfsOps for FunctionsVfsOps {
 
 static VFS_OPS_IMPL: FunctionsVfsOps = FunctionsVfsOps;
 
+/// 安装通用文件系统注册表 (S-1) — 新增 FS 在此登记一行即被 `mount` 解析
+///
+/// 注册失败只可能来自重名或表满 (两者均由静态字面量与容量常量排除);
+/// 此时保持注册表未安装, mount 路径 fail-closed (`NotInitialized`), 不 panic.
+fn install_filesystem_registry() {
+    let mut registry = FsRegistry::new();
+    if registry
+        .register_filesystem("ramfs", crate::functions::fs::ramfs_core::ramfs_fs())
+        .is_ok()
+        && registry
+            .register_filesystem("egfs", crate::functions::fs::egfs::entry::get_egfs())
+            .is_ok()
+        && registry
+            .register_filesystem("devfs", &crate::functions::fs::devfs::DEVFS_DATA)
+            .is_ok()
+        && registry
+            .register_filesystem("tmpfs", crate::functions::fs::tmpfs::tmpfs_fs())
+            .is_ok()
+        && registry
+            .register_filesystem("overlay", crate::functions::fs::overlayfs::overlay_fs())
+            .is_ok()
+    {
+        // 重复 init 时安装失败 (表已存在) — 幂等, 保留原表
+        let _ = set_fs_registry(registry);
+    }
+}
+
 /// `functions::fs` 初始化 — 注册策略到 privileged (由 crate root 编排点调用)
 ///
 /// 注册内容 (DECISION-K 项 6 注册点前置):
-/// - `FsBackend` 挂载决策策略 (`register_fs_backend`)
+/// - `FsBackend` 挂载决策策略 (`register_fs_backend`) + 通用文件系统注册表 (S-1)
 /// - VFS poll 策略 (`register_default_vfs_poll_policy`)
 /// - EGFS `FileSystem` 实例 (`register_egfs_fs`) + 热插拔监听器
 ///   (`egfs_hotplug_register`, `HOTPLUG_MANAGER` 为自足 static, 时序仅要求
@@ -225,6 +248,7 @@ static VFS_OPS_IMPL: FunctionsVfsOps = FunctionsVfsOps;
 pub fn init() {
     static POLICY: FunctionsFsBackend = FunctionsFsBackend;
     let _ = register_fs_backend(&POLICY);
+    install_filesystem_registry();
     let _ = crate::functions::fs::vfs_poll_policy::register_default_vfs_poll_policy();
     let _ = register_egfs_fs(crate::functions::fs::egfs::entry::get_egfs());
     crate::functions::fs::egfs::entry::egfs_hotplug_register();
@@ -264,8 +288,8 @@ pub use flock::{
 pub use inotify::{sys_inotify_add_watch, sys_inotify_init1, sys_inotify_rm_watch};
 // T-05: 后端决策策略 re-export
 pub use backend_trait::{
-    FallbackFsBackend, FsBackend, current_fs_backend, egfs_fs, register_egfs_fs,
-    register_fs_backend,
+    FallbackFsBackend, FsBackend, FsRegistry, current_fs_backend, egfs_fs, lookup_filesystem,
+    register_egfs_fs, register_fs_backend, set_fs_registry,
 };
 
 /// 全局 FS 单例 / 进程-调度器态测试互斥锁

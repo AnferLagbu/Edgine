@@ -3,9 +3,8 @@
 //!
 //! ## 归属记录
 //!
-//! 纯算法实现 (SHA-256 哈希, 安全原语) 的权威定义在
-//! `privileged/sgeg/sha256.rs` (第二十五批反转归位, DECISION-K 项 5 sgeg
-//! 判据 — privileged/sgeg/secure_boot 直接消费). 本文件仅 re-export 保持
-//! functions 内部消费者路径兼容.
+//! 权威定义在 `privileged/crypto/sha256.rs` (S-2, 2026-11-17 子系统解耦工程:
+//! 由 `privileged/sgeg/sha256.rs` 迁至中立位置 —— 纯算法不带安全策略语义).
+//! 本文件仅 re-export, 保持 functions 内部消费者的既有路径兼容.
 
-pub use crate::privileged::sgeg::sha256::*;
+pub use crate::privileged::crypto::sha256::*;

@@ -74,7 +74,9 @@
   全部实例; `vfs_mount_internal` 改为「名字 → 注册表查找 → fail-closed（未注册返 `NotInitialized`）」。
   `FsType` 降级为**挂载记账标签**（`vfs_manager` 的 `fs_type` 字段与测试断言继续用），不再参与实例化。
   **不改** `VFS_MANAGER.mount` 旧路径的行为，不改 privileged 侧。
-- **状态**: []
+- **状态**: [X] (注册表 `FsRegistry` 落 `backend_trait.rs`，`fs::init()` 期安装 5 个实例
+  (ramfs/egfs/devfs/tmpfs/overlay)；`vfs_mount_internal` 改为「类型特例 + 注册表通用分支」，
+  新增 FS 只需在注册点加一行；3 条 host 单测锁注册/查找/重名/容量)
 
 ### S-2: SHA-256 算法归位
 
@@ -85,20 +87,25 @@
   常量 `PWM_DIGEST_LEN` 改中立名; 更新 4 类消费者: `sgeg/secure_boot.rs`、`functions/sgeg/crypto.rs`、
   `functions/sgeg/sha256.rs`（现为 `pub use` 转发）、`kernel_tests/sys.rs`、`egfs/checksum.rs`。
   `functions/sgeg/sha256.rs` 保留为再导出以维持既有对外面，或按搜索结果改直连 —— **以不引入死代码为准（F9）**。
-- **状态**: []
+- **状态**: [X] (`git mv` 至 [privileged/crypto/sha256.rs](../../src/kernel/privileged/crypto/sha256.rs)，
+  新增 `privileged/crypto/mod.rs`；常量 `PWM_DIGEST_LEN` → `SHA256_DIGEST_LEN`；
+  6 处消费者改直连 (secure_boot / identity / functions-sgeg-crypto / egfs-checksum /
+  kernel_tests / host-tests bench)，`functions/sgeg/sha256.rs` 壳改指 crypto；
+  设计册 [sgeg-design.md:49](../design/sgeg-design.md) 链接同批重指)
 
 ### S-3: 删 EGFS 死状态字段
 
 - **描述**: `EgfsData.current_pwm` 声明 + 初始化后零读取（[egfs_data.rs:93](../../src/kernel/functions/fs/egfs/egfs_data.rs#L93) / `:137`）。
 - **方案**: 删除字段与初始化语句。若构造/初始化签名因此有未使用参数，一并显式消费或删参（不得用 `allow(unused)` 压住，F9）。
-- **状态**: []
+- **状态**: [X] (字段与初始化语句删除; 全仓零剩余引用, 无签名改动)
 
 ### S-4: 设计立场册 `docs/design/subsystem-decoupling-design.md`
 
 - **描述**: 把本册 §一 的三家对照、Edgine 已有/缺失、两条共性立论写成设计立场（长期主张），作为 v2 与后续工程的输入。
 - **方案**: 按 AGENTS §6 design 册规范（自由描述风格，**禁**结构化字段与状态标记）; 明确写「开关不是解耦手段」
   与「不做 LSM 式注册表」两条立场及其理由; 与本册及 `sgeg-design.md` 互指。
-- **状态**: []
+- **状态**: [X] ([subsystem-decoupling-design.md](../design/subsystem-decoupling-design.md) 已落:
+  三家对照表 + 解耦三件套 + 「开关不是解耦手段」+ 两条可机械检验判据 + 冻结期二分)
 
 ### S-5: 期一收口
 
@@ -106,7 +113,10 @@
 - **方案**: §2.3 七门槛全绿（`bash ci/audit.sh full` + `make test-host` + `make test-kernel-host` +
   `make -f Makefile.ci ci-rustdoc` 分跑，判据取日志内 `*-RC=` 回显）; S-1 需新增 host 契约锁
   （注册表解析 + 未注册 fail-closed + 重复注册拒绝）; 同步 `docs/explain` 相关页与本册状态。
-- **状态**: []
+- **状态**: [X] (七门槛实测全绿, 判据取日志内 `*-RC=` 回显: `bash ci/audit.sh full` **AUDIT-RC=0**
+  (含双架构 QEMU 2/2、aarch64 EGFS 三相、UEFI 可达面、未执行腿数 0); `make test-host` **HOST-RC=0**
+  (202 套 / 1597 passed / 0 failed); `make test-kernel-host` **KHOST-RC=0** (12+807+556 = 1375 passed / 0 failed);
+  `make -f Makefile.ci ci-rustdoc` **RUSTDOC-RC=0** (双架构 exit 0))
 
 ## 四、期二（待授权，不施工）
 

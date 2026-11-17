@@ -89,8 +89,6 @@ pub struct EgfsData {
     pub fds: Mutex<[EgfsFd; EGFS_MAX_FDS]>,
     /// 下一个待分配的描述符编号.
     pub next_fd: AtomicU32,
-    /// 当前进程的 PWM 身份字.
-    pub current_pwm: AtomicU64,
     /// 当前工作目录对象编号.
     pub current_dir: AtomicU64,
     /// 是否已挂载.
@@ -134,7 +132,6 @@ pub fn get_egfs() -> &'static EgfsData {
                 }; EGFS_MAX_FDS],
             ),
             next_fd: AtomicU32::new(0),
-            current_pwm: AtomicU64::new(0),
             current_dir: AtomicU64::new(HV_DMU_OBJ_ROOT),
             mounted: AtomicBool::new(false),
             initialized: AtomicBool::new(false),

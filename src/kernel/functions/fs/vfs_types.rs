@@ -21,6 +21,8 @@ pub const VFS_MAX_PATH: usize = 128;
 pub const VFS_MAX_NAME: usize = 64;
 /// 同时挂载的文件系统最大数量
 pub const VFS_MAX_MOUNTS: usize = 8;
+/// 文件系统注册表最大条目数 (注册的 FS 种类上限; 超限注册 fail-closed)
+pub const FS_REGISTRY_MAX_ENTRIES: usize = 8;
 
 // 统一到 privileged::error (P0-2 迁回)
 pub use crate::privileged::error::KernelError;

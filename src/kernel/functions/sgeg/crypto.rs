@@ -12,7 +12,7 @@
 //!
 //! ## 迁移方法
 //!
-//! 1. 内部把 `&[u8]` 切片传给 `sgeg::sha256::sha256`
+//! 1. 内部把 `&[u8]` 切片传给 `privileged::crypto::sha256::sha256`
 //! 2. functions 层 0 unsafe — 所有 `unsafe` 在 privileged `cpuid`/`rdrand` 内部
 //! 3. 强类型 `Salt([u8; 16])` / `Hash([u8; 32])` 替代裸 `[u8; N]`
 //!
@@ -179,8 +179,8 @@ impl Default for PasswordHash {
 #[inline]
 #[must_use]
 pub fn sha256(data: &[u8]) -> Sha256Hash {
-    // B07-07: sgeg::sha256::sha256 返回标准 32 字节, 直接包装.
-    Sha256Hash(sgeg::sha256::sha256(data))
+    // B07-07: privileged::crypto::sha256::sha256 返回标准 32 字节, 直接包装.
+    Sha256Hash(crate::privileged::crypto::sha256::sha256(data))
 }
 
 /// 计算 SHA-256 → 密码哈希 (含盐拉伸)
@@ -195,7 +195,7 @@ pub fn password_hash(password: &[u8], salt: Salt) -> PasswordHash {
     // B07-07: salt 经 from_parts 显式写入 full[32..48].
     // 原实现把 sha256 的 48 字节返回直接当 full, salt 部分恒 0, 加盐失效
     // (相同密码产生相同存储值, 失去防彩虹表能力).
-    let digest = sgeg::sha256::sha256(&stretched[..40 + SALT_LEN]);
+    let digest = crate::privileged::crypto::sha256::sha256(&stretched[..40 + SALT_LEN]);
     PasswordHash::from_parts(Sha256Hash(digest), salt)
 }
 

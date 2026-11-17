@@ -47,11 +47,11 @@ pub const PCR_COUNT: usize = 8;
 pub const MAX_TRUST_CHAIN_DEPTH: usize = 4;
 
 // ============================================================================
-// SHA-256 (B08-19: 委托 functions::sgeg::sha256 规范实现,
+// SHA-256 (B08-19: 委托 privileged::crypto::sha256 规范实现,
 // 删除本地重复 K 常量表/填充/轮函数 — 原注释"后者输出 48 字节"已被 B07-07 证伪)
 // ============================================================================
 
-use crate::privileged::sgeg::sha256::sha256;
+use crate::privileged::crypto::sha256::sha256;
 
 /// 计算 SHA-256 哈希 (标准 32 字节输出, 委托 functions 规范实现)
 #[must_use]
