@@ -497,7 +497,8 @@ mod tests {
 
         // fs_open → make_inode 钩子 → functions RamFsInode (回归路径本体)
         // ramfs_fs() 返回 'static dyn FileSystem, 内部自查加锁, 无裸指针提升.
-        let opened = ramfs_fs().fs_open("/backend_reg_t", 0, 0);
+        let opened =
+            ramfs_fs().fs_open("/backend_reg_t", 0, crate::functions::fs::SubjectId::new(0));
         assert!(
             opened.is_ok(),
             "fs_open 应经 backend 钩子返回 Inode (命中 Fallback 即回归)"

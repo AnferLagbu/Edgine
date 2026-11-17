@@ -174,8 +174,15 @@ fn process_fd_table_deny_unsafe() {
 fn filesystem_fs_open_returns_arc_inode() {
     // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 functions/fs/vfs_types.rs
     let src = read_file("functions/fs/vfs_types.rs");
+    // T-3: 形参已载体中立化 (pwm: u64 -> SubjectId); 按去空白文本比对,
+    // 避免 rustfmt 折行导致源码契约误报. 返回类型仍必须是 Arc<dyn Inode>.
+    let compact: String = src.split_whitespace().collect();
     assert!(
-        src.contains("fn fs_open(&self, rel_path: &str, flags: u32, pwm: u64) -> KernelResult<Arc<dyn Inode>>"),
+        compact.contains("fnfs_open(&self,rel_path:&str,flags:u32,subject:SubjectId,"),
+        "FileSystem::fs_open 形参必须为 (rel_path, flags, SubjectId)"
+    );
+    assert!(
+        src.contains("KernelResult<Arc<dyn Inode>>"),
         "FileSystem::fs_open 必须返回 Arc<dyn Inode>"
     );
     assert!(
@@ -188,8 +195,13 @@ fn filesystem_fs_open_returns_arc_inode() {
 fn filesystem_fs_create_returns_arc_inode() {
     // 阶段 4b: FileSystem trait 已随 VFS 完整下沉迁至 functions/fs/vfs_types.rs
     let src = read_file("functions/fs/vfs_types.rs");
+    let compact: String = src.split_whitespace().collect();
     assert!(
-        src.contains("fn fs_create(&self, parent_path: &str, name: &str, pwm: u64) -> KernelResult<Arc<dyn Inode>>"),
+        compact.contains("fnfs_create(&self,parent_path:&str,name:&str,subject:SubjectId,"),
+        "FileSystem::fs_create 形参必须为 (parent_path, name, SubjectId)"
+    );
+    assert!(
+        src.contains("KernelResult<Arc<dyn Inode>>"),
         "FileSystem::fs_create 必须返回 Arc<dyn Inode>"
     );
 }

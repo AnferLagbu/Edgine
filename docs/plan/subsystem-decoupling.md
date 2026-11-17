@@ -155,7 +155,15 @@
   与 D5-i 对 EGFS 的处理同构; 随后把 `FileSystem` trait 的 `pwm: u64` 换成 FS 层不透明 `SubjectId`
   （FS 只记录属主、不解读语义，对照 Linux `void* i_security`）。
 - **方案**: 判定移到 T-1 的唯一出口; trait 签名改类型 + 7 个 impl + 调用方全改; host 权限回归锁逐条归因后改钉。
-- **状态**: []
+- **状态**: [X] (`SubjectId` 落 [vfs_types.rs](../../src/kernel/functions/fs/vfs_types.rs)（不透明主体: `new`/`raw`，字段私有）;
+  `FileSystem` trait 全部 `pwm: u64` / `owner_pwm` / `group_pwm` → `subject: SubjectId` /
+  `owner_subject` / `group_subject`; 7 个实现 (ramfs / egfs / ext2 / exfat / devfs / tmpfs /
+  overlayfs) 在方法体内 `raw()` 取回、**行为逐行不变**; VFS 调用点与 host-tests 调用点统一
+  `SubjectId::new(...)` 包装。两条源码契约针按新机制改钉 (去空白比对 + 返回类型断言),
+  `ramfs_core` 内联测试的 `fs_open(..., 0)` 同批修正。
+  读数: 七门槛全绿 —— audit full **RC=0** (QEMU 2/2 + aarch64 EGFS 三相 + UEFI 可达面 +
+  未执行腿数 0) / test-host **202 套 1598 passed 0 failed** / test-kernel-host **1375 passed
+  0 failed** / ci-rustdoc 双架构 exit 0)
 
 ### T-4: 盘上字段语义中立化收尾
 
