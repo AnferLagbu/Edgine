@@ -7,7 +7,8 @@ use crate::functions::fs::KernelError;
 use crate::functions::fs::ramfs_core::RamFsDirEntry;
 use crate::functions::fs::vfs_manager::VFS_MANAGER;
 use crate::functions::fs::vfs_types::{
-    FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence, VfsStat,
+    FileSystem, KernelResult, SubjectId, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence,
+    VfsStat,
 };
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use alloc::string::String;
@@ -209,7 +210,7 @@ impl OverlayFsData {
 
         // 3. lowerdir 命中 — 经 VFS_MANAGER 只读查询下层挂载。
         if let Some((lower_fs, lower_rel)) = self.lower_target(path)
-            && let Ok(st) = lower_fs.fs_stat(&lower_rel, pwm)
+            && let Ok(st) = lower_fs.fs_stat(&lower_rel, SubjectId::new(pwm))
         {
             return OverlayEntry {
                 name: String::from(name),
@@ -254,7 +255,7 @@ impl OverlayFsData {
 
         // 2. 定位并打开只读下层文件。
         let (lower_fs, lower_rel) = self.lower_target(path).ok_or(KernelError::FileNotFound)?;
-        let lower_inode = lower_fs.fs_open(&lower_rel, 0, pwm)?;
+        let lower_inode = lower_fs.fs_open(&lower_rel, 0, SubjectId::new(pwm))?;
 
         // 3. 仅普通文件可拷贝。
         // SIMPLIFIED: 目录/符号链接/设备的 copy_up 未实装 (目录需递归复制子树);
@@ -547,8 +548,9 @@ impl FileSystem for OverlayFsFileSystem {
         &self,
         rel_path: &str,
         flags: u32,
-        pwm: u64,
+        subject: SubjectId,
     ) -> KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -593,7 +595,7 @@ impl FileSystem for OverlayFsFileSystem {
 
         // 只读: 直通下层, 包装为只读 inode (不产生 upper 副本).
         let (lower_fs, lower_rel) = fs.lower_target(rel_path).ok_or(KernelError::FileNotFound)?;
-        let inner = lower_fs.fs_open(&lower_rel, flags, pwm)?;
+        let inner = lower_fs.fs_open(&lower_rel, flags, SubjectId::new(pwm))?;
         Ok(alloc::sync::Arc::new(OverlayLowerInode { inner }))
     }
 
@@ -601,7 +603,14 @@ impl FileSystem for OverlayFsFileSystem {
         Ok(())
     }
 
-    fn fs_read(&self, handle: u32, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_read(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &mut [u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -615,7 +624,14 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_write(&self, handle: u32, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_write(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &[u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -629,7 +645,8 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_stat(&self, rel_path: &str, pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, subject: SubjectId) -> KernelResult<VfsStat> {
+        let pwm = subject.raw();
         let fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -667,27 +684,34 @@ impl FileSystem for OverlayFsFileSystem {
             // 只命中 lowerdir: 经 VFS_MANAGER 委托下层 fs_stat.
             let (lower_fs, lower_rel) =
                 fs.lower_target(rel_path).ok_or(KernelError::FileNotFound)?;
-            lower_fs.fs_stat(&lower_rel, pwm)
+            lower_fs.fs_stat(&lower_rel, SubjectId::new(pwm))
         } else {
             Err(KernelError::FileNotFound)
         }
     }
 
-    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _pwm: u64) -> KernelResult<()> {
+    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 
     fn fs_chown(
         &self,
         _rel_path: &str,
-        _owner_pwm: u64,
-        _group_pwm: u64,
-        _pwm: u64,
+        _owner_subject: SubjectId,
+        _group_subject: SubjectId,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 
-    fn fs_utimensat(&self, rel_path: &str, atime: u64, mtime: u64, pwm: u64) -> KernelResult<()> {
+    fn fs_utimensat(
+        &self,
+        rel_path: &str,
+        atime: u64,
+        mtime: u64,
+        subject: SubjectId,
+    ) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -709,7 +733,8 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_mkdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -726,7 +751,8 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_unlink(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut fs = OVERLAY_FS.lock();
         fs.ensure_mounted()?;
 
@@ -746,7 +772,9 @@ impl FileSystem for OverlayFsFileSystem {
             // 否则 merged 视图会重新暴露被删的下层文件.
             let lower_has_same = fs
                 .lower_target(rel_path)
-                .is_some_and(|(lower_fs, lower_rel)| lower_fs.fs_stat(&lower_rel, pwm).is_ok());
+                .is_some_and(|(lower_fs, lower_rel)| {
+                    lower_fs.fs_stat(&lower_rel, SubjectId::new(pwm)).is_ok()
+                });
             if lower_has_same {
                 fs.create_whiteout(rel_path)?;
             }
@@ -758,11 +786,11 @@ impl FileSystem for OverlayFsFileSystem {
         }
     }
 
-    fn fs_rmdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rmdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_rename(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rename(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 

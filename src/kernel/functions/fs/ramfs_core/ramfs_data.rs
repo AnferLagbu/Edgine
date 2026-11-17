@@ -10,8 +10,9 @@ use super::{
     RAMFS_BLOCK_SIZE, RAMFS_MAX_ACES, RAMFS_MAX_BLOCKS, RAMFS_MAX_NODES, SENSITIVITY_PUBLIC,
 };
 use crate::functions::fs::KernelError;
-use crate::functions::fs::authorize::{self, AccessDecision, ObjectLabel, SubjectId};
+use crate::functions::fs::authorize::{self, AccessDecision, ObjectLabel};
 use crate::functions::fs::dcache;
+use crate::functions::fs::vfs_types::SubjectId;
 use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
 use crate::privileged::sgeg::api as pwm_api;
@@ -384,7 +385,7 @@ impl RamFsData {
     /// ACE 显式判定 — 纯数据查询 (遍历本实例的 ACE 表), 不含策略组合
     fn ace_verdict(&self, node_id: u32, subject: SubjectId, cap: u64) -> Option<bool> {
         for ace in &self.aces {
-            if ace.used && ace.node_id == node_id && (ace.pwm == 0 || ace.pwm == subject.0) {
+            if ace.used && ace.node_id == node_id && (ace.pwm == 0 || ace.pwm == subject.raw()) {
                 if (ace.deny_mask & cap) != 0 {
                     return Some(false);
                 }
@@ -397,13 +398,13 @@ impl RamFsData {
     }
 
     fn check_permission(&self, node: &RamFsNode, pwm: u64, cap: u64) -> bool {
-        let subject = SubjectId(pwm);
+        let subject = SubjectId::new(pwm);
         let acl = self.ace_verdict(node.node_id, subject, cap);
         authorize::decide(
             subject,
             ObjectLabel {
                 sensitivity: node.sensitivity,
-                owner: SubjectId(node.owner_pwm),
+                owner: SubjectId::new(node.owner_pwm),
                 acl,
             },
             cap,

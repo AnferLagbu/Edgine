@@ -26,8 +26,8 @@ use crate::functions::fs::KernelError;
 use crate::functions::fs::backend_trait::current_fs_backend;
 use crate::functions::fs::inode::Inode;
 use crate::functions::fs::{
-    FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags, VfsSeekWhence,
-    VfsStat,
+    FileSystem, KernelResult, SubjectId, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsOpenFlags,
+    VfsSeekWhence, VfsStat,
 };
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
@@ -96,8 +96,9 @@ impl FileSystem for RamFsFileSystem {
         &self,
         rel_path: &str,
         flags: u32,
-        pwm: u64,
+        subject: SubjectId,
     ) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
+        let pwm = subject.raw();
         let mount_idx = 0; // RamFs 默认挂载索引
         let mut ramfs = RAMFS_DATA.lock();
         let fs_id = ramfs.fs_id;
@@ -117,7 +118,14 @@ impl FileSystem for RamFsFileSystem {
         Ok(())
     }
 
-    fn fs_read(&self, handle: u32, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_read(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &mut [u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let mut new_offset = offset;
         let result = ramfs.read(handle, &mut new_offset, buf, pwm);
@@ -128,7 +136,14 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_write(&self, handle: u32, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_write(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &[u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let mut new_offset = offset;
         let result = ramfs.write(handle, &mut new_offset, buf, pwm);
@@ -139,7 +154,7 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, _subject: SubjectId) -> KernelResult<VfsStat> {
         let ramfs = RAMFS_DATA.lock();
         let fs_id = ramfs.fs_id;
         match ramfs.resolve_path(rel_path) {
@@ -182,7 +197,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_chmod(&self, rel_path: &str, mode: u16, pwm: u64) -> KernelResult<()> {
+    fn fs_chmod(&self, rel_path: &str, mode: u16, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let result = ramfs.chmod(rel_path, mode, pwm);
         if result == 0 {
@@ -195,10 +211,13 @@ impl FileSystem for RamFsFileSystem {
     fn fs_chown(
         &self,
         rel_path: &str,
-        owner_pwm: u64,
-        group_pwm: u64,
-        pwm: u64,
+        owner_subject: SubjectId,
+        group_subject: SubjectId,
+        subject: SubjectId,
     ) -> KernelResult<()> {
+        let owner_pwm = owner_subject.raw();
+        let group_pwm = group_subject.raw();
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let result = ramfs.chown_ext(rel_path, owner_pwm, group_pwm, pwm);
         if result == 0 {
@@ -208,7 +227,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_mkdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let (parent_path, name) = rel_path.rfind('/').map_or(("/", rel_path), |pos| {
             if pos == 0 {
@@ -228,7 +248,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_unlink(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let result = ramfs.unlink(rel_path, pwm);
         if result == 0 {
@@ -238,7 +259,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_rmdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_rmdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         ramfs
             .resolve_path(rel_path)
@@ -258,7 +280,8 @@ impl FileSystem for RamFsFileSystem {
             })
     }
 
-    fn fs_rename(&self, old_path: &str, new_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_rename(&self, old_path: &str, new_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         ramfs.unlink(old_path, pwm);
         ramfs.link(0, 0, new_path, pwm);
@@ -297,8 +320,9 @@ impl FileSystem for RamFsFileSystem {
         node_id: u32,
         offset: u64,
         buf: &mut [u8],
-        pwm: u64,
+        subject: SubjectId,
     ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let mut new_offset = offset;
         let result = ramfs.read(node_id, &mut new_offset, buf, pwm);
@@ -309,7 +333,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_symlink(&self, target: &str, link_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_symlink(&self, target: &str, link_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let (parent_path, name) = link_path.rfind('/').map_or(("/", link_path), |pos| {
             if pos == 0 {
@@ -343,7 +368,8 @@ impl FileSystem for RamFsFileSystem {
             })
     }
 
-    fn fs_link(&self, old_path: &str, new_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_link(&self, old_path: &str, new_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let Some(target_node) = ramfs.resolve_path(old_path) else {
             return Err(KernelError::FileNotFound);
@@ -375,7 +401,8 @@ impl FileSystem for RamFsFileSystem {
         }
     }
 
-    fn fs_truncate(&self, handle: u32, size: u64, pwm: u64) -> KernelResult<()> {
+    fn fs_truncate(&self, handle: u32, size: u64, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
         let result = ramfs.truncate(handle, size, pwm);
         if result == 0 {
@@ -407,8 +434,9 @@ impl FileSystem for RamFsFileSystem {
         &self,
         parent_path: &str,
         name: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> KernelResult<alloc::sync::Arc<dyn Inode>> {
+        let pwm = subject.raw();
         let mount_idx = 0;
         let mut ramfs = RAMFS_DATA.lock();
         let fs_id = ramfs.fs_id;

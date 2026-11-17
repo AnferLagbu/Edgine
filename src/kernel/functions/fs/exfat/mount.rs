@@ -6,7 +6,7 @@
 use super::read::ExfatFs;
 use crate::functions::fs::KernelError;
 use crate::functions::fs::vfs_types::{
-    FileSystem, KernelResult, VfsDirEntry, VfsSeekWhence, VfsStat,
+    FileSystem, KernelResult, SubjectId, VfsDirEntry, VfsSeekWhence, VfsStat,
 };
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
@@ -120,7 +120,7 @@ impl FileSystem for ExfatFileSystem {
         &self,
         rel_path: &str,
         _flags: u32,
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>> {
         let fs_guard = EXFAT_FS.lock();
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
@@ -134,21 +134,33 @@ impl FileSystem for ExfatFileSystem {
         Ok(())
     }
 
-    fn fs_read(&self, handle: u32, offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
+    fn fs_read(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &mut [u8],
+        _subject: SubjectId,
+    ) -> KernelResult<usize> {
         let fs_guard = EXFAT_FS.lock();
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
 
         fs.read_file(handle, offset, buf)
     }
 
-    fn fs_write(&self, handle: u32, offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
+    fn fs_write(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &[u8],
+        _subject: SubjectId,
+    ) -> KernelResult<usize> {
         let fs_guard = EXFAT_FS.lock();
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
 
         fs.write_file(handle, offset, buf)
     }
 
-    fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, _subject: SubjectId) -> KernelResult<VfsStat> {
         let fs_guard = EXFAT_FS.lock();
         let fs = fs_guard.as_ref().ok_or(KernelError::NotInitialized)?;
 
@@ -171,33 +183,33 @@ impl FileSystem for ExfatFileSystem {
         })
     }
 
-    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _pwm: u64) -> KernelResult<()> {
+    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _subject: SubjectId) -> KernelResult<()> {
         Ok(())
     }
 
     fn fs_chown(
         &self,
         _rel_path: &str,
-        _owner_pwm: u64,
-        _group_pwm: u64,
-        _pwm: u64,
+        _owner_subject: SubjectId,
+        _group_subject: SubjectId,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Ok(())
     }
 
-    fn fs_mkdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_mkdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_unlink(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_unlink(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_rmdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rmdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_rename(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rename(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
@@ -221,7 +233,7 @@ impl FileSystem for ExfatFileSystem {
     }
 
     // L4 重构: 扩展方法实现 (override trait 默认实现)
-    fn fs_symlink(&self, _target: &str, _link_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_symlink(&self, _target: &str, _link_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 
@@ -229,7 +241,7 @@ impl FileSystem for ExfatFileSystem {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_link(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_link(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 

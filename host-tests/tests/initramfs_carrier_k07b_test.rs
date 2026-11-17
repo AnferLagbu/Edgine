@@ -320,7 +320,7 @@ fn test_unpack_and_read_are_fd_free() {
     }
     assert_contains(
         &writer,
-        "fs.fs_create(parent_path, name, pwm)",
+        "fs.fs_create(parent_path, name, SubjectId::new(pwm))",
         "建文件走 fs_create",
     );
     assert_contains(
@@ -328,7 +328,11 @@ fn test_unpack_and_read_are_fd_free() {
         "inode.write(0, data, pwm)",
         "写数据走 Inode::write",
     );
-    assert_contains(&reader, "fs.fs_stat(rel_path, pwm)", "读取前按 stat 定长");
+    assert_contains(
+        &reader,
+        "fs.fs_stat(rel_path, SubjectId::new(pwm))",
+        "读取前按 stat 定长",
+    );
     assert_contains(
         &reader,
         "inode.read(0, &mut buf, pwm)",

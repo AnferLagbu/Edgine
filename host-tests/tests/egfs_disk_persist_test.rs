@@ -38,6 +38,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use edgine::kernel::functions::fs::FileSystem;
+use edgine::kernel::functions::fs::SubjectId;
 use edgine::kernel::functions::fs::egfs::bp::{EgfsCksumType, EgfsCompType};
 use edgine::kernel::functions::fs::egfs::egfs_data::{EgfsData, get_egfs};
 use edgine::kernel::functions::fs::egfs::spa::{EgfsSpa, EgfsUberblock};
@@ -392,7 +393,7 @@ fn egfs_disk_mode_vfs_roundtrip() {
     let pwm = test_pwm();
     let data = payload();
     let inode = egfs
-        .fs_create("/", "init", pwm)
+        .fs_create("/", "init", SubjectId::new(pwm))
         .expect("fs_create 必须实装, 不得回落 trait 默认 NotSupported");
     assert_eq!(
         inode.write(0, &data, pwm).expect("磁盘模式写入应成功"),
@@ -411,7 +412,7 @@ fn egfs_disk_mode_vfs_roundtrip() {
         "二次启动应能凭盘上 uberblock 挂载成功"
     );
     let rd = egfs
-        .fs_open("/init", 0x0001, pwm)
+        .fs_open("/init", 0x0001, SubjectId::new(pwm))
         .expect("冷恢复后应能按名打开已落盘文件 (目录项对象号丢失即在此失败)");
     let mut back = vec![0u8; data.len()];
     assert_eq!(
@@ -468,7 +469,7 @@ fn second_boot_init_keeps_mount_setup_and_disk_txg() {
     let pwm = test_pwm();
     let data = payload();
     let inode = egfs
-        .fs_create("/", "second-boot-probe", pwm)
+        .fs_create("/", "second-boot-probe", SubjectId::new(pwm))
         .expect("fs_create 必须实装");
     assert_eq!(
         inode.write(0, &data, pwm).expect("磁盘模式写入应成功"),
@@ -496,7 +497,7 @@ fn second_boot_init_keeps_mount_setup_and_disk_txg() {
         "二启 txg 必须取自盘上值, 不得被重做的 setup 回退到 1"
     );
     let rd = egfs
-        .fs_open("/second-boot-probe", 0x0001, pwm)
+        .fs_open("/second-boot-probe", 0x0001, SubjectId::new(pwm))
         .expect("二启后应能按名打开已落盘文件");
     let mut back = vec![0u8; data.len()];
     assert_eq!(
@@ -570,7 +571,7 @@ fn second_boot_restored_disk_root_stays_writeable() {
     let data = payload();
     assert_eq!(egfs.mkdir("/first-boot-dir", pwm), 0, "首启建目录应成功");
     let inode = egfs
-        .fs_create("/", "first-boot-file", pwm)
+        .fs_create("/", "first-boot-file", SubjectId::new(pwm))
         .expect("首启建文件应成功");
     assert_eq!(
         inode.write(0, &data, pwm).expect("首启写入应成功"),
@@ -587,7 +588,7 @@ fn second_boot_restored_disk_root_stays_writeable() {
         "夹具前提: 盘上目录必须真被恢复 (否则下面判的是重建出来的空表)"
     );
     let rd = egfs
-        .fs_open("/first-boot-file", 0x0001, pwm)
+        .fs_open("/first-boot-file", 0x0001, SubjectId::new(pwm))
         .expect("二启后盘上文件应可按名打开");
     let mut back = vec![0u8; data.len()];
     assert_eq!(
@@ -602,14 +603,14 @@ fn second_boot_restored_disk_root_stays_writeable() {
         "恢复出来的磁盘根必须可建目录 (state 停在 Creating 即只读回归)"
     );
     let new_inode = egfs
-        .fs_create("/", "second-boot-file", pwm)
+        .fs_create("/", "second-boot-file", SubjectId::new(pwm))
         .expect("恢复出来的磁盘根必须可建文件");
     assert_eq!(
         new_inode.write(0, &data, pwm).expect("二启写入应成功"),
         data.len()
     );
     let wr = egfs
-        .fs_open("/second-boot-file", 0x0001, pwm)
+        .fs_open("/second-boot-file", 0x0001, SubjectId::new(pwm))
         .expect("二启新建的文件应可按名打开");
     let mut new_back = vec![0u8; data.len()];
     assert_eq!(

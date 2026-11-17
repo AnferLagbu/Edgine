@@ -13,6 +13,7 @@ use super::inode::Inode;
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::open_guard::{OpenSource, authorize_open};
 use super::vfs_manager::VFS_MANAGER;
+use super::vfs_types::SubjectId;
 use super::vfs_types::{
     KernelError, OpenFile, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
@@ -109,7 +110,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
 
     // E6-4: trait object 分发 (优先于 fs_type match)
     if let Some(fs) = fs_opt {
-        match fs.fs_open(rel_path, flags, pwm) {
+        match fs.fs_open(rel_path, flags, SubjectId::new(pwm)) {
             Ok(inode) => match publish_opened_inode(inode, flags, pwm, cloexec, OpenSource::Path) {
                 Ok(fd_idx) => crate::functions::intcast::low_i32_from_usize(fd_idx),
                 Err(_) => -1,
@@ -117,7 +118,7 @@ pub extern "C" fn vfs_open_internal(path: *const u8, flags: u32, pwm: u64) -> i3
             Err(KernelError::FileNotFound) if (flags & VfsOpenFlags::CREAT.bits()) != 0 => {
                 // CREAT: 文件不存在, 尝试创建
                 let (parent_path, name) = split_parent_name(rel_path);
-                match fs.fs_create(parent_path, name, pwm) {
+                match fs.fs_create(parent_path, name, SubjectId::new(pwm)) {
                     Ok(inode) => {
                         let inode_id = inode.node_id();
                         let Ok(fd_idx) =
@@ -411,7 +412,7 @@ pub fn vfs_pread_inode(
         }
     };
     let Some(fs) = fs else { return -1 };
-    fs.fs_pread_inode(node_id, file_offset, dst, pwm)
+    fs.fs_pread_inode(node_id, file_offset, dst, SubjectId::new(pwm))
         .map_or(-1, crate::functions::intcast::low_i32_from_usize)
 }
 

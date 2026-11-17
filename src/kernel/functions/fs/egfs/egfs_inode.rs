@@ -3,7 +3,9 @@
 
 use super::egfs_data::{EgfsData, get_egfs};
 use crate::functions::fs::inode::Inode;
-use crate::functions::fs::{KernelError, KernelResult, VfsFileType, VfsSeekWhence, VfsStat};
+use crate::functions::fs::{
+    KernelError, KernelResult, SubjectId, VfsFileType, VfsSeekWhence, VfsStat,
+};
 
 /// `EGFS` 文件 Inode — 直接持有 fd 编号
 pub struct EgfsInode {
@@ -173,9 +175,10 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         rel_path: &str,
         flags: u32,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>>
     {
+        let pwm = subject.raw();
         match self.open(rel_path, flags, pwm) {
             Ok(fd) => Ok(alloc::sync::Arc::new(EgfsInode::new(
                 fd.cast_unsigned(),
@@ -199,15 +202,16 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         parent_path: &str,
         name: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<alloc::sync::Arc<dyn crate::functions::fs::inode::Inode>>
     {
+        let pwm = subject.raw();
         // EGFS 为平坦命名空间: 父路径与文件名拼成单一 ZAP 键, 与 fs_open 同一权威.
         // 缺此 override 会走 trait 默认 NotSupported, 令 VFS 建文件路径 (write_file_kernel /
         // initramfs 解包) 对每个常规文件静默失败.
         let path = alloc::format!("{}/{}", parent_path.trim_end_matches('/'), name);
         // 0x0102 = O_CREAT | O_RDWR
-        self.fs_open(&path, 0x0102, pwm)
+        self.fs_open(&path, 0x0102, SubjectId::new(pwm))
     }
 
     fn fs_read(
@@ -215,7 +219,7 @@ impl crate::functions::fs::FileSystem for EgfsData {
         handle: u32,
         offset: u64,
         buf: &mut [u8],
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<usize> {
         let _ = offset;
         let result = self.read(
@@ -235,7 +239,7 @@ impl crate::functions::fs::FileSystem for EgfsData {
         handle: u32,
         offset: u64,
         buf: &[u8],
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<usize> {
         let _ = offset;
         let result = self.write(
@@ -253,8 +257,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
     fn fs_stat(
         &self,
         rel_path: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<crate::functions::fs::VfsStat> {
+        let pwm = subject.raw();
         self.stat(rel_path, pwm)
             .map_or(Err(KernelError::FileNotFound), |obj| {
                 Ok(crate::functions::fs::VfsStat {
@@ -284,8 +289,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         rel_path: &str,
         atime: u64,
         mtime: u64,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         self.set_times(rel_path, atime, mtime, pwm)
     }
 
@@ -293,8 +299,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         rel_path: &str,
         mode: u16,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.chmod(rel_path, mode, pwm);
         if result == 0 {
             Ok(())
@@ -306,10 +313,13 @@ impl crate::functions::fs::FileSystem for EgfsData {
     fn fs_chown(
         &self,
         rel_path: &str,
-        owner_pwm: u64,
-        group_pwm: u64,
-        pwm: u64,
+        owner_subject: SubjectId,
+        group_subject: SubjectId,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let owner_pwm = owner_subject.raw();
+        let group_pwm = group_subject.raw();
+        let pwm = subject.raw();
         let result = self.chown_ext(rel_path, owner_pwm, group_pwm, pwm);
         if result == 0 {
             Ok(())
@@ -318,7 +328,12 @@ impl crate::functions::fs::FileSystem for EgfsData {
         }
     }
 
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> crate::functions::fs::KernelResult<()> {
+    fn fs_mkdir(
+        &self,
+        rel_path: &str,
+        subject: SubjectId,
+    ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.mkdir(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -327,7 +342,12 @@ impl crate::functions::fs::FileSystem for EgfsData {
         }
     }
 
-    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> crate::functions::fs::KernelResult<()> {
+    fn fs_unlink(
+        &self,
+        rel_path: &str,
+        subject: SubjectId,
+    ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.unlink(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -336,7 +356,12 @@ impl crate::functions::fs::FileSystem for EgfsData {
         }
     }
 
-    fn fs_rmdir(&self, rel_path: &str, pwm: u64) -> crate::functions::fs::KernelResult<()> {
+    fn fs_rmdir(
+        &self,
+        rel_path: &str,
+        subject: SubjectId,
+    ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.unlink(rel_path, pwm);
         if result == 0 {
             Ok(())
@@ -349,8 +374,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         old_path: &str,
         new_path: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.rename(old_path, new_path, pwm);
         if result == 0 {
             Ok(())
@@ -372,8 +398,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         target: &str,
         link_path: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.symlink(target, link_path, pwm);
         if result == 0 {
             Ok(())
@@ -399,8 +426,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         old_path: &str,
         new_path: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.link(old_path, new_path, pwm);
         if result == 0 {
             Ok(())
@@ -447,8 +475,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         rel_path: &str,
         name: &str,
         value: &[u8],
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.setxattr(rel_path, name, value, pwm);
         if result == 0 {
             Ok(())
@@ -462,8 +491,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         rel_path: &str,
         name: &str,
         buf: &mut [u8],
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<usize> {
+        let pwm = subject.raw();
         let result = self.getxattr(rel_path, name, buf, pwm);
         if result < 0 {
             Err(KernelError::FileNotFound)
@@ -476,8 +506,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         rel_path: &str,
         buf: &mut [u8],
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<usize> {
+        let pwm = subject.raw();
         let result = self.listxattr(rel_path, buf, pwm);
         if result < 0 {
             Err(KernelError::FileNotFound)
@@ -490,8 +521,9 @@ impl crate::functions::fs::FileSystem for EgfsData {
         &self,
         rel_path: &str,
         name: &str,
-        pwm: u64,
+        subject: SubjectId,
     ) -> crate::functions::fs::KernelResult<()> {
+        let pwm = subject.raw();
         let result = self.removexattr(rel_path, name, pwm);
         if result == 0 {
             Ok(())

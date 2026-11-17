@@ -726,7 +726,9 @@ impl Inode for DevFsInode {
 // FileSystem trait 实现 (E6-9c: VFS 分发接入)
 // ============================================================================
 
-use crate::functions::fs::{FileSystem, KernelError, KernelResult, VfsDirEntry, VfsStat};
+use crate::functions::fs::{
+    FileSystem, KernelError, KernelResult, SubjectId, VfsDirEntry, VfsStat,
+};
 
 impl FileSystem for DevfsData {
     fn name(&self) -> &'static str {
@@ -745,7 +747,12 @@ impl FileSystem for DevfsData {
         Ok(())
     }
 
-    fn fs_open(&self, rel_path: &str, _flags: u32, _pwm: u64) -> KernelResult<Arc<dyn Inode>> {
+    fn fs_open(
+        &self,
+        rel_path: &str,
+        _flags: u32,
+        _subject: SubjectId,
+    ) -> KernelResult<Arc<dyn Inode>> {
         match self.open(rel_path) {
             Some((_index, dev_type)) => Ok(Arc::new(DevFsInode::new(dev_type, 0))),
             None => Err(KernelError::FileNotFound),
@@ -756,7 +763,13 @@ impl FileSystem for DevfsData {
         Ok(())
     }
 
-    fn fs_read(&self, handle: u32, _offset: u64, buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
+    fn fs_read(
+        &self,
+        handle: u32,
+        _offset: u64,
+        buf: &mut [u8],
+        _subject: SubjectId,
+    ) -> KernelResult<usize> {
         // DevFS read 需要 dev_type, handle 即为 dev_type
         let result = DevfsData::read(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
@@ -766,7 +779,13 @@ impl FileSystem for DevfsData {
         }
     }
 
-    fn fs_write(&self, handle: u32, _offset: u64, buf: &[u8], _pwm: u64) -> KernelResult<usize> {
+    fn fs_write(
+        &self,
+        handle: u32,
+        _offset: u64,
+        buf: &[u8],
+        _subject: SubjectId,
+    ) -> KernelResult<usize> {
         let result = DevfsData::write(crate::functions::intcast::low_u8_from_u32(handle), buf);
         if result < 0 {
             Err(KernelError::Io)
@@ -775,7 +794,7 @@ impl FileSystem for DevfsData {
         }
     }
 
-    fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, _subject: SubjectId) -> KernelResult<VfsStat> {
         match self.open(rel_path) {
             Some((index, dev_type)) => Ok(VfsStat {
                 node_id: index,
@@ -796,33 +815,33 @@ impl FileSystem for DevfsData {
         }
     }
 
-    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _pwm: u64) -> KernelResult<()> {
+    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::PermissionDenied)
     }
 
     fn fs_chown(
         &self,
         _rel_path: &str,
-        _owner_pwm: u64,
-        _group_pwm: u64,
-        _pwm: u64,
+        _owner_subject: SubjectId,
+        _group_subject: SubjectId,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Err(KernelError::PermissionDenied)
     }
 
-    fn fs_mkdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_mkdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_unlink(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_unlink(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::PermissionDenied)
     }
 
-    fn fs_rmdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rmdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_rename(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rename(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 

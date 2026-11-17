@@ -23,6 +23,7 @@
 //! `use edgine::kernel::functions::fs::egfs::egfs_data::get_egfs` 访问内核
 //! 暴露的 EGFS API.
 
+use edgine::kernel::functions::fs::SubjectId;
 use edgine::kernel::functions::fs::egfs::dataset::EgfsDataset;
 use edgine::kernel::functions::fs::egfs::egfs_data::{EgfsData, get_egfs};
 use edgine::kernel::privileged::error::KernelError;
@@ -857,22 +858,26 @@ fn egfs_utimensat_writes_back_times() {
     let fd = egfs.open(PATH, 0x0102, pwm).unwrap();
     egfs.close(fd.cast_unsigned());
 
-    egfs.fs_utimensat(PATH, ATIME, MTIME, pwm)
+    egfs.fs_utimensat(PATH, ATIME, MTIME, SubjectId::new(pwm))
         .expect("fs_utimensat on existing file must succeed");
 
-    let st = egfs.fs_stat(PATH, pwm).expect("fs_stat must find file");
+    let st = egfs
+        .fs_stat(PATH, SubjectId::new(pwm))
+        .expect("fs_stat must find file");
     assert_eq!(st.atime, ATIME, "atime 必须写回");
     assert_eq!(st.mtime, MTIME, "mtime 必须写回");
 
     // UTIME_OMIT: atime 保持不变, mtime 更新
-    egfs.fs_utimensat(PATH, u64::MAX, MTIME + 5, pwm)
+    egfs.fs_utimensat(PATH, u64::MAX, MTIME + 5, SubjectId::new(pwm))
         .expect("UTIME_OMIT for atime must succeed");
-    let st = egfs.fs_stat(PATH, pwm).expect("fs_stat must find file");
+    let st = egfs
+        .fs_stat(PATH, SubjectId::new(pwm))
+        .expect("fs_stat must find file");
     assert_eq!(st.atime, ATIME, "UTIME_OMIT 必须保持 atime 原值");
     assert_eq!(st.mtime, MTIME + 5, "mtime 必须更新");
 
     assert!(
-        egfs.fs_utimensat("/no_such_file_utimensat.txt", 1, 1, pwm)
+        egfs.fs_utimensat("/no_such_file_utimensat.txt", 1, 1, SubjectId::new(pwm))
             .is_err(),
         "不存在的路径必须报错"
     );

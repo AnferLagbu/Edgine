@@ -8,7 +8,7 @@
 
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
 use super::vfs_manager::VFS_MANAGER;
-use super::vfs_types::{VFS_MAX_PATH, VfsStat};
+use super::vfs_types::{SubjectId, VFS_MAX_PATH, VfsStat};
 use crate::privileged::userptr::{UserReadPtr, UserWritePtr};
 
 // ============================================================================
@@ -40,7 +40,7 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     // 在删除前获取 inode 号, 用于删除后释放 POSIX 锁
     let ino_before = fs_opt.and_then(|fs| fs.fs_resolve_path(rel_path));
 
-    let result = fs_opt.map_or(-1, |fs| match fs.fs_unlink(rel_path, pwm) {
+    let result = fs_opt.map_or(-1, |fs| match fs.fs_unlink(rel_path, SubjectId::new(pwm)) {
         Ok(()) => 0,
         Err(_) => -1,
     });
@@ -89,7 +89,7 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     }
 
     // E6-4: trait object 分发
-    fs_opt.map_or(-1, |fs| match fs.fs_mkdir(rel_path, pwm) {
+    fs_opt.map_or(-1, |fs| match fs.fs_mkdir(rel_path, SubjectId::new(pwm)) {
         Ok(()) => {
             // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
             if let Some(parent_ino) = fs.fs_resolve_path(parent_path) {
@@ -116,7 +116,7 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     // E6-4: trait object 分发
-    fs_opt.map_or(-1, |fs| match fs.fs_rmdir(rel_path, pwm) {
+    fs_opt.map_or(-1, |fs| match fs.fs_rmdir(rel_path, SubjectId::new(pwm)) {
         Ok(()) => 0,
         Err(_) => -1,
     })
@@ -137,7 +137,7 @@ pub(crate) fn vfs_stat_core(path: *const u8, pwm: u64) -> Option<VfsStat> {
     let path = VFS_MANAGER.resolve_user_path(path, &mut pbuf)?;
     let (mount_idx, _fs_type, fs_opt) = VFS_MANAGER.resolve_mount_fs(path)?;
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
-    let mut stat = fs_opt?.fs_stat(rel_path, pwm).ok()?;
+    let mut stat = fs_opt?.fs_stat(rel_path, SubjectId::new(pwm)).ok()?;
 
     let tbl = crate::privileged::sgeg::identity::get_table();
     stat.uid = tbl.uid_of(stat.owner_pwm);
@@ -293,9 +293,11 @@ pub extern "C" fn vfs_chmod(path: *const u8, mode: u16, pwm: u64) -> i32 {
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     // E6-4: trait object 分发
-    fs_opt.map_or(-1, |fs| match fs.fs_chmod(rel_path, mode, pwm) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    fs_opt.map_or(-1, |fs| {
+        match fs.fs_chmod(rel_path, mode, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     })
 }
 
@@ -321,7 +323,12 @@ pub extern "C" fn vfs_chown_ext(path: *const u8, owner_pwm: u64, group_pwm: u64,
 
     // E6-4: trait object 分发
     fs_opt.map_or(-1, |fs| {
-        match fs.fs_chown(rel_path, owner_pwm, group_pwm, pwm) {
+        match fs.fs_chown(
+            rel_path,
+            SubjectId::new(owner_pwm),
+            SubjectId::new(group_pwm),
+            SubjectId::new(pwm),
+        ) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -346,7 +353,7 @@ pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u6
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     fs_opt.map_or(-1, |fs| {
-        match fs.fs_utimensat(rel_path, atime, mtime, pwm) {
+        match fs.fs_utimensat(rel_path, atime, mtime, SubjectId::new(pwm)) {
             Ok(()) => 0,
             Err(_) => -1,
         }
@@ -380,9 +387,11 @@ pub extern "C" fn vfs_link(oldpath: *const u8, newpath: *const u8, pwm: u64) -> 
     let Some((_, _, fs_opt)) = VFS_MANAGER.resolve_mount_fs(old_path) else {
         return -2;
     };
-    fs_opt.map_or(-1, |fs| match fs.fs_link(old_path, new_path, pwm_eff) {
-        Ok(()) => 0,
-        Err(e) => e.as_i32(),
+    fs_opt.map_or(-1, |fs| {
+        match fs.fs_link(old_path, new_path, SubjectId::new(pwm_eff)) {
+            Ok(()) => 0,
+            Err(e) => e.as_i32(),
+        }
     })
 }
 
@@ -404,9 +413,11 @@ pub extern "C" fn vfs_symlink(target: *const u8, linkpath: *const u8, pwm: u64) 
     let Some((_, _, fs_opt)) = VFS_MANAGER.resolve_mount_fs(link_path) else {
         return -2;
     };
-    fs_opt.map_or(-1, |fs| match fs.fs_symlink(tgt, link_path, pwm_eff) {
-        Ok(()) => 0,
-        Err(e) => e.as_i32(),
+    fs_opt.map_or(-1, |fs| {
+        match fs.fs_symlink(tgt, link_path, SubjectId::new(pwm_eff)) {
+            Ok(()) => 0,
+            Err(e) => e.as_i32(),
+        }
     })
 }
 
@@ -475,9 +486,11 @@ pub extern "C" fn vfs_rename(old: *const u8, new: *const u8, pwm: u64) -> i32 {
     let new_rel = VFS_MANAGER.get_relative_path(new_path, new_mount_idx);
 
     // E6-4: trait object 分发
-    old_fs_opt.map_or(-1, |fs| match fs.fs_rename(old_rel, new_rel, pwm) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    old_fs_opt.map_or(-1, |fs| {
+        match fs.fs_rename(old_rel, new_rel, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     })
 }
 
@@ -531,9 +544,11 @@ pub extern "C" fn vfs_setxattr_internal(
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
-    fs_opt.map_or(-38, |fs| match fs.fs_setxattr(rel_path, name, value, pwm) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    fs_opt.map_or(-38, |fs| {
+        match fs.fs_setxattr(rel_path, name, value, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     })
 }
 
@@ -569,7 +584,7 @@ pub extern "C" fn vfs_getxattr_internal(
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     fs_opt.map_or(-38, |fs| {
-        fs.fs_getxattr(rel_path, name, buf, pwm)
+        fs.fs_getxattr(rel_path, name, buf, SubjectId::new(pwm))
             .map_or(-1, crate::functions::intcast::low_i32_from_usize)
     })
 }
@@ -604,7 +619,7 @@ pub extern "C" fn vfs_listxattr_internal(
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     fs_opt.map_or(-38, |fs| {
-        fs.fs_listxattr(rel_path, buf, pwm)
+        fs.fs_listxattr(rel_path, buf, SubjectId::new(pwm))
             .map_or(-1, crate::functions::intcast::low_i32_from_usize)
     })
 }
@@ -624,9 +639,11 @@ pub extern "C" fn vfs_removexattr_internal(path: *const u8, name: *const u8, pwm
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
-    fs_opt.map_or(-38, |fs| match fs.fs_removexattr(rel_path, name, pwm) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    fs_opt.map_or(-38, |fs| {
+        match fs.fs_removexattr(rel_path, name, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(_) => -1,
+        }
     })
 }
 

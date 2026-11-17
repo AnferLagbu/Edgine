@@ -21,7 +21,7 @@
 
 use edgine::kernel::functions::fs::init as fs_init;
 use edgine::kernel::functions::fs::overlayfs::overlay_fs;
-use edgine::kernel::functions::fs::{FileSystem, VFS_MANAGER, vfs_mount_safe};
+use edgine::kernel::functions::fs::{FileSystem, SubjectId, VFS_MANAGER, vfs_mount_safe};
 use edgine::kernel::privileged::error::KernelError;
 use std::sync::{Mutex, Once};
 
@@ -66,7 +66,7 @@ fn lower_ramfs() -> &'static dyn FileSystem {
 /// 在 lowerdir 根下创建文件并写入内容, 模拟镜像预置的下层只读数据.
 fn create_lower_file(name: &str, content: &[u8]) {
     let inode = lower_ramfs()
-        .fs_create("/", name, PWM)
+        .fs_create("/", name, SubjectId::new(PWM))
         .expect("创建下层文件失败");
     let written = inode.write(0, content, PWM).expect("写入下层文件失败");
     assert_eq!(written, content.len(), "下层文件写入长度不符");
@@ -87,7 +87,7 @@ fn overlay_lower_readonly_passthrough() {
 
     // 只读打开: 应得下层 Inode 代理 (不产生 upper 副本)
     let inode = overlay
-        .fs_open(&path, O_RDONLY, PWM)
+        .fs_open(&path, O_RDONLY, SubjectId::new(PWM))
         .expect("只读打开下层文件失败");
 
     let mut buf = [0u8; 64];
@@ -106,7 +106,9 @@ fn overlay_lower_readonly_passthrough() {
     );
 
     // 只读打开不应在 upperdir 产生副本: 重新解析仍命中 lower
-    let entry_stat = overlay.fs_stat(&path, PWM).expect("stat 下层文件失败");
+    let entry_stat = overlay
+        .fs_stat(&path, SubjectId::new(PWM))
+        .expect("stat 下层文件失败");
     assert_eq!(
         entry_stat.node_id,
         inode.node_id(),
@@ -131,20 +133,22 @@ fn overlay_write_open_triggers_copy_up() {
 
     // 写打开: 触发 copy_up, 返回 upper 层 Inode
     let inode = overlay
-        .fs_open(&path, O_WRONLY, PWM)
+        .fs_open(&path, O_WRONLY, SubjectId::new(PWM))
         .expect("写打开触发 copy_up 失败");
     let written = inode.write(0, upper, PWM).expect("写入 upper 失败");
     assert_eq!(written, upper.len(), "upper 写入长度不符");
 
     // 重新只读打开: 现由 upper 命中, 读到新内容
-    let reread = overlay.fs_open(&path, O_RDONLY, PWM).expect("重开失败");
+    let reread = overlay
+        .fs_open(&path, O_RDONLY, SubjectId::new(PWM))
+        .expect("重开失败");
     let mut buf = [0u8; 32];
     let n = reread.read(0, &mut buf, PWM).expect("读取失败");
     assert_eq!(&buf[..n], upper, "copy_up 后应读到 upper 新内容");
 
     // 下层原文未被破坏 (copy_up 是复制而非移动)
     let lower_inode = lower_ramfs()
-        .fs_open(name, O_RDONLY, PWM)
+        .fs_open(name, O_RDONLY, SubjectId::new(PWM))
         .expect("打开下层原文失败");
     let mut lbuf = [0u8; 32];
     let ln = lower_inode
@@ -165,17 +169,22 @@ fn overlay_lower_only_unlink_creates_whiteout() {
     let overlay = overlay_fs();
     let path = format!("/{name}");
 
-    assert!(overlay.fs_stat(&path, PWM).is_ok(), "删除前应可见");
-    overlay.fs_unlink(&path, PWM).expect("删除下层文件失败");
+    assert!(
+        overlay.fs_stat(&path, SubjectId::new(PWM)).is_ok(),
+        "删除前应可见"
+    );
+    overlay
+        .fs_unlink(&path, SubjectId::new(PWM))
+        .expect("删除下层文件失败");
 
     assert_eq!(
-        overlay.fs_stat(&path, PWM).unwrap_err(),
+        overlay.fs_stat(&path, SubjectId::new(PWM)).unwrap_err(),
         KernelError::FileNotFound,
         "whiteout 后 stat 应不可见"
     );
     assert_eq!(
         overlay
-            .fs_open(&path, O_RDONLY, PWM)
+            .fs_open(&path, O_RDONLY, SubjectId::new(PWM))
             .map(|_| ())
             .unwrap_err(),
         KernelError::FileNotFound,
@@ -184,14 +193,14 @@ fn overlay_lower_only_unlink_creates_whiteout() {
 
     // whiteout 状态下的重复删除仍报 FileNotFound
     assert_eq!(
-        overlay.fs_unlink(&path, PWM).unwrap_err(),
+        overlay.fs_unlink(&path, SubjectId::new(PWM)).unwrap_err(),
         KernelError::FileNotFound,
         "重复删除应报 FileNotFound"
     );
 
     // 下层数据本身仍在 (whiteout 只遮蔽合并视图)
     assert!(
-        lower_ramfs().fs_stat(name, PWM).is_ok(),
+        lower_ramfs().fs_stat(name, SubjectId::new(PWM)).is_ok(),
         "whiteout 不得删除下层实体"
     );
 }
@@ -214,20 +223,24 @@ fn overlay_unlink_after_copy_up_masks_lower() {
     let path = format!("/{name}");
 
     // 写打开触发 copy_up: upper 出现同名副本, lower 仍保留
-    let inode = overlay.fs_open(&path, O_WRONLY, PWM).expect("copy_up 失败");
+    let inode = overlay
+        .fs_open(&path, O_WRONLY, SubjectId::new(PWM))
+        .expect("copy_up 失败");
     inode.write(0, upper, PWM).expect("写入 upper 失败");
 
     // 删除: upper 删除后必须补 whiteout 遮蔽 lower 同名副本
-    overlay.fs_unlink(&path, PWM).expect("删除失败");
+    overlay
+        .fs_unlink(&path, SubjectId::new(PWM))
+        .expect("删除失败");
 
     assert_eq!(
-        overlay.fs_stat(&path, PWM).unwrap_err(),
+        overlay.fs_stat(&path, SubjectId::new(PWM)).unwrap_err(),
         KernelError::FileNotFound,
         "回归: 删除后 merged 视图不得再命中下层副本"
     );
     assert_eq!(
         overlay
-            .fs_open(&path, O_RDONLY, PWM)
+            .fs_open(&path, O_RDONLY, SubjectId::new(PWM))
             .map(|_| ())
             .unwrap_err(),
         KernelError::FileNotFound,
@@ -236,7 +249,7 @@ fn overlay_unlink_after_copy_up_masks_lower() {
 
     // 下层实体仍在 (whiteout 仅遮蔽)
     assert!(
-        lower_ramfs().fs_stat(name, PWM).is_ok(),
+        lower_ramfs().fs_stat(name, SubjectId::new(PWM)).is_ok(),
         "whiteout 不得删除下层实体"
     );
 }
@@ -259,22 +272,28 @@ fn overlay_utimensat_writes_times_with_owner_check() {
     let path = format!("/{name}");
 
     // 写打开触发 copy_up, 使文件进入 upper (时间戳写回作用于 upper 节点)
-    let inode = overlay.fs_open(&path, O_WRONLY, PWM).expect("copy_up 失败");
+    let inode = overlay
+        .fs_open(&path, O_WRONLY, SubjectId::new(PWM))
+        .expect("copy_up 失败");
     inode.write(0, b"times-content", PWM).expect("写入失败");
 
     // 1. 路径级 fs_utimensat: 非 OMIT 字段更新, fs_stat 可观测
     overlay
-        .fs_utimensat(&path, ATIME, MTIME, PWM)
+        .fs_utimensat(&path, ATIME, MTIME, SubjectId::new(PWM))
         .expect("属主 utimensat 应成功");
-    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    let st = overlay
+        .fs_stat(&path, SubjectId::new(PWM))
+        .expect("stat 失败");
     assert_eq!(st.atime, ATIME, "atime 应写回");
     assert_eq!(st.mtime, MTIME, "mtime 应写回");
 
     // 2. UTIME_OMIT: u64::MAX 字段保持原值, 另一字段照常更新
     overlay
-        .fs_utimensat(&path, u64::MAX, MTIME + 5, PWM)
+        .fs_utimensat(&path, u64::MAX, MTIME + 5, SubjectId::new(PWM))
         .expect("OMIT atime 应成功");
-    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    let st = overlay
+        .fs_stat(&path, SubjectId::new(PWM))
+        .expect("stat 失败");
     assert_eq!(st.atime, ATIME, "OMIT atime 应保持原值");
     assert_eq!(st.mtime, MTIME + 5, "mtime 应照常更新");
 
@@ -282,20 +301,24 @@ fn overlay_utimensat_writes_times_with_owner_check() {
     inode
         .set_times(ATIME + 10, MTIME + 10, PWM)
         .expect("inode 级 set_times 应成功");
-    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    let st = overlay
+        .fs_stat(&path, SubjectId::new(PWM))
+        .expect("stat 失败");
     assert_eq!(st.atime, ATIME + 10, "inode 级 set_times 应写回 atime");
     assert_eq!(st.mtime, MTIME + 10, "inode 级 set_times 应写回 mtime");
 
     // 4. 属主判据: 未注册非零 pwm (特权级 0xFF, fail-closed) 改他人文件时间戳被拒
     assert_eq!(
         overlay
-            .fs_utimensat(&path, ATIME + 1, MTIME + 1, OTHER_PWM)
+            .fs_utimensat(&path, ATIME + 1, MTIME + 1, SubjectId::new(OTHER_PWM))
             .unwrap_err(),
         KernelError::PermissionDenied,
         "非属主且无特权应被拒"
     );
     // 拒绝后时间戳保持不变
-    let st = overlay.fs_stat(&path, PWM).expect("stat 失败");
+    let st = overlay
+        .fs_stat(&path, SubjectId::new(PWM))
+        .expect("stat 失败");
     assert_eq!(st.atime, ATIME + 10, "被拒后 atime 应不变");
     assert_eq!(st.mtime, MTIME + 10, "被拒后 mtime 应不变");
 }
@@ -314,7 +337,7 @@ fn overlay_utimensat_layer_routing() {
     create_lower_file(name, b"lower");
     assert_eq!(
         overlay
-            .fs_utimensat(&format!("/{name}"), 1, 1, PWM)
+            .fs_utimensat(&format!("/{name}"), 1, 1, SubjectId::new(PWM))
             .unwrap_err(),
         KernelError::ReadOnlyFilesystem,
         "lower-only 文件时间戳不可改"
@@ -323,7 +346,7 @@ fn overlay_utimensat_layer_routing() {
     // 2. 两层皆无: FileNotFound
     assert_eq!(
         overlay
-            .fs_utimensat("/no_such_utimensat.txt", 1, 1, PWM)
+            .fs_utimensat("/no_such_utimensat.txt", 1, 1, SubjectId::new(PWM))
             .unwrap_err(),
         KernelError::FileNotFound,
         "不存在路径应报 FileNotFound"
@@ -333,11 +356,11 @@ fn overlay_utimensat_layer_routing() {
     let gone = "whiteout_utimensat.txt";
     create_lower_file(gone, b"gone");
     overlay
-        .fs_unlink(&format!("/{gone}"), PWM)
+        .fs_unlink(&format!("/{gone}"), SubjectId::new(PWM))
         .expect("unlink 失败");
     assert_eq!(
         overlay
-            .fs_utimensat(&format!("/{gone}"), 1, 1, PWM)
+            .fs_utimensat(&format!("/{gone}"), 1, 1, SubjectId::new(PWM))
             .unwrap_err(),
         KernelError::FileNotFound,
         "whiteout 遮蔽路径应报 FileNotFound"

@@ -8,11 +8,8 @@
 //! 这也是 SGEG v2 的接口面: 换 v2 只换本文件的判定实现与 [`SubjectId`] 的解释;
 //! 文件系统侧只负责给出 [`ObjectLabel`], 不解读主体语义.
 
+use super::vfs_types::SubjectId;
 use crate::privileged::sgeg::api as pwm_api;
-
-/// 主体标识 (不透明) — 文件系统只透传与持久化, 解释权在判定方
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubjectId(pub u64);
 
 /// 客体标签 — 由对象自己回答
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +41,7 @@ const LEVEL_DISABLED: u8 = 0xFF;
 /// 分支次序与 ramfs 原实现一致; 任一「拒绝」分支立即返回 `Deny`.
 #[must_use]
 pub fn decide(subject: SubjectId, label: ObjectLabel, required: u64) -> AccessDecision {
-    let level = pwm_api::pwm_get_privilege_level(subject.0);
+    let level = pwm_api::pwm_get_privilege_level(subject.raw());
     if level == LEVEL_DISABLED {
         return AccessDecision::Deny;
     }
@@ -65,12 +62,12 @@ pub fn decide(subject: SubjectId, label: ObjectLabel, required: u64) -> AccessDe
             AccessDecision::Deny
         };
     }
-    if pwm_api::pwm_get_fs_capability(subject.0) & required == required {
+    if pwm_api::pwm_get_fs_capability(subject.raw()) & required == required {
         return AccessDecision::Allow;
     }
-    if label.owner.0 != 0
+    if label.owner.raw() != 0
         && label.owner != subject
-        && pwm_api::pwm_has_capability(subject.0, FS_DOMAIN, required)
+        && pwm_api::pwm_has_capability(subject.raw(), FS_DOMAIN, required)
     {
         return AccessDecision::Allow;
     }

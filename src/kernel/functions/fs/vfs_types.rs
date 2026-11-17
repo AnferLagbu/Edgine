@@ -24,6 +24,26 @@ pub const VFS_MAX_MOUNTS: usize = 8;
 /// 文件系统注册表最大条目数 (注册的 FS 种类上限; 超限注册 fail-closed)
 pub const FS_REGISTRY_MAX_ENTRIES: usize = 8;
 
+/// 主体标识 (不透明) — 文件系统只透传与持久化, 解释权在判定方
+///
+/// 载体中立化 (T-3): 换 SGEG v2 时只换该类型的解释方, 文件系统的签名不动.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubjectId(u64);
+
+impl SubjectId {
+    /// 由原始凭证构造 (VFS 边界: syscall 层取得的身份字)
+    #[must_use]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// 取原始值 — 仅用于持久化与相等比较, 不得据此做策略决策 (判定归 `authorize`)
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
 // 统一到 privileged::error (P0-2 迁回)
 pub use crate::privileged::error::KernelError;
 
@@ -340,7 +360,12 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 当路径不存在、无权限或底层打开失败时返回 `KernelError`.
-    fn fs_open(&self, rel_path: &str, flags: u32, pwm: u64) -> KernelResult<Arc<dyn Inode>>;
+    fn fs_open(
+        &self,
+        rel_path: &str,
+        flags: u32,
+        subject: SubjectId,
+    ) -> KernelResult<Arc<dyn Inode>>;
     /// 关闭文件
     ///
     /// # Errors
@@ -350,12 +375,24 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 当句柄无效、偏移越界或底层 I/O 失败时返回 `KernelError`.
-    fn fs_read(&self, handle: u32, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize>;
+    fn fs_read(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &mut [u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize>;
     /// 写文件, 返回实际写入字节数
     ///
     /// # Errors
     /// 当句柄无效、文件只读或底层 I/O 失败时返回 `KernelError`.
-    fn fs_write(&self, handle: u32, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize>;
+    fn fs_write(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &[u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize>;
 
     // ---- 元数据 ----
 
@@ -363,12 +400,12 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 当路径不存在或底层元数据读取失败时返回 `KernelError`.
-    fn fs_stat(&self, rel_path: &str, pwm: u64) -> KernelResult<VfsStat>;
+    fn fs_stat(&self, rel_path: &str, subject: SubjectId) -> KernelResult<VfsStat>;
     /// 修改文件权限
     ///
     /// # Errors
     /// 当路径不存在、无权限或底层元数据更新失败时返回 `KernelError`.
-    fn fs_chmod(&self, rel_path: &str, mode: u16, pwm: u64) -> KernelResult<()>;
+    fn fs_chmod(&self, rel_path: &str, mode: u16, subject: SubjectId) -> KernelResult<()>;
     /// 修改文件所有者
     ///
     /// # Errors
@@ -376,9 +413,9 @@ pub trait FileSystem: Send + Sync {
     fn fs_chown(
         &self,
         rel_path: &str,
-        owner_pwm: u64,
-        group_pwm: u64,
-        pwm: u64,
+        owner_subject: SubjectId,
+        group_subject: SubjectId,
+        subject: SubjectId,
     ) -> KernelResult<()>;
 
     // ---- 目录操作 ----
@@ -387,22 +424,22 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 当父路径不存在、名称已存在、无权限或底层创建失败时返回 `KernelError`.
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()>;
+    fn fs_mkdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()>;
     /// 删除文件
     ///
     /// # Errors
     /// 当路径不存在、无权限或底层删除失败时返回 `KernelError`.
-    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> KernelResult<()>;
+    fn fs_unlink(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()>;
     /// 删除目录
     ///
     /// # Errors
     /// 当目录不存在、非空、无权限或底层删除失败时返回 `KernelError`.
-    fn fs_rmdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()>;
+    fn fs_rmdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()>;
     /// 重命名
     ///
     /// # Errors
     /// 当源/目标路径无效、无权限或底层重命名失败时返回 `KernelError`.
-    fn fs_rename(&self, old_path: &str, new_path: &str, pwm: u64) -> KernelResult<()>;
+    fn fs_rename(&self, old_path: &str, new_path: &str, subject: SubjectId) -> KernelResult<()>;
     /// 读取目录项, 返回 true 表示还有更多项
     ///
     /// # Errors
@@ -416,7 +453,7 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当无权限、名称已存在或底层创建失败时返回 `KernelError`.
-    fn fs_symlink(&self, _target: &str, _link_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_symlink(&self, _target: &str, _link_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
     /// 读取符号链接目标.
@@ -430,7 +467,7 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当无权限、名称已存在或底层链接创建失败时返回 `KernelError`.
-    fn fs_link(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_link(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
@@ -444,7 +481,7 @@ pub trait FileSystem: Send + Sync {
         _rel_path: &str,
         _atime: u64,
         _mtime: u64,
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
@@ -452,7 +489,7 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当句柄无效、无权限或底层截断失败时返回 `KernelError`.
-    fn fs_truncate(&self, _handle: u32, _size: u64, _pwm: u64) -> KernelResult<()> {
+    fn fs_truncate(&self, _handle: u32, _size: u64, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
     /// 调整文件偏移.
@@ -480,7 +517,13 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当父路径不存在、无权限或底层创建失败时返回 `KernelError`.
-    fn fs_create(&self, parent_path: &str, name: &str, pwm: u64) -> KernelResult<Arc<dyn Inode>> {
+    fn fs_create(
+        &self,
+        parent_path: &str,
+        name: &str,
+        subject: SubjectId,
+    ) -> KernelResult<Arc<dyn Inode>> {
+        let pwm = subject.raw();
         let _ = (parent_path, name, pwm);
         Err(KernelError::NotSupported)
     }
@@ -500,7 +543,7 @@ pub trait FileSystem: Send + Sync {
         _node_id: u32,
         _offset: u64,
         _buf: &mut [u8],
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> KernelResult<usize> {
         Err(KernelError::NotSupported)
     }
@@ -515,7 +558,7 @@ pub trait FileSystem: Send + Sync {
         _rel_path: &str,
         _name: &str,
         _value: &[u8],
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
@@ -528,7 +571,7 @@ pub trait FileSystem: Send + Sync {
         _rel_path: &str,
         _name: &str,
         _buf: &mut [u8],
-        _pwm: u64,
+        _subject: SubjectId,
     ) -> KernelResult<usize> {
         Err(KernelError::NotSupported)
     }
@@ -536,14 +579,24 @@ pub trait FileSystem: Send + Sync {
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当缓冲区过小或底层列出失败时返回 `KernelError`.
-    fn fs_listxattr(&self, _rel_path: &str, _buf: &mut [u8], _pwm: u64) -> KernelResult<usize> {
+    fn fs_listxattr(
+        &self,
+        _rel_path: &str,
+        _buf: &mut [u8],
+        _subject: SubjectId,
+    ) -> KernelResult<usize> {
         Err(KernelError::NotSupported)
     }
     /// 移除扩展属性.
     ///
     /// # Errors
     /// 默认实现返回 `NotSupported`; 当属性不存在、无权限或底层移除失败时返回 `KernelError`.
-    fn fs_removexattr(&self, _rel_path: &str, _name: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_removexattr(
+        &self,
+        _rel_path: &str,
+        _name: &str,
+        _subject: SubjectId,
+    ) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
     /// 格式化底层介质 (EGFS 磁盘模式使用).

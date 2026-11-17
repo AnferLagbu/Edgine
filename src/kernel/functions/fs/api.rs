@@ -25,7 +25,7 @@
 //! - fd 句柄操作 (open/close/read/write/seek/...) 见 [`handle`](super::handle) (本模块
 //!   `pub use handle::*`)
 use super::vfs_manager::VFS_MANAGER;
-use super::vfs_types::VFS_MAX_PATH;
+use super::vfs_types::{SubjectId, VFS_MAX_PATH};
 use crate::privileged::glue::CStrExt;
 use crate::privileged::mm::PAGE_SIZE;
 
@@ -134,13 +134,13 @@ pub fn read_file_kernel(path: &str, pwm: u64, max_size: usize) -> Option<alloc::
     };
     let rel_path = VFS_MANAGER.get_relative_path(resolved, mount_idx);
 
-    let stat = fs.fs_stat(rel_path, pwm).ok()?;
+    let stat = fs.fs_stat(rel_path, SubjectId::new(pwm)).ok()?;
     let size = usize::try_from(stat.size).ok()?;
     if size == 0 || size > max_size {
         return None;
     }
 
-    let inode = fs.fs_open(rel_path, 0, pwm).ok()?;
+    let inode = fs.fs_open(rel_path, 0, SubjectId::new(pwm)).ok()?;
     let mut buf = alloc::vec![0u8; size];
     // 单次读满: RamFS `read_at_offset` 内部按块循环, 与 [`read_file_to_vec`]
     // 走 `vfs_read_safe(fd, &mut buf)` 的调用形状一致.
@@ -174,7 +174,7 @@ pub fn write_file_kernel(path: &str, data: &[u8], pwm: u64) -> bool {
     let rel_path = VFS_MANAGER.get_relative_path(resolved, mount_idx);
     let (parent_path, name) = split_parent_name(rel_path);
 
-    let Ok(inode) = fs.fs_create(parent_path, name, pwm) else {
+    let Ok(inode) = fs.fs_create(parent_path, name, SubjectId::new(pwm)) else {
         return false;
     };
     if data.is_empty() {

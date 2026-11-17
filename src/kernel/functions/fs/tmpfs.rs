@@ -11,7 +11,8 @@ use crate::functions::fs::KernelError;
 use crate::functions::fs::inode::Inode;
 use crate::functions::fs::ramfs_core::{RamFsData, RamFsDirEntry};
 use crate::functions::fs::vfs_types::{
-    FileSystem, KernelResult, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence, VfsStat,
+    FileSystem, KernelResult, SubjectId, VFS_MAX_NAME, VfsDirEntry, VfsFileType, VfsSeekWhence,
+    VfsStat,
 };
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
@@ -215,7 +216,13 @@ impl FileSystem for TmpFsFileSystem {
         Ok(())
     }
 
-    fn fs_open(&self, rel_path: &str, flags: u32, pwm: u64) -> KernelResult<Arc<dyn Inode>> {
+    fn fs_open(
+        &self,
+        rel_path: &str,
+        flags: u32,
+        subject: SubjectId,
+    ) -> KernelResult<Arc<dyn Inode>> {
+        let pwm = subject.raw();
         let mut fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -231,7 +238,14 @@ impl FileSystem for TmpFsFileSystem {
         Ok(())
     }
 
-    fn fs_read(&self, handle: u32, offset: u64, buf: &mut [u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_read(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &mut [u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -244,7 +258,14 @@ impl FileSystem for TmpFsFileSystem {
         }
     }
 
-    fn fs_write(&self, handle: u32, offset: u64, buf: &[u8], pwm: u64) -> KernelResult<usize> {
+    fn fs_write(
+        &self,
+        handle: u32,
+        offset: u64,
+        buf: &[u8],
+        subject: SubjectId,
+    ) -> KernelResult<usize> {
+        let pwm = subject.raw();
         let mut fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -263,7 +284,7 @@ impl FileSystem for TmpFsFileSystem {
         }
     }
 
-    fn fs_stat(&self, rel_path: &str, _pwm: u64) -> KernelResult<VfsStat> {
+    fn fs_stat(&self, rel_path: &str, _subject: SubjectId) -> KernelResult<VfsStat> {
         let fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -274,21 +295,22 @@ impl FileSystem for TmpFsFileSystem {
         fs.inner.stat(node_id).ok_or(KernelError::FileNotFound)
     }
 
-    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _pwm: u64) -> KernelResult<()> {
+    fn fs_chmod(&self, _rel_path: &str, _mode: u16, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 
     fn fs_chown(
         &self,
         _rel_path: &str,
-        _owner_pwm: u64,
-        _group_pwm: u64,
-        _pwm: u64,
+        _owner_subject: SubjectId,
+        _group_subject: SubjectId,
+        _subject: SubjectId,
     ) -> KernelResult<()> {
         Err(KernelError::ReadOnlyFilesystem)
     }
 
-    fn fs_mkdir(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_mkdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -311,7 +333,8 @@ impl FileSystem for TmpFsFileSystem {
         }
     }
 
-    fn fs_unlink(&self, rel_path: &str, pwm: u64) -> KernelResult<()> {
+    fn fs_unlink(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
+        let pwm = subject.raw();
         let mut fs = TMPFS_DATA.lock();
         fs.ensure_mounted()?;
 
@@ -323,11 +346,11 @@ impl FileSystem for TmpFsFileSystem {
         }
     }
 
-    fn fs_rmdir(&self, _rel_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rmdir(&self, _rel_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
-    fn fs_rename(&self, _old_path: &str, _new_path: &str, _pwm: u64) -> KernelResult<()> {
+    fn fs_rename(&self, _old_path: &str, _new_path: &str, _subject: SubjectId) -> KernelResult<()> {
         Err(KernelError::NotSupported)
     }
 
