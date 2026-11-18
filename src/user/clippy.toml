@@ -1,0 +1,20 @@
+# Clippy configuration for Edgine user-space workspace
+#
+# 适用: src/user 用户态 workspace (成员清单单源 = 本目录 Cargo.toml 的 [workspace]).
+# 本目录即其 workspace root, 故 clippy 按「workspace root 优先于 cwd」发现本文件.
+#
+# 口径 (门禁健康度收敛工程 D-2 甲・每树最小化): 本文件**只放 disallowed-***,
+# 不引入 cognitive-complexity / too-many-lines 等阈值 —— 本树此前从未受这些阈值
+# 约束, 引入会冒出未知存量, 超出「替代 once_cell 判据」的批次范围.
+# 内核风格阈值的单源仍在 src/rust/clippy.toml, 本树不复制.
+
+# ── 禁用类型 (I-16 OnceCell 抽象统一) ─────────────────────────
+# 判据与唯一允许入口同 src/kernel/clippy.toml 的同名段 (单源口径, 不在此复述规则).
+# 射程: spin 非本 workspace 任何成员的**直接**依赖, 但 wasmi 2.0.0 传递依赖
+# spin 0.9.9 (见 Cargo.lock), 且 vendor/spin 已在树内 ⇒ 某成员一旦显式声明 spin
+# 即可达, 故本条目**射程非结构性为空** (与内核/壳/host-tests 三树不同).
+# 生效性已实测 (门禁健康度收敛工程批 2): 临时登记仓内真实类型后, 在 proctest 成员里
+# 只 `use` 不使用即命中 disallowed_types 且 RC=101 ⇒ 本文件确被发现、该键确生效.
+# 但 spin 两条目本身**未验证命中**: 无成员直接声明 spin, 注入 `use spin::Once;`
+# 会先报 unresolved import, 走不到本 lint.
+disallowed-types = ["spin::Once", "spin::OnceCell"]

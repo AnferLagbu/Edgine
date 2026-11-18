@@ -85,7 +85,7 @@
 |---|---|
 | F1 **批 1 前**为 `deny`，全仓无任何 `#![forbid(...)]`（**批 1 后已改**: functions crate 根现为 `forbid`，见 [:38](../../src/kernel/functions/mod.rs#L38)） | 取证当时 [functions/mod.rs:36](../../src/kernel/functions/mod.rs#L36)；`grep -rn "forbid(" src/ host-tests/ kani-harness/ --include=*.rs` 仅命中 shell 函数名针 |
 | **F9 侧车存量已清零**（`totals = {sites: 0, files: 0}`）⇒ clippy 配置化零存量成本。**但「forbid 化零存量成本」这半已被批 1 证伪** | `scripts/audit_dead_code_comment.baseline.json`；侧车内 `missing_safety_doc` / `undocumented_unsafe_blocks` / `disallowed` 均 0 次。**口径缺口**: 侧车只统计**本仓源码**的抑制注解，**不统计第三方宏展开发射的 allow** ⇒ 由「侧车 0」推不出「升 forbid 不会红」。死代码族实测 42 处 E0453 全部来自 vendored bitflags 宏（§2.5 H）。`unsafe_code` 那半仍成立（functions 树 0 unsafe，批 1 七门槛为证） |
-| `spin` **已不是任何树的直接依赖** ⇒ once_cell 腿当前射程为空 | [src/kernel/Cargo.toml:50-52](../../src/kernel/Cargo.toml#L50) 自述「原 `spin` 依赖已删」；四树 `Cargo.toml` 无 `spin =` |
+| `spin` **已不是任何树的直接依赖**（无成员写 `spin =`）⇒ once_cell 判据零存量。**但「射程为空」只对三树成立**（批 2 订正） | [src/kernel/Cargo.toml:50-52](../../src/kernel/Cargo.toml#L50) 自述「原 `spin` 依赖已删」；四树 `Cargo.toml` 无 `spin =`。五份 `Cargo.lock` 实测: kernel / host-tests / src/rust / kani-harness **各 0 条 spin**，`src/user/Cargo.lock` **1 条 spin 0.9.9**（wasmi 2.0.0 传递依赖，[:89](../../src/user/Cargo.lock#L89)），且 `src/user/vendor/spin/` 已在树内 ⇒ 某成员一旦显式声明 spin 即可达，**src/user 的射程非结构性为空** |
 | privileged unsafe **1953 处 / 自建口径 100% 覆盖**（该覆盖率**虚高**，见 §2.5） | `python3 tools/audit_unsafe.py --summary` 实跑: 块 1517 / fn 290 / extern 127 / 其它 19 |
 | auto-trait `unsafe impl` **84 处被自建脚本豁免**，clippy 不豁免；豁免理由**事实错误** | [tools/audit_unsafe.py:242-246](../../tools/audit_unsafe.py#L242) 自述「Rust 编译器对 Send/Sync impl 自动验证类型安全」——显式 `unsafe impl Sync` 是**手工断言**，编译器只查 auto trait 的**自动推导**，不验证显式 impl |
 | `audit_reverse_deps` **结构恒真** | [audit_reverse_deps.py:32/36](../../scripts/audit_reverse_deps.py#L32) 扫 `privileged/` 找 `crate::functions`；而 P-71 拆 crate 后 [lib.rs:113/129](../../src/kernel/lib.rs#L113) 只是 `pub use … as …` 别名，privileged 作为独立 crate 编译时 `crate::functions` **不可解析**；全仓 3 处命中全是注释 |
@@ -93,7 +93,7 @@
 | ~~I6 是 safe API 边界判据，forbid 不覆盖~~ **已证伪：I6 结构恒真** | [audit_invariants.py:111-120](../../scripts/audit_invariants.py#L111) 的三个模式 `dma_map` / `dma_unmap` / `dma_sync` 在**全仓 `.rs` 零命中**（真实 DMA 面是 `DmaStream` / `alloc_coherent`，见 §2.5）⇒ 该检查永不可命中。上一轮「必须保留 I6」的判断**错误**，据此裁定 **D-6 甲：整腿退役** |
 | `block_registration` 的低层入口有 **host-tests 4 文件直调** | `egdf_register_block_dev` 出现在 `host-tests/src/framekernel_bench.rs`、`tests/hotplug_reenum_contract_test.rs`、`tests/egdf_registry_io_host_test.rs`、`tests/egfs_disk_persist_test.rs` ⇒ 可见性收紧会断测试面 |
 | `c_naming` 的驼峰面**今天已被 rustc 执法** | [audit_c_naming.py:50](../../scripts/audit_c_naming.py#L50) `CAMEL_CASE_FN` 自述「近似 non_snake_case」；clippy 四树腿均带 `-D warnings` ⇒ `non_snake_case` 已是硬错 |
-| **clippy 阈值配置对两树失效**（预存缺口，本轮取证顺带发现） | `src/kernel/clippy.toml` 与 `src/rust/clippy.toml` 存在，`host-tests/`、`src/user/` **无**；四树扩围腿在 `popd` 后以 `PROJECT_ROOT` 为 cwd（根也无配置）⇒ 按 §2.3 的 E 探针，这两树跑的是 **clippy 默认阈值**。AGENTS §3 只写 `src/rust/clippy.toml`，与实测不符 |
+| **clippy 阈值配置对两树失效**（预存缺口，本轮取证顺带发现；**批 2 只补 disallowed 面，阈值面按 D-2 甲刻意不补**） | 取证当时 `src/kernel/clippy.toml` 与 `src/rust/clippy.toml` 存在，`host-tests/`、`src/user/` **无**；四树扩围腿在 `popd` 后以 `PROJECT_ROOT` 为 cwd（根也无配置）⇒ 按 §2.3 的 E 探针，这两树跑的是 **clippy 默认阈值**。AGENTS §3 只写 `src/rust/clippy.toml`，与实测不符。**批 2 后**: 两树各有 `clippy.toml` 且实测被发现（P2/P3），但**只含 `disallowed-types`**，阈值仍是 clippy 默认 ⇒ 缺口**部分闭合**，阈值面与 AGENTS §3 的四份配置清单同步归批 4 |
 
 ---
 
@@ -281,13 +281,18 @@ L5 推翻了「照搬先例」的设计: `audit_missing_docs_debt` 用 `-D` + �
 > 且脚本扫描面是五树、clippy 只四树（§2.5 G），编译器面是**严格子集**。
 > 按用户判据「生态工具更强才算不必要」，此处生态工具**更弱** ⇒ 该腿必要。
 > 这是实测驱动的订正，D-3 甲的 forbid 射程随之收缩到 `unsafe_code` 一项。
+>
+> **第五次变化待裁定（批 2 实测新增）**: `audit_once_cell` 的 kani-harness 面 clippy **不可达**
+> （该树 `cargo clippy` RC=101），与 ⑤ 的「五树 ⊃ 四树」同型 ⇒ 已立 **D-7**（§四）。
+> 裁定甲/乙则计数再变（2 整腿 + 3 部分 + 3 不可替代 / 2 整腿 + 4 部分 + 2 不可替代），
+> 裁定丙则维持现读数。**本册不在裁定前改动 §3.1–§3.3 的归属**，只在 §3.1 该行加了前提标注。
 
 ### 3.1 甲类・整腿退役（3 条）
 
 | 腿 | 替代 | 依据 |
 |---|---|---|
 | `audit_reverse_deps.py` | **无需替代**（结构恒真，删腿即净收益） | §2.4；crate 拆分后判据永不可命中 |
-| `audit_once_cell.py` | `clippy::disallowed-types`（禁 `spin::Once` / `spin::OnceCell`） | §2.2 cp 探针（use-only 也命中）+ §2.4（spin 已非依赖 ⇒ 零存量） |
+| `audit_once_cell.py` | `clippy::disallowed-types`（禁 `spin::Once` / `spin::OnceCell`）**只覆盖四树中的三树 + 壳/abi**；**kani-harness 面 clippy 不可达**（批 2 实测，见批 2 详情三）⇒ **本行退役结论待 D-7 裁定，批 4 不得径行摘腿** | §2.2 cp 探针（use-only 也命中）+ §2.4（spin 非任何成员直接依赖 ⇒ 零存量）；批 2 P1–P5 实测四树配置全 live |
 | `audit_invariants.py` | I1–I5 → `forbid(unsafe_code)`；**I6 无需替代**（结构恒真） | §2.5 C；I6 的真实执法是 privileged 的 `DmaStream` / `alloc_coherent` safe API + F2 黑名单，**不是文本扫描** |
 
 ### 3.2 甲类・部分收敛（3 条，**保留残余面**）
@@ -339,7 +344,7 @@ L5 推翻了「照搬先例」的设计: `audit_missing_docs_debt` 用 `-D` + �
 ## 四、批次划分
 
 > **分批原则**: 批 1 / 批 2 / 批 3 **只加固执法或新增脚本，不动腿清单** ⇒ 不触 `AGENTS.md`；
-> 批 4 是**唯一**改腿清单的批（摘三腿 + 收敛四腿 + 接新腿）⇒ **那一次预授权的 AGENTS 改动落在批 4**。
+> 批 4 是**唯一**改腿清单的批（摘 2–3 腿 + 收敛 3–4 腿 + 接新腿，once_cell 那腿视 **D-7** 裁定）⇒ **那一次预授权的 AGENTS 改动落在批 4**。
 > 依据: [ci/audit.sh:94-138](../../ci/audit.sh#L94) 的 **P-69 反向对账**把「AGENTS §2.2 反引号点名的脚本」
 > 当外部期望，摘腿而不同步改 AGENTS 会**当场硬红**；故 AGENTS 改动无法延后到收口批。
 > 批 5a–5g 是 SAFETY 存量清零子批（D-5 乙），批 6 收口。
@@ -470,14 +475,80 @@ rustdoc 双架构两腿都真跑，**0 源码级 link 错误 + 0 私有项链接
 `src/user/clippy.toml`，**只放 disallowed-\***，不引入阈值（避免两树首次受 `cognitive-complexity`
 等约束而冒出未知存量）；③ 路径一律 **crate 名绝对**（cp 探针: `crate::…` 不命中）；
 ④ 负控制 + 配置生效正控制（见详情）；⑤ 复核 §2.4 末行的配置覆盖缺口已被本批补齐。
-状态：[]
-详情：**负控制不能直接注入 `use spin::Once;`**——`spin` 已不是任何树的依赖（§2.4），
+状态：[X]
+详情：**负控制不能直接注入 `use spin::Once;`**——无成员直接声明 `spin`（§2.4 批 2 订正行），
 注入会先报 unresolved import 而非 `disallowed_types`，证明不了配置生效。改用仓内**真实存在的类型**
-（如 `core::cell::UnsafeCell`）临时登记进 `disallowed-types`，验证「只 `use` 不使用也命中」+
-「该树配置确被读到」，再 `cp` + `sha256` 复原。spin 条目本身属**射程为空但防线在位**，
-这一限制须写进脚本/配置的中文注释，不得伪称已验证 spin 命中。
-按 E 探针，内核腿读 `src/kernel/clippy.toml`、壳腿读 `src/rust/clippy.toml`（workspace root 优先），
-两份都 live，都要改；edgine-abi 独立 workspace 无配置 ⇒ 回退读 cwd 的 `src/rust/clippy.toml`（B2 探针）。
+临时登记进 `disallowed-types`，验证「只 `use` 不使用也命中」+「该树配置确被读到」，再 `cp` + `sha256` 复原。
+spin 条目本身属**射程为空但防线在位**（src/user 例外，见下），这一限制已写进四份配置的中文注释，
+**不伪称已验证 spin 命中**。
+
+**一、配置发现机制的订正（原详情措辞不准）**
+
+原文写「edgine-abi 独立 workspace 无配置 ⇒ 回退读 cwd 的 `src/rust/clippy.toml`」——**机制说错了**:
+四树扩围腿的 cwd 是 `PROJECT_ROOT`，而仓根**没有** `clippy.toml`，按 cwd 回退根本读不到。
+P1 实测（临时往 `src/rust/clippy.toml` 塞一个未知键，利用 clippy 对未知键 **fail-closed**）:
+壳腿与 edgine-abi 腿**都 RC=101「unknown field name」** ⇒ 两份都确读到 `src/rust/clippy.toml`。
+真实机制是**从该 crate 的 workspace root 向上走祖先目录**: edgine-abi 的 workspace root 是
+`src/rust/edgine-abi`，自身无配置 ⇒ 上一级 `src/rust/clippy.toml` 命中。与 cwd 无关。
+
+**二、五轮探针读数（全部 `cp` + `sha256` 复原，仓内源码零残留）**
+
+| 探针 | 改装面 | 读数 | 证明 |
+|---|---|---|---|
+| P1 | `src/rust/clippy.toml` 加未知键 | 壳腿 RC=101 / edgine-abi 腿 RC=101 | 两腿都读该文件（祖先回退） |
+| P2 | `host-tests/clippy.toml` 登记 `core::cell::UnsafeCell` + `tests/tmpfs_test.rs` 只 `use` | RC=101，命中该 use 行 | 新配置被发现 + use-only 命中 |
+| P3 | `src/user/clippy.toml` 同上 + `proctest/src/main.rs` 只 `use` | RC=101，命中该 use 行 | 同上（用户态树） |
+| P4 | `src/kernel/clippy.toml` 登记 `core::cell::UnsafeCell` | RC=101，**privileged 78 处真实使用点**全红 | 内核配置 live + 命中真实使用点 |
+| P5 | 改登记 `core::num::NonZeroU128`（全树零使用）+ `functions/userctx.rs` 只 `use` | RC=101，命中 `functions/userctx.rs:13` | 内核树 **use-only** 也命中 |
+
+P4 单独不够: `kernel-privileged` 先编译即 78 错中断，走不到 `kernel-functions`，故补 P5 用一个
+全树零使用的类型把「use-only」这半在内核树也钉死。五轮合计证明: **四份配置全部 live、
+`disallowed-types` 键全部生效、use-only 导入即命中**（与 §2.2 cp 探针同结论，覆盖面扩到四树）。
+复原核验: `git status` 只剩四份 `clippy.toml`（2 M + 2 A），`userctx.rs` / `tmpfs_test.rs` /
+`proctest/src/main.rs` 三个探针载体 sha256 与改装前逐字节相同。
+
+**三、kani-harness 覆盖不对称（本批最大产出，登记不施工）**
+
+`audit_once_cell.py` 的 `BASES` 是**四树**（P-60 甲），实跑扫 **1442 个 `.rs`**
+= kernel 730 + host-tests 207 + src/user 503 + **kani-harness 2**。
+而 clippy 侧: 七腿覆盖 kernel / host-tests / src/user / 壳 / edgine-abi，**没有 kani-harness 腿**；
+且本批实测**该树根本 clippy 不了**——`cargo clippy --manifest-path kani-harness/Cargo.toml`
+**RC=101**，`E0433 could not find privileged in the crate root` ×3（来自 `#[path]` 引入的
+`functions/wasm/types.rs:739`）+ `unexpected_cfgs`（`cfg(kani)` 未声明）。
+即「加一条 kani clippy 腿」这条替代路**已被实测堵死**，不是没接而是接不上。
+
+⇒ 按用户判据「有比自建门禁更好的生态工具才算不必要」，**kani-harness 这 2 个文件的面生态工具更弱**
+（与 `audit_dead_code_comment` 因五树 ⊃ 四树而改判保留**同型**）。
+若批 4 照 §3.1 原结论整腿退役 `audit_once_cell.py`，这 2 个文件就**失去任何执法**。
+**本批不摘腿**（方案明写双执法并存），故无即时损失；处置立为 **D-7 待用户裁定**（§四），
+批 4 的 once_cell 项**以 D-7 为前提**，不得径行施工。
+
+**顺带暴露的第二处不对称（同登记不施工）**: 脚本按 `rglob("*.rs")` 扫，故也扫 vendored 子树
+（`src/user/vendor` 473 + `functions/net/smoltcp` 96 = 569 个文件，占 1442 的 39%），
+而 clippy 四腿一律 `--no-deps` ⇒ vendored 代码不在其射程。vendored 是第三方锁定代码
+（smoltcp 另有 `audit_smoltcp_purity` 守零修改），是否属本规则意图射程**本身可议**，
+故不单独立项，只在 D-7 里作为口径选项一并交用户裁定。
+
+**四、⑤ 配置覆盖缺口复核结论**
+
+§2.4 末行的缺口**部分闭合**: `host-tests/`、`src/user/` 现各有 `clippy.toml` 且实测被发现，
+`disallowed-types` 面已补齐；但按 **D-2 甲**两份**只放 disallowed-\***，
+`cognitive-complexity` / `too-many-lines` 等阈值**仍是 clippy 默认**（刻意不引入，避免两树首次
+受阈值约束冒出未知存量、超出本批范围）。阈值面与 AGENTS §3「Clippy 配置」只列一份的失真，
+一并归批 4 那一次 AGENTS 改动处理。
+
+**五、收口读数（七门槛全绿，改动面 = 4 份 `clippy.toml`，零摘腿）**
+
+五腿 `*-RC=` 回显均 **0**（日志 `/tmp/b2-gates.log`，五腿 RC 汇总在尾）:
+`./ci/build.sh all` 双架构 0 error / 0 warning；`bash ci/audit.sh full`
+**本轮因环境缺失未执行腿数 0**、UEFI(OVMF) 引导真跑腿可达面判据全符合
+（`[THREAD]` 按登记册**显式不判**，属 `uefi-thread-exit-hang` 的既有豁免面，非本批所致）；
+host-tests **203 套 / 1599 passed / 0 failed**；内核 host 单测三成员
+**12 + 807 + 556 = 1375 / 0 failed**；rustdoc 双架构两腿都真跑
+（x86_64 exit 0 / aarch64 exit 0），**0 源码级 link 错误 + 0 私有项链接**。
+读数与批 1 收口**逐项相同**——本批只改 clippy 配置的键与中文注释，**零 codegen 改动**，
+故一致是预期而非巧合。执法面**一条腿都没摘**（方案明写双执法并存一轮回），
+`audit_once_cell.py` 原样保留，实跑仍 **1442 文件 / 四树 0 处残留 / RC=0**。
 
 ### 批 3・SAFETY 存量棘轮腿实装（D-5 乙，**本批不接 CI**）
 
@@ -507,8 +578,10 @@ Fresh 诊断，`-W` 不中断编译 ⇒ 一次 `--workspace` / `--all-targets` �
 描述：在批 1/2/3 的替代执法已证明会红之后，摘恒真腿、收敛部分腿、接新腿，并同步全部连带面。
 方案：① 删 `audit_reverse_deps.py` 整腿（**只脚本 + full 清单条目**；已核: 无独立调起块（只走 2e 泛型循环）、
 host-tests 零锁针、selftest 零用例）；
-② 删 `audit_once_cell.py` 整腿（批 2 配置已替代；连带面＝quick 清单 + `:276-285` 调起块 +
-`test_p60` 的①面改钉，**selftest 零用例**）；
+② `audit_once_cell.py` 处置**以 D-7 裁定为前提，不得径行整腿退役**（批 2 实测: kani-harness 面
+clippy 不可达，RC=101 / E0433 ×3）——D-7 甲＝整腿不动（本项取消）；乙＝`BASES` 收缩到 kani-harness
+单树 + `test_p60` ①面改钉；丙＝整腿退役（连带面＝quick 清单 + `:276-285` 调起块 + `test_p60` ①面改钉，
+**selftest 零用例**），并须在 AGENTS 显式记录该 2 文件面无执法；
 ③ 删 `audit_invariants.py` **整腿**（含 `check_i6`，D-6 甲）——I1–I5 已由批 1 的 `forbid(unsafe_code)` 执法，
 I6 恒真且真实执法在 privileged safe API + F2；
 ④ `audit_safety_coverage.py` / `tools/audit_unsafe.py` 收敛为 **extern + 其它引用**面，
@@ -607,8 +680,8 @@ I6 恒真且真实执法在 privileged safe API + F2；
 | **P-69 反向对账** | [ci/audit.sh:94-138](../../ci/audit.sh#L94) | 以 AGENTS §2.2 反引号点名为外部期望 ⇒ **AGENTS 必须同批改** |
 | quick 档各腿调起块 | `invariants` [:220-229](../../ci/audit.sh#L220)、`once_cell` [:276-285](../../ci/audit.sh#L276) 的 `if` 块 + `mark_leg` + `audit_leg_missing`；`reverse_deps` **无独立块**（只走 2e 循环） | 脚本删了而调起块还在 ⇒ `audit_leg_missing` fail-closed |
 | 2e 注释块 | [ci/audit.sh:745-770](../../ci/audit.sh#L745) 的逐腿耗时表与「`missing_docs_debt` 是九腿里**唯一真编译**的腿」 | 新增 `audit_safety_debt` 后该叙述失真；须回填**七目录的实测磁盘与冷/热耗时**（先例: 143M / 冷 30.2s / 热 7.7s） |
-| **AGENTS.md**（一次授权） | ① [:55](../../AGENTS.md#L55) `audit_invariants.py` 表行删；② [:56](../../AGENTS.md#L56) `audit_once_cell.py` 表行删；③ [:66](../../AGENTS.md#L66) 完整清单「28 个 / `scripts/` 25」→ **26 个 / 23**，full 档列举删 `audit_reverse_deps` 加 `audit_safety_debt`（条数仍 10）；④ [:68](../../AGENTS.md#L68) 末句「OnceCell 统一性面（`audit_once_cell.py`）已按四树同范围扫描」→ 改指 clippy `disallowed-types`；⑤ **§4.2 的 I6** 须写明真实执法 = privileged `DmaStream` / `alloc_coherent` safe API + F2 黑名单，**不是文本扫描**（D-6 甲裁定的记录义务）；⑥ §5 **F1** 检查方式 `deny` → `forbid`；⑦ §5 **F4** 检查方式 → 收敛后 extern+ref 面 + clippy 棘轮腿；⑧ §3 Clippy 配置口径补**每树配置**（D-2 甲） | 根文档属 §6 必同步面；P-69 与多枚锁针直接读它。**八处一次改完**，授权只用一次。**§5 F9 不改**——原拟的「warn 级死代码族由 clippy 腿逐个 `-F` 执法」已按 §2.5 H 撤回，F9 现文（脚本 + 侧车 + 构建参数双路）与保留后的实现仍逐字相符 |
-| host-tests 结构锁 | `ci_entrypoint_unified_test.rs`: **`test_p60_scope_closure_and_silent_skips_fixed`**（[:2481](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2481)，once_cell BASES 三组针在 [:2482-2505](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2482)）⇒ 整腿退役后**改钉到 clippy 配置**；**该测试是四面合针**（① once_cell 四树+BASES+fail-closed ② safety_coverage 不再声称过滤 arch ③ c_naming 读失败进 `read_errors` ④ AGENTS §2.2 写明 F8 射程），只改①，②③④ 须原样存活（②③ 指向的脚本批 4 只收敛不退役）；`test_audit_sh_carries_hard_rule_audits`（[:184](../../host-tests/tests/ci_entrypoint_unified_test.rs#L184)，[:105](../../host-tests/tests/ci_entrypoint_unified_test.rs#L105) 点名 `audit_safety_coverage.py`）、`test_audit_sh_audit_legs_are_fail_closed`（[:217](../../host-tests/tests/ci_entrypoint_unified_test.rs#L217)）、`test_p69_leg_manifest_is_reconciled_against_agents`（[:673](../../host-tests/tests/ci_entrypoint_unified_test.rs#L673)）、`test_p50_audit_scope_and_selftest_are_wired`（[:752](../../host-tests/tests/ci_entrypoint_unified_test.rs#L752)）、`test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states`（[:2000](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2000)） | 这些针把**脚本内部结构**与 AGENTS 文本钉死；机制替换按先例**改钉不删针**。**`test_p53_f9_dead_code_comment_gate_is_wired`（[:302](../../host-tests/tests/ci_entrypoint_unified_test.rs#L302)）不在此列**——该腿整腿保留、接线不动，针无需改 |
+| **AGENTS.md**（一次授权） | ① [:55](../../AGENTS.md#L55) `audit_invariants.py` 表行删；② [:56](../../AGENTS.md#L56) `audit_once_cell.py` 表行**按 D-7 裁定处置**（甲/乙＝保留，乙须把射程改指 kani-harness 单树 + clippy 三树；丙＝删行）；③ [:66](../../AGENTS.md#L66) 完整清单「28 个 / `scripts/` 25」→ **26 个 / 23**（D-7 丙）或 **27 个 / 24**（D-7 甲/乙），full 档列举删 `audit_reverse_deps` 加 `audit_safety_debt`（条数仍 10）；④ [:68](../../AGENTS.md#L68) 末句「OnceCell 统一性面（`audit_once_cell.py`）已按四树同范围扫描」→ 按 D-7 改写（乙＝脚本守 kani-harness、clippy `disallowed-types` 守其余三树；丙＝改指 clippy 并**显式记录 kani-harness 2 文件面无执法**）；⑤ **§4.2 的 I6** 须写明真实执法 = privileged `DmaStream` / `alloc_coherent` safe API + F2 黑名单，**不是文本扫描**（D-6 甲裁定的记录义务）；⑥ §5 **F1** 检查方式 `deny` → `forbid`；⑦ §5 **F4** 检查方式 → 收敛后 extern+ref 面 + clippy 棘轮腿；⑧ §3 Clippy 配置口径补**每树配置**（D-2 甲） | 根文档属 §6 必同步面；P-69 与多枚锁针直接读它。**八处一次改完**，授权只用一次。**§5 F9 不改**——原拟的「warn 级死代码族由 clippy 腿逐个 `-F` 执法」已按 §2.5 H 撤回，F9 现文（脚本 + 侧车 + 构建参数双路）与保留后的实现仍逐字相符 |
+| host-tests 结构锁 | `ci_entrypoint_unified_test.rs`: **`test_p60_scope_closure_and_silent_skips_fixed`**（[:2481](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2481)，once_cell BASES 三组针在 [:2482-2505](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2482)）⇒ **按 D-7 裁定改钉**（丙＝整腿退役后改钉到 clippy 配置；乙＝改钉到「BASES 只含 kani-harness」+ clippy 三树配置；甲＝针不动）；**该测试是四面合针**（① once_cell 四树+BASES+fail-closed ② safety_coverage 不再声称过滤 arch ③ c_naming 读失败进 `read_errors` ④ AGENTS §2.2 写明 F8 射程），只改①，②③④ 须原样存活（②③ 指向的脚本批 4 只收敛不退役）；`test_audit_sh_carries_hard_rule_audits`（[:184](../../host-tests/tests/ci_entrypoint_unified_test.rs#L184)，[:105](../../host-tests/tests/ci_entrypoint_unified_test.rs#L105) 点名 `audit_safety_coverage.py`）、`test_audit_sh_audit_legs_are_fail_closed`（[:217](../../host-tests/tests/ci_entrypoint_unified_test.rs#L217)）、`test_p69_leg_manifest_is_reconciled_against_agents`（[:673](../../host-tests/tests/ci_entrypoint_unified_test.rs#L673)）、`test_p50_audit_scope_and_selftest_are_wired`（[:752](../../host-tests/tests/ci_entrypoint_unified_test.rs#L752)）、`test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states`（[:2000](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2000)） | 这些针把**脚本内部结构**与 AGENTS 文本钉死；机制替换按先例**改钉不删针**。**`test_p53_f9_dead_code_comment_gate_is_wired`（[:302](../../host-tests/tests/ci_entrypoint_unified_test.rs#L302)）不在此列**——该腿整腿保留、接线不动，针无需改 |
 | 审计自测 | `scripts/tests/audit_selftest.py`: **只有 `test_audit_unsafe`（[:547](../../scripts/tests/audit_selftest.py#L547)）需改钉**——它钉 `scan_file` 对「fn 体内 unsafe 块上方无 SAFETY」的命中，批 4 把块面交 clippy 后须改钉到 extern 面。**`test_functions_boundary`（[:81](../../scripts/tests/audit_selftest.py#L81)）不需改钉**：实读该用例只断言 `check_forbidden_imports` 的 `FORBIDDEN_PRIVILEGED_IMPORT`，即批 4 **保留**的 F2 面（本轮复核订正，原记「两例都改钉」过宽）。**新增 `audit_safety_debt` 用例**（含塌缩守卫负控制）；`total = len(results)` 自适应，但 **12 处 `[Test N/12]` 标签是硬编码**，须同批改 13（无针钉这些标签，属散文失真非硬红）。指向 invariants / once_cell / reverse_deps 的用例 **0 个**（已核：12 用例只点名 6 个脚本＝functions_boundary / deadlock_matrix×5 / block_registration / audit_unsafe / coupling×3 / vacuous_needle） | 自测本身是 full 档阻断腿，指向已删脚本即红 |
 | 退役产物消费者 | `other/target/audit/invariants-report.json` **全仓零消费者**（只有 [audit_invariants.py:195](../../scripts/audit_invariants.py#L195) 这个写者） | 已核: 删腿无下游断点，不需要迁移消费面 |
 | clippy 配置 | [src/kernel/clippy.toml:5](../../src/kernel/clippy.toml#L5) 空话自述订正；**[src/rust/clippy.toml:5](../../src/rust/clippy.toml#L5) 是逐字相同的孪生假自述**（本轮读两份配置时发现，同批一并订正）；批 2 新建的 `host-tests/clippy.toml`、`src/user/clippy.toml` | 自述与实现不符属预存问题，本工程正是使其成真的那一轮 |
@@ -641,6 +714,7 @@ I6 恒真且真实执法在 privileged safe API + F2；
 | **D-4** | 乙类是否后续立项 | 甲 本册登记为开放项，不施工 / 乙 另开一册逐项实测 | **甲**（用户本轮只授权甲类分批） |
 | **D-5** | SAFETY 面路径（批 0 出数 399 后新立） | 甲 立即补完 399 处注释再把块/fn/impl 面交 clippy（`-F` 硬零）/ **乙 clippy 检测 + 存量棘轮**（`-W` 取数、399 冻侧车、只拦新增、清零后翻硬） | **乙**。甲的成本基数比原估计大约 50 倍，赶工只会产出「调用方保证指针/类型有效 (详见上下文)」这类**占位理由**，把虚高读数再灌一遍；乙把欠账**显式化**，与 `audit_missing_docs_debt` 先例同构 |
 | **D-6** | I6 与 `audit_invariants` 处置（批 0 证伪后新立） | **甲 删 `check_i6`，整腿退役** / 乙 保留 I6 并把模式改指真实 DMA 面（`DmaStream` / `alloc_coherent`） | **甲**。I6 三模式全仓零命中 ⇒ 结构恒真，删腿不损失执法（§3.1「删腿即净收益」）；乙等于新造一条文本扫描腿去重复 safe API + F2 已有的执法。**记录义务**: AGENTS §4.2 须写明 I6 的真实执法面 |
+| **D-7** | `audit_once_cell` 处置（**批 2 实测后新立，待裁定**） | 甲 整腿保留不动（改判「不可替代」）/ **乙 部分收敛**：`BASES` 收缩到 **kani-harness 单树**，其余三树交 clippy / 丙 照原结论整腿退役，显式接受 kani-harness 2 文件失去执法 | **待用户裁定，批 4 以本项为前提**。病灶: 脚本扫四树 1442 文件，clippy 七腿**不含 kani-harness**，且该树实测 `cargo clippy` **RC=101**（E0433 ×3 + `unexpected_cfgs`）⇒「加一条 kani 腿」已堵死（批 2 详情三）。按用户判据该面生态工具**更弱**，与 `audit_dead_code_comment` 改判保留同型。取舍: 甲零成本但三树永久双执法；乙与另三条部分收敛腿同构、残余面最小（2 文件），且 vendored 扫描面不对称随之消失，代价是 `test_p60_scope_closure_and_silent_skips_fixed` 的①面针（BASES 四树 + fail-closed）须**改钉不删针**；丙损失执法，违「防回归优先固化门禁」偏好。**分类计数随裁定变**: 甲 → 2 整腿 + 3 部分 + 3 不可替代；乙 → 2 整腿 + 4 部分 + 2 不可替代；丙 → 维持 3/3/2 |
 
 ---
 

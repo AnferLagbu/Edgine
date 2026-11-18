@@ -34,3 +34,17 @@ standard-macro-braces = [
     { name = "klog_slab", brace = "(" },
     { name = "klog_error", brace = "(" },
 ]
+
+# ── 禁用类型 (I-16 OnceCell 抽象统一) ─────────────────────────
+# 判据: 项目代码不得绕过自研一次性原语, 直接用第三方 `spin::Once` / `spin::OnceCell`.
+# 唯一允许入口: `crate::functions::sync::once::{Once, OnceCell}` (后者是
+# `privileged::sync::once_lock::OnceLock<T>` 的类型别名).
+# 路径必须 **crate 名绝对**: `crate::spin::Once` 形态不命中 (实测).
+# 射程: spin 已从本 workspace 依赖移除 (见 Cargo.toml 内注释), Cargo.lock 零 spin
+# ⇒ 本条目当前**射程为空**, 属「防线在位」, 将来重新引入 spin 即刻生效.
+# 生效性已实测 (门禁健康度收敛工程批 2): 临时登记仓内真实类型后, 既命中真实使用点
+# (privileged 78 处), 也命中 functions 内「只 `use` 不使用」的导入, RC=101
+# ⇒ 本文件确被内核腿读到、该键确生效.
+# 但 spin 两条目本身**未验证命中**: 注入 `use spin::Once;` 会先报 unresolved import
+# (spin 已非本 workspace 依赖), 走不到本 lint.
+disallowed-types = ["spin::Once", "spin::OnceCell"]

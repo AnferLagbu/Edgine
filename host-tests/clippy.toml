@@ -1,0 +1,18 @@
+# Clippy configuration for Edgine host-tests
+#
+# 适用: host 侧单元/集成测试 crate (edgine-host-tests). 本目录即其 workspace root
+# (仓根无 Cargo.toml), 故 clippy 按「workspace root 优先于 cwd」发现本文件.
+#
+# 口径 (门禁健康度收敛工程 D-2 甲・每树最小化): 本文件**只放 disallowed-***,
+# 不引入 cognitive-complexity / too-many-lines 等阈值 —— 本树此前从未受这些阈值
+# 约束, 引入会冒出未知存量, 超出「替代 once_cell 判据」的批次范围.
+# 内核风格阈值的单源仍在 src/rust/clippy.toml, 本树不复制.
+
+# ── 禁用类型 (I-16 OnceCell 抽象统一) ─────────────────────────
+# 判据与唯一允许入口同 src/kernel/clippy.toml 的同名段 (单源口径, 不在此复述规则).
+# 射程: host-tests/Cargo.lock 零 spin ⇒ 当前射程为空, 属「防线在位」.
+# 生效性已实测 (门禁健康度收敛工程批 2): 临时登记仓内真实类型后, 在 tests/ 集成用例里
+# 只 `use` 不使用即命中 disallowed_types 且 RC=101 ⇒ 本文件确被发现、该键确生效.
+# 但 spin 两条目本身**未验证命中**: 注入 `use spin::Once;` 会先报 unresolved import
+# (spin 非本 workspace 依赖), 走不到本 lint.
+disallowed-types = ["spin::Once", "spin::OnceCell"]
