@@ -85,13 +85,13 @@ pub struct EgfsDmuObject {
     /// 最近状态变更时间 (tick).
     pub ctime: u64,
     /// 属主 PWM 身份字.
-    pub owner_pwm: u64,
+    pub owner_subject: u64,
     /// 属组 PWM 身份字.
-    pub group_pwm: u64,
+    pub group_subject: u64,
     /// 敏感度等级.
-    pub sensitivity: u8,
+    pub label_level: u8,
     /// POSIX 权限位.
-    pub pwm_perm: u16,
+    pub access_bits: u16,
     /// 硬链接计数.
     pub link_count: u32,
     /// 对象标志位.
@@ -111,7 +111,7 @@ pub struct EgfsDmuObject {
 impl EgfsDmuObject {
     /// 构造普通文件对象, 默认权限 0644、链接数 1.
     #[must_use]
-    pub fn new_file(obj_id: u64, owner_pwm: u64) -> Self {
+    pub fn new_file(obj_id: u64, owner_subject: u64) -> Self {
         Self {
             obj_id,
             obj_type: EgfsObjType::File,
@@ -122,10 +122,10 @@ impl EgfsDmuObject {
             atime: 0,
             mtime: 0,
             ctime: 0,
-            owner_pwm,
-            group_pwm: 0,
-            sensitivity: 0,
-            pwm_perm: 0o644,
+            owner_subject,
+            group_subject: 0,
+            label_level: 0,
+            access_bits: 0o644,
             link_count: 1,
             flags: 0,
             birth_txg: 0,
@@ -138,7 +138,7 @@ impl EgfsDmuObject {
 
     /// 构造目录对象, 默认权限 0755、链接数 2.
     #[must_use]
-    pub fn new_dir(obj_id: u64, owner_pwm: u64) -> Self {
+    pub fn new_dir(obj_id: u64, owner_subject: u64) -> Self {
         Self {
             obj_id,
             obj_type: EgfsObjType::Dir,
@@ -149,10 +149,10 @@ impl EgfsDmuObject {
             atime: 0,
             mtime: 0,
             ctime: 0,
-            owner_pwm,
-            group_pwm: 0,
-            sensitivity: 0,
-            pwm_perm: 0o755,
+            owner_subject,
+            group_subject: 0,
+            label_level: 0,
+            access_bits: 0o755,
             link_count: 2,
             flags: 0,
             birth_txg: 0,
@@ -176,10 +176,10 @@ impl EgfsDmuObject {
             atime: 0,
             mtime: 0,
             ctime: 0,
-            owner_pwm: 0,
-            group_pwm: 0,
-            sensitivity: 0,
-            pwm_perm: 0o644,
+            owner_subject: 0,
+            group_subject: 0,
+            label_level: 0,
+            access_bits: 0o644,
             link_count: 1,
             flags: 0,
             birth_txg: 0,
@@ -192,7 +192,7 @@ impl EgfsDmuObject {
 
     /// 构造符号链接对象, 默认权限 0777.
     #[must_use]
-    pub fn new_symlink(obj_id: u64, owner_pwm: u64) -> Self {
+    pub fn new_symlink(obj_id: u64, owner_subject: u64) -> Self {
         Self {
             obj_id,
             obj_type: EgfsObjType::Symlink,
@@ -203,10 +203,10 @@ impl EgfsDmuObject {
             atime: 0,
             mtime: 0,
             ctime: 0,
-            owner_pwm,
-            group_pwm: 0,
-            sensitivity: 0,
-            pwm_perm: 0o777,
+            owner_subject,
+            group_subject: 0,
+            label_level: 0,
+            access_bits: 0o777,
             link_count: 1,
             flags: 0,
             birth_txg: 0,
@@ -279,10 +279,10 @@ impl EgfsObjSet {
     }
 
     /// 初始化对象集: 清空对象表, 建立根目录与元数据 ZAP 对象.
-    pub fn init(&self, owner_pwm: u64) {
+    pub fn init(&self, owner_subject: u64) {
         let mut objs = self.objects.lock();
         objs.clear();
-        let mut root = EgfsDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_pwm);
+        let mut root = EgfsDmuObject::new_dir(HV_DMU_OBJ_ROOT, owner_subject);
         root.birth_txg = 1;
         objs.push(root);
         let zap = EgfsDmuObject::new_zap(HV_DMU_OBJ_META);
@@ -293,13 +293,13 @@ impl EgfsObjSet {
     }
 
     /// 按类型分配新对象编号并插入对象表; 不支持的类型返回 `None`.
-    pub fn alloc_obj(&self, obj_type: EgfsObjType, owner_pwm: u64) -> Option<u64> {
+    pub fn alloc_obj(&self, obj_type: EgfsObjType, owner_subject: u64) -> Option<u64> {
         let obj_id = self.next_obj_id.fetch_add(1, Ordering::AcqRel);
         let obj = match obj_type {
-            EgfsObjType::File => EgfsDmuObject::new_file(obj_id, owner_pwm),
-            EgfsObjType::Dir => EgfsDmuObject::new_dir(obj_id, owner_pwm),
+            EgfsObjType::File => EgfsDmuObject::new_file(obj_id, owner_subject),
+            EgfsObjType::Dir => EgfsDmuObject::new_dir(obj_id, owner_subject),
             EgfsObjType::Zap | EgfsObjType::ZapMicro => EgfsDmuObject::new_zap(obj_id),
-            EgfsObjType::Symlink => EgfsDmuObject::new_symlink(obj_id, owner_pwm),
+            EgfsObjType::Symlink => EgfsDmuObject::new_symlink(obj_id, owner_subject),
             _ => return None,
         };
         self.objects.lock().push(obj);

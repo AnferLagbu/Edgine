@@ -69,7 +69,7 @@ pub struct EgfsUberblock {
     /// 魔数; 等于 `HV_SPA_MAGIC` 时才视为有效.
     pub magic: u32,
     /// 归属的 PWM (功率/写管理) 域编号.
-    pub pwm_domain_id: u16,
+    pub subject_domain_id: u16,
     /// 对齐填充, 使块尾保持 8 字节边界.
     pub pad: [u8; 2],
 }
@@ -87,7 +87,7 @@ impl EgfsUberblock {
             checkpoint_txg: 0,
             checksum: [0; 4],
             magic: 0,
-            pwm_domain_id: 0,
+            subject_domain_id: 0,
             pad: [0; 2],
         }
     }
@@ -148,7 +148,7 @@ impl EgfsUberblock {
         off += 32;
         let magic = u32::from_le_bytes(bytes[off..off + 4].try_into().ok()?);
         off += 4;
-        let pwm_domain_id = u16::from_le_bytes(bytes[off..off + 2].try_into().ok()?);
+        let subject_domain_id = u16::from_le_bytes(bytes[off..off + 2].try_into().ok()?);
         Some(Self {
             txg,
             root_bp,
@@ -158,7 +158,7 @@ impl EgfsUberblock {
             checkpoint_txg,
             checksum,
             magic,
-            pwm_domain_id,
+            subject_domain_id,
             pad: [0; 2],
         })
     }
@@ -632,7 +632,7 @@ mod tests {
             checkpoint_txg: 0,
             checksum: [0; 4],
             magic: HV_SPA_MAGIC,
-            pwm_domain_id: 0,
+            subject_domain_id: 0,
             pad: [0; 2],
         };
         ub.compute_checksum();

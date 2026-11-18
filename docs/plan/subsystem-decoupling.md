@@ -113,9 +113,9 @@
 - **方案**: §2.3 七门槛全绿（`bash ci/audit.sh full` + `make test-host` + `make test-kernel-host` +
   `make -f Makefile.ci ci-rustdoc` 分跑，判据取日志内 `*-RC=` 回显）; S-1 需新增 host 契约锁
   （注册表解析 + 未注册 fail-closed + 重复注册拒绝）; 同步 `docs/explain` 相关页与本册状态。
-- **状态**: [X] (七门槛实测全绿, 判据取日志内 `*-RC=` 回显: `bash ci/audit.sh full` **AUDIT-RC=0**
-  (含双架构 QEMU 2/2、aarch64 EGFS 三相、UEFI 可达面、未执行腿数 0); `make test-host` **HOST-RC=0**
-  (202 套 / 1597 passed / 0 failed); `make test-kernel-host` **KHOST-RC=0** (12+807+556 = 1375 passed / 0 failed);
+- **状态**: [X] (期二收口, 判据取日志内 `*-RC=` 回显: `bash ci/audit.sh full` **AUDIT-RC=0**
+  (含双架构 QEMU 2/2、aarch64 EGFS 磁盘三相、UEFI 可达面、未执行腿数 0); `make test-host` **HOST-RC=0**
+  (202 套 / 1598 passed / 0 failed); `make test-kernel-host` **KHOST-RC=0** (12+807+556 = 1375 passed / 0 failed);
   `make -f Makefile.ci ci-rustdoc` **RUSTDOC-RC=0** (双架构 exit 0))
 
 ## 四、期二（待授权，不施工）
@@ -169,7 +169,11 @@
 
 - **描述**: `owner_pwm` / `pwm_perm` / `pwm_domain_id` 等盘上字段名与注释中立化（**不改磁盘格式**）。
 - **方案**: 仅改命名与文档，字节布局零变化; 与 SGEG v2 的客体标签模型对接（v2 仍需要属主与标签）。
-- **状态**: []
+- **状态**: [X] (命名映射: `owner_pwm` → `owner_subject`, `group_pwm` → `group_subject`,
+  `pwm_perm` → `access_bits`, `sensitivity` → `label_level`, `pwm_domain_id` → `subject_domain_id`;
+  射程 = EGFS 盘上结构 (`dmu` / `spa` / `dataset` / `egfs_data` 序列化) + host-tests 对 EGFS 对象的访问;
+  **VfsStat 的同名展示字段不改** (那是 POSIX 视图, 不是盘上格式)。
+  字节布局零变化的证据: `egfs_disk_persist_test` 落盘/读回往返 + aarch64 QEMU EGFS 磁盘三相全绿。
 
 ## 五、调研发现：载体中立化为何不能留在期一
 

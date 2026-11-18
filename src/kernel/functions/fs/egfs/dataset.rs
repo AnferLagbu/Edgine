@@ -45,9 +45,9 @@ pub struct EgfsDsProps {
     /// 同步写入策略编码.
     pub sync: u8,
     /// 敏感度等级.
-    pub sensitivity: u8,
+    pub label_level: u8,
     /// 属主 PWM 身份字.
-    pub owner_pwm: u64,
+    pub owner_subject: u64,
     /// 数据配额 (字节).
     pub quota: u64,
     /// 空间预留 (字节).
@@ -67,8 +67,8 @@ impl Default for EgfsDsProps {
             checksum: 2,
             atime: true,
             sync: 0,
-            sensitivity: 0,
-            owner_pwm: 0,
+            label_level: 0,
+            owner_subject: 0,
             quota: 0,
             reservation: 0,
             ref_quota: 0,
@@ -127,13 +127,13 @@ pub struct EgfsDataset {
 impl EgfsDataset {
     /// 以编号、名称与属主创建数据集, 初始状态 Creating、可写.
     #[must_use]
-    pub fn new(ds_id: u64, name: &str, owner_pwm: u64) -> Self {
+    pub fn new(ds_id: u64, name: &str, owner_subject: u64) -> Self {
         let mut n = [0u8; HV_DS_MAX_NAME];
         let b = name.as_bytes();
         let len = b.len().min(HV_DS_MAX_NAME - 1);
         n[..len].copy_from_slice(&b[..len]);
         let props = EgfsDsProps {
-            owner_pwm,
+            owner_subject,
             ..EgfsDsProps::default()
         };
         Self {
@@ -171,8 +171,8 @@ impl EgfsDataset {
     }
 
     /// 初始化对象集并把状态转为 Active、标记为已挂载.
-    pub fn init(&self, owner_pwm: u64) {
-        self.objset.init(owner_pwm);
+    pub fn init(&self, owner_subject: u64) {
+        self.objset.init(owner_subject);
         self.state
             .store(EgfsDsState::Active as u8, Ordering::Release);
         self.mounted.store(true, Ordering::Release);
@@ -200,21 +200,21 @@ impl EgfsDataset {
     }
 
     /// 在根目录创建普通文件并返回对象编号; 不可写或分配失败返回 `None`.
-    pub fn create_file(&self, name: &str, owner_pwm: u64) -> Option<u64> {
+    pub fn create_file(&self, name: &str, owner_subject: u64) -> Option<u64> {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(EgfsObjType::File, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(EgfsObjType::File, owner_subject)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }
 
     /// 在根目录创建子目录并返回对象编号; 不可写或分配失败返回 `None`.
-    pub fn create_dir(&self, name: &str, owner_pwm: u64) -> Option<u64> {
+    pub fn create_dir(&self, name: &str, owner_subject: u64) -> Option<u64> {
         if !self.is_writeable() {
             return None;
         }
-        let obj_id = self.objset.alloc_obj(EgfsObjType::Dir, owner_pwm)?;
+        let obj_id = self.objset.alloc_obj(EgfsObjType::Dir, owner_subject)?;
         self.dir_zap.insert_u64(name, obj_id);
         Some(obj_id)
     }

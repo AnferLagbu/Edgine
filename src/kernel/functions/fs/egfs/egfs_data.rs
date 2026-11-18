@@ -570,7 +570,7 @@ impl EgfsData {
 
     /// 打开 egfs 中的对象并分配文件描述符.
     ///
-    /// `pwm` 仅在新建对象时记为属主 (`owner_pwm`), 不参与放行判定.
+    /// `pwm` 仅在新建对象时记为属主 (`owner_subject`), 不参与放行判定.
     ///
     /// # Errors
     /// 未初始化时返回 `NotInitialized`; 对象不存在时返回 `FileNotFound`;
@@ -859,7 +859,7 @@ impl EgfsData {
             return KernelError::FileNotFound.as_i32();
         };
 
-        obj.pwm_perm = mode;
+        obj.access_bits = mode;
         // Framekernel P2.2.2: 安全时间戳
         obj.ctime = crate::arch!(timestamp());
         obj.dirty = true;
@@ -872,12 +872,12 @@ impl EgfsData {
     }
 
     /// 修改文件属主, 成功返回 0.
-    pub fn chown(&self, path: &str, owner_pwm: u64, pwm: u64) -> i32 {
-        self.chown_ext(path, owner_pwm, 0, pwm)
+    pub fn chown(&self, path: &str, owner_subject: u64, pwm: u64) -> i32 {
+        self.chown_ext(path, owner_subject, 0, pwm)
     }
 
     /// 同时修改文件属主与属组, 成功返回 0.
-    pub fn chown_ext(&self, path: &str, owner_pwm: u64, group_pwm: u64, _pwm: u64) -> i32 {
+    pub fn chown_ext(&self, path: &str, owner_subject: u64, group_subject: u64, _pwm: u64) -> i32 {
         if !self.is_initialized() {
             return KernelError::NotInitialized.as_i32();
         }
@@ -893,9 +893,9 @@ impl EgfsData {
             return KernelError::FileNotFound.as_i32();
         };
 
-        obj.owner_pwm = owner_pwm;
-        if group_pwm != 0 {
-            obj.group_pwm = group_pwm;
+        obj.owner_subject = owner_subject;
+        if group_subject != 0 {
+            obj.group_subject = group_subject;
         }
         // Framekernel P2.2.2: 安全时间戳
         obj.ctime = crate::arch!(timestamp());
@@ -1526,17 +1526,17 @@ impl EgfsData {
             return None;
         }
         off += 8;
-        if !Self::write_le64(buf, off, obj.owner_pwm) {
+        if !Self::write_le64(buf, off, obj.owner_subject) {
             return None;
         }
         off += 8;
-        if !Self::write_le64(buf, off, obj.group_pwm) {
+        if !Self::write_le64(buf, off, obj.group_subject) {
             return None;
         }
         off += 8;
-        buf[off] = obj.sensitivity;
+        buf[off] = obj.label_level;
         off += 1;
-        if !Self::write_le16(buf, off, obj.pwm_perm) {
+        if !Self::write_le16(buf, off, obj.access_bits) {
             return None;
         }
         off += 2;
@@ -1715,13 +1715,13 @@ impl EgfsData {
         off += 8;
         let ctime = Self::read_le64(buf, off)?;
         off += 8;
-        let owner_pwm = Self::read_le64(buf, off)?;
+        let owner_subject = Self::read_le64(buf, off)?;
         off += 8;
-        let group_pwm = Self::read_le64(buf, off)?;
+        let group_subject = Self::read_le64(buf, off)?;
         off += 8;
-        let sensitivity = buf[off];
+        let label_level = buf[off];
         off += 1;
-        let pwm_perm = Self::read_le16(buf, off)?;
+        let access_bits = Self::read_le16(buf, off)?;
         off += 2;
         let link_count = Self::read_le32(buf, off)?;
         off += 4;
@@ -1742,10 +1742,10 @@ impl EgfsData {
             atime,
             mtime,
             ctime,
-            owner_pwm,
-            group_pwm,
-            sensitivity,
-            pwm_perm,
+            owner_subject,
+            group_subject,
+            label_level,
+            access_bits,
             link_count,
             flags,
             birth_txg,

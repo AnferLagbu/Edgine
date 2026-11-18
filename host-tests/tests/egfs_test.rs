@@ -599,7 +599,7 @@ fn advanced_meta(egfs: &EgfsData) {
 
         let stat = egfs.stat("/chmod_test.txt", test_pwm());
         assert!(stat.is_some());
-        assert_eq_egfs!(stat.unwrap().pwm_perm, 0o755u16, "chmod value");
+        assert_eq_egfs!(stat.unwrap().access_bits, 0o755u16, "chmod value");
     });
 
     test!(chmod_nonexistent, {
@@ -618,7 +618,7 @@ fn advanced_meta(egfs: &EgfsData) {
 
         let stat = egfs.stat("/chown_test.txt", test_pwm());
         assert!(stat.is_some());
-        assert_eq_egfs!(stat.unwrap().owner_pwm, 42, "chown value");
+        assert_eq_egfs!(stat.unwrap().owner_subject, 42, "chown value");
     });
 
     test!(chown_nonexistent, {
