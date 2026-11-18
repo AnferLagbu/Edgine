@@ -11,8 +11,6 @@
 
 use crate::functions::fs::api as fw;
 use crate::privileged::proc::api as proc_fw;
-use crate::privileged::sgeg;
-use crate::privileged::sgeg::capability::FS_CAP_CHOWN;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
@@ -20,6 +18,9 @@ use crate::privileged::syscall::api;
 // rename
 // ============================================================================
 
+use super::authorize;
+use super::subject;
+use super::vfs_types::SubjectId;
 /// rename(oldpath, newpath) — 重命名/移动文件
 ///
 /// # Errors
@@ -121,7 +122,7 @@ pub fn fchown_syscall(fd: i32, owner: u64, group: u64) -> Result<usize, Errno> {
     let pwm = current_pwm();
     // B06-PRE-002: 前置 FS 域 CHOWN 能力校验 — 属主/属组变更是身份安全关键操作,
     // 由专用能力位门控 (与 access/open 路径的 pwm_has_capability 语义一致).
-    if !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, FS_CAP_CHOWN) {
+    if !authorize::has_fs_capability(SubjectId::new(pwm), authorize::FS_CAP_CHOWN) {
         return Err(Errno::Eperm);
     }
     let r = fw::vfs_fchown(fd.cast_unsigned(), owner, group, pwm);
@@ -334,7 +335,7 @@ pub fn alarm_syscall(seconds: u32) -> usize {
 
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }
 
 fn current_pid() -> u32 {

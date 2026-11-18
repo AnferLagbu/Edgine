@@ -12,11 +12,10 @@ use super::{
 use crate::functions::fs::KernelError;
 use crate::functions::fs::authorize::{self, AccessDecision, ObjectLabel};
 use crate::functions::fs::dcache;
-use crate::functions::fs::vfs_types::SubjectId;
 use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
-use crate::privileged::sgeg::api as pwm_api;
 
+use crate::functions::fs::vfs_types::SubjectId;
 /// `RamFS` 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表 / 链接目标表
 pub struct RamFsData {
     /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
@@ -1319,11 +1318,8 @@ impl RamFsData {
             return KernelError::FileNotFound.as_i32();
         }
 
-        if node.owner_pwm != pwm {
-            let level = pwm_api::pwm_get_privilege_level(pwm);
-            if level != 0 {
-                return KernelError::PermissionDenied.as_i32();
-            }
+        if node.owner_pwm != pwm && !authorize::is_system_privileged(SubjectId::new(pwm)) {
+            return KernelError::PermissionDenied.as_i32();
         }
 
         node.perm = mode;
@@ -1347,8 +1343,7 @@ impl RamFsData {
             return KernelError::FileNotFound.as_i32();
         }
 
-        let level = pwm_api::pwm_get_privilege_level(pwm);
-        if level != 0 {
+        if !authorize::is_system_privileged(SubjectId::new(pwm)) {
             return KernelError::PermissionDenied.as_i32();
         }
 
@@ -1381,11 +1376,8 @@ impl RamFsData {
         if !node.used {
             return KernelError::FileNotFound.as_i32();
         }
-        if node.owner_pwm != pwm {
-            let level = pwm_api::pwm_get_privilege_level(pwm);
-            if level != 0 {
-                return KernelError::PermissionDenied.as_i32();
-            }
+        if node.owner_pwm != pwm && !authorize::is_system_privileged(SubjectId::new(pwm)) {
+            return KernelError::PermissionDenied.as_i32();
         }
         let changed = atime != u64::MAX || mtime != u64::MAX;
         if atime != u64::MAX {

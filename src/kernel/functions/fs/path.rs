@@ -30,6 +30,8 @@ use crate::privileged::syscall::api;
 // chdir
 // ============================================================================
 
+use super::authorize;
+use super::vfs_types::SubjectId;
 /// chdir(path) — 切换工作目录
 ///
 /// # 参数
@@ -88,8 +90,8 @@ pub fn getcwd_syscall(buf_ptr: u64, size: u64) -> Result<usize, Errno> {
 ///
 /// 与 `mount`/`umount2`/`open_by_handle_at` 先例一致 (functions/fs/mount.rs:52).
 fn require_sys_admin() -> Result<u64, Errno> {
-    let pwm = crate::privileged::sgeg::session::get_current_pwm();
-    if !crate::privileged::sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
+    let pwm = crate::functions::fs::subject::current_raw();
+    if authorize::require_system_admin(SubjectId::new(pwm)).is_err() {
         return Err(Errno::Eacces);
     }
     Ok(pwm)

@@ -71,6 +71,8 @@ pub mod signalfd;
 /// 快照 (snapshot) 系统调用处理器
 pub mod snapshot;
 pub mod stat;
+/// 主体解析单点 (L2)
+pub mod subject;
 pub mod sysfs;
 /// G9: 动态系统树
 pub mod systree;

@@ -51,6 +51,7 @@ use crate::privileged::syscall::{
 // 常量
 // ============================================================================
 
+use super::subject;
 /// `TFD_CLOEXEC` (`O_CLOEXEC`)
 pub const TFD_CLOEXEC: i32 = 0o200_0000;
 /// `TFD_NONBLOCK` (`O_NONBLOCK`)
@@ -157,7 +158,7 @@ impl TimerFdFile {
 
     /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败归还槽位
     fn attach(idx: usize, nonblock: bool, cloexec: bool) -> Result<usize, Errno> {
-        let pwm = crate::privileged::sgeg::pwm_get_current();
+        let pwm = subject::current_raw();
         let open_file = OpenFile::from_file(Arc::new(Self::new(idx)), 0, pwm);
         open_file.set_nonblock(nonblock);
         let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {

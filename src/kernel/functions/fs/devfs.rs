@@ -32,6 +32,7 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 // 常量
 // ============================================================================
 
+use super::subject;
 /// 最大设备数
 pub const DEVFS_MAX_DEVICES: usize = 16;
 /// 设备名最大长度
@@ -292,9 +293,9 @@ impl DevfsData {
                 crate::functions::intcast::low_i32_from_usize(buf.len())
             }
             Some(DevKind::Sgeg) => {
-                let pwm = crate::privileged::sgeg::session::get_current_pwm();
-                let euid = crate::privileged::sgeg::session::get_euid();
-                let uid = crate::privileged::sgeg::session::get_current_uid();
+                let pwm = crate::functions::fs::subject::current_raw();
+                let euid = subject::current_euid();
+                let uid = subject::current_uid();
                 if pwm != 0 {
                     let mut off = 0;
                     let blen = buf.len();
@@ -377,7 +378,7 @@ impl DevfsData {
                 if note.is_empty() || password.is_empty() {
                     return KernelError::InvalidArgument.as_i32();
                 }
-                crate::privileged::sgeg::session::login(note, password)
+                subject::login(note, password)
                     .map_or(KernelError::PermissionDenied.as_i32(), |_pwm| {
                         crate::functions::intcast::low_i32_from_usize(buf.len())
                     })

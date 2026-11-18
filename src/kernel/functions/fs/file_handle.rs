@@ -182,7 +182,7 @@ pub fn open_by_handle_at_syscall(
     // 通过 FileSystem trait 构造原生 Inode
     // fs_resolve_inode 返回原生 Arc<dyn Inode>; 句柄无法解析 (inode_id/mount_idx 失效)
     // 时返回 EINVAL, 与相邻 mount_idx 校验一致。
-    let pwm = crate::privileged::sgeg::session::get_current_pwm();
+    let pwm = crate::functions::fs::subject::current_raw();
     let inode = fs
         .fs_resolve_inode(inode_id, mount_idx)
         .ok_or(Errno::Einval)?;

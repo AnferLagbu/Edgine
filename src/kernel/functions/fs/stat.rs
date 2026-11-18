@@ -16,10 +16,10 @@
 
 use crate::functions::fs::VfsStat;
 use crate::functions::fs::api as fw;
-use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
+use super::subject;
 const VFS_STAT_SIZE: u64 = core::mem::size_of::<VfsStat>() as u64;
 
 // ============================================================================
@@ -281,7 +281,7 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
     let Ok(path) = crate::privileged::mm::copy_user::copy_string_from_user(path_ptr, 4096) else {
         return Errno::Efault.as_ret();
     };
-    let pwm = crate::privileged::sgeg::pwm_get_current();
+    let pwm = subject::current_raw();
     let r = crate::functions::fs::vfs_utimensat_safe(&path, atime, mtime, pwm);
     if r < 0 { Errno::Eio.as_ret() } else { 0 }
 }
@@ -292,5 +292,5 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
 
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }

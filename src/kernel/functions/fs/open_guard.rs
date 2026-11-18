@@ -10,14 +10,9 @@
 //! `mount` / `umount2` 先例一致); 路径打开的判定暂仍由各文件系统内部承担,
 //! T-3 将把 ramfs 的判定上提至此并接入客体标签查询.
 
-use crate::functions::fs::vfs_types::KernelError;
-use crate::privileged::sgeg::api as pwm_api;
+use super::vfs_types::KernelError;
 
-/// SGEG 能力域号 — SYSTEM 域 (0)
-const SYSTEM_DOMAIN: u16 = 0;
-/// SYSTEM 域 `CAP_SYS_ADMIN` 位 (bit0)
-const CAP_SYS_ADMIN: u64 = 0x01;
-
+use super::authorize;
 /// 对象获取方式 — 决定采用哪套判据
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenSource {
@@ -35,11 +30,7 @@ pub fn authorize_open(subject: u64, source: OpenSource) -> Result<(), KernelErro
     match source {
         OpenSource::Path => Ok(()),
         OpenSource::Handle => {
-            if pwm_api::pwm_has_capability(subject, SYSTEM_DOMAIN, CAP_SYS_ADMIN) {
-                Ok(())
-            } else {
-                Err(KernelError::PermissionDenied)
-            }
+            authorize::require_system_admin(super::vfs_types::SubjectId::new(subject))
         }
     }
 }

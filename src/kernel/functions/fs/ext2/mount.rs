@@ -8,9 +8,10 @@ use crate::functions::fs::KernelError;
 use crate::functions::fs::vfs_types::{
     FileSystem, KernelResult, SubjectId, VfsDirEntry, VfsSeekWhence, VfsStat,
 };
-use crate::privileged::sgeg::api as pwm_api;
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
+use crate::functions::fs::authorize;
+use crate::functions::fs::subject;
 /// ext2 文件系统实例 (全局单例)
 static EXT2_FS: Mutex<Option<Ext2Fs>> = Mutex::new(None);
 
@@ -115,8 +116,8 @@ impl Inode for Ext2Inode {
         let mut fs_guard = EXT2_FS.lock();
         let fs = fs_guard.as_mut().ok_or(KernelError::NotInitialized)?;
         let mut inode = fs.read_inode(self.inode_num)?;
-        if u32::from(inode.uid) != pwm_api::pwm_get_uid(pwm)
-            && pwm_api::pwm_get_privilege_level(pwm) != 0
+        if u32::from(inode.uid) != subject::uid_of(SubjectId::new(pwm))
+            && !authorize::is_system_privileged(SubjectId::new(pwm))
         {
             return Err(KernelError::PermissionDenied);
         }

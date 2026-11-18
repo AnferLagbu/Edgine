@@ -14,7 +14,6 @@
 //! - [`umount2_syscall`] target 必须非空, 需 `CAP_SYS_ADMIN`
 
 use crate::functions::fs::api as fw;
-use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
@@ -22,6 +21,9 @@ use crate::privileged::syscall::api;
 // mount
 // ============================================================================
 
+use super::authorize;
+use super::subject;
+use super::vfs_types::SubjectId;
 /// mount(source, target, fstype) — 挂载文件系统
 ///
 /// 需 `CAP_SYS_ADMIN` (capability 0x01) 才能挂载.
@@ -49,7 +51,7 @@ pub fn mount_syscall(source_ptr: u64, target_ptr: u64, fstype_ptr: u64) -> Resul
     }
 
     let pwm = current_pwm();
-    if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
+    if authorize::require_system_admin(SubjectId::new(pwm)).is_err() {
         return Err(Errno::Eacces);
     }
 
@@ -83,7 +85,7 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
     }
 
     let pwm = current_pwm();
-    if !sgeg::api::pwm_has_capability(pwm, 0, 0x01) {
+    if authorize::require_system_admin(SubjectId::new(pwm)).is_err() {
         return Err(Errno::Eacces);
     }
 
@@ -104,5 +106,5 @@ pub fn umount2_syscall(target_ptr: u64, flags: i32) -> Result<usize, Errno> {
 /// mount/umount2 在调用前还需 `pwm_has_capability(..., CAP_SYS_ADMIN)` 检查,
 /// 这里仅返回原始凭证,真正权限决策交给 capability 模块。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }

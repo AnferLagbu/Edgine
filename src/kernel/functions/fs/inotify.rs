@@ -42,6 +42,7 @@ use crate::privileged::sync::IrqSpinLock as Mutex;
 // inotify 常量
 // ============================================================================
 
+use super::subject;
 /// `IN_ACCESS`: 文件被访问
 pub const IN_ACCESS: u32 = 0x0000_0001;
 /// `IN_MODIFY`: 文件被修改
@@ -358,7 +359,7 @@ impl InotifyFile {
 
     /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败归还槽位
     fn attach(idx: u8, nonblock: bool, cloexec: bool) -> Result<usize, Errno> {
-        let pwm = crate::privileged::sgeg::pwm_get_current();
+        let pwm = subject::current_raw();
         let open_file = OpenFile::from_file(Arc::new(Self::new(idx)), 0, pwm);
         open_file.set_nonblock(nonblock);
         let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {

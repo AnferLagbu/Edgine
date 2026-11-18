@@ -29,6 +29,7 @@ use crate::functions::fs::vfs_types::{KernelError, KernelResult, OpenFile, VfsFi
 use crate::privileged::sync::IrqSpinLock;
 use crate::privileged::syscall::Errno;
 
+use super::subject;
 /// `EFD_SEMAPHORE` 标志 (与 Linux 一致)
 pub const EFD_SEMAPHORE: i32 = 0o1;
 /// `EFD_NONBLOCK` 标志 (与 Linux 一致)
@@ -156,7 +157,7 @@ pub fn eventfd_syscall(initval: u64, flags: i32) -> Result<usize, Errno> {
     let nonblock = (flags & EFD_NONBLOCK) != 0;
     let cloexec = (flags & EFD_CLOEXEC) != 0;
 
-    let pwm = crate::privileged::sgeg::pwm_get_current();
+    let pwm = subject::current_raw();
     let open_file = OpenFile::from_file(Arc::new(EventFdFile::new(initval, semaphore)), 0, pwm);
     open_file.set_nonblock(nonblock);
 

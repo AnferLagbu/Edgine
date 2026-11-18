@@ -180,9 +180,10 @@ fn test_object_acquisition_has_single_authorize_exit() {
         0,
         "open_by_handle_at 不得自带能力判定 (判定归 authorize_open)"
     );
+    // L2: 句柄打开的判定经 authorize 统一出口 (能力实现已收进 authorize.rs)
     assert!(
-        guard.contains("pwm_has_capability"),
-        "能力判定实现须落在 open_guard.rs"
+        guard.contains("authorize::require_system_admin"),
+        "句柄打开判定须经 authorize 出口"
     );
 }
 

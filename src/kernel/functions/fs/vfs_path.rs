@@ -22,6 +22,7 @@ use crate::privileged::userptr::{UserReadPtr, UserWritePtr};
 // VFS 核心接口 (内部)
 // ============================================================================
 
+use super::subject;
 /// 删除目录项 — VFS 核心实现.
 ///
 /// 删除前记录 inode 号, 成功后释放该 inode 上的 POSIX 锁并发 inotify
@@ -139,9 +140,8 @@ pub(crate) fn vfs_stat_core(path: *const u8, pwm: u64) -> Option<VfsStat> {
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
     let mut stat = fs_opt?.fs_stat(rel_path, SubjectId::new(pwm)).ok()?;
 
-    let tbl = crate::privileged::sgeg::identity::get_table();
-    stat.uid = tbl.uid_of(stat.owner_pwm);
-    stat.gid = tbl.gid_of(stat.group_pwm);
+    stat.uid = subject::uid_of(SubjectId::new(stat.owner_pwm));
+    stat.gid = subject::gid_of(SubjectId::new(stat.group_pwm));
     if stat.gid == 0xFFFF_FFFF {
         stat.gid = stat.uid;
     }

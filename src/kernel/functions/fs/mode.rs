@@ -8,7 +8,6 @@
 
 use crate::functions::fs::api as fw;
 use crate::privileged::proc::DEFAULT_UMASK;
-use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -17,6 +16,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 // umask
 // ============================================================================
 
+use super::subject;
 /// 无进程上下文 (host 单测 / 早期启动) 时的 umask 缺省.
 ///
 /// 有进程上下文时权威值在 `Process::fs_context` (K-03: `CLONE_FS` 线程共享);
@@ -157,5 +157,5 @@ pub fn fchmod_syscall(fd: i32, mode: u32) -> Result<usize, Errno> {
 
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }

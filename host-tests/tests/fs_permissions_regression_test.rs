@@ -281,9 +281,10 @@ fn set_times_of_persistent_fs_checks_owner_or_privilege() {
             continue;
         }
         checked.push(rel);
+        // L2: 特权级判定已收进 authorize 出口 —— 针改判「经该出口」而非直呼 sgeg
         assert!(
-            body.contains("pwm_get_privilege_level"),
-            "{file:?} 的 set_times 落盘前必须判属主/特权级 (丙批 B1)",
+            body.contains("is_system_privileged"),
+            "{file:?} 的 set_times 落盘前必须判属主/特权级 (丙批 B1, 经 authorize 出口)",
         );
         assert!(
             body.contains("PermissionDenied"),

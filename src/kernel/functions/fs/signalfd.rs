@@ -33,6 +33,7 @@ use crate::functions::fs::vfs_types::{KernelError, KernelResult, OpenFile, VfsFi
 use crate::privileged::sync::IrqSpinLock;
 use crate::privileged::syscall::Errno;
 
+use super::subject;
 /// `SFD_CLOEXEC` (`O_CLOEXEC`)
 pub const SFD_CLOEXEC: i32 = 0o200_0000;
 /// `SFD_NONBLOCK` (`O_NONBLOCK`)
@@ -313,7 +314,7 @@ pub fn signalfd_apply(fd: i32, sigmask: u64, flags: i32) -> Result<usize, Errno>
     }
 
     // 创建: 构造对象 → OpenFileTable → per-process fd 表
-    let pwm = crate::privileged::sgeg::pwm_get_current();
+    let pwm = subject::current_raw();
     let open_file = OpenFile::from_file(Arc::new(SignalFdFile::new(sigmask, current_pid)), 0, pwm);
     open_file.set_nonblock((flags & SFD_NONBLOCK) != 0);
     let cloexec = (flags & SFD_CLOEXEC) != 0;

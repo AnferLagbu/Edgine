@@ -13,8 +13,6 @@
 //! - [`unlink_syscall`] 解除链接 (删除文件)
 
 use crate::functions::fs::api as fw;
-use crate::privileged::sgeg;
-use crate::privileged::sgeg::capability::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
@@ -22,6 +20,10 @@ use crate::privileged::syscall::api;
 // 权限位
 // ============================================================================
 
+use super::authorize;
+use super::authorize::{FS_CAP_EXECUTE, FS_CAP_READ, FS_CAP_WRITE};
+use super::subject;
+use super::vfs_types::SubjectId;
 /// `F_OK` - 文件存在性检查
 pub const F_OK: i32 = 0;
 /// `R_OK` - 可读
@@ -72,8 +74,7 @@ pub fn access_syscall(path_ptr: u64, mode: i32) -> Result<usize, Errno> {
     if mode & X_OK != 0 {
         required_caps |= FS_CAP_EXECUTE;
     }
-    if required_caps != 0 && !sgeg::api::pwm_has_capability(pwm, sgeg::CAP_DOMAIN_FS, required_caps)
-    {
+    if required_caps != 0 && !authorize::has_fs_capability(SubjectId::new(pwm), required_caps) {
         return Err(Errno::Eacces);
     }
     // 调用 vfs_stat_safe 验证存在性; 不需要 VfsStat 内容.
@@ -133,5 +134,5 @@ pub fn unlink_syscall(path_ptr: u64) -> Result<usize, Errno> {
 
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }

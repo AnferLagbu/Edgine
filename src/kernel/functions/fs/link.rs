@@ -8,7 +8,6 @@
 //! - 委托 `privileged/fs/vfs::api` 完成真实现 (ramfs.link / ramfs.symlink / ramfs.readlink)
 
 use crate::functions::fs::api as fw;
-use crate::privileged::sgeg;
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
@@ -16,6 +15,7 @@ use crate::privileged::syscall::api;
 // link
 // ============================================================================
 
+use super::subject;
 /// link(oldpath, newpath) — 创建硬链接
 ///
 /// # Errors
@@ -105,5 +105,5 @@ pub fn readlink_syscall(path_ptr: u64, buf_ptr: u64, bufsiz: u64) -> Result<usiz
 
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
-    sgeg::api::pwm_get_current()
+    subject::current_raw()
 }

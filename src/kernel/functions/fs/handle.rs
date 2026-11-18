@@ -13,7 +13,6 @@ use super::inode::Inode;
 use super::open_file_table::OPEN_FILE_TABLE;
 use super::open_guard::{OpenSource, authorize_open};
 use super::vfs_manager::VFS_MANAGER;
-use super::vfs_types::SubjectId;
 use super::vfs_types::{
     KernelError, OpenFile, VFS_MAX_PATH, VfsDirEntry, VfsOpenFlags, VfsSeekWhence, VfsStat,
 };
@@ -21,6 +20,8 @@ use crate::privileged::fd_notify;
 use crate::privileged::mm::{PAGE_SIZE, pcache};
 use crate::privileged::userptr::{UserReadPtr, UserWritePtr};
 
+use super::subject;
+use super::vfs_types::SubjectId;
 /// 通过本地 fd 取当前进程 fd 表 (权威表) 的 `OpenFile` `handle_id`.
 ///
 /// 内联全限定路径调用 `privileged::proc::with_current_fd_table`, 避免新增
@@ -860,9 +861,8 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
             },
         };
         // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
-        let tbl = crate::privileged::sgeg::identity::get_table();
-        stat.uid = tbl.uid_of(stat.owner_pwm);
-        stat.gid = tbl.gid_of(stat.group_pwm);
+        stat.uid = subject::uid_of(SubjectId::new(stat.owner_pwm));
+        stat.gid = subject::gid_of(SubjectId::new(stat.group_pwm));
         if stat.gid == 0xFFFF_FFFF {
             stat.gid = stat.uid;
         }

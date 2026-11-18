@@ -33,6 +33,7 @@ use crate::privileged::mm::uffd::{
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api::{read_struct_from_user, write_struct_to_user};
 
+use super::subject;
 /// `O_CLOEXEC`
 const O_CLOEXEC: u32 = 0o200_0000;
 /// `O_NONBLOCK`
@@ -175,7 +176,7 @@ pub fn userfaultfd_syscall(flags: u32) -> i64 {
         return Errno::Emfile.as_ret();
     };
 
-    let pwm = crate::privileged::sgeg::pwm_get_current();
+    let pwm = subject::current_raw();
     let open_file = OpenFile::from_file(Arc::new(UserFaultFdFile::new(idx)), 0, pwm);
     open_file.set_nonblock(nonblock);
 

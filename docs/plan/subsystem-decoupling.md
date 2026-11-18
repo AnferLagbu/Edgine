@@ -200,3 +200,21 @@
 
 期一收口按 AGENTS §2.3 七门槛全绿（判据取日志内 `*-RC=` 回显，`bash ci/audit.sh full` 档位必写）;
 S-1 另需 host 契约锁与新增 public API 的中文文档（F8）; 新册须先 `git add` 再跑 `scan_obsolete_naming`（其扫描面是 git 索引）。
+
+## 八、后续增补：L2 主体解析出口收敛（2026-11-17）
+
+### L2: fs 层对 SGEG 的直接引用收敛到两个具名出口
+
+- **描述**: 期二收口后 fs 子树仍有 23 个文件裸引用 `privileged::sgeg`（主体解析 6 处、
+  能力判定 8 处、身份映射 3 处、会话/登录 3 处），不满足设计册「删掉安全模块 FS 仍成立」的检验。
+- **方案**: 新增 [functions/fs/subject.rs](../../src/kernel/functions/fs/subject.rs)（主体解析:
+  `current_raw` / `current_uid` / `current_euid` / `login` / `uid_of` / `gid_of` /
+  `subject_of_uid|gid`）; [authorize.rs](../../src/kernel/functions/fs/authorize.rs) 增
+  `require_system_admin` / `has_fs_capability` / `is_system_privileged` 与 `FS_CAP_*` 再导出;
+  全部调用点改经两个出口。新增源码契约锁 `host-tests/tests/fs_sgeg_leak_test.rs`
+  （fs 子树逐行判、跳过注释行、断言两出口非空转）, 负控制注入一处违规恰红 1 点。
+  既有两针按新机制改钉（T-1 句柄判定针改判「经 authorize」; 权限回归针改判
+  `is_system_privileged`）。
+- **状态**: [X] (读数: build all 6/0 · audit full **RC=0**（QEMU 2/2 + EGFS 三相 + UEFI,
+  未执行腿数 0）· test-host **203 套 1599 passed 0 failed** · test-kernel-host **1375 passed
+  0 failed** · ci-rustdoc 双架构 exit 0; fs 子树内 `privileged::sgeg` 引用仅剩 authorize/subject 两文件)

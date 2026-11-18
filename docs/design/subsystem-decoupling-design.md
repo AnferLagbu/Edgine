@@ -71,14 +71,17 @@ Edgine 并非从零开始: 解耦三件套里前两件已经相当成熟.
 依赖 (基线对账)、构建期门控合法性 (计数登记), 加上 functions 边界白名单. Linux /
 Windows / macOS 在这些方向上是靠评审与约定, 没有对等物.
 
-**缺口也是三件, 而且正好对应三件套里最容易被忽略的部分:**
+**当时的缺口也是三件, 正好对应三件套里最容易被忽略的部分; 三件均已在 2026-11-17
+的工程里闭合**[^1]:
 
-- **没有 `register_filesystem`**: 挂载分发仍是 `match FsType` 硬编码, 加一个文件系统
-  要改 VFS. 这是 Linux 2.0 之前的形态.
-- **没有中立载体**: `pwm: u64` 直接进 `FileSystem` trait 签名, 注释还写着"FS 实现负责
-  权限检查". 这正是 §一 第三条说的"身份类型被塞进文件系统接口".
-- **判定出口不唯一**: `open_by_handle_at` 绕过唯一 open 出口, 判定散在系统调用入口,
-  ramfs 仍保留全仓唯一存活的 FS 内 `check_permission`.
+- **没有 `register_filesystem`** → 现为 `FsRegistry` 注册表, 新增 FS 只需在注册点加一行.
+- **没有中立载体** → 现为 `SubjectId` (`FileSystem` trait 不再出现 `pwm: u64`).
+- **判定出口不唯一** → 现为唯一 publish 出口 (`publish_opened_inode`) 加单点判定算法
+  (`authorize::decide`); `open_by_handle_at` 不再是绕过路径.
+
+[^1]: 改动面与门槛读数见 [子系统解耦工程](../plan/subsystem-decoupling.md). 同一工程还
+收敛了 fs 层对安全模块的**直接引用**: 子树内只允许 `authorize.rs` 与 `subject.rs` 两个
+出口引用 `privileged::sgeg`, 其余文件一律经它们访问 (由源码契约锁把守).
 
 ## 五、不做 LSM 式注册表
 
