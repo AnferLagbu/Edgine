@@ -32,8 +32,10 @@
 // P-71: functions 已独立为 `kernel-functions` crate (100% safe 业务层).
 // host-test (std) 下剥离裸机约束, 与 kernel-privileged 同构.
 #![cfg_attr(not(feature = "host-test"), no_std)]
-// F1: 本 crate 全树禁止 unsafe (crate 级 deny 覆盖所有子模块).
-#![deny(unsafe_code)]
+// F1: 本 crate 全树禁止 unsafe (crate 级 forbid 覆盖所有子模块).
+// forbid 而非 deny: deny 可被下游 `#[allow(unsafe_code)]` 逃逸 (实测 RC=0),
+// forbid 遇 allow 直接 E0453, 且命令行 `-A` 也压不住.
+#![forbid(unsafe_code)]
 
 // ============================================================================
 // 子系统声明

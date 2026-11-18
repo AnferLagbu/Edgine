@@ -181,7 +181,7 @@ report_mode_boundary() {
 # ── 0. F1 预检: functions/ 零 unsafe ────────────────────────────
 # 服务层 (functions/) 不允许任何 unsafe 代码, 这是框内核架构的核心契约.
 # check_tcb.sh 现只做秒级预检, 早于构建与 0.5k 审计腿; 权威判定在编译期
-# src/kernel/functions/mod.rs 的 #![deny(unsafe_code)] 与步骤 0.5k 的
+# src/kernel/functions/mod.rs 的 #![forbid(unsafe_code)] 与步骤 0.5k 的
 # scripts/audit_functions_boundary.py. TCB 占比度量不在此处, 见步骤 0.5b.
 step "0/6 F1 预检 (functions/ 零 unsafe)"
 if [ -x "$PROJECT_ROOT/tools/check_tcb.sh" ]; then

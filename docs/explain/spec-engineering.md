@@ -78,7 +78,7 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 6 层防护机制
 
-6 层防护。编译期：functions/mod.rs 顶部 #![deny(unsafe_code)] 强制 functions 0 unsafe；静态检查：审计脚本清单以 AGENTS §2.2 为唯一持有者，本地一键入口 `ci/audit.sh`（本文不复制清单，P-70 甲）；编译验证：双架构 cargo check 0w0e + clippy 0 warning；测试：host-tests + QEMU 集成测试；miri-tests 已删除，UB 检测由 Rust 编译期 + 上述审计腿覆盖；人工审查：PR review 流程覆盖本规范 13 章节；文档同步：plan/ + explain/ 两层文档自动维护。
+6 层防护。编译期：functions/mod.rs 顶部 #![forbid(unsafe_code)] 强制 functions 0 unsafe；静态检查：审计脚本清单以 AGENTS §2.2 为唯一持有者，本地一键入口 `ci/audit.sh`（本文不复制清单，P-70 甲）；编译验证：双架构 cargo check 0w0e + clippy 0 warning；测试：host-tests + QEMU 集成测试；miri-tests 已删除，UB 检测由 Rust 编译期 + 上述审计腿覆盖；人工审查：PR review 流程覆盖本规范 13 章节；文档同步：plan/ + explain/ 两层文档自动维护。
 
 ## 注意事项
 

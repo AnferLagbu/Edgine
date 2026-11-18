@@ -8,7 +8,7 @@
 # 改名收益小于同步成本.
 #
 # 权威判定 (本脚本是快速预检, 不是权威):
-#   - 编译期: src/kernel/functions/mod.rs 的 #![deny(unsafe_code)]
+#   - 编译期: src/kernel/functions/mod.rs 的 #![forbid(unsafe_code)]
 #   - 审计期: scripts/audit_functions_boundary.py (F1+F2, ci/audit.sh 步骤 0.5k)
 # 近似之处: 只做行级词法过滤 (状态机跳过 // 行注释与 /* */ 块注释), 不解析字符串
 # 字面量; 字符串里出现 unsafe 会误报, 但真实 unsafe 代码不会漏报.
@@ -44,7 +44,7 @@ fi
 
 # 状态机: 跳过 // 行注释与跨行 /* */ 块注释后匹配 unsafe (词边界, 不匹配 unsafe_code).
 # SIMPLIFIED: 不处理字符串字面量与原始字符串; 影响 = 字符串含 "unsafe" 时误报;
-# 权威判定以编译期 deny 与 audit_functions_boundary.py 为准.
+# 权威判定以编译期 forbid 与 audit_functions_boundary.py 为准.
 SV_HITS=$(find "$FUNC_DIR" -name '*.rs' \
     -not -path "*/smoltcp/*" -not -path "*/target/*" -print0 \
     | xargs -0 awk '
@@ -71,7 +71,7 @@ SV_HITS=$(find "$FUNC_DIR" -name '*.rs' \
 if [ -n "$SV_HITS" ]; then
     echo -e "${RED}FAIL${NC}: functions/ 中发现 unsafe 代码:"
     echo "$SV_HITS"
-    echo "修复依据: src/kernel/functions/mod.rs 的 #![deny(unsafe_code)] (编译期权威)"
+    echo "修复依据: src/kernel/functions/mod.rs 的 #![forbid(unsafe_code)] (编译期权威)"
     echo "          scripts/audit_functions_boundary.py (F1+F2 权威审计, ci/audit.sh 步骤 0.5k)"
     exit 1
 fi

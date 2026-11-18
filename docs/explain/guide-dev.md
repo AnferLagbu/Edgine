@@ -44,11 +44,11 @@ TCB 维护 5 条原则：(1) 暴露最强类型，避免裸指针 privileged pub
 
 ### TCB 边界机制
 
-3 层保护机制。编译期：functions/mod.rs 顶部 #![deny(unsafe_code)]，cargo build 阶段排除 functions unsafe；静态检查：scripts/audit_functions_boundary.py TCB 公开 API 白名单 + 内部模块黑名单；人工审查：code review 流程覆盖 OSTD 四准则 + 6 不变式 + safe API 形式化。
+3 层保护机制。编译期：functions/mod.rs 顶部 #![forbid(unsafe_code)]，cargo build 阶段排除 functions unsafe；静态检查：scripts/audit_functions_boundary.py TCB 公开 API 白名单 + 内部模块黑名单；人工审查：code review 流程覆盖 OSTD 四准则 + 6 不变式 + safe API 形式化。
 
 ### 数据流方向
 
-单向数据流。functions safe Rust → 调用 privileged::* 安全 API → privileged 内部 unsafe 块配 // SAFETY: 注释 → 硬件（MMU/DMA/中断/CPU 寄存器）；跨层接口全部走 privileged pub fn（无 pub unsafe fn）；privileged 内部子模块之间不受 #![deny(unsafe_code)] 限制，允许 unsafe，但要写 // SAFETY:。
+单向数据流。functions safe Rust → 调用 privileged::* 安全 API → privileged 内部 unsafe 块配 // SAFETY: 注释 → 硬件（MMU/DMA/中断/CPU 寄存器）；跨层接口全部走 privileged pub fn（无 pub unsafe fn）；privileged 内部子模块之间不受 #![forbid(unsafe_code)] 限制，允许 unsafe，但要写 // SAFETY:。
 
 ### TCB 演进路径
 

@@ -79,11 +79,11 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 
 ### 编译期强制
 
-functions 层 0 unsafe 通过编译时 deny 强制。src/kernel/functions/mod.rs 顶部 #![deny(unsafe_code)]；任何子模块中写 unsafe 即触发编译错误；效果：cargo build 阶段即排除 functions 层 unsafe 代码。
+functions 层 0 unsafe 通过编译时 forbid 强制。src/kernel/functions/mod.rs 顶部 #![forbid(unsafe_code)]（取 forbid 而非 deny：deny 可被子模块 #[allow(unsafe_code)] 消音而静默放行，forbid 遇 allow 直接 E0453 硬错，命令行 -A 也压不住）；任何子模块中写 unsafe 即触发编译错误；效果：cargo build 阶段即排除 functions 层 unsafe 代码。
 
 ### 调用边界
 
-跨层接口全部走 privileged safe API。functions safe Rust → 调用 privileged::* 安全 API → privileged 内部 unsafe 块配 // SAFETY: 注释 → MMU/DMA/中断控制器/CPU 寄存器；跨层接口必须全部走 privileged pub fn（无 pub unsafe fn）；privileged 内部子模块之间不受 #![deny(unsafe_code)] 限制，允许 unsafe，但要写 // SAFETY:。
+跨层接口全部走 privileged safe API。functions safe Rust → 调用 privileged::* 安全 API → privileged 内部 unsafe 块配 // SAFETY: 注释 → MMU/DMA/中断控制器/CPU 寄存器；跨层接口必须全部走 privileged pub fn（无 pub unsafe fn）；privileged 内部子模块之间不受 #![forbid(unsafe_code)] 限制，允许 unsafe，但要写 // SAFETY:。
 
 ### 内存安全 TCB 定义
 
@@ -123,7 +123,7 @@ Soundness/Expressiveness/Minimalism/Efficiency。通过评审再合并。
 
 ### 依赖清单
 
-5 个依赖源：docs/README.md §6 explain 文档格式（写本文所遵循的格式规范）/ src/kernel/privileged/mod.rs（privileged 子树入口，含完整模块清单与 SAFETY 注释规范）/ src/kernel/functions/mod.rs（functions 子树入口，包含 #![deny(unsafe_code)] 与 Safe Rust 契约）/ scripts/audit_functions_boundary.py（TCB 公开 API 白名单 + 内部模块黑名单）/ docs/plan/archive/framekernel-compliance.md（框内核合规工程书）。
+5 个依赖源：docs/README.md §6 explain 文档格式（写本文所遵循的格式规范）/ src/kernel/privileged/mod.rs（privileged 子树入口，含完整模块清单与 SAFETY 注释规范）/ src/kernel/functions/mod.rs（functions 子树入口，包含 #![forbid(unsafe_code)] 与 Safe Rust 契约）/ scripts/audit_functions_boundary.py（TCB 公开 API 白名单 + 内部模块黑名单）/ docs/plan/archive/framekernel-compliance.md（框内核合规工程书）。
 
 ### 被引用清单
 
