@@ -203,4 +203,9 @@ impl fmt::Display for Frame {
 
 // SAFETY: Frame 是堆分配对象，Send + Sync 来自 PMM 计数面 (内部锁保护) 的安全并发访问。
 unsafe impl Send for Frame {}
+// SAFETY: `Frame` 的三个字段 (phys: PhysAddr / order: u8 / meta: usize) 全是 Copy
+// 值且无内部可变性: `meta()` 取 &self、`set_meta()` 取 &mut self ⇒ 共享引用下不可变。
+// 唯一的共享可变面是 PMM 侧的持有计数, 由 `mm::api::frame_inc` / `frame_dec` 的内部
+// 锁保护 (Clone 登记 +1, Drop 归零才归还), 不依赖 Frame 自身同步。故 &Frame 跨核
+// 共享安全; 归还恰好一次等不变量见本文件模块文档的 SAFETY 段。
 unsafe impl Sync for Frame {}

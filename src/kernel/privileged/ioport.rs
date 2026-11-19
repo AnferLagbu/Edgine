@@ -273,4 +273,9 @@ impl IoPort {
 
 // SAFETY: IoPort 封装了独占的 PIO 端口范围, 内核态独占访问。
 unsafe impl Send for IoPort {}
+// SAFETY: `IoPort` 的三个字段 (base: u16 / len: u16 / name: &'static str) 构造后
+// 全为只读, 无内部可变性。端口范围的独占性由 `unsafe fn new` 的契约承担 (len 非零、
+// `base.checked_add(len)` 不溢出、不与其它 IoPort 范围重叠)。共享 &IoPort 的访问走
+// `check_offset` 校验 + `asm!("out dx, eax", options(nomem, nostack))`, PIO 按指令
+// 串行执行 ⇒ 跨核共享安全 (I5: 外设 PIO 只经本安全代理)。
 unsafe impl Sync for IoPort {}

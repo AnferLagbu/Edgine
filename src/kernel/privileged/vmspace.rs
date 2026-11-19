@@ -185,4 +185,9 @@ impl fmt::Display for VmSpace {
 
 // SAFETY: VmSpace is a handle to page tables owned by the kernel.
 unsafe impl Send for VmSpace {}
+// SAFETY: `VmSpace` 只有 `pt_root: PhysAddr` 与 `is_kernel: bool` 两个 Copy 字段,
+// 无内部可变性 (`set_kernel` 取 &mut self)。页表本体的并发面由 mm 侧页表锁与调度
+// 契约管住: `activate` / `destroy` 均为 unsafe fn, 其 `# Safety` 段分别要求只在
+// context switch 时调用 (不在中断上下文)、销毁前无 CPU 运行在此地址空间上 ⇒
+// 共享 &VmSpace 句柄本身不引入数据竞争。
 unsafe impl Sync for VmSpace {}

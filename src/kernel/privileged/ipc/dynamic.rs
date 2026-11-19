@@ -233,6 +233,11 @@ impl DynIpcNamespace {
             // SAFETY: cur 是经 Box::into_raw 分配的 Box<Message> 派生出的有效指针.
             // 消息链表只在持有 msg_queues 锁时被修改.
             let msg_nn = unsafe { NonNull::new_unchecked(cur) };
+            // SAFETY: `msg_nn` 由上一行 `NonNull::new_unchecked(cur)` 构造, cur 是
+            // `Box::into_raw` 派生的非空有效指针 (见上一处 SAFETY); `from_non_null` 只是
+            // `Self(nn)` 包装, 不解引用、不取所有权。消息链表只在持有 `msg_queues` 锁时修改,
+            // 本处正在该锁临界区内 ⇒ 无并发改写。下一行先取 `next()` 再 `free()`, 故释放后
+            // 不再访问本条目。
             let msg_ref = unsafe { MessageRef::from_non_null(msg_nn) };
             cur = msg_ref.next();
             // SAFETY: msg_nn 由 Box::into_raw 分配, 此处重新构造 Box 以

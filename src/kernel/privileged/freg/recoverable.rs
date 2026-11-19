@@ -49,6 +49,11 @@ pub struct RecoverableMutex<T: Snapshot + 'static> {
 // T: Send 是跨线程转移所需; T: Sync 是因为锁获取后 &T 可共享.
 // domain_id 为普通 u64 (Copy). 除 IrqSpinLock 提供的保证外, 不引入额外不安全.
 unsafe impl<T: Snapshot + Send> Send for RecoverableMutex<T> {}
+// SAFETY: `RecoverableMutex<T>` 的可变面全在 `inner: IrqSpinLock<T>` 内 (该锁自带
+// 互斥 + 关中断), `domain_id` 是普通 u64 (Copy, 构造后只读) ⇒ &Self 跨核共享安全。
+// 已登记缺口 (批6 待裁, 本批不改): 本 impl 约束为 `T: Snapshot + Sync`, 而内层
+// `IrqSpinLock<T>` 的 Sync impl 要求 `T: Send` (sync/irq_spinlock.rs) —— Sync 不蕴含
+// Send, 故 T: Sync 但 !Send 时外层声称 Sync 而内层依据不成立, 属约束错配。
 unsafe impl<T: Snapshot + Sync> Sync for RecoverableMutex<T> {}
 
 impl<T: Snapshot + 'static> RecoverableMutex<T> {

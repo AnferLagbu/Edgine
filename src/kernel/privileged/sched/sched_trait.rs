@@ -126,6 +126,12 @@ impl fmt::Display for Task {
 
 // SAFETY: Task 持有 Process 的只读指针, Process 自身 Send+Sync。
 unsafe impl Send for Task {}
+// SAFETY: `Task` 只有 `proc_ptr: *const Process` 与 `pid: Pid` 两个 Copy 字段, 无
+// 内部可变性。全部 &self 访问器读的是 `Process` 的原子字段 (state / priority /
+// exit_code / cpu_time / cr3 / pending_signals)、`Mutex` 保护的字段 (name) 或构造后
+// 只读的 bool 判定 (is_kernel), 不写 Process ⇒ 共享 &Task 不引入数据竞争。
+// `proc_ptr` 的有效性由 `unsafe fn from_raw` 的契约 (指向有效 Process 且生命周期
+// 覆盖 Task) 承担, 不属本 impl 的依据。
 unsafe impl Sync for Task {}
 
 // ============================================================================

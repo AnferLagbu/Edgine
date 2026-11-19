@@ -28,6 +28,11 @@ pub struct UndoLog {
 // 不涉及引用计数或内部可变性。所有修改操作通过 &mut self
 // 或外部锁保护，跨线程共享只读引用安全。
 unsafe impl Send for UndoLog {}
+// SAFETY: `UndoLog` 的三个字段 (定长 `[UndoEntry; MAX_UNDO_ENTRIES]` / count: usize /
+// current_generation: u64) 均无内部可变性, 全部修改经 `&mut self`。其共享存放点是
+// `RecoveryDomain::undo` 的 `IrqSpinLock<UndoLog>` (freg 内唯一实例化点), 共享访问
+// 必先取锁; 其余使用点 (如 `Snapshot::capture_freg`) 只拿 `&mut UndoLog` 独占借用。
+// 条目内 `field_ptr` 只在锁内解引用 (见 types.rs 的 UndoEntry SAFETY)。
 unsafe impl Sync for UndoLog {}
 
 impl Default for UndoLog {

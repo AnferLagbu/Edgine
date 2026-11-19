@@ -1130,10 +1130,12 @@ fn test_gate_criterion_mode_is_single_sourced() {
 /// `target_arch = "aarch64"` 门控代码完全不经 clippy (远端 ci-x86.yml 的 aarch64
 /// 步骤因 Gitee-only 从不执行, 不能代替本地门禁).
 ///
-/// 三臂:
+/// 四臂:
 /// ① 步骤 2 块内含双三元组循环头, 两枚三元组都在循环头里 (只写进注释 ⇒ 红);
 /// ② 循环变量必须喂给 `--target` —— 否则三元组只是摆设;
-/// ③ 该块必须整体位于 quick 早退分支之前 (裁定为双档加维; 挪到 full-only ⇒ 红).
+/// ③ 该块必须整体位于 quick 早退分支之前 (裁定为双档加维; 挪到 full-only ⇒ 红);
+/// ④ 内核腿显式 `-D clippy::undocumented_unsafe_blocks` (批5g 该树 SAFETY 存量清零
+///    ⇒ 由棘轮转硬执法; 摘掉这一项则新增无 SAFETY 块退回只靠 full 档棘轮).
 #[test]
 fn test_audit_sh_clippy_covers_both_arches() {
     let sh = read(AUDIT_SH);
@@ -1168,6 +1170,19 @@ fn test_audit_sh_clippy_covers_both_arches() {
         start < quick_exit,
         "步骤 2 被挪到 quick 早退之后 (2={start} exit={quick_exit}) —— 裁定是双档加维, \
          quick 也必须有 aarch64 clippy"
+    );
+    // 臂 ④: lint 默认 allow, 单靠 `-D warnings` 升不动它 ⇒ 必须显式点名.
+    let lines = logical_lines(block);
+    assert_leg_flags(
+        clippy_leg(&lines, "../kernel/Cargo.toml"),
+        &[
+            "--workspace",
+            "--target \"${target}\"",
+            "-D warnings",
+            "-D clippy::pedantic",
+            "-D clippy::undocumented_unsafe_blocks",
+        ],
+        "内核双架构",
     );
 }
 
@@ -1387,6 +1402,54 @@ fn test_audit_sh_clippy_pedantic_covers_four_trees() {
     assert_shell_and_abi_legs(&lines);
     assert_four_tree_legs_are_in_quick_band(&sh, block);
     assert_header_claims_four_trees(&sh);
+}
+
+/// 门禁健康度收敛 批5g: 2b feature 维必须与步骤 2 同样显式 `-D` 点名
+/// `undocumented_unsafe_blocks`, 且循环头点名两个 feature.
+///
+/// 病灶: `audit_safety_debt` 的七腿都**不带 feature**, 故
+/// `#[cfg(feature = "kernel_test")]` 门控的 unsafe 块从来不在棘轮读数里 (批5g 实测
+/// 该面另有 5 处: `privileged/tests/test_mm.rs` 2 + `privileged/timer/hrtimer.rs` 1 +
+/// `lib.rs` 2, 已同批补写). 只翻步骤 2 会留下这个盲区 —— 新增无 SAFETY 的门控块
+/// 在 quick / full 两档都静默放行.
+#[test]
+fn test_audit_sh_feature_dim_clippy_pins_safety_lint() {
+    let sh = read(AUDIT_SH);
+    let start = sh
+        .find("step \"2b/6")
+        .unwrap_or_else(|| panic!("ci/audit.sh 缺少步骤 2b (clippy feature 维)"));
+    let block = &sh[start..];
+    let block = match block.find("\nstep \"") {
+        Some(next) => &block[..next],
+        None => block,
+    };
+    let loop_head = block
+        .lines()
+        .find(|l| l.trim_start().starts_with("for FEATURE in "))
+        .unwrap_or_else(|| panic!("步骤 2b 没有 feature 循环头"));
+    for feature in ["kernel_test", "host-test"] {
+        assert!(
+            loop_head
+                .split_whitespace()
+                .any(|t| t.trim_end_matches(';') == feature),
+            "步骤 2b 循环头未点名 {feature} —— 该 feature 门控代码成为 lint 盲区"
+        );
+    }
+    let lines = logical_lines(block);
+    let leg = lines
+        .iter()
+        .find(|l| l.contains("cargo clippy") && l.contains("--features \"$FEATURE\""))
+        .unwrap_or_else(|| panic!("步骤 2b 没有把循环变量喂给 --features 的 clippy 腿"));
+    assert_leg_flags(
+        leg,
+        &[
+            "--workspace",
+            "-D warnings",
+            "-D clippy::pedantic",
+            "-D clippy::undocumented_unsafe_blocks",
+        ],
+        "2b feature 维",
+    );
 }
 
 #[test]

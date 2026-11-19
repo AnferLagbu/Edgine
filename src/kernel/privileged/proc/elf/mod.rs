@@ -142,6 +142,13 @@ pub fn elf_validate(elf_data: &[u8]) -> Option<&'static Elf64Header> {
     // SAFETY: 已通过 verify_elf 校验; 切片首地址按 ELF 文件头布局只读解析
     // (经 `usize` 地址值中转, 避免裸指针直接提升对齐断言).
     let addr = elf_data.as_ptr() as usize;
+    // SAFETY: 上一行已把 `elf_data.as_ptr()` 转成地址值, 本块转回
+    // `*const Elf64Header` 并构造共享引用。依据: `verify_elf` 已校验魔数/类别/
+    // 机器码/程序头表范围, 且 `Elf64Header` 是 `#[repr(C)]` + `Clone, Copy`, 首字段
+    // `ident: [u8; 16]` ⇒ 布局与 ELF64 文件头逐字节对应, 不依赖 Rust 默认布局。
+    // 已登记缺口 (批6 待裁, 本批不改): ① `verify_elf` 用 `read_unaligned` 读头,
+    // 从未确立 8 字节对齐, 而 `&*(… as *const Elf64Header)` 要求对齐 (经 `usize`
+    // 中转不消除该要求); ② 返回 `&'static` 把入参切片的生命周期谎称为 static。
     Some(unsafe { &*(addr as *const Elf64Header) })
 }
 
@@ -432,6 +439,15 @@ pub fn needs_interp_rewrite(elf_data: &[u8]) -> bool {
 /// # Safety
 /// `elf_data` 必须指向可写的有效 ELF 数据 (内核拷贝缓冲区).
 pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
+    // SAFETY: 本块是 `rewrite_interp_path` 的实现体, 其 `# Safety` 契约要求
+    // `elf_data` 指向可写的有效 ELF 数据 (内核拷贝缓冲区), 长度 `elf_size`。块内:
+    // `from_raw_parts` 只读借用该区间交 `elf_validate`; 程序头按 `read_unaligned`
+    // 逐条按值读出 (不构造对齐引用), 条数与表范围已由 `verify_elf` 校验; 写入只落在
+    // `interp_offset .. interp_offset+interp_len` 内, 长度取
+    // `EDGINE_INTERP.len().min(interp_len)` 并以 0 补齐剩余 ⇒ 不越出原 PT_INTERP 段。
+    // 已登记缺口 (批6 待裁, 本批不改): 范围判据 `interp_offset + interp_len > elf_size`
+    // 是**未检查加法**, 两个来自 ELF 的值转 usize 后相加可回绕, 回绕即绕过该判据 ⇒
+    // 后续 `copy_nonoverlapping` / `write_bytes` 可写到缓冲区外 (ELF 由用户态提供)。
     unsafe {
         let Some(header) = elf_validate(core::slice::from_raw_parts(
             elf_data.cast_const(),

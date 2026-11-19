@@ -526,9 +526,19 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
             }
             // SAFETY: `const` 由调用方保证为有效指针; 只读访问
             let new_addr = unsafe { raw::read_u64(ss as *const u64) };
+            // SAFETY: 上方已 `raw::check_user_buf(ss, 24)` 校验整段 24 字节落在用户地址空间
+            // (`userptr::validate_user_buf`), 本处读偏移 8 的 flags 字段仍在该范围内;
+            // `read_u64` 是 `read_volatile`, 只读按值取 u64, 不构造引用、不写用户内存;
+            // `low_u32_from_u64` 是纯截断 (取低 32 位), 无 panic 面。
+            // 已登记缺口 (批6 待裁, 本批不改): `validate_user_buf` 只判地址区间上界,
+            // **不判 8 字节对齐、不判已映射**, 且 `ptr + len` 是未检查加法可回绕; 而
+            // `raw::read_u64` 的 SAFETY 声称对齐已校验, 也未走 stac/clac 用户内存安全代理。
             let new_flags_in = crate::privileged::glue::low_u32_from_u64(unsafe {
                 raw::read_u64((ss + 8) as *const u64)
             });
+            // SAFETY: 同上一处: `check_user_buf(ss, 24)` 已覆盖偏移 16 的 size 字段,
+            // `read_u64` 为 `read_volatile` 只读按值取, 不构造引用、不写用户内存。
+            // 对齐/映射校验缺口与 stac/clac 缺失同上一处登记 (批6 待裁, 本批不改)。
             let new_size = unsafe { raw::read_u64((ss + 16) as *const u64) };
 
             if (new_flags_in & SS_DISABLE) != 0 {

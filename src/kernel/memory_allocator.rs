@@ -28,8 +28,23 @@ const TAG_PMM_PAGE: u64 = 0xA115_504D_4D50_4702;
 const TAG_PMM_PAGES: u64 = 0xA115_504D_4D50_4703;
 const TAG_SIZE: usize = core::mem::size_of::<u64>();
 
+// SAFETY: `GlobalAlloc` 契约 = alloc/dealloc 按同一 `Layout` 配对、返回指针满足
+// `layout.align()`、失败返回 null。本实现按 `PAGE_THRESHOLD`(2048) 分流: 小对象
+// 走 `kmalloc` (失败回退 PMM 单页), 大对象走 PMM 单页/连续页; 小对象在返回指针
+// 前 8 字节写来源标签 (TAG_KMALLOC / TAG_PMM_PAGE / TAG_PMM_PAGES), dealloc 读
+// 同一标签原路归还, 页数口径两侧一致 (小 `(size+8).div_ceil(4096)`, 大
+// `size.div_ceil(4096)`); OOM 两条路径均返回 `null_mut()`。
+// 已登记缺口 (批6 待裁, 本批不改): 小对象路径 `+TAG_SIZE` 使返回指针只保证 8
+// 字节对齐 —— `mm/kmalloc.rs` 的 ALIGNMENT=16 与 PMM 的 4096 都被前移破坏, 故
+// `layout.align() > 8` 的契约当前不成立 (大对象路径 tag_offset=0, 不受影响)。
 unsafe impl GlobalAlloc for KernelAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: 本块是 `GlobalAlloc::alloc` 的实现体, 总契约见上方 impl 的 SAFETY。
+        // `kmalloc` 经 `mm/api.rs` 转 `k_malloc` → `KernelHeap::allocate`, 返回 16 对齐
+        // 的堆数据指针或 null; `write_unaligned` 不要求对齐, 且请求长度已含 `+8` ⇒
+        // 标签落在本次分配范围内。PMM 路径 `phys + KERNEL_BASE` 是内核线性映射
+        // (x86_64 0xFFFF_8000_0000_0000 / aarch64 0xFFFF_0000_0000_0000), 页对齐且
+        // 整页可写, `add(TAG_SIZE)` 仍在页内; 分配失败即返回 null 不构造指针。
         unsafe {
             let size = layout.size();
             let tag_offset = if size <= PAGE_THRESHOLD { TAG_SIZE } else { 0 };
@@ -79,6 +94,12 @@ unsafe impl GlobalAlloc for KernelAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: 本块是 `GlobalAlloc::dealloc` 的实现体, 契约要求 `ptr` 来自本分配器
+        // 同一 `Layout` 的 alloc 且尚未释放。`ptr.sub(TAG_SIZE)` + `read_unaligned` 只在
+        // 小对象路径 (size <= 2048) 执行, 该路径 alloc 必写 8 字节标签 ⇒ 回退 8 字节仍在
+        // 原分配内; 大对象路径 tag_offset=0, 直接用 `ptr` 反推物理地址不做前移。
+        // `raw - KERNEL_BASE` 是 alloc 侧 `phys + KERNEL_BASE` 的逆运算; 未知标签回退
+        // `kfree(raw)` 与 alloc 的 kmalloc 来源同口径 (raw 即堆数据指针)。
         unsafe {
             if ptr.is_null() {
                 return;

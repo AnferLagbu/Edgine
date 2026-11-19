@@ -2,123 +2,12 @@
   "_meta": {
     "generated_by": "python3 scripts/audit_safety_debt.py --update-baseline",
     "口径": "clippy clippy::undocumented_unsafe_blocks 在七腿 (内核双架构 / host-tests --all-targets / src/user 双裸机三元组 / 壳 / edgine-abi) 的位点并集, 按 (文件, 形态) 记数; 形态 block=unsafe 块 / impl=unsafe impl; vendored 非 workspace 成员天然不出; unsafe extern / missing_safety_doc 面不在射程",
-    "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
+    "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 已逐树补写完毕, 四树主 clippy 腿均显式 -D 点名本 lint; 侧车 totals 归 0 后本腿即硬零门禁 (债册为空 ⇒ 任何新增位点当场红), 不再是棘轮"
   },
   "totals": {
-    "sites": 58,
-    "files": 20,
-    "keys": 22
+    "sites": 0,
+    "files": 0,
+    "keys": 0
   },
-  "entries": [
-    [
-      "src/kernel/lib.rs",
-      "block",
-      6
-    ],
-    [
-      "src/kernel/memory_allocator.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/memory_allocator.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/frame.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/domain.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/recoverable.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/types.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/freg/undo_log.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/glue/string.rs",
-      "block",
-      16
-    ],
-    [
-      "src/kernel/privileged/ioport.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/ipc/dynamic.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/klog/mod.rs",
-      "block",
-      11
-    ],
-    [
-      "src/kernel/privileged/proc/elf/mod.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/proc/scheduler.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/proc/user_proc.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/sched/sched_trait.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/sgeg/audit.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/syscall/dispatch.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/syscall/mod.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/timer/hrtimer.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/vmspace.rs",
-      "impl",
-      1
-    ]
-  ]
+  "entries": []
 }

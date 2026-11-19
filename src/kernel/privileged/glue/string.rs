@@ -33,6 +33,29 @@
 // D1: strlen 扫描上限统一复用 cstr::MAX_CSTR_LEN, 消除双常量漂移。
 use super::cstr::MAX_CSTR_LEN;
 
+// === unsafe 依据单源 (C ABI 字符串/内存胶水) ===
+// 本文件是 libc 字符串/内存函数的内核侧 FFI 实现。全部 unsafe 块的依据按下面三类
+// 单源化, 逐处注释只引类别 + 写该处特有的不变量。三类的 C 侧契约 (调用方义务):
+//
+// 类别 A「C 字符串只读扫描」(strlen / strcmp / strncmp / strchr / strrchr / strstr):
+//   C 侧须保证实参指向以 NUL 结尾、整段可由内核读取的字节缓冲, 且扫描期间不被
+//   并发修改。本侧只读不写。限界各不相同: strlen 上限 MAX_CSTR_LEN (cstr.rs=4096),
+//   strncmp 上限 n, 其余四个无长度上限, 终止性完全依赖 C 侧的 NUL 契约。
+//
+// 类别 B「调用方定容量的写入」(strcpy / strncpy / strcat / memcpy / memmove /
+//   memset / memset_optimized / secure_zero 三个填充类):
+//   C 侧须保证目标指针指向至少容纳本次写入字节数的可写缓冲, 源指针指向至少容纳
+//   读取字节数的可读缓冲, 写入期间不被并发访问; 字符串类还须 NUL 终止。本侧按 C
+//   语义不额外校验容量 (与 libc 一致), 越界即 C 侧违约。例外: memmove 显式支持重叠。
+//
+// 类别 C「n 界定的只读比较/查找」(memcmp / memchr):
+//   C 侧须保证指针指向至少 n 字节可读缓冲; 不要求 NUL 终止, 本侧不写任何字节。
+//   n=0 或空指针时提前返回, 不解引用。
+//
+// 共同不变量: 全部函数以 `extern "C"` + `#[unsafe(no_mangle)]` 导出, 参数按 C ABI
+// 传值 (指针宽度 = 目标架构字长), 无 Rust 引用/生命周期跨越 FFI 边界; 返回的指针
+// 一律是入参指针或其内部偏移, 不新建所有权, 释放责任仍在 C 侧。
+
 // ============================================================================
 // 字符串操作函数 (String Operations)
 // ============================================================================
@@ -49,6 +72,11 @@ use super::cstr::MAX_CSTR_LEN;
 /// 此函数通过 FFI 暴露给 C 代码使用
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
+    // SAFETY: 类别 A。`s` 为 null 时提前返回 0 不解引用; 循环内 `*ptr` / `ptr.add(1)`
+    // 只在 C 侧契约的 NUL 终止缓冲内推进, 扫描上限 MAX_CSTR_LEN。
+    // 已登记缺口 (批6 待裁, 本批不改): 判据次序是「先解引用再判长度」
+    // (`while *ptr != 0 && len < MAX_CSTR_LEN`), 故无 NUL 的缓冲最坏读到索引
+    // MAX_CSTR_LEN (第 4097 字节) 才退出, 比声明上限多读 1 字节。
     unsafe {
         if s.is_null() {
             return 0;
@@ -106,6 +134,9 @@ pub fn strlen_safe(s: &[i8]) -> usize {
 ///
 /// `src` 是指向以 NUL 结尾的 C 字符串的有效指针. `dst` 至少有 `max_len` 字节可写内存.
 pub unsafe extern "C" fn strcmp(s1: *const i8, s2: *const i8) -> i32 {
+    // SAFETY: 类别 A。空指针组合提前返回 (双 null→0, 单 null→-1/1) 不解引用;
+    // 循环逐字节读 `*p1` / `*p2`, 遇任一 NUL 或不等即返回无符号差值, 不写内存。
+    // 无长度上限, 终止性依赖 C 侧两段缓冲均 NUL 终止。
     unsafe {
         if s1.is_null() || s2.is_null() {
             if s1.is_null() && s2.is_null() {
@@ -149,6 +180,9 @@ pub unsafe extern "C" fn strcmp(s1: *const i8, s2: *const i8) -> i32 {
 ///
 /// `src` 与 `dst` 均为有效指针. `dst` 至少有 `n` 字节可写内存. 两个区域不可重叠.
 pub unsafe extern "C" fn strncmp(s1: *const i8, s2: *const i8, n: usize) -> i32 {
+    // SAFETY: 类别 A。n=0 与空指针组合均提前返回; `remaining` 从 n 递减, 循环最多
+    // 读 n 字节, 且遇任一 NUL 或不等即提前返回 ⇒ 读取范围是 min(n, 到首个 NUL)。
+    // 只读不写。C 侧须保证两段缓冲各自至少可读该范围。
     unsafe {
         if n == 0 {
             return 0;
@@ -195,6 +229,9 @@ pub unsafe extern "C" fn strncmp(s1: *const i8, s2: *const i8, n: usize) -> i32 
 /// 调用者必须确保 dest 有足够的空间
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strcpy(dest: *mut i8, src: *const i8) -> *mut i8 {
+    // SAFETY: 类别 B。按 C `strcpy` 语义逐字节复制 src 到 dest 直到并含 NUL,
+    // 写入长度 = src 串长 + 1, 由 C 侧的 dest 容量契约兜住 (本侧不校验, 与 libc 一致)。
+    // 空指针提前返回 dest; 返回值为入参 dest, 不新建所有权。
     unsafe {
         if dest.is_null() || src.is_null() {
             return dest;
@@ -234,6 +271,9 @@ pub unsafe extern "C" fn strcpy(dest: *mut i8, src: *const i8) -> *mut i8 {
 /// 调用者必须确保 dest 有至少 n 字节的空间
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strncpy(dest: *mut i8, src: *const i8, n: usize) -> *mut i8 {
+    // SAFETY: 类别 B。复制循环以 `remaining` (初值 n) 为界且遇 src 的 NUL 即停,
+    // 随后零填充循环把 dest 剩余字节补 0 ⇒ 总写入恰为 n 字节, 不越出 C 侧声明的
+    // dest 容量。src 只需可读至首个 NUL 或 n 字节 (取先到者)。返回入参 dest。
     unsafe {
         if dest.is_null() || src.is_null() || n == 0 {
             return dest;
@@ -284,6 +324,9 @@ pub unsafe extern "C" fn strncpy(dest: *mut i8, src: *const i8, n: usize) -> *mu
 /// 调用者必须确保 dest 有足够的空间容纳结果
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strcat(dest: *mut i8, src: *const i8) -> *mut i8 {
+    // SAFETY: 类别 B。先扫 dest 找到其 NUL (只读, 依赖 dest 已 NUL 终止), 再从该
+    // 位置按 `strcpy` 语义追加 src 直到并含 NUL ⇒ 写入范围是 dest 串长 + src 串长 + 1,
+    // 容量由 C 侧契约兜住。空指针提前返回; 返回入参 dest。
     unsafe {
         if dest.is_null() || src.is_null() {
             return dest;
@@ -330,6 +373,10 @@ pub unsafe extern "C" fn strcat(dest: *mut i8, src: *const i8) -> *mut i8 {
 ///
 /// `ptr` 是有效指针. 若 `n` 非零, 则从 `ptr` 起至少有 `n` 字节可读.
 pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
+    // SAFETY: 类别 A。null 提前返回; `low_i8_from_i32(c)` 是纯截断 (取低 8 位),
+    // 循环只读 `*p` 并前进, 命中 target 或遇 NUL 即返回 ⇒ 读取不越过首个 NUL。
+    // target 为 0 时按 C 语义返回指向终止符的指针。返回指针是入参 s 的内部偏移,
+    // `cast_mut` 只改指针可变性不产生新所有权 (C 侧 `strchr` 签名即如此)。
     unsafe {
         if s.is_null() {
             return core::ptr::null_mut();
@@ -369,6 +416,9 @@ pub unsafe extern "C" fn strchr(s: *const i8, c: i32) -> *mut i8 {
 ///
 /// `a` 与 `b` 均为有效指针. 各自至少有 `n` 字节可读.
 pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
+    // SAFETY: 类别 A。null 提前返回; 循环只读到首个 NUL 为止 (含该字节), 用 `last`
+    // 记录最后一次命中位置, 不写内存。返回的 `last.cast_mut()` 是入参 s 的内部偏移,
+    // 未命中返回 null。终止性依赖 C 侧的 NUL 契约。
     unsafe {
         if s.is_null() {
             return core::ptr::null_mut();
@@ -417,6 +467,10 @@ pub unsafe extern "C" fn strrchr(s: *const i8, c: i32) -> *mut i8 {
 ///
 /// `ptr` 是有效指针. `value` 将被写入从 `ptr` 起 `n` 个连续字节.
 pub unsafe extern "C" fn strstr(haystack: *const i8, needle: *const i8) -> *mut i8 {
+    // SAFETY: 类别 A。haystack 为 null 提前返回; needle 为 null 或空串按 C 语义返回
+    // haystack。外层只读到 haystack 首个 NUL 为止; 内层比较在 `*h_temp != n_ch` 时
+    // break, 而 haystack 的 NUL 必与任何非零 n_ch 不等 ⇒ 内层也不会读过 haystack
+    // 的终止符。needle 须由 C 侧保证 NUL 终止 (内层以其 NUL 判匹配成功)。只读不写。
     unsafe {
         if haystack.is_null() {
             return core::ptr::null_mut();
@@ -486,6 +540,9 @@ pub unsafe extern "C" fn memcpy(
     n: usize,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> *mut core::ffi::c_void {
+    // SAFETY: 类别 B。空指针或 n=0 提前返回 dest; `for i in 0..n` 逐字节
+    // `*d.add(i) = *s.add(i)` ⇒ 读 src[0..n]、写 dest[0..n], 两侧容量与
+    // 「区域不重叠」均由 C 侧契约兜住 (重叠须改用 memmove)。返回入参 dest。
     unsafe {
         if dest.is_null() || src.is_null() || n == 0 {
             return dest;
@@ -524,6 +581,9 @@ pub unsafe extern "C" fn memmove(
     src: *const core::ffi::c_void,
     n: usize,
 ) -> *mut core::ffi::c_void {
+    // SAFETY: 类别 B (重叠例外)。空指针或 n=0 提前返回; 按 `d < s` 选正序否则逆序
+    // 拷贝, 两种次序都保证「源字节在被覆盖前已读出」⇒ 重叠时语义与 C `memmove`
+    // 一致。读写范围各为 n 字节, 容量由 C 侧契约兜住。返回入参 dest。
     unsafe {
         if dest.is_null() || src.is_null() || n == 0 {
             return dest;
@@ -571,6 +631,12 @@ pub unsafe extern "C" fn memset(
     c: i32,
     n: usize,
 ) -> *mut core::ffi::c_void {
+    // SAFETY: 类别 B。空指针或 n=0 提前返回。aarch64 分支先逐字节写到 16 对齐,
+    // 再以 `stp` 每轮写 16 字节 (轮数 = remaining/16), 尾部 `remaining &= 0xF` 字节
+    // 逐字节补齐 ⇒ 总写入恰为 n 字节; 非 aarch64 分支直接 `for i in 0..n` 逐字节写。
+    // 两分支都只写 s[0..n], 容量由 C 侧契约兜住。`u8_from_i32(c & 0xFF)` 是纯截断。
+    // 已登记缺口 (批6 待裁, 本批不改): 内层 `stp` asm 标了 `options(nostack, readonly)`,
+    // 而 stp 确实写内存 ⇒ `readonly` 是错误声明, LLVM 可据此重排/消除对该缓冲的后续读。
     unsafe {
         if s.is_null() || n == 0 {
             return s;
@@ -648,6 +714,12 @@ pub unsafe extern "C" fn memset(
 ///
 /// `src` 是指向至少有 `n` 字节可读内存的有效指针.
 pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut u8 {
+    // SAFETY: 类别 B (x86_64 专属, 函数带 `#[cfg(target_arch = "x86_64")]`)。
+    // 空指针或 n=0 提前返回; `rep stosb` 从 rdi 起写 rcx 个 al 字节 ⇒ 写入范围恰为
+    // s[0..n], 容量由 C 侧契约兜住。依赖 DF=0 (内核异常存根 `boot/isr.asm` 入口 `cld`),
+    // `nostack` 成立 (不压栈)。返回入参 s。
+    // 已登记缺口 (批6 待裁, 本批不改): `rep stosb` 会递增 rdi、递减 rcx 至 0, 但两者
+    // 都声明为 `in(...)` (未标 inout/out) ⇒ 编译器按「值未变」处理, 属未声明的寄存器破坏。
     unsafe {
         if s.is_null() || n == 0 {
             return s;
@@ -691,6 +763,9 @@ pub unsafe extern "C" fn memcmp(
     s2: *const core::ffi::c_void,
     n: usize,
 ) -> i32 {
+    // SAFETY: 类别 C。n=0 与空指针组合提前返回 (双 null→0, 单 null→-1/1);
+    // `for i in 0..n` 只读比较两段 u8, 遇不等即返回差值, 全等返回 0。不写内存,
+    // 不要求 NUL 终止; C 侧须保证两段各至少 n 字节可读。
     unsafe {
         if n == 0 {
             return 0;
@@ -735,6 +810,9 @@ pub unsafe extern "C" fn memcmp(
 ///
 /// `src` 是指向以 NUL 结尾的 C 字符串的有效指针.
 pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
+    // SAFETY: 类别 C。null 或 n=0 提前返回; `u8_from_i32(c & 0xFF)` 纯截断,
+    // `for i in 0..n` 只读扫描, 命中即返回 `p.add(i).cast_mut()` (入参内部偏移),
+    // 未命中返回 null。读取严格以 n 为界, 不依赖 NUL 终止, 不写内存。
     unsafe {
         if s.is_null() || n == 0 {
             return core::ptr::null_mut();
@@ -772,6 +850,11 @@ pub unsafe extern "C" fn memchr(s: *const u8, c: i32, n: usize) -> *mut u8 {
 ///
 /// `src` 是合法指针, 至少指向 `max_len` 字节可读内存.
 pub unsafe extern "C" fn secure_zero(ptr: *mut u8, len: usize) {
+    // SAFETY: 类别 B。null 或 len=0 提前返回; 把 `*mut u8` 视作 `*mut AtomicU8`
+    // (AtomicU8 对齐为 1, 与 u8 同布局同尺寸, 故 cast 不引入对齐/别名问题), 逐字节
+    // `store(0, Relaxed)` ⇒ 写入范围恰为 ptr[0..len], 容量由 C 侧契约兜住。
+    // 用原子存储而非普通写, 使编译器不能把清零当死存储消除 (本函数的目的)。
+    // Relaxed 不建立跨核同步次序, 需要可见性保证时由 C 侧另加屏障。
     unsafe {
         if ptr.is_null() || len == 0 {
             return;

@@ -1950,6 +1950,18 @@ impl Scheduler {
             // 本函数运行在 cli 临界区, 该条目不参与并发卸载.
             unsafe { (*p).tls_base.load(Ordering::Acquire) }
         });
+        // SAFETY: 本块是「prev PCB 在表中不可解析」的兜底单向切换。`next_ctx_ptr`
+        // 由 `next_ptr` 经 `addr_of!((*p).context)` 取得, 而 `next_ptr` 来自调用方
+        // `schedule()` 的 `PROCESS_TABLE.get(next)`, 该处判 None 即提前返回 ⇒ 非空
+        // 且指向活动 Process。`get_mut_unchecked()` 绕过 Mutex 取锁是有意为之
+        // (B05-55: 不得持 MutexGuard 跨 context_switch), 排他依据是 `schedule()`
+        // 首行 `interrupt_disable()` 关本核中断 (仅提前返回分支恢复) 与 next 的
+        // `eevdf_on_cpu` 投送屏障 (见 process.rs 该字段文档: 拣中即置位, 确认离核
+        // 才清) ⇒ 切换期间无并发访问该上下文。
+        // `scratch_ctx` 是本 CPU 私有 `RacyCell<ProcessContext>`, 只承接被丢弃的
+        // prev 寄存器, 内容不会被读回; `addr_of!` / `addr_of_mut!` 只取地址不构造
+        // 引用。`context_switch` 保存旧上下文后切入 next, 不返回本块之后。
+        // (上方注释写「本函数开头 cli」, 实际 cli 在调用方 `schedule()` 首行。)
         unsafe {
             let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
             let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));

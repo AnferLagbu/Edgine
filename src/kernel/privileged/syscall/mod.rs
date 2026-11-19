@@ -374,6 +374,14 @@ pub mod raw {
     /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn reboot_via_idt() -> ! {
+        // SAFETY: 本块是 `reboot_via_idt` 的实现体, 其 `# Safety` 契约要求调用方已关闭
+        // 其它 CPU (本函数不返回)。`lidt [rdi]` 以 rdi 指向的伪描述符加载空 IDT
+        // (limit=0, base=0), 随后 `int 0` 在无门可用的 IDT 上触发异常 → 双重故障 →
+        // 三重故障复位, 这是 x86 无键盘控制器时的重启手段; 尾部 `spin_loop` 循环只是
+        // 复位未生效时的兜底, 不依赖 asm 正常返回。
+        // 已登记缺口 (批6 待裁, 本批不改): ① 64 位模式下 IDTR 是 10 字节 (2 字节 limit
+        // + 8 字节 base), 而实参是 `&[0u16; 4]` = 8 字节 ⇒ `lidt` 越界读 2 字节;
+        // ② `int 0` 会压栈 (EFLAGS/CS/EIP), 与 `options(nostack)` 声明矛盾。
         unsafe {
             core::arch::asm!(
                 "lidt [rdi]",
@@ -394,6 +402,13 @@ pub mod raw {
     /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "aarch64")]
     pub unsafe fn reboot_via_psci() -> ! {
+        // SAFETY: 本块是 `reboot_via_psci` 的实现体, 其 `# Safety` 契约要求调用方已关闭
+        // 其它 CPU。`svc #0` 陷入固件, 尾部 `spin_loop` 循环是复位未生效时的兜底;
+        // `nostack` 成立 (svc 指令本身不访问内核栈)。
+        // 已登记缺口 (批6 待裁, 本批不改): 本实现与 PSCI 规范不符 —— x0=0 不是
+        // SYSTEM_RESET 功能号 (本仓 `arch/aarch64/psci.rs` 已定义 PSCI_SYSTEM_RESET =
+        // 0x8400_0009 并实现 `system_reset()`), 且 QEMU virt 的 conduit 是 HVC 而非 SVC;
+        // 另 SMCCC 会破坏 x0..x3 等寄存器却未声明 clobber。正确路径是改调 `psci::system_reset()`。
         unsafe {
             core::arch::asm!("svc #0", in("x0") 0u64, options(nostack));
             loop {

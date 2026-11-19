@@ -92,6 +92,10 @@ pub struct UndoEntry {
 // 仅记录用于回滚的地址. old_value/value_size/checksum 均为普通 Copy 类型.
 // 无内部可变性; 由于指针仅在 UndoLog 锁内解引用, send/share 安全.
 unsafe impl Send for UndoEntry {}
+// SAFETY: `UndoEntry` 是 `#[derive(Clone, Copy)]` 的值类型: generation / old_value /
+// value_size / checksum 均为普通 Copy 字段, 唯一裸指针 `field_ptr` 只记录待回滚字段
+// 的地址, 不持有所有权、无内部可变性。该指针的解引用只发生在 `UndoLog` 的锁内
+// (回滚路径), 共享 &UndoEntry 本身不触发任何写 ⇒ 跨核共享安全。
 unsafe impl Sync for UndoEntry {}
 
 /// FREG 快照: 记录捕获时的代数、时间刻度与撤销日志偏移。

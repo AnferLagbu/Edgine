@@ -1916,6 +1916,13 @@ impl UserProcManager {
         //
         // SAFETY: elf_data 区间已校验 (非空 + size >= header), verify_elf 内部仅读借用。
         crate::klog_boot_info!("[ELF] calling verify_elf...");
+        // SAFETY: `verify_elf` 的契约是「指针指向至少 `elf_size` 字节可读的缓冲」,
+        // 本函数首部已判 `elf_data` 非空且 `elf_size >= size_of::<ElfHeader>()`;
+        // 其内部只读解析 (魔数/类别/机器码/程序头表范围), 不写缓冲, 头部按
+        // `read_unaligned` 读 ⇒ 不要求对齐。
+        // 已登记缺口 (批6 待裁, 本批不改): 本函数 doc 声称「区间有效性由本函数首部
+        // 校验」, 而首部只判非空与最小长度, **未校验 `elf_addr..elf_addr+elf_size`
+        // 是否落在已映射内存** ⇒ 传入非法区间时 `verify_elf` 的读取即越界访问。
         let Ok(verified) = (unsafe { super::elf::verify::verify_elf(elf_data, elf_size) }) else {
             crate::klog_boot_info!("[ELF] verify_elf failed");
             return -1;

@@ -569,6 +569,9 @@ fn uffd_flow_body(idx: usize) -> TestResult {
         ];
         probes
             .iter()
+            // SAFETY: `base_ptr` 是本次 PMM 新分配页的内核直接映射地址 (见上方块级 SAFETY),
+            // `probes` 四个偏移 0 / 1 / 2048 / PAGE_SIZE-1 全落在该页内 ⇒ `add(i)` 不越界;
+            // `read_volatile` 只读一字节按值返回, 不构造引用, 该页尚未映射给任何用户地址空间。
             .all(|&i| unsafe { core::ptr::read_volatile(base_ptr.add(i)) } == 0x5A)
     };
     pmm_inst.free_page(phys);
@@ -790,6 +793,8 @@ fn test_cow_child_write_isolated_from_parent() -> TestResult {
 
     // SAFETY: 两帧均由 PMM 分配, 内核直接映射可读同一字节偏移
     let parent_after = unsafe { *(phys.to_virt().0 as *const u8) };
+    // SAFETY: `new_phys` 是 COW 复制出的新帧, 由 PMM 分配且上方已断言子页表改指它;
+    // `to_virt()` 给出内核直接映射地址, 本处只读首字节按值取 u8, 不构造引用、不写。
     let child_copied = unsafe { *(PhysAddr(new_phys).to_virt().0 as *const u8) };
     check!(parent_after == COW_TEST_BYTE, "父页内容不得被子的复制扰动");
     check!(child_copied == COW_TEST_BYTE, "复制帧应含旧页内容");

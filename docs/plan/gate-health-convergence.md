@@ -1287,18 +1287,168 @@ feature 运行维 **4/4** + thread-stress **6/6**；FP-06 白名单外 FP/SIMD *
 `memory_allocator.rs` 3 / ipc 1 / sched 1 / sgeg 1（合计 58）。
 方案：同批 5a 四步；清完后 **kernel 树小计归零** ⇒ 内核双架构腿翻
 `-D clippy::undocumented_unsafe_blocks` 硬执法，侧车全表清空，棘轮腿转**硬零**形态。
-状态：[]
+状态：[X]
 详情：三树全清后 `audit_safety_debt` 的侧车 `totals` 归 0，该腿从「债册」升为「硬零门禁」，
 与 F9 侧车清零后的处置同构。`glue/string.rs` 16 处属 FFI 胶水，理由须写明 C 侧契约。
+**施工结果**：21 个源文件、**63 处**真实 SAFETY 标签 = 58 处债册位点 + 5 处 `kernel_test`
+门控位点（后者不在七腿射程，见下「feature 盲区」）。分布与描述逐项核对一致：`glue/string.rs` 16 /
+`klog/mod.rs` 11 / `lib.rs` 6 / `timer/hrtimer.rs` 4 / `memory_allocator.rs` 3 / `proc/elf/mod.rs` 2 /
+`syscall/dispatch.rs` 2 / `syscall/mod.rs` 2 / `frame.rs` 1 / `freg/{domain,recoverable,types,undo_log}.rs`
+各 1 / `ioport.rs` 1 / `ipc/dynamic.rs` 1 / `proc/scheduler.rs` 1 / `proc/user_proc.rs` 1 /
+`sched/sched_trait.rs` 1 / `sgeg/audit.rs` 1 / `vmspace.rs` 1；另 `tests/test_mm.rs` 2 处属 feature 面。
+kernel 面 diff **+339 / −1**，新增行中**非注释非空行 0**，唯一删除行是 `hrtimer.rs` 那条散逸
+SAFETY 的**移位**（原在 `check!(` 之上、覆盖不到宏实参里的块，移进实参行正上方）⇒ 纯注释批、
+零语义改动。全仓 diff **+446 / −128**，余下删除行逐行核过 = `ci/audit.sh` 2 条 clippy 尾旗标 +
+host-test docstring 2 行 + 侧车 116 行 + 脚本 7 行。
+**单源化**：`glue/string.rs` 模块级「unsafe 依据单源 (C ABI 字符串/内存胶水)」分三类 ——
+A「C 字符串只读扫描」(`strlen`/`strcmp`/`strncmp`/`strchr`/`strrchr`/`strstr`；`strncmp` 有 n 上限，
+其余五个无长度上限、终止性完全依赖 C 侧 NUL 契约)、B「调用方定容量的写入」(`strcpy`/`strncpy`/
+`strcat`/`memcpy`/`memmove`/`memset`/`memset_optimized`/`secure_zero`)、C「n 界定的只读比较/查找」
+(`memcmp`/`memchr`)；16 处逐处只引类别 + 写该处特有不变量。`klog/mod.rs` 同法单源化 C 侧
+`klog_*` 九入口 + `klog_write` 的契约传递。
+**核实过的关键断言**：新注释引用的 **232 个内核符号一次性 grep 核实全部存在（MISS 0）**。
+两条初稿路径断言 MISS 后经调研纠正：aarch64 入口真名在 `privileged/boot/aarch64/entry.rs`
+（不是 `arch/aarch64/entry.rs`）；`serial_impl` 是 `klog/mod.rs` 内的**嵌套模块**而非独立文件，
+`serial_init` 调用点实测在该文件 889 行。`klog_init` 的 doc 声称「串口硬件就绪后才置位」与实装
+次序相反（889 `serial_init` → 891 `register_defaults` → 892 `KLOG_INIT.store`），已就地登记为 ㊷。
+**棘轮读数与硬零转换**：58 → **0 处 / 0 文件 / 0 键**（−58）。七腿逐腿读数全 0：kernel-x86_64 /
+kernel-aarch64 / host-tests / shell-rust 四腿**真编译**，user-x86_64 / user-aarch64 /
+shell-edgine-abi 三腿 Fresh。22 个目标键全部归零、**零新增位点**。侧车 `--update-baseline`
+收缩至 `totals {sites:0, files:0, keys:0}` / `entries []`（+5 / −116 行）。**四处执法点同批翻
+`-D clippy::undocumented_unsafe_blocks`**：`ci/audit.sh:559`（内核双架构腿）、`:594`（host-tests）、
+`:611`（src/user 双裸机三元组）、`:655`（2b feature 维 `kernel_test`/`host-test`），各配一段
+「默认 allow、单靠 `-D warnings` 升不动」的理由注释（550 / 591 / 606 / 643）；棘轮腿注释 773
+同步改口径。`scripts/audit_safety_debt.py` 的 `main()` 成功分支拆出 `base_total == 0` 专用文案
+「✓ 硬零门禁: 七腿位点并集 0 处, 债册亦空 (批5g 收口) —— 新增无 SAFETY 的 unsafe 块/impl 即红,
+无存量可豁免」，docstring 现状段与 `dump_baseline` 处置段同批改写。**至此三树全部硬执法，
+本工程 SAFETY 面收口**（399 → 287 → 261 → 236 → 182 → 109 → 58 → 0）。
+**feature 盲区（本批新证据，口径已核实非漏接）**：`audit_safety_debt.py` 的 `_KERNEL_ARGS`
+不带 `--features`，且 `--lib` 不带 `--all-targets` ⇒ `#[cfg(test)]` 与 `kernel_test` 门控代码
+**从不进入七腿读数**。故 `kernel_test` 门控的 5 处位点（`tests/test_mm.rs` 2 + 其余 3）与
+`glue/string.rs` 测试模块（927–928 行 `#[cfg(test)] mod tests`）内的 **12 处窄占位**都不在
+58 之内；本批把 5 处门控位点一并补写，并由 2b feature 维的 `-D`（`:655`）执法，12 处测试模块
+占位按裁定**不改写**（归 ⑮ 存量，见 57）。
+**位置形态新证据（clippy 判据实测，已写进脚本 docstring）**：① 语句级位点接受 `// SAFETY:`
+写在 `unsafe {` / `let … = unsafe {` 行正上方，**中间夹 `#[cfg(...)]` 仍被接受**（此前 docstring
+误称不接受，已纠正）；② 方法链中 `.iter()` 与 `.all(|&i| unsafe {…})` 之间插注释**被接受**；
+③ 写在 `check!(` / `assert_eq!(` **之上**的注释**不覆盖**宏实参行里的块，必须移进调用内、
+紧贴该实参行（本批 `hrtimer.rs` 的唯一删除行即此因）；④ 条目级
+（`#[unsafe(no_mangle)] pub unsafe extern "C" fn`）的 SAFETY 写在属性之上只附着到条目，
+**函数体块仍进债册** ⇒ 体内须另写。
+**塌缩守卫边界**：`collapse_suspected(total, baseline_total, any_compiled)` =
+`total == 0 and baseline_total > 0 and not any_compiled`（`scripts/audit_safety_debt.py:280–287`），
+`--update-baseline` 同样受拦。**首次归零**那一次 `--update-baseline` 被它拦下（RC=2），
+处置 = `touch src/kernel/lib.rs` 让内核腿真编译后重跑（RC=0），**未削弱守卫、未手改侧车**。
+基线归 0 后该守卫结构上永不再触发（`baseline_total > 0` 恒假）。
+**负控制（两组，注入 → 红 → 复原 → sha256 一致）**：NC1 在内核注入一个无 SAFETY 的 unsafe 块
+⇒ 硬执法腿 `NC1-CLIPPY-RC=101`、棘轮腿 `NC1-RATCHET-RC=1`（双路都真拦）；NC2 摘掉
+`ci/audit.sh` 的 `-D clippy::undocumented_unsafe_blocks` 尾旗标 ⇒ 形状锁
+`NC2-SHAPELOCK-RC=101`。两组复原后 `sha256sum -c` 各一次**成功**。
+**形状锁**：`host-tests/tests/ci_entrypoint_unified_test.rs` 的
+`test_audit_sh_clippy_pedantic_covers_four_trees`（1382）由**三臂扩为四臂**（①②③ 原文保留，
+新增 ④ 用 `logical_lines`/`clippy_leg`/`assert_leg_flags` 钉五个旗标）；另新增
+`test_audit_sh_feature_dim_clippy_pins_safety_lint`（1416）钉 2b feature 维：定位 `step "2b/6`、
+断言 `for FEATURE in ` 循环头按 token 相等点名两个 feature，再 `assert_leg_flags`。
+该套 **31 passed / RC=0**。全仓 grep 确认**无其它针**钉这批 lint 旗标或侧车 totals ⇒
+硬零转换无隐藏契约破坏。
+**⑮ 检测器内容面盲区的终态读数（本批不改判据，待批 6 裁定）**：clippy 与棘轮只判 SAFETY
+**是否存在与位置**，从不判内容。终态全树读数（`src/kernel` 排除 vendored smoltcp）=
+**2786 行 SAFETY 标签 / 230 文件**；窄口径（`调用方保证指针/类型有效 (详见上下文)` +
+`调用方保证指针合法`）**251 处 / 57 文件**；宽口径（8 条短语：详见上下文 / 调用方保证指针 /
+调用方保证 / TODO / 待补 / 占位 / 由调用方 / 保证安全）**463 处 / 92 文件**。**口径说明**：
+此面 **⊃ 批 5 补写面** —— 债册只统计**缺注释**的位点，既有占位注释从来不在债册内，故终态读数
+大于逐批读数之和，**未做逐批归属拆分**。⑮ 甲案（加内容面审计腿）射程须按此终态读数估，
+不能再用批 5d/5e/5f 的三个分面读数相加。
+**㊵ 复核（批 5f 登记的 13 处定长字节窗口是否落在本批改动面）**：逐条解析被锁测试的真实源码
+路径后确认**全部不在**——`td19`→`functions/proc/{elf,madvise_mlock,mod}.rs`、`td17`→
+`functions/proc/table.rs`、`td18`→`functions/fs/ramfs.rs` + `privileged/error.rs`、
+`net_poll_at_hrtimer` 的 400 窗→`net/init/poll_timer.rs`（**不是** `timer/hrtimer.rs`）、
+`p24`/`virtio`/`net_snapshot`/`socket_wait_queue`/`socket_multicast` 均在 `net/driver` 面。
+故本批未踩该类红，13 处按 §11.2 不顺手改。
+**首轮门槛红与归因（本批直接导致的连带面，已在本批修复）**：① `FMT-KERNEL-RC=1` **四处漂移**
+（`proc/elf/mod.rs:142` 与 `:439`、`proc/scheduler.rs:1950`、`proc/user_proc.rs:1916`）——
+我插入的注释块用了**更深的代码行缩进**，而 rustfmt 把注释规范化到**语句级缩进**；
+修法 = 按锚点定位连续 `//` 行整块重缩进（elf 8→4 两处、scheduler 16→8、user_proc 16→8），
+复跑 `FMT-KERNEL3-RC=0`。② `AUDIT-FULL-RC=1` 在**步骤 0.5g 早退**（日志仅 67 行，步骤 1–4
+全未执行）——F7/TD-22 判 `glue/string.rs:46` 为**纯英文段落**（英文长词 memset /
+memset_optimized / secure_zero）：单源段里一行**换行的标识符列表**即使身处中文注释块内也算违规；
+修法 = 该行补中文「三个填充类):」，复跑 `LANG-RC=0`（1441 文件 / 0 违规）+ `FMT-RC=0` 后重跑全档。
+**另登记只报告不处置的观察（§11.5，与批 4/5a–5f 各项合并待批 6 裁定；本批新增 ㊶–58，
+累计 58 项）**：㊶ `lib.rs:381` 的 `options(noreturn)` 与实装不符 —— 存根末尾是 `iretq`，而
+`idt/table.rs` 的 `RecoveryAction::Recovered` 分支正常返回、x86_64 分支此后无停机循环即函数尾，
+`-> !` 落空属 UB 面。㊷ `klog_init` doc「串口硬件就绪后才置位」次序倒置（见上）。㊸
+`klog/mod.rs:681` 的 `cstr_slice` 返回 `&'static [u8]`，把 C 侧缓冲生命周期**谎称 static**，
+实际依据只是「调用内同步消费」，留存即 UAF。㊹ `timer/hrtimer.rs` 两处：`:390`
+`hrtimer_cancel` 只置 Inactive + `queue_seq=0`、**不出队** ⇒ 调用方释放 timer 后队列仍可能持
+悬垂 `NonNull`；`:398` `callback` 是**普通非原子字段**（`HrTimer` 只有 expiry_ns/state/queue_seq
+原子），另一核 `init(&mut self, callback)` 可普通写 ⇒ 数据竞争 + &/&mut 别名冲突，队列锁只保护 Vec。
+㊺ `memory_allocator.rs:37` 小对象路径 `+TAG_SIZE` 使返回指针只保证 **8 字节对齐**，
+`mm/kmalloc.rs` 的 ALIGNMENT=16 与 PMM 4096 都被前移破坏 ⇒ `layout.align() > 8` 契约不成立
+（大对象路径 tag_offset=0 不受影响）。㊻ `freg/recoverable.rs:54` 本 impl 约束 `T: Snapshot + Sync`，
+而内层 `IrqSpinLock<T>` 的 Sync impl 要求 `T: Send`（`sync/irq_spinlock.rs`），**Sync 不蕴含 Send**
+⇒ 约束错配。㊼ `proc/elf/mod.rs:149` `verify_elf` 用 `read_unaligned`、从未确立 8 字节对齐，
+而 `&*(… as *const Elf64Header)` 要求对齐（经 usize 中转不消除）；且返回 `&'static` 伪造。
+㊽ `proc/elf/mod.rs:448` `interp_offset + interp_len > elf_size` 是**未检查加法**，两个来自 ELF
+的值转 usize 相加可回绕 ⇒ 绕过判据后 `copy_nonoverlapping`/`write_bytes` 可越界写（ELF 由用户态
+提供，是本批发现中风险最高一条）。㊾ `syscall/dispatch.rs:533` `validate_user_buf` 只判上界，
+不判 8 字节对齐、不判已映射，`ptr + len` 未检查可回绕；`raw::read_u64` 的 SAFETY 声称对齐已校验，
+也未走 stac/clac（与批 5f ㉚–㉜ 同型的 I4 缺口）。㊿ `syscall/mod.rs:382` `reboot_via_idt`：
+64 位 IDTR 是 **10 字节**（2 limit + 8 base）而实参 `&[0u16; 4]` = 8 字节 ⇒ `lidt` 越界读 2 字节；
+且 `int 0` 压栈 EFLAGS/CS/EIP 与 `options(nostack)` 矛盾。51 `syscall/mod.rs:408`
+`reboot_via_psci`：x0=0 **不是** SYSTEM_RESET（仓内 `arch/aarch64/psci.rs` 已有
+`PSCI_SYSTEM_RESET = 0x8400_0009` + `system_reset()`），QEMU virt conduit 是 **HVC 而非 SVC**，
+SMCCC 破坏 x0..x3 未声明 clobber ⇒ 正确路径是改调 `psci::system_reset()`。52
+`sgeg/audit.rs:52`（**SGEG 现版冻结，禁为其它工程适配现版**）：模块文档称「写入经 IrqSpinLock
+保护」而 `AuditLog` 只有 `[AuditEntry; 256]` + `AtomicUsize`、**无任何锁** ⇒ `log(&self)` 裸指针写
+与 `dump(&self)` 读构成 &/&mut 别名 UB；计数回绕后多核可取同一 idx，「最后写入语义」仍是无同步
+并发写。53 `proc/user_proc.rs:1923` doc 声称「区间有效性由本函数首部校验」，首部只判非空与
+最小长度，**未校验** `elf_addr..elf_addr+elf_size` 是否落在已映射内存。54
+`proc/scheduler.rs:1946` 注释写「本函数开头 cli 排他」，实际 cli 在**调用方 `schedule()` 首行**
+（措辞漂移，判据不变，已就地注明）。55 `freg/domain.rs:75` 的 Send 注释写「spin::Mutex」，
+实装是 `IrqSpinLock`（同类措辞漂移，已就地注明）。56 `glue/string.rs` asm 约束三项：
+`:638` 内层 `stp` 标 `options(nostack, readonly)` 而 stp 确实写内存 ⇒ **readonly 错误声明**，
+LLVM 可据此重排/消除后续读；`:721` `rep stosb` 递增 rdi、递减 rcx 至 0，但两者都声明为
+`in(...)`（未标 inout/out）⇒ **未声明的寄存器破坏**；另 compare 家族全仓零调用方（R1 报告面）。
+57 `glue/string.rs:541` 一条**散逸 SAFETY** 落在 `) -> *mut core::ffi::c_void {` 之上（覆盖不到
+任何块）；同文件测试模块 12 处窄占位（`cfg(test)` 不在七腿射程，归 ⑮ 存量）。
+58 **AGENTS.md 文档滞后**：§2.2 表行与「F4 执法分工」段仍以未来时写「批5a–5g 逐树清零后翻 `-D`
+转硬执法」，且「存量 399 处 / 78 文件 / 83 键」已归 0 —— **那一次预授权已在批 4 用掉，
+本批不改 AGENTS.md**，待新授权后同批收口（属 §6 代码同步范围内的真漂移，非历史面）。
+**七门槛（终态，判据 = 日志内 `*-RC=` 回显，非后台包装退出码）**：① `./ci/build.sh all`
+`BUILD-ALL-RC=0`（Passed **6** / Failed **0**，`/tmp/g5g_build.log`）；② `bash ci/audit.sh full`
+`AUDIT-FULL2-RC=0`（`/tmp/g5g_audit2.log`；自测 **13/13**，其中 `audit_safety_debt` 内置夹具
+**23/23**；`safety_debt` 打印**硬零门禁**线、七腿并集 **0 处 / 0 文件 / 0 键**与空债册一致；
+`missing_docs_debt` **0 处 / 0 键**；废弃命名扫描 受检 **1721 文件** / 历史面 KEEP **316** /
+违规 **0**；`vacuous_needle` 受检 **1313 `.rs`** / 违规 **0**；P-49 存量审计腿 **10/10** 无静默跳过；
+`check_doc_paths` 校验 **19 份** / 设计册免报 **3 条** / **0 漂移**；性能指标腿 **24 项**全部在
+绝对预算内（3 passed）；Lockbud 实编并分析 **4/4 crate** 零发现；QEMU **2/2**（FAIL_OK=0）+
+P-62 feature 运行维 **4/4** + thread-stress **6/6**；FP-06 白名单外 FP/SIMD **0**；F1 预检
+functions 零 unsafe（**292 文件**）；TCB **54.1%** < 64%；SAFETY 引用面 **146/146 = 100%**
+（extern 127 + 引用 19）；I-43 **0**、I-07 **0**；**因环境缺失未执行腿数 0**；档位 **full**）；
+③ `make test-host` `HOST-RC=0`（**204 套 / 1603 passed / 0 failed** —— 比批 5c–5f 的 1602 多 1，
+即本批新增的 feature 维形状锁用例）；④ `make test-kernel-host` `KHOST-RC=0`（三成员
+**12 + 807 + 556 = 1375 / 0 failed**）；⑤ `make -f Makefile.ci ci-rustdoc` `RUSTDOC-RC=0`
+（x86_64 与 aarch64 两腿都真跑、各 exit **0**，0 源码级 link 错误 + 0 私有项链接）。
+**本批无新建文件**（21 个源文件 + 1 个 host-test + `ci/audit.sh` + 脚本 + 侧车 + 本册 + 台账
+均已在索引内），故无需先 git add 再跑命名扫描。
+**文档回填后终态复跑**（`/tmp/g5g_terminal.log`，判据 = 日志内 `*-RC=` 回显，非后台通知退出码）：
+`T1-BUILD-RC=0`（Passed **6** / Failed **0**）、`T2-NAMING-RC=0`（受检 **1721 文件** / KEEP **316** /
+违规 **0**）、`T3-DOCPATHS-RC=0`（校验 **19 份** / 设计册免报 **3** 条 / **0 漂移**）——本册与台账
+两处文档改动未引入废弃命名违规或源码路径漂移。
 
 ### 批 6・收口
 
-描述：台账与册内状态同步、memory 更新、按路径提交推送；并**合并提交 §11.5 四十项工程外发现
-（①–㊵，批 5g 若新增则续编）的处置裁定**——其中 ⑥ `auth_login` 参数序颠倒与 ⑩ `strlen` 上限
-多读 1 字节是真缺陷，⑪–⑭ 是 latent 的约束 / 锁序 / 别名缺口，⑮ 是 SAFETY 检测器的**内容面
-盲区**（甲 加内容面审计腿 / 乙 只逐批改写不加腿；三批累计占位存量读数见批 5d/5e/5f），
-㉚–㉜ 是 net syscall 面的 **I4 用户指针校验缺口**（㉛ 逐 iov `base`/`len` 无界可触内核内存，
-风险最高），㊵ 是 host-tests **定长字节窗口脆性截断**（14 处 / 9 文件，批 5f 修 1 登记 13）。
+描述：台账与册内状态同步、memory 更新、按路径提交推送；并**合并提交 §11.5 五十八项工程外发现
+（①–㊿ 与 51–58，批 5g 新增 ㊶–58）的处置裁定**——其中 ⑥ `auth_login` 参数序颠倒与 ⑩ `strlen`
+上限多读 1 字节是真缺陷（⑩ 在内核 FFI 侧同型再现，见 `glue/string.rs:77`），⑪–⑭ 是 latent 的
+约束 / 锁序 / 别名缺口，⑮ 是 SAFETY 检测器的**内容面盲区**（甲 加内容面审计腿 / 乙 只逐批改写
+不加腿；**射程按批 5g 终态全树读数估：窄 251 处 / 57 文件、宽 463 处 / 92 文件**，该面 ⊃ 补写面，
+不可再用批 5d/5e/5f 三个分面读数相加），㉚–㉜ 与 ㊾ 是 **I4 用户指针校验缺口**（㉛ 逐 iov
+`base`/`len` 无界可触内核内存），㊽ `rewrite_interp_path` **未检查加法可回绕 ⇒ 越界写**（ELF 由
+用户态提供，全清单风险最高），㊵ 是 host-tests **定长字节窗口脆性截断**（14 处 / 9 文件，
+批 5f 修 1 登记 13，批 5g 已复核 13 处均不在其改动面），52 属 **SGEG 现版冻结面**（只裁定不施工），
+58 是 **AGENTS.md §2.2 / F4 分工段滞后**（批 5g 已把三树翻硬执法、侧车归 0，而那一次预授权已用掉
+⇒ **须先取得新的 AGENTS 改动授权**才能收口）。
 方案：① 本册状态字段全 `[X]`；② `docs/plan/progress-active-tasks.md` 甲表行回填读数
 （**13 个行首状态字段** = 批 0/1/2/3/4/5a/5b/5c/5d/5e/5f/5g/6）；
 ③ 新文件**先 `git add`** 再跑 `scan_obsolete_naming`（扫 `git ls-files`）与 `check_doc_paths`；

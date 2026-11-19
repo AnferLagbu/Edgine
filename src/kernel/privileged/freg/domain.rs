@@ -75,6 +75,12 @@ pub struct RecoveryDomain {
 // 对 addr_ranges 使用 spin::Mutex. 所有可变访问要么是原子的,
 // 要么由 Mutex 保护. 不存在无同步的 UnsafeCell.
 unsafe impl Send for RecoveryDomain {}
+// SAFETY: `RecoveryDomain` 的全部可变状态要么是 AtomicU32/AtomicU64 (状态、代数、
+// 计数、配额、心跳、能力掩码、地址范围计数), 要么由 `IrqSpinLock` 保护 (depends_on /
+// depended_by / undo / capture_cb / rollback_cb / freg_stack / addr_ranges); 两个普通
+// u64 字段 `freg_interval_ticks` 与 `heartbeat_max_gap` 只在 const `new()` 中写入,
+// 此后仅经 &self 读取 ⇒ 无「无同步的可变面」。故 &RecoveryDomain 跨核共享安全。
+// (上方 Send 注释写「spin::Mutex」, 实装是 IrqSpinLock, 属措辞漂移, 判据不变。)
 unsafe impl Sync for RecoveryDomain {}
 
 impl RecoveryDomain {

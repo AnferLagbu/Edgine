@@ -46,6 +46,15 @@ impl AuditLog {
         // 重入锁, 多核并发写不同 idx 不会数据竞争; 若 idx 相同 (环形覆盖) 也是
         // 单字节字段级别的无锁覆盖, 接受最后写入语义。
         let entry = (&raw const self.entries[idx]).cast_mut();
+        // SAFETY: `idx` 由 `count.fetch_add(1, AcqRel) % AUDIT_CAPACITY` 得出, 恒在数组
+        // 界内; `entry` 经 `&raw const … .cast_mut()` 取得, 本块只写不读, 六个字段全是
+        // Copy 值 (无 Drop、无内部可变性), 写入不越出该条目。
+        // 已登记缺口 (批6 待裁, 本批不改; SGEG 现版冻结, 禁为其它工程适配现版):
+        // ① 本文件模块文档声称「写入经 IrqSpinLock 保护」, 而 `AuditLog` 只有
+        // `[AuditEntry; 256]` + `AtomicUsize`, **无任何锁**, `log(&self)` 经裸指针写共享
+        // 数组 ⇒ 与 `dump(&self)` 的读构成 &/&mut 别名冲突 (UB);
+        // ② 计数回绕后多核可取到同一 idx, 上方注释承认「最后写入语义」, 但那仍是无同步
+        // 的并发写 = 数据竞争, 不是可接受的语义。
         unsafe {
             (*entry).timestamp = now;
             (*entry).pwm = PwmId(pwm);

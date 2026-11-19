@@ -7,6 +7,13 @@ audit_safety_debt.py — F4「SAFETY 注释」的 clippy 口径存量债册与�
 立即补 399 处会产出「调用方保证指针/类型有效」式占位理由, 把自建脚本
 「100% 覆盖」的虚高读数重新灌满. 故本腿只拦**新增**, 清零工程分批 (批 5a–5g).
 
+**现状 (批 5g 收口)**: 批 5a–5g 已把四树存量全部补写完毕, 侧车 `totals` 归 0,
+本腿由「存量棘轮」升为**硬零门禁** —— 债册为空 ⇒ 任何新增位点都是 `over` ⇒ 当场红,
+与 F9 侧车清零后的处置同构. 三树的主 clippy 腿另已显式 `-D` 点名本 lint
+(src/user 批5b / host-tests 批5c / 内核双架构 批5g), 故 quick 档即拦; 本腿保留的
+独有价值是**七腿位点并集** (含 2b feature 维之外的壳 / edgine-abi 两腿) 与
+「读数塌缩」守卫 (全 Fresh 且读数 0 时判疑似而不是放行).
+
 与自建腿的分工 (批 4 收敛后):
 - 本腿 = `unsafe {}` 块 + `unsafe impl` 的 SAFETY 注释 (clippy 判据, 宽严见下);
 - `audit_safety_coverage.py` / `tools/audit_unsafe.py` 保留 **extern 块**面
@@ -38,9 +45,13 @@ x86_64 与 aarch64 两腿各报一次只记一次), 再聚合成 **(文件, 形�
   上限 ⇒ 诊断天然不出, 无需人工排除清单;
 - 判「SAFETY 注释存在」而不判「注释是中文」或「理由是否成立」—— 语言面与理由质量
   不在任何机器判据内. 注释位置的判据**比「紧邻上一行」宽** (实测): 块前注释串允许
-  空行间隔 (`privileged/mm/copy_user.rs` 四处「占位 SAFETY + 空行 + 块」均不报),
-  但中间隔了非注释 token (fn 签名 / 属性 / 语句) 就不认. 批 5 要求「紧邻上一行」是
-  **项目约定**, 严于本 lint, 不是 lint 的判据;
+  空行间隔 (`privileged/mm/copy_user.rs` 四处「占位 SAFETY + 空行 + 块」均不报).
+  语句级位点中间隔 `#[cfg(...)]` 属性**也认** (批5g 实测四例: 注释在属性上方 /
+  属性与 `unsafe {` 之间 / `let … = unsafe {` 的两种同形位置, 均不报; 无注释的
+  对照组照常报). 但 **item 级不认**: 把 SAFETY 写在 `#[unsafe(no_mangle)]` 等属性
+  之前, 注释归属该 item 而非其体内的块, 块仍进债册 (批5g 在 glue/string.rs 与
+  klog/mod.rs 见到的「属性前已有 SAFETY 却仍欠债」即此形态). 批 5 要求「紧邻上一行」
+  是**项目约定**, 严于本 lint, 不是 lint 的判据;
 - **抑制面不重复扫**: 关掉这盏灯 (`allow/expect(clippy::undocumented_unsafe_blocks)`)
   会让读数下降而与真补写同形, 但该面已由 F9 的 `audit_dead_code_comment.py` 执法 ——
   其侧车 `totals` 实测为 0 (clippy 与一般 rustc lint 抑制面已硬零), 新增抑制当场红.
@@ -224,8 +235,9 @@ def dump_baseline(entries: dict) -> str:
                     "src/user 双裸机三元组 / 壳 / edgine-abi) 的位点并集, 按 (文件, 形态) 记数; "
                     "形态 block=unsafe 块 / impl=unsafe impl; vendored 非 workspace 成员天然不出; "
                     "unsafe extern / missing_safety_doc 面不在射程",
-            "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, "
-                           "该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零",
+            "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 已逐树补写完毕, "
+                           "四树主 clippy 腿均显式 -D 点名本 lint; 侧车 totals 归 0 后"
+                           "本腿即硬零门禁 (债册为空 ⇒ 任何新增位点当场红), 不再是棘轮",
         },
         "totals": totals_of(entries),
         "entries": [[f, k, c] for (f, k), c in sorted(entries.items())],
@@ -449,8 +461,12 @@ def main(argv=None) -> int:
     over, under = reconcile(entries, baseline)
     print(f"  债册: {base_total} 处 / {len(baseline)} 键 ({os.path.basename(BASELINE_FILE)})")
     if not over and not under:
-        print(f"✓ clippy 口径与债册一致 ({total['sites']} 处待补写; "
-              f"新增无 SAFETY 的 unsafe 块/impl 即红, 补写后需重跑 --update-baseline)")
+        if base_total == 0:
+            print("✓ 硬零门禁: 七腿位点并集 0 处, 债册亦空 (批5g 收口) —— "
+                  "新增无 SAFETY 的 unsafe 块/impl 即红, 无存量可豁免")
+        else:
+            print(f"✓ clippy 口径与债册一致 ({total['sites']} 处待补写; "
+                  f"新增无 SAFETY 的 unsafe 块/impl 即红, 补写后需重跑 --update-baseline)")
         return 0
     for (path, kind), cur, base in over[:15]:
         print(f"    ✗ 新增 {path} — {kind}: 当前 {cur} / 债册 {base}")

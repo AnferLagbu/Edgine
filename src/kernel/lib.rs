@@ -220,6 +220,10 @@ fn panic_capture_registers() -> ([u64; 16], u64, u64) {
     #[cfg(target_arch = "x86_64")]
     let mut regs: [u64; 16] = [0; 16];
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: 三段 asm 只做 `mov <out(reg)>, <GPR>` 的寄存器→局部数组搬运:
+    // 不访存、不改标志、不压栈, 与 `nostack` + `preserves_flags` 一致; `regs`
+    // 是本函数栈上 [u64; 16], 16 个 out(reg) 各绑定互不重叠的元素。读到的是
+    // 汇编插入点的寄存器值 (编译器可重排), 只作崩溃取证的近似现场, 不参与控制流。
     unsafe {
         core::arch::asm!(
             "mov {0}, rax", "mov {1}, rbx", "mov {2}, rcx",
@@ -245,6 +249,9 @@ fn panic_capture_registers() -> ([u64; 16], u64, u64) {
     let regs: [u64; 16] = [0; 16];
     // cr2/cr3 仅 x86_64 有对应寄存器, 其余架构保持 0
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: `mov <reg>, cr2` / `mov <reg>, cr3` 是 CPL=0 特权指令。本函数唯一
+    // 调用点是同文件 `#[panic_handler] fn panic`, 运行在内核态 (x86_64 ring 0),
+    // 故不会 #GP; 两条 asm 只写本块内的局部 u64, 不访存、不改栈。
     let (cr2, cr3_val): (u64, u64) = unsafe {
         let mut cr2: u64 = 0;
         let mut cr3_val: u64 = 0;
@@ -366,6 +373,15 @@ fn panic_dump_gfx(msg: &str, regs: &[u64; 16], cr2: u64, cr3_val: u64) {
 #[cfg(not(feature = "host-test"))]
 fn panic_halt() -> ! {
     #[cfg(target_arch = "x86_64")]
+    // SAFETY: `int 0x82` 是本内核自建的 FREG 恢复向量, 接线已核实: `boot/isr.asm`
+    // 的 `isr0x82` 存根 (cli → push 0 → push 0x82 → KPTI 分支 → 压全 GPR →
+    // `call exception_handler`) 由 `idt/mod.rs` 的 `stub_addr!(isr0x82)` 装入 IDT
+    // 0x82 门, 该门配 IST=3 (`idt/table.rs`) ⇒ 异常帧落在 TSS 独立恢复栈上,
+    // 不依赖可能已损坏的当前栈。
+    // 已登记缺口 (批6 待裁, 本批不改): `options(noreturn)` 与实装不符 —— 存根末尾
+    // 是 `iretq`, 而 `idt/table.rs` 的 `RecoveryAction::Recovered` 分支正常返回,
+    // 故恢复成功时控制流回到本 asm 之后, 而 x86_64 分支此后无停机循环即函数尾,
+    // `-> !` 落空属 UB 面。
     unsafe {
         core::arch::asm!("int 0x82", options(noreturn));
     }
@@ -375,6 +391,12 @@ fn panic_halt() -> ! {
         unsafe extern "C" {
             fn recovery_try_recover_from_idt() -> i32;
         }
+        // SAFETY: 该 extern 声明的符号定义在本镜像内: `freg/api.rs` 的
+        // `#[unsafe(no_mangle)] pub extern "C" fn recovery_try_recover_from_idt() -> i32`,
+        // 签名 (无参, 返回 i32) 与声明逐字一致, 无 ABI 错配或悬垂符号。它可在 panic
+        // 上下文调用: 入口 `RECOVERY_ATTEMPTED.swap` 挡重入, 管理器用 `try_lock`
+        // (忙则返回 -3 而不阻塞), `PANIC_MSG` 锁在调用方 `panic` 的作用域内已释放
+        // ⇒ 无自死锁。返回 >=0 表示域已回滚到一致快照。
         let result = unsafe { recovery_try_recover_from_idt() };
         if result >= 0 {
             // 域状态已回滚到一致快照, 记录恢复事件
@@ -388,6 +410,9 @@ fn panic_halt() -> ! {
             );
         }
         loop {
+            // SAFETY: `wfi` 是 EL1 可执行的等待中断指令, 只让本核进入低功耗态,
+            // 不访存、不改通用寄存器; 未声明 options 属保守默认 (编译器按可能改
+            // 内存/标志处理), 不构成额外风险。外层 `loop` 保证被唤醒后仍停在停机态。
             unsafe {
                 core::arch::asm!("wfi");
             }
@@ -436,6 +461,11 @@ fn alloc_error(layout: alloc::alloc::Layout) -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_init() {
     // 0. KLog — 自举串口驱动, 必须先于所有子系统
+    // SAFETY: `klog_init` 的契约是「先于任何日志输出、且只调用一次」。本块是
+    // `kernel_init` 的首条语句, 引导器 (x86_64 `boot.asm` trampoline64_high /
+    // aarch64 `entry.rs`) 单次跳入本入口, 此前无 klog 调用点; 串口硬件由该 fn
+    // 自身 `serial_impl::serial_init()` 自举, 不依赖其它子系统已初始化。
+    // (其 `# Safety` 段写「串口硬件就绪」与实装次序相反, 实质契约是单次性与次序。)
     unsafe {
         crate::privileged::klog::klog_init();
     }
@@ -517,6 +547,11 @@ fn kernel_init_test_memory() {
     {
         let read_u64 = |phys: u64, idx: usize| -> u64 {
             let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
+            // SAFETY: `va` = boot 页表页物理地址 + `KERNEL_BASE` + idx*8, 走内核线性映射
+            // (与 `memory_allocator.rs` 的 `phys + KERNEL_BASE` 同口径), 上方 `vmm_init()` 已
+            // 建立该映射; 本处两个调用点 idx=24/63 ⇒ 偏移 192/504 字节, 与页对齐的 phys 相加
+            // 后仍 8 字节对齐且落在同一 4KB 页内。`read_volatile` 只读 8 字节按值返回 u64,
+            // 不构造引用、不写页表 (纯诊断读)。
             unsafe { core::ptr::read_volatile(va as *const u64) }
         };
         let pd24 = read_u64(0x0010_9000, 24);
@@ -538,6 +573,10 @@ fn kernel_init_test_memory() {
     {
         let read_u64 = |phys: u64, idx: usize| -> u64 {
             let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
+            // SAFETY: 同上方诊断闭包: `va` 经内核线性映射指向 boot 页表页 (pml4 0x10_2000 /
+            // pdpt 0x10_4000 / pd 0x10_9000), `vmm_init()` 已建立映射; 本处五个调用点
+            // idx=256/0/24/63 ⇒ 偏移 2048/0/192/504 字节, 均 8 字节对齐且不越出该 4KB 页。
+            // `read_volatile` 只读按值取 u64, 不构造引用、不写页表。
             unsafe { core::ptr::read_volatile(va as *const u64) }
         };
         let pml4_256 = read_u64(0x0010_2000, 256);

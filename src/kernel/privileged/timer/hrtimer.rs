@@ -227,6 +227,11 @@ struct TimerEntry {
 // NonNull<HrTimer> 本身不是 Send, 但内核中定时器可在任意 CPU 上操作,
 // 由 spinlock 保证互斥。
 unsafe impl Send for TimerEntry {}
+// SAFETY: `TimerEntry` 的两个字段 (`NonNull<HrTimer>` / seq: u64) 都是 Copy 值, 无
+// 内部可变性; 条目只存在于 `HRTIMER_QUEUE: Mutex<Vec<TimerEntry>>` 内, 全部读写
+// (入队 / 遍历 / retain / sort_by_key) 都在该锁临界区里 ⇒ &TimerEntry 跨核共享安全。
+// 指针所指 HrTimer 的有效性不属本 impl 的依据, 由 `hrtimer_start` 的 `# Safety`
+// 契约 (回调触发前保持有效内存) 单独承担。
 unsafe impl Sync for TimerEntry {}
 
 /// 全局序号计数器
@@ -379,11 +384,26 @@ pub fn hrtimer_run_queues() {
             let timer_ptr = entry.timer.as_ptr();
             // SAFETY: 入队时保证指针有效, 出队前不会释放
             let expiry = unsafe { (*timer_ptr).expiry_ns.load(Ordering::Acquire) };
+            // SAFETY: `timer_ptr` 取自队列条目, 有效性由 `hrtimer_start` 的 `# Safety` 契约
+            // 承担; `state()` 只读 HrTimer 的原子 state 字段 (AtomicU64), 不写内存, 与并发
+            // `set_state` 无数据竞争。
+            // 已登记缺口 (批6 待裁, 本批不改): `hrtimer_cancel` 只置 Inactive + queue_seq=0,
+            // **不出队**, 故调用方释放 timer 后队列仍可能持有悬垂 NonNull, 本处解引用即 UAF
+            // 面 —— 现契约只覆盖「回调触发前有效」, 未覆盖「取消后到下次 run_queues」这段窗口。
             let state = unsafe { (*timer_ptr).state() };
 
             if expiry <= now_ns && state == HrTimerState::Pending {
+                // SAFETY: 指针有效性同上, 由 `hrtimer_start` 的 `# Safety` 契约承担; 本处把回调
+                // 函数指针按值读出 (Copy) 存入 `expired`, 供锁释放后执行。
+                // 已登记缺口 (批6 待裁, 本批不改): `callback` 是**普通非原子字段** (HrTimer 只有
+                // expiry_ns / state / queue_seq 是原子), 本处经 `&*timer_ptr` 读它, 而另一核的
+                // `init(&mut self, callback)` 可普通写它 ⇒ 数据竞争与 &/&mut 别名冲突; 队列锁只
+                // 保护 Vec, 不保护 HrTimer 本体。
                 let cb = unsafe { (*timer_ptr).callback };
                 let seq = entry.seq;
+                // SAFETY: `set_state` 只对 HrTimer 的原子 state 字段做 store, 指针有效性同由
+                // `hrtimer_start` 契约承担。本处在队列锁内把状态置 Running, 随后的 `queue.retain`
+                // 只保留 Pending 条目 ⇒ 已收集条目同轮出队, 不会被重复收集。
                 unsafe { (*timer_ptr).set_state(HrTimerState::Running) };
                 expired.push((entry.timer, cb, seq));
             } else if state == HrTimerState::Inactive {
@@ -834,8 +854,10 @@ fn test_periodic_restart() -> crate::privileged::tests::TestResult {
         let now = hrtimer_clock_read();
         hrtimer_start(timer, now + 1_000_000); // 1ms 后
     }
-    // SAFETY: 经 &raw const 取裸指针避免对 static mut 取引用
     check!(
+        // SAFETY: T2 是本测试独占的 static mut, 上方已经 `addr_of_mut!` 完成 init 与
+        // `hrtimer_start`; 本处经 `addr_of!` 取址再解引用, 不对 static mut 构造共享引用,
+        // `is_pending()` 经 `state()` 读 AtomicU64, 是原子读而非裸字段读。
         unsafe { (*core::ptr::addr_of!(T2)).is_pending() },
         "pending after start"
     );

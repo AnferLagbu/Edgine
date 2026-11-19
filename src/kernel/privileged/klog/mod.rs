@@ -679,6 +679,13 @@ impl LogCategory {
 
 // SAFETY: `const` 由调用方保证为有效指针; 只读访问
 unsafe fn cstr_slice(ptr: *const u8) -> &'static [u8] {
+    // SAFETY: 本 fn 的契约 (`ptr` 指向 NUL 终止的可读缓冲) 由九个 `klog_*` 入口与
+    // `klog_write` 的 C 侧契约传递而来 (见下方单源段)。null 提前返回 `b"(null)"`;
+    // 扫描有硬上限: `len > 1024` 即返回 `b"(truncated)"`, 故无 NUL 的缓冲最坏读到
+    // 索引 1024 (第 1025 字节) 即止。`from_raw_parts(ptr, len)` 的 ptr 非空, len 是
+    // 已逐字节读过且均非零的字节数 ⇒ 切片范围落在已验证可读区内。
+    // 已登记缺口 (批6 待裁, 本批不改): 返回类型 `&'static [u8]` 把 C 侧缓冲的生命周期
+    // 谎称为 static, 实际依据只是「调用内同步消费」; 若将来有调用点留存该切片即 UAF。
     unsafe {
         if ptr.is_null() {
             return b"(null)";
@@ -901,6 +908,12 @@ pub unsafe extern "C" fn klog_write(
     fmt: *const u8,
     // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
+    // SAFETY: 本块是 `klog_write` 的实现体。C 侧契约: `fmt` 指向 NUL 终止的可读缓冲
+    // (同下方单源段的入口族契约); `_file` / `_func` / `_line` 三个形参在本实现中
+    // 未使用, 不解引用。null fmt 提前返回 -1; level 只接受 0..5 (其余返回 -1),
+    // cat 经 match 全枚举兜底为 Kernel ⇒ 不构造非法枚举值; MIN_LEVEL 过滤提前返回 0。
+    // `fmt.cast::<u8>()` 只改元素类型不改地址, 交 `cstr_slice` 取得带 1024 字节上限
+    // 的切片后由 `klog_output` 同步消费, 不留存指针、不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return -1;
@@ -945,6 +958,19 @@ pub unsafe extern "C" fn klog_write(
     }
 }
 
+// === unsafe 依据单源 (klog 的 C ABI 日志入口族) ===
+// 下面九个 `klog_*` 导出函数形态完全一致, 依据单源化于此, 逐处只写该处特有的
+// 级别/分类与指针类型:
+//   C 侧契约: 实参指向以 NUL 结尾、整段可由内核读取的字节缓冲 (`*const u8` 或
+//   `*const i8` —— 二者按 C ABI 同宽同布局, `cast::<u8>()` 只改元素类型不改地址),
+//   且在本调用返回前不被并发修改或释放。
+//   本侧义务: 空指针提前返回不解引用; 经 `cstr_slice` 取得带 1024 字节扫描上限的
+//   切片后交 `klog_output`。后者在调用内同步消费该切片 (截断式拷贝进 KLOG_LINE_MAX
+//   行缓冲 → 串口 sink → 环形缓冲 → 图形控制台), **不留存指针**, 故返回后 C 侧可
+//   立即释放或复用该缓冲。
+//   共同不变量: 无返回值、不转移所有权、不写 C 侧内存; 级别与分类是编译期常量,
+//   不经 C 侧传入, 故无非法级别/分类的校验面。
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 ///
@@ -952,6 +978,9 @@ pub unsafe extern "C" fn klog_write(
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_ffi_info(msg: *const u8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_ffi_info`: 级别 Info / 分类 Kernel,
+    // `*const u8` 直接交 `cstr_slice`, 无 cast。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if msg.is_null() {
             return;
@@ -968,6 +997,9 @@ pub unsafe extern "C" fn klog_ffi_info(msg: *const u8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_ffi_warn(msg: *const u8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_ffi_warn`: 级别 Warn / 分类 Kernel,
+    // `*const u8` 直接交 `cstr_slice`, 无 cast。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if msg.is_null() {
             return;
@@ -984,6 +1016,9 @@ pub unsafe extern "C" fn klog_ffi_warn(msg: *const u8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_ffi_error(msg: *const u8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_ffi_error`: 级别 Error / 分类 Kernel,
+    // `*const u8` 直接交 `cstr_slice`, 无 cast。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if msg.is_null() {
             return;
@@ -1000,6 +1035,9 @@ pub unsafe extern "C" fn klog_ffi_error(msg: *const u8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_net(fmt: *const u8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_net`: 级别 Info / 分类 Net,
+    // `*const u8` 经 `cast::<u8>()` 是恒等转换。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;
@@ -1016,6 +1054,9 @@ pub unsafe extern "C" fn klog_net(fmt: *const u8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_net_err(fmt: *const u8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_net_err`: 级别 Error / 分类 Net,
+    // `*const u8` 经 `cast::<u8>()` 是恒等转换。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;
@@ -1032,6 +1073,9 @@ pub unsafe extern "C" fn klog_net_err(fmt: *const u8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_init_msg(fmt: *const i8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_init_msg`: 级别 Info / 分类 Boot,
+    // `*const i8` 经 `cast::<u8>()` 只改元素符号性, 地址与字节值不变。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;
@@ -1048,6 +1092,9 @@ pub unsafe extern "C" fn klog_init_msg(fmt: *const i8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_kern(fmt: *const i8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_kern`: 级别 Info / 分类 Kernel,
+    // `*const i8` 经 `cast::<u8>()` 只改元素符号性, 地址与字节值不变。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;
@@ -1064,6 +1111,9 @@ pub unsafe extern "C" fn klog_kern(fmt: *const i8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_syscall(fmt: *const i8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_syscall`: 级别 Info / 分类 Syscall,
+    // `*const i8` 经 `cast::<u8>()` 只改元素符号性, 地址与字节值不变。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;
@@ -1080,6 +1130,9 @@ pub unsafe extern "C" fn klog_syscall(fmt: *const i8) {
 ///
 /// `msg`/`fmt` 是指向以 NUL 结尾的 C 字符串的有效指针, 所在内存可由内核访问.
 pub unsafe extern "C" fn klog_info(fmt: *const i8) {
+    // SAFETY: 类别 D (见上方单源段)。本处是 `klog_info`: 级别 Info / 分类 Kernel,
+    // `*const i8` 经 `cast::<u8>()` 只改元素符号性, 地址与字节值不变。
+    // 空指针提前返回, 消息在调用内同步消费不留存, 不写 C 侧内存。
     unsafe {
         if fmt.is_null() {
             return;

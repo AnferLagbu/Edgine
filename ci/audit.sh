@@ -543,13 +543,20 @@ unset RUSTC_WRAPPER
 # aarch64 clippy 步骤, 但本仓仅 Gitee、workflow 从不执行 ⇒ 不能代替本地门禁.
 # 成本实测: aarch64 维 RC=0 (0 诊断), 增量 CPU ≈14s; build-std 由步骤 1 的
 # 双架构 check 先行构建, 本维只重编 kernel crate. 与步骤 1 同形 (两档都跑).
+# 门禁健康度收敛 批5g: src/kernel 树的 SAFETY 存量已清零 (批5d mm+sync / 批5e
+# arch+cpu+idt+boot / 批5f net+driver+egdf / 批5g 其余), 故内核双架构腿与 host-tests
+# (批5c) / src/user (批5b) 同形, 由 audit_safety_debt 的存量棘轮转**硬执法**: 新增无
+# SAFETY 的 unsafe 块 / unsafe impl 在门槛 2 即红, 不必等 full 档棘轮. lint 名显式点名
+# 是必需的 —— undocumented_unsafe_blocks 默认 allow, 单靠 `-D warnings` 升不动它.
+# 射程口径: 本腿只判块 / impl 两面; pub unsafe fn / unsafe trait 由 missing_safety_doc
+# (已被 -D warnings 升硬) 判, unsafe extern / 函数指针引用面由 audit_safety_coverage 判.
 for target in x86_64-unknown-none aarch64-unknown-none-softfloat; do
     # 捕获式退出码 (B01-25 惯用法): `if cmd | tail` 在 pipefail 下失败即走 else,
     # 于是 "失败 (exit=…)" 分支不可达、真因被「执行异常」吞掉 (P-55 同族).
     set +e
     CLIPPY_OUT=$(cargo clippy --manifest-path ../kernel/Cargo.toml --workspace --release --lib --bins --examples --target "${target}" --target-dir ../../other/target \
         "${BUILD_STD_CFG[@]}" \
-        -- -D warnings -D clippy::pedantic 2>&1)
+        -- -D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks 2>&1)
     CLIPPY_RC=$?
     set -e
     printf '%s\n' "$CLIPPY_OUT" | tail -10
@@ -633,6 +640,11 @@ done
 # host target 运行 (避开裸机 build.rs 产物检查), 与 ci-x86.yml clippy-pedantic
 # job 对齐. 两维清理后零 unfulfilled 作为门槛 (G-02 合并).
 step "2b/6 Clippy feature 维 (kernel_test + host-test, host target)"
+# 门禁健康度收敛 批5g: feature 维同样显式 `-D` 点名 undocumented_unsafe_blocks.
+# 理由 = audit_safety_debt 的七腿**不带 feature**, 故 `#[cfg(feature = "kernel_test")]`
+# 门控的 unsafe 块从来不在棘轮读数里 (批5g 实测该面另有 5 处: privileged/tests/test_mm.rs
+# 2 + privileged/timer/hrtimer.rs 1 + lib.rs 2, 已同批补写). 只翻步骤 2 会留下这个
+# feature 门控盲区, 故本腿一并翻硬执法; host-test 维实测本就 0 处.
 for FEATURE in kernel_test host-test; do
     # 方案 D: feature 维 clippy 指向 kernel manifest (host target, 门控代码 lint)
     # 捕获式退出码 (B01-25 惯用法, P-55 ②): `if cmd | tail` 在 pipefail 下失败即走
@@ -640,7 +652,7 @@ for FEATURE in kernel_test host-test; do
     set +e
     FEATURE_CLIPPY_OUT=$(cargo clippy --manifest-path "$PROJECT_ROOT/src/kernel/Cargo.toml" --workspace --features "$FEATURE" --lib \
         --target-dir "$PROJECT_ROOT/other/target" \
-        -- -D warnings -D clippy::pedantic 2>&1)
+        -- -D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks 2>&1)
     FEATURE_CLIPPY_RC=$?
     set -e
     printf '%s\n' "$FEATURE_CLIPPY_OUT" | tail -10
