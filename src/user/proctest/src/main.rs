@@ -23,6 +23,12 @@ use userlib::{print, print_dec, println, str};
 // 测试基础设施
 // ============================================================================
 
+// unsafe 依据单源 (计数器面): 三个 static mut 都是本进程私有的 u32 计数, 访问点
+// 只有 test_pass / test_fail / test_summary / _start 四处. proctest 只 fork 不
+// clone (导入面无线程创建 syscall), 故本进程恒单线程; fork 出的子进程持 COW 私有
+// 副本、各自计数, 不与父进程共享这些静态. 每处访问都是即时读或即时自增, 不跨访问
+// 持有引用也不让指针逃逸 ⇒ 无别名冲突与数据竞争. 下列各处只引本单源 + 写该处特有
+// 的不变量.
 static mut TEST_COUNT: u32 = 0;
 static mut PASS_COUNT: u32 = 0;
 static mut FAIL_COUNT: u32 = 0;
@@ -33,6 +39,8 @@ fn test_begin(name: &str) {
 }
 
 fn test_pass(name: &str) {
+    // SAFETY: 计数器单源 (见 static 声明处) —— 本进程单线程, 两个自增是即时
+    // 读改写、不产生引用; 断言总数由 9 组测试固定, 远不到 u32 上限.
     unsafe {
         PASS_COUNT += 1;
         TEST_COUNT += 1;
@@ -42,6 +50,8 @@ fn test_pass(name: &str) {
 }
 
 fn test_fail(name: &str, reason: &str) {
+    // SAFETY: 计数器单源 —— 同 test_pass, 单线程即时自增; 失败计数上界同样是
+    // 那 9 组测试的断言数.
     unsafe {
         FAIL_COUNT += 1;
         TEST_COUNT += 1;
@@ -56,14 +66,19 @@ fn test_summary() {
     println("");
     println("=== 测试结果汇总 ===");
     print("总测试: ");
+    // SAFETY: 计数器单源 —— 只读取值拷贝, 不产生指向 static 的引用; 汇总在所有
+    // 测试跑完后调用, 此后无写入者.
     print_dec(i64::from(unsafe { TEST_COUNT }));
     println("");
     print("通过:   ");
+    // SAFETY: 计数器单源 —— 同上, 只读快照.
     print_dec(i64::from(unsafe { PASS_COUNT }));
     println("");
     print("失败:   ");
+    // SAFETY: 计数器单源 —— 同上, 只读快照.
     print_dec(i64::from(unsafe { FAIL_COUNT }));
     println("");
+    // SAFETY: 计数器单源 —— 只读比较, 不产生引用; 与上面三次读之间无写入者.
     if unsafe { FAIL_COUNT } == 0 {
         println("[OK] 所有测试通过!");
     } else {
@@ -474,5 +489,7 @@ pub extern "C" fn _start() -> ! {
     println("  测试完成");
     println("========================================");
 
+    // SAFETY: 计数器单源 —— 只读快照作退出码; 本进程单线程且 test_summary 之后
+    // 不再有任何 test_pass / test_fail 调用, 故该值此刻已终态.
     proc_exit(i32::try_from(unsafe { FAIL_COUNT }).expect("失败计数超出 i32"));
 }

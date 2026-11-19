@@ -1456,6 +1456,9 @@ fn cow_fault_legs() -> (bool, bool) {
     // 走"就地恢复可写"分支 (不复制).
     // SAFETY: 同上, cell_ptr 指向本帧内有效 u64.
     unsafe { core::ptr::write_volatile(cell_ptr, COW_MAGIC_LATE) };
+    // SAFETY: 同上一处 —— cell_ptr 仍指向本帧内的 cell (函数未返回), 本次读的就是刚
+    // 写入的同一地址; 子进程已收割, 该 leaf 持有计数回到 1, 除本线程外无第二个持有者.
+    // volatile 防"写后读"被折叠成常量, 否则本判据不再证明就地恢复可写真的生效.
     let reuse_ok = unsafe { core::ptr::read_volatile(cell_ptr) } == COW_MAGIC_LATE;
 
     (copy_ok, reuse_ok)
@@ -1470,6 +1473,10 @@ fn cow_child_body(cell_ptr: *mut u64) -> ! {
     // SAFETY: 本进程与父进程共用同一 VA 布局 (fork 语义), cell_ptr 是本帧内 u64
     // 的地址; 用 volatile 读写见 `cow_fault_legs` 的同一理由 (防值折叠).
     let seen = unsafe { core::ptr::read_volatile(cell_ptr) };
+    // SAFETY: 同上 —— fork 后子进程持同一 VA 布局, cell_ptr 在子侧仍指向有效且 8 字节
+    // 对齐的 u64 (源自父侧 `&mut cell`), 落在本进程已映射的栈页内. 该页此刻是与父共享
+    // 的只读帧, 本条写故意触发写保护缺页, 由内核 COW 恢复成子侧私有帧后重试同一条指令
+    // (被测链路见 `cow_fault_legs` 文档). volatile 保证这条写不被折叠掉, 否则缺页不发生.
     unsafe { core::ptr::write_volatile(cell_ptr, COW_MAGIC_CHILD) };
     // SAFETY: 同上.
     let after = unsafe { core::ptr::read_volatile(cell_ptr) };
@@ -1523,6 +1530,9 @@ fn descend_touch(depth: u32) -> bool {
     // 后读, 不存在读取未初始化内容的路径. volatile 保证写真的落页 (否则编译器可
     // 把读折叠成常量), 也保证该页确实被访问 —— 未映射时这正是缺页的来源.
     unsafe { byte_ptr.write_volatile(COW_STACK_MARK) };
+    // SAFETY: 同上 —— byte_ptr 指向本帧 pad 的界内末元素 (u8, 对齐 1), 上一条
+    // write_volatile 已把该字节初始化, 故本次读不读未初始化内容; pad 随本帧存活,
+    // 递归下降尚未返回. volatile 防"写后读"折叠成常量, 否则本层判据失效.
     let first_ok = unsafe { byte_ptr.read_volatile() } == COW_STACK_MARK;
     let deep_ok = depth == 0 || descend_touch(depth - 1);
     // SAFETY: 同上, byte_ptr 仍指向本帧 (未返回) 内元素.

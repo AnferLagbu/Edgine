@@ -22,7 +22,9 @@ enum RedirKind {
 struct Segment<'a> {
     cmd_buf: [u8; 256],
     cmd_len: usize,
-    argv: [*const u8; 16],
+    // 存 cmd_buf 内偏移而非指针: 本结构按值返回后要移进 segments 数组槽, 自指指针
+    // 会随移动悬垂 (指向已死的 parse 帧), 偏移与位置无关, 指针留到使用点再取.
+    argv_off: [usize; 16],
     argc: usize,
     redir_in: Option<&'a [u8]>,
     redir_out: Option<&'a [u8]>,
@@ -63,7 +65,7 @@ fn parse_single_segment(raw: &[u8]) -> Segment<'_> {
     let mut seg = Segment {
         cmd_buf: [0u8; 256],
         cmd_len: 0,
-        argv: [core::ptr::null(); 16],
+        argv_off: [0; 16],
         argc: 0,
         redir_in: None,
         redir_out: None,
@@ -161,7 +163,7 @@ fn parse_single_segment(raw: &[u8]) -> Segment<'_> {
             break;
         }
 
-        seg.argv[seg.argc] = &raw const seg.cmd_buf[pos];
+        seg.argv_off[seg.argc] = pos;
         seg.argc += 1;
         if seg.argc >= 16 {
             break;
@@ -175,7 +177,8 @@ fn parse_single_segment(raw: &[u8]) -> Segment<'_> {
             pos += 1;
         }
     }
-    seg.argv[seg.argc] = core::ptr::null();
+    // NULL 哨兵由使用点的 17 槽指针数组承担 (argc 上限 16, 在 16 槽数组上写
+    // argv[argc] 会越界).
     seg
 }
 
@@ -228,15 +231,24 @@ fn run_pipeline_child(seg: &Segment, prev_pipe: &[i32; 2], cur_pipe: &[i32; 2]) 
         }
     }
 
-    let argv = &seg.argv[..=seg.argc];
-    let path = seg.argv[0];
-    if path.is_null() {
+    if seg.argc == 0 {
         proc_exit(1);
     }
 
-    // null 终止路径方便 exec
-    let path_slice = unsafe { CStr::from_ptr(path.cast::<core::ffi::c_char>()) }.to_bytes();
-    let _ = proc_exec(path_slice, argv, &[]);
+    // 指针留到此处取: seg 已是 segments 数组槽内的最终位置, cmd_buf 不再移动, 故
+    // argv 指针与路径串都指向活内存 (该数组活在父帧直到子进程 exec; fork 后子侧持
+    // 同一 VA 布局的副本). 17 槽 = 16 个参数上限 + NULL 哨兵.
+    let mut argv_ptrs: [*const u8; 17] = [core::ptr::null(); 17];
+    for i in 0..seg.argc {
+        argv_ptrs[i] = seg.cmd_buf[seg.argv_off[i]..].as_ptr();
+    }
+    let path_off = seg.argv_off[0];
+    let path_slice = CStr::from_bytes_until_nul(&seg.cmd_buf[path_off..])
+        .expect("cmd_buf 在 cmd_len 处恒有 NUL 终止符")
+        .to_bytes();
+    // 连同 NUL 一起交出, 满足 proc_exec 对 path 的 NUL 结尾契约.
+    let path_arg = &seg.cmd_buf[path_off..=path_off + path_slice.len()];
+    let _ = proc_exec(path_arg, &argv_ptrs[..=seg.argc], &[]);
     // exec 失败
     print("eash: ");
     print(from_utf8(path_slice).unwrap_or("?"));
@@ -261,6 +273,9 @@ pub fn execute_pipeline(input: &[u8]) {
     };
 
     // 按 | 切分段
+    // SAFETY: MaybeUninit<T> 与 [MaybeUninit<T>; N] 都没有有效性不变量 (任意位模式
+    // 对其都合法), 故对数组整体 assume_init 不构成"已初始化"断言; 每个槽随后由下面的
+    // .write(parse_single_segment(..)) 真正初始化, 读取只发生在已 write 的前 seg_count 槽.
     let mut segments: [MaybeUninit<Segment>; MAX_PIPELINE] =
         unsafe { MaybeUninit::uninit().assume_init() };
     let mut seg_count = 0;
@@ -285,6 +300,10 @@ pub fn execute_pipeline(input: &[u8]) {
         return;
     }
 
+    // SAFETY: 前 seg_count 个槽已由上面循环 .write 初始化 (seg_count 只在 write 之后
+    // 自增), 循环守卫 seg_count < MAX_PIPELINE ⇒ 不越数组界; MaybeUninit<Segment> 与
+    // Segment 同尺寸同对齐, cast 后指针指向连续 seg_count 个已初始化 Segment; 被遮蔽的
+    // 数组绑定活到函数结束, 借用期间无写入者 (下面只读 segments[i]).
     let segments: &[Segment] =
         unsafe { core::slice::from_raw_parts(segments.as_ptr().cast::<Segment>(), seg_count) };
 

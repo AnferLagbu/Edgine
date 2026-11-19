@@ -847,8 +847,72 @@ userlib 内联单测 **10 passed / 0 failed**。
 描述：清 proctest 7 / install 7 / exectest 6 / eash 3 / init 3。
 方案：同批 5a 四步；清完后 **src/user 树小计归零** ⇒ 该树 CI clippy 腿加
 `-D clippy::undocumented_unsafe_blocks` 翻**硬执法**（不再靠侧车），侧车该树条目清空。
-状态：[]
+状态：[X]
 详情：翻硬执法后该树任何新增无 SAFETY 块在**门槛 2** 即红，无需等棘轮腿。
+**施工结果（2026-11-19）**：26 处全清、**零占位**——proctest 7 / install 7 / exectest 6 / init 3
+逐处补紧邻上一行的中文 SAFETY；eash 3 处中 **2 处补注释 + 1 处 unsafe 直接消除**（见下缺陷修复）。
+方法照批 5a 三步：先读内核对应实装再落笔、重复形态单源化、落笔后 grep 核实全部引用名与具体断言。
+**单源化**落在三个 crate 的模块级「unsafe 依据单源」段（proctest 计数器探针 / install 设备探测
+状态 / exectest 入口栈槽位），逐处只引类别 + 写该处特有不变量；init 3 处形态各异故逐处直书。
+**核实过的关键断言**（不是「内核会校验」式笼统话）：① exectest 的入口栈槽序按
+`privileged/proc/user_proc.rs:1697` 的 `setup_user_stack_in_table`（argc + argv 指针 + argv NULL +
+envp 指针 + envp NULL + 串区），argc=3 时槽 1/2/3 是 argv、4 是 argv NULL、5/6 是 envp、7 是 envp NULL；
+栈顶指针按 `:1027` 的 `initial_rsp = stack_virt + USER_STACK_GUARD + USER_STACK_SIZE - 8` 与
+`stack_virt = aslr_stack_top - USER_STACK_SIZE - USER_STACK_GUARD` 推得 **`initial_rsp ==
+aslr_stack_top() - 8`**，而 `config/memory.rs:126` 的 `aslr_stack_top()` 是 `USER_STACK_TOP` 减
+**页对齐**随机偏移 ⇒ sp 恒 8 字节对齐。② install 的 `disk_list` 写入上界是
+`min(max_count, block_device_count())`（`functions/sgeg/storage/disk.rs:64`）而**非**用户缓冲容量；
+`disk_info` 经 `api::write_struct_to_user` → `check_user_buf(ptr, size_of::<UserDiskInfo>())`
+做**全尺寸**复校（故下面 ⑨ 的 76 字节常量失真无安全后果）。
+**eash 预存缺陷修复（用户裁定「本批内修复」，非顺手改）**：`Segment` 原持
+`argv: [*const u8; 16]`，在 `parse_single_segment` 的**函数局部**结构里取
+`&raw const seg.cmd_buf[pos]`，再把该结构**按值返回**、由调用方移进 `segments` 数组槽 ⇒ 那些指针
+仍指向已死的 parse 帧，`run_pipeline_child` 的 `CStr::from_ptr` 读悬垂指针；是否「看起来能跑」
+取决于 LLVM 是否恰好省掉返回拷贝，不是可依赖的契约。改为存 **`argv_off: [usize; 16]` 偏移**、
+指针留到使用点再取（此时 `seg` 已是数组槽内最终位置），与同 crate `commands/mod.rs` 的
+`run_external` 既有写法同构。**连带消除第二处缺陷**：argc 上限与数组容量同为 16，收尾写
+`argv[argc]` 哨兵在满 16 个参数时越界 panic ⇒ 哨兵改由使用点的 **17 槽**指针数组承担。
+修复后 `run_pipeline_child` 的 argv 与路径构造**全程 safe**（`CStr::from_bytes_until_nul` +
+`as_ptr`，路径切片连同 NUL 交出以满足 `proc_exec` 的 NUL 结尾契约），该处 unsafe 块整个消失。
+**新增静态形状锁** `host-tests/tests/eash_pipeline_argv_offset_test.rs`（3 用例：Segment 存偏移
+不存自指指针 / parse 不写 16 槽哨兵 / 指针与路径串在使用点取且函数内无 unsafe）+ `host-tests/README.md`
+索引行。取形状锁而非行为测试的理由：该解析器活在 no_std 用户态 bin crate、依赖 fork/exec/pipe，
+host 侧无法直接编译执行；既有 `eash_cmd_parser_test.rs` 锁的是 `Cmd` 模型，覆盖不到 `Segment`
+的指针来源。
+**翻硬执法**：`ci/audit.sh` 的 src/user 双裸机三元组腿加
+`-D clippy::undocumented_unsafe_blocks`（+3 行中文理由）。**lint 名显式点名是必需的**——
+该 lint 默认 allow，单靠 `-D warnings` 不会把它升成错误（批 0 实测 L2 的反面）。接线形状锁
+`ci_entrypoint_unified_test.rs` 的 `assert_user_leg_is_dual_arch` 旗标清单同批加该项。
+**两项负控制（均 `cp` + `sha256` 逐字节复原）**：① 往 src/user 真文件注入一个无 SAFETY 的
+unsafe 块 ⇒ 门槛 2 该树腿 **RC=101**、判词 `error: unsafe block missing a safety comment`
+（证硬执法真在位，不是只改了旗标文本）；② 从 `ci/audit.sh` 摘掉新旗标 ⇒ 形状锁 **RC=101**、
+判词「`src/user` pedantic 腿缺 `-D clippy::undocumented_unsafe_blocks`」（证接线有锁，
+静默退回棘轮形态会被拦）。
+**自捕订正 2 处（本批自己造成的红，均已修）**：① 缺陷修复引入的
+`path_off..path_off + path_slice.len() + 1` 触发 `clippy::range_plus_one`（`-D clippy::pedantic` 下硬错）
+⇒ 改 `..=` 闭区间（F9 禁新增 `allow`），形状锁的针**同批重指**；② 新测试文件缺文件末换行 ⇒
+门槛 2 **步骤 2c** fmt 漂移硬红（首轮 `G2-AUDIT-FULL-RC=1` 的**唯一**红因；2c 在 quick 早退之前，
+故该轮 2d/2e/2f/2g/3/4 **全未执行**，不存在 QEMU 与棘轮读数），
+`cargo fmt --manifest-path host-tests/Cargo.toml` 修复后该腿 RC=0、形状锁复跑 **3/3**。
+**棘轮读数**：287 → **261 处 / 70 文件 / 75 键**（−26；块 244 + impl 17），侧车 `src/user/` 条目
+**0**，余 host-tests 25 + kernel 236；`--update-baseline` 收缩后复跑双向对账 **RC=0**。
+**七门槛（终态）**：`./ci/build.sh all` **RC=0**（Passed **6** / Failed **0**）·
+`bash ci/audit.sh full` **RC=0**（**未执行腿数 0**；P-69 通过 / selftest **13/13** /
+`safety_debt` 通过・债册 **261 处 / 75 键** / `missing_docs_debt` **0 处 / 0 键** / QEMU **2/2** /
+P-62 feature 运行维 **4/4** / lockdep 构建面双架构两侧符合 / UEFI(OVMF) 可达面全符合且
+`[THREAD]` 显式不判 / aarch64 COW 四判据 + EGFS 三相全符合 / 线程压力 3 轮 × 2 架构 **6/6**）·
+`make test-host` **RC=0**（**204 套 / 1602 passed / 0 failed**，较批 5a **+1 套 +3 用例**＝本批
+新增形状锁）· `make test-kernel-host` **RC=0**（三成员 **12+807+556=1375 / 0 failed**）·
+`make -f Makefile.ci ci-rustdoc` **RC=0**（双架构两腿真跑，**0 源码级 link 错误 + 0 私有项链接**）。
+**终态复跑**（本册与台账回填后，避免文档改动引入新漂移）：`./ci/build.sh all` **RC=0**
+（Passed **6** / Failed **0**）· `scan_obsolete_naming` **RC=0**（受检 **1721 文件** /
+历史面 KEEP **316** / 违规 **0**；较批 5a **+1 文件**＝新增形状锁，已先 `git add` 入索引）·
+`check_doc_paths` **RC=0**（**19 份** / **0 漂移**，设计册计划新建路径免报 **3** 条）。
+**新增一项工程外发现（§11.5 只报告不处置，与批 4 五项 + 批 5a 三项合并待批 6 裁定）**：
+⑨ `functions/sgeg/storage/disk.rs:44` 的 `USER_DISK_INFO_SIZE = 76` 与 `:28` / `:73` 的
+「76 字节」注释**失真**——`UserDiskInfo` 实为 4 × `u32` + `[u8; 64]` = **80 字节**；
+**无安全后果**（`write_struct_to_user` 按 `size_of::<T>()` 全尺寸复校，76 只是提前放行的下界），
+属常量与注释漂移，本批 install 的 SAFETY 按**实际复校入口**落笔、未沿用该常量。
 
 ### 批 5c・SAFETY 清零: host-tests（25 处）
 

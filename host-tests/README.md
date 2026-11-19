@@ -176,6 +176,7 @@ criterion_main!(benches);
 | `session_per_process_test.rs` | session 每进程 | I-29 |
 | `usermode_ring3_test.rs` | usermode ring3 切换 | I-32 |
 | `eash_cmd_parser_test.rs` | eash 用户态 Shell | I-10 |
+| `eash_pipeline_argv_offset_test.rs` | eash 管道 argv 偏移形态锁（Segment 存偏移不存自指指针 / parse 不写 16 槽哨兵 / 指针与路径串在使用点取且全程 safe） | 门禁健康度 批5b |
 | `eevdf_btreemap_bench_test.rs` | EEVDF BTreeMap 性能基准 | I-34 |
 | `td14_ipc_full_lifecycle_test.rs` | IPC 全生命周期 | TD-14 |
 | `functions_ipc_complete_test.rs` | functions IPC 完整性 | I-14 |

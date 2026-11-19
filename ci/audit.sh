@@ -591,10 +591,14 @@ else
     err "clippy pedantic (host-tests) 失败 (exit=$HT_CLIPPY_RC, 见上方输出)"
 fi
 
+# src/user 树的 SAFETY 面已清零 (门禁健康度收敛 批5b), 故该树不再靠 audit_safety_debt
+# 的存量棘轮, 直接在 clippy 腿里 `-D` 转硬执法: 新增无 SAFETY 的 unsafe 块 / unsafe impl
+# 在门槛 2 即红. lint 名显式点名是必需的 —— undocumented_unsafe_blocks 默认 allow,
+# 单靠 `-D warnings` 不会把它升成错误.
 for target in x86_64-unknown-none aarch64-unknown-none; do
     set +e
     USER_CLIPPY_OUT=$(cargo clippy --manifest-path src/user/Cargo.toml --release --workspace --no-deps \
-        --target "${target}" -- -D warnings -D clippy::pedantic 2>&1)
+        --target "${target}" -- -D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks 2>&1)
     USER_CLIPPY_RC=$?
     set -e
     printf '%s\n' "$USER_CLIPPY_OUT" | tail -10

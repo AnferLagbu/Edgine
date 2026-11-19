@@ -29,6 +29,17 @@ const EXIT_ENV_VALUE: i32 = 16;
 const EXIT_GETCWD: i32 = 17;
 const EXIT_CWD: i32 = 18;
 
+// unsafe 依据单源 (入口栈槽位面): 本文件所有 word_at / cstr_eq 的地址都取自内核为
+// 本进程布置的入口栈. 写侧 = privileged::proc::user_proc::setup_user_stack_in_table,
+// 槽序 = argc(1) + argv 指针(arg_count) + argv NULL(1) + envp 指针(env_count) +
+// envp NULL(1), 其后才是字符串区, 整段 [sp, stack_top) 是一次布置出的连续区间.
+// 对齐: 该函数把 total 向上取整到 16, 而 stack_top 取自 UserProcManager::create 的
+// initial_rsp = aslr_stack_top() - 8 (页对齐栈顶减 8), 故 sp 恒 8 字节对齐, u64 槽读
+// 不违反对齐要求. 唯一拉起者 = init 的 exec_leg_child: argv = {exectest, <腿>, K07B}
+// 共 3 项, envp = {K07B_ENV=1, K07B_BATCH=2} 共 2 项 ⇒ argc=3 时槽 1/2/3 = argv 三项、
+// 槽 4 = argv NULL、槽 5/6 = envp 两项、槽 7 = envp NULL. argc != 3 在入口即 fail 退出,
+// 故下列各处槽号都以 argc=3 为前提. 各处只引本单源 + 写该处特有的不变量.
+
 /// 入口栈上 envp 首槽下标: argc=3 已断言后, 布局 = argc(1) + argv(3 + NULL),
 /// 故首槽恒为 1 + 3 + 1 = 5.
 const ENV_SLOT: usize = 5;
@@ -100,8 +111,12 @@ extern "C" fn exectest_main(sp: u64) -> ! {
     if argc != 3 {
         fail("argc", i64::try_from(argc).unwrap_or(i64::MAX), EXIT_ARGC);
     }
+    // SAFETY: 入口栈槽位单源 (见 ENV_SLOT 上方) —— argc=3 已断言, 槽 1 是 argv 首项
+    // 指针槽, 落在内核布置的指针区内.
     let argv0 = unsafe { word_at(sp, 1) };
+    // SAFETY: 同单源 —— 槽 2 = argv 腿标记项, 仍在 argv 指针区 (槽 1..=3) 内.
     let argv1 = unsafe { word_at(sp, 2) };
+    // SAFETY: 同单源 —— 槽 3 = argv 末项 (argc=3 ⇒ 末项下标 3), 未越过 argv NULL 槽 4.
     let argv2 = unsafe { word_at(sp, 3) };
     // SAFETY: 三个槽均由内核按 argv 数组写入.
     if !unsafe { cstr_eq(argv0, b"exectest") } || !unsafe { cstr_eq(argv2, b"K07B") } {
@@ -120,8 +135,13 @@ extern "C" fn exectest_main(sp: u64) -> ! {
     if unsafe { word_at(sp, 4) } != 0 {
         fail("argv-sentinel", 0, EXIT_ARGV_SENTINEL);
     }
+    // SAFETY: 同单源 —— ENV_SLOT=5 是 argc=3 下的 envp 首槽; 拉起者 init 传
+    // env_count=2, 故该槽在 envp 指针区内 (槽 4 的 argv NULL 哨兵上一行已断言).
     let env0 = unsafe { word_at(sp, ENV_SLOT) };
+    // SAFETY: 同单源 —— 槽 6 = envp 第二项 (env_count=2 ⇒ 指针区覆盖槽 5..=6).
     let env1 = unsafe { word_at(sp, ENV_SLOT + 1) };
+    // SAFETY: 同单源 —— 槽 7 = envp NULL 哨兵 (紧随两项之后), 是布置区间内最后一个
+    // 指针槽; 即使实际 env_count 更小, 该槽也落在同一次布置的字符串区内, 不越出本进程栈.
     let env_end = unsafe { word_at(sp, ENV_SLOT + 2) };
     if env0 == 0 || env1 == 0 || env_end != 0 {
         // 条目数不是恰好 2 (含哨兵缺失/多余) 一律失败.

@@ -1271,6 +1271,10 @@ fn assert_user_leg_is_dual_arch(lines: &[String]) {
             "--target \"${target}\"",
             "-D warnings",
             "-D clippy::pedantic",
+            // 门禁健康度收敛 批5b: 该树 SAFETY 存量已清零 ⇒ 由棘轮转硬执法.
+            // lint 默认 allow, 少了这一项则 `-D warnings` 升不动它, 新增无 SAFETY
+            // 块会静默放行 (退回只靠 full 档棘轮的形态).
+            "-D clippy::undocumented_unsafe_blocks",
         ],
         "src/user",
     );
