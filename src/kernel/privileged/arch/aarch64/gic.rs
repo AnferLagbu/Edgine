@@ -92,6 +92,41 @@ pub const RESCHEDULE_SGI: u32 = 0xFE & 0xF;
 /// FREG恢复专用 SGI 编号 (`0x82` 语义的 aarch64 等价, 取 SGI 7)。
 pub const FREG_RECOVERY_SGI: u32 = 7;
 
+// === unsafe 依据单源 (本文件寄存器访问与初始化路径共用) ===
+//
+// 类别 D「GICD MMIO 寄存器访问」(`gicd_read` / `gicd_write` / `gicd_write64`):
+// 地址 = `GICD_BASE.load(Acquire) + offset`, 转 `*const` / `*mut u32` (或 u64) 后走
+// `read_volatile` / `write_volatile` —— **不构造引用**, 故无别名与生命周期面;
+// volatile 保证编译器不合并/消除这些访问 (MMIO 有侧效应), 前后各一条 `dsb sy`
+// 保证屏障两侧的访存次序. 地址有效性 (MMU 已启用 + GICD 帧已映射) 与 offset
+// 合法性块内无法证明: `GICD_BASE` 是 `set_bases` 写入的高半区别名
+// (`KERNEL_BASE + dist_pa`) 或初值 QEMU virt `0xFFFF_0000_0800_0000`, 映射由引导期
+// 页表装配完成, 一律由各 fn `# Safety` 段作为调用方义务传入. 对齐面: GICD 帧基址
+// 4 KiB 对齐, 本文件全部 offset 为 4 的倍数 (64 位 IROUTER 为 8 的倍数) ⇒ u32/u64
+// 访问自然对齐. 写 GICD 改变中断投递语义 (分组/优先级/使能/路由), 其正确性属
+// 调用时序职责, 不是本类别能保证的.
+//
+// 类别 R「GICR 帧 MMIO 寄存器访问」(`gicr_read_at` / `gicr_write_at` /
+// `gicr_read64_at`): 与类别 D 同构, 差别是 base **由调用方传入** (本核 RD 帧或 SGI
+// 帧的高半区别名, 由 `redist_frames` 按亲和值定位), 故"base 指向已映射、已唤醒且
+// 属本核的帧"这一义务比类别 D 更强 —— 命中他人帧会把本核 SGI/PPI 配置写到别的核
+// 上 (ISSUE-RT-002). 帧步长 `GICR_STRIDE` = 128 KiB、SGI 偏移 `GICR_SGI_OFFSET` =
+// 64 KiB, 本文件内调用的 offset 均取自 `GICR_*` 常量或按 PPI 计算的 4/8 倍数 ⇒
+// 自然对齐; `gicr_sgi_read` 是 pub 面, 其 offset 合法性由调用方契约传入.
+//
+// 类别 S「ICC_* 系统寄存器 MRS/MSR」: `icc_pmr_el1` / `icc_bpr1_el1` /
+// `icc_igrpen0_el1` / `icc_igrpen1_el1` / `icc_ctlr_el1` / `icc_iar1_el1` /
+// `icc_eoir1_el1` / `icc_dir_el1` 都是 EL1 特权系统寄存器, EL0 访问会 trap, 故
+// "在 EL1+ 执行"由调用方契约传入. asm 只用 `in(reg)` / `out(reg)`, **无指针解引用
+// 面**; 未声明 `options(...)` 属保守 (编译器假定可能访存/改标志), 不构成 UB.
+// 语义侧: 写 PMR/BPR/IGRPEN/EOImode 改变本核中断屏蔽与优先级行为; 读
+// `icc_iar1_el1` **不是纯读** —— 它同时 ACK 中断 (置 active、抬运行优先级), 必须
+// 与 `icc_eoir1_el1` 配对, 否则本核运行优先级永不下降.
+//
+// 类别 C「组合调用, 无新增不变量」: 块内只调上述 D/R/S 类 unsafe fn 与 `gic_logic`
+// 纯函数, 不新增指针或指令面, 契约由外层 fn `# Safety` 原样继承; 各处只补该处
+// 特有的次序/边界/读改写不变量.
+
 // ============================================================================
 // 寄存器读写辅助
 // ============================================================================
@@ -99,6 +134,10 @@ pub const FREG_RECOVERY_SGI: u32 = 7;
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn gicd_read(offset: u64) -> u32 {
+    // SAFETY: 类别 D. 本块只把 `GICD_BASE + offset` 转裸指针后 `read_volatile`
+    // 读一个 u32, 不构造引用; 前后 `dsb sy` 夹住该访问, 保证读到的是屏障之后的
+    // 设备状态. offset 由本文件调用点取自 `GICD_*` 常量或按 INTID 计算的 4 字节
+    // 倍数寄存器索引; 映射与 MMU 前提由外层 fn `# Safety` 传入.
     unsafe {
         core::arch::asm!("dsb sy");
         let val = read_volatile((GICD_BASE.load(Ordering::Acquire) + offset) as *const u32);
@@ -110,6 +149,10 @@ unsafe fn gicd_read(offset: u64) -> u32 {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn gicd_write(offset: u64, val: u32) {
+    // SAFETY: 类别 D. 与 `gicd_read` 同址同对齐, 差别是 `write_volatile` **写设备
+    // 状态**: 写 CTLR/IGROUPR/IPRIORITYR/ISENABLER 会改变中断分组、优先级与投递,
+    // 故调用点须自行保证次序 (如 CTLR 写后等 RWP 归零再写 ARE). 块内不构造引用,
+    // volatile 写不被优化消除; 映射前提由外层 fn `# Safety` 传入.
     unsafe {
         core::arch::asm!("dsb sy");
         write_volatile(
@@ -123,6 +166,9 @@ unsafe fn gicd_write(offset: u64, val: u32) {
 #[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
 unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
+    // SAFETY: 类别 R. base 由调用方传入 (本核 RD 或 SGI 帧高半区别名), 块内无法
+    // 证明它已映射/已唤醒/属本核 —— 该义务由外层 fn `# Safety` 传入. 本块只
+    // `read_volatile` 一个 u32, 不构造引用; `dsb sy` 前后夹住访问.
     unsafe {
         core::arch::asm!("dsb sy");
         let val = read_volatile((base + offset) as *const u32);
@@ -134,6 +180,10 @@ unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
 #[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
 unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
+    // SAFETY: 类别 R. 同 `gicr_read_at` 的 base 义务; 本块 `write_volatile` 写
+    // SGI/PPI 私有状态 (WAKER 唤醒、IGROUPR0 分组、IPRIORITYR 优先级、ICFGR1
+    // 触发模式、ISENABLER0 使能), 只影响 base 所属那一核, 故 base 定位错误即
+    // "把本核配置写到他人核上". 块内不构造引用.
     unsafe {
         core::arch::asm!("dsb sy");
         write_volatile((base + offset) as *mut u32, val);
@@ -144,6 +194,10 @@ unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
 #[inline]
 // SAFETY: 调用方保证 base 指向已映射的 GICR 帧, 且 base+offset 处为 64 位 (8 字节对齐) 寄存器。
 unsafe fn gicr_read64_at(base: u64, offset: u64) -> u64 {
+    // SAFETY: 类别 R. 唯一用途是读 `GICR_TYPER` (offset 0x0008, 8 字节对齐) 取
+    // 亲和值与 Last 位; 64 位 `read_volatile` 要求 base+offset 8 字节对齐, 由
+    // GICR 帧 64 KiB 对齐 + 该 offset 保证. base 有效性与本核归属仍由调用方契约
+    // 传入, 块内不构造引用.
     unsafe {
         core::arch::asm!("dsb sy");
         let val = read_volatile((base + offset) as *const u64);
@@ -172,6 +226,12 @@ unsafe fn gicr_read64_at(base: u64, offset: u64) -> u64 {
 ///
 /// 需确保 GICR 区域 (含扫描范围内全部帧) 已映射到内核地址空间。
 unsafe fn redist_frames() -> Result<(u64, u64), &'static str> {
+    // SAFETY: 类别 C + R. 块内只调 `gicr_read64_at` 与 `gic_logic` 纯函数. 扫描以
+    // `REDIST_SCAN_MAX_FRAMES` (1024) 为上界、遇 `GICR_TYPER.Last` 即停, 故最坏会
+    // 触到 base + 128 KiB * 1023 的帧 —— 映射面须覆盖**整个扫描范围**而非仅命中
+    // 帧, 这一点由本 fn `# Safety` 传入. 未命中即 `Err` (fail-closed), 不回退线性
+    // 推算; 返回的 rd/sgi 是同一帧相隔 64 KiB 的两个基址, 后续写入均落在本核
+    // 私有状态上.
     unsafe {
         let base = GICR_BASE.load(Ordering::Acquire);
         let target = crate::arch!(cpu_id());
@@ -216,6 +276,12 @@ pub unsafe fn gicr_sgi_read(offset: u64) -> u32 {
 ///
 /// 调用前需确保 `GICD_BASE` (0x08000000) 已正确映射，MMU 已启用。
 pub unsafe fn init_distributor() -> Result<(), &'static str> {
+    // SAFETY: 类别 C + D. 块内全是 `gicd_read` / `gicd_write` / `wait_ctlr_rwp`
+    // 与纯算术, 无新增指针面. 次序不可颠倒: ARE 位仅在所有 Group 使能位为 0 时
+    // 可写, 故先写 CTLR=0 → 等 RWP → 写 ARE → 等 RWP → 最后置 Group0/Group1NS,
+    // 每步之间由 `wait_ctlr_rwp` 兜住 (超限即 `Err` 向上传递). IGROUPR 只覆盖
+    // INTID 0..63 (2 个 32 位字), 更高 INTID 的分组由
+    // `configure_and_enable_device_spi` 按其所在字补写.
     unsafe {
         // 0. 读取 GIC 诊断信息
         let typer = gicd_read(GICD_TYPER);
@@ -285,6 +351,9 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
 ///
 /// 需确保 GICD MMIO 已映射。
 unsafe fn wait_ctlr_rwp() -> Result<(), &'static str> {
+    // SAFETY: 类别 C + D. 块内只 `gicd_read(GICD_CTLR)` 自旋 + `spin_loop`, 无新增
+    // 指针面. 自旋有界: `ctlr_rwp_timed_out` 超限即返回 `Err`, 不会在硬件不响应时
+    // 无限挂住启动路径. 读 CTLR 无侧效应, 不改变 Distributor 状态.
     unsafe {
         let mut wait_count: u32 = 0;
         while gicd_read(GICD_CTLR) & gic_logic::GICD_CTLR_RWP_MASK != 0 {
@@ -316,6 +385,13 @@ unsafe fn wait_ctlr_rwp() -> Result<(), &'static str> {
 ///
 /// 调用前需确保 Distributor 已初始化，`rd` / `sgi` 指向已映射的 GICR 帧。
 pub unsafe fn init_redistributor(rd: u64, sgi: u64) -> Result<(), &'static str> {
+    // SAFETY: 类别 C + R. rd/sgi 由 `redist_frames` 按本核亲和值定位 (唯一调用点
+    // `init_per_cpu`), 块内只调 `gicr_read_at` / `gicr_write_at`. 次序: 清
+    // WAKER.ProcessSleep 后必须等 ChildrenAsleep 归零才可访问 SGI 帧寄存器,
+    // 否则写落空; 等待有界 (`wake_timed_out` 超限返回 `Err`). ICFGR1 与
+    // IPRIORITYR 是**读改写**, 只动 Timer PPI (30) 的位域, 保留同字其他 PPI 配置;
+    // 该 RMW 非原子, 但 rd/sgi 是本核私有帧且只在该核自身初始化路径调用,
+    // 无并发写者.
     unsafe {
         // 1. 唤醒 redistributor
         let waker = gicr_read_at(rd, GICR_WAKER);
@@ -371,6 +447,11 @@ pub unsafe fn init_redistributor(rd: u64, sgi: u64) -> Result<(), &'static str> 
 ///
 /// 仅在 EL1 或更高特权级调用，需确保 Redistributor 已初始化。
 pub unsafe fn init_cpu_interface() {
+    // SAFETY: 类别 S. 六条 MRS/MSR 全是 ICC_* EL1 系统寄存器, 只用 in(reg) /
+    // out(reg), 无指针解引用面; EL1 前提由本 fn `# Safety` 传入. CTLR 是读改写:
+    // 只清 bit1 (EOImode) 保留其余位, EOImode=0 ⇒ `icc_eoir1_el1` 一次完成降
+    // 优先级与去激活, 故 IRQ 路径只需 `end_of_interrupt`. 写 IGRPEN0/1 即刻开放
+    // 本核中断投递, 调用点须在 Redistributor 唤醒与分组配置完成之后.
     unsafe {
         // 设置中断优先级掩码 (PMR): 允许所有优先级
         core::arch::asm!("msr icc_pmr_el1, {}", in(reg) 0xFFu64);
@@ -397,6 +478,10 @@ pub unsafe fn init_cpu_interface() {
 ///
 /// 调用前需确保 CPU Interface 已初始化，`sgi` 指向已映射的 GICR SGI 帧。
 pub unsafe fn enable_timer_ppi(sgi: u64) {
+    // SAFETY: 类别 C + R. 块内只一次 `gicr_write_at(sgi, GICR_ISENABLER0, bit)`.
+    // `TIMER_PPI` = 30 (gic_logic 单源), bit = 1 << (30 % 32) 落在 PPI 段;
+    // ISENABLER0 是**写 1 置位**寄存器, 不需读改写, 故不覆盖同字其他使能位.
+    // sgi 的本核归属与映射由本 fn `# Safety` 传入.
     unsafe {
         let bit = 1u32 << (gic_logic::TIMER_PPI % 32);
         gicr_write_at(sgi, GICR_ISENABLER0, bit);
@@ -412,6 +497,11 @@ pub unsafe fn enable_timer_ppi(sgi: u64) {
 ///
 /// 调用前需确保 CPU Interface 已初始化，`sgi` 指向已映射的 GICR SGI 帧。
 pub unsafe fn enable_sgi(sgi: u64, intid: u32) {
+    // SAFETY: 类别 C + R. 同 `enable_timer_ppi` 的写 1 置位形态. `intid % 32`
+    // 只保证移位不越 u32 边界 (≤31), **不校验 intid < 16**: 传入 16..31 会落到
+    // PPI 使能位而非 SGI. 调用点一律用本模块 `TLB_SHOOTDOWN_SGI` /
+    // `RESCHEDULE_SGI` / `FREG_RECOVERY_SGI` 常量 (13/14/7), 该范围义务由本 fn
+    // `# Safety` 与常量单源共同兜住.
     unsafe {
         gicr_write_at(sgi, GICR_ISENABLER0, 1u32 << (intid % 32));
     }
@@ -464,6 +554,11 @@ pub fn deactivate(intid: u32) {
 ///
 /// 仅在目标 CPU 上调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
 pub unsafe fn init_per_cpu() -> Result<(), &'static str> {
+    // SAFETY: 类别 C. 块内只调 `redist_frames` / `init_redistributor` /
+    // `init_cpu_interface` / `enable_timer_ppi` / `enable_sgi`, 无新增指针面.
+    // 次序即依赖链: 先定位本核帧 (失败即 `?` 返回, 不触碰任何寄存器) → 唤醒并
+    // 配置 Redistributor → 开放 CPU Interface → 使能 Timer PPI 与三路内核 SGI.
+    // 全部帧基址来自同一次 `redist_frames`, 故不存在跨核错配.
     unsafe {
         let (rd, sgi) = redist_frames()?;
         init_redistributor(rd, sgi)?;
@@ -495,6 +590,10 @@ pub unsafe fn init_per_cpu() -> Result<(), &'static str> {
 ///
 /// 仅在启动阶段调用，需确保 MMU 已启用且 GIC MMIO 区域已映射。
 pub unsafe fn init() -> Result<(), &'static str> {
+    // SAFETY: 类别 C. 块内只 `init_distributor` → `init_per_cpu` →
+    // `verify_post_conditions` 三步, 无新增指针面. 次序不可颠倒: Distributor
+    // 未使能前 per-CPU 配置不会投递中断; 校验放在全部写之后, 任一后置条件不符
+    // 即 `Err` 交 boot 入口 fail-fast, 把静默挂起转成确定性报错.
     unsafe {
         init_distributor()?;
         init_per_cpu()?;
@@ -512,6 +611,13 @@ pub unsafe fn init() -> Result<(), &'static str> {
 /// 仅在 [`init`] 内部、全部配置写操作完成后调用;
 /// 需确保 MMU 已启用且 GIC MMIO 区域已映射。
 unsafe fn verify_post_conditions() -> Result<(), &'static str> {
+    // SAFETY: 类别 C + D + R + S. 三个 MMIO 回读 (`gicd_read` / `gicr_read_at` /
+    // `gicr_sgi_read`) 加一条 `mrs icc_igrpen1_el1`, 全是**只读**且不构造引用;
+    // 有 ACK 侧效应的是读 IAR, 本处不读 IAR. 判定交
+    // `gic_logic::verify_post_conditions` 纯函数 (host 侧逐支路实证). 回读基址取
+    // `GICR_BASE` / `GICR_SGI_BASE` 两个 static (启动核帧别名), 与配置时
+    // `redist_frames` 定位的帧是否同一由调用时序保证 —— 本函数 private, 唯一
+    // 调用点是 `init`, 在启动核执行.
     unsafe {
         // 逐项回读关键寄存器实测值, 判定交由架构中立纯逻辑 [`gic_logic`] ——
         // 该判据在 host 侧被逐支路单元测试 (ISSUE-RT-002 确定性实证), 与本处同源.
@@ -552,6 +658,10 @@ pub fn is_valid_irq(irq: u32) -> bool {
 ///
 /// 调用前需确保 Distributor 已初始化。
 pub unsafe fn enable_spi(irq: u32) {
+    // SAFETY: 类别 C + D. 块内只 `gicd_write` 一次. `is_spi` 只判下界 (>= 32),
+    // **不判上界** (`is_valid_irq` 未在此调用), 故 `GICD_ISENABLER + (irq/32)*4`
+    // 落在 GICD 帧内这一前提由调用方传入合法 INTID 兜住. ISENABLER 是写 1 置位
+    // 寄存器, 不需读改写, 不覆盖同字其他 SPI 的使能位.
     unsafe {
         if !is_spi(irq) {
             return;
@@ -568,6 +678,9 @@ pub unsafe fn enable_spi(irq: u32) {
 ///
 /// 调用前需确保 Distributor 已初始化。
 pub unsafe fn disable_spi(irq: u32) {
+    // SAFETY: 类别 C + D. 同 `enable_spi` 的边界口径 (`is_spi` 只判下界). 目标
+    // 寄存器是 `GICD_ICENABLER` = ISENABLER 偏移 + 0x80 (0x0180 段), 写 1 **清**
+    // 对应使能位; 与 ISENABLER 同为写 1 生效形态, 故不需读改写.
     unsafe {
         if !is_spi(irq) {
             return;
@@ -585,6 +698,9 @@ pub unsafe fn disable_spi(irq: u32) {
 ///
 /// 调用前需确保 Distributor 已初始化。
 pub unsafe fn set_spi_pending(irq: u32) {
+    // SAFETY: 类别 C + D. 同 `enable_spi` 的边界口径. 写 `GICD_ISPENDR` 置 pending
+    // 会**真的触发一次中断投递** (软件触发 SPI), 属语义侧效应: 调用点须确保该
+    // INTID 已配置并注册 handler (见 `register_device_spi`). 块内不构造引用.
     unsafe {
         if !is_spi(irq) {
             return;
@@ -601,6 +717,11 @@ pub unsafe fn set_spi_pending(irq: u32) {
 ///
 /// 调用前需确保 Distributor 已初始化。
 pub unsafe fn configure_spi_level(irq: u32) {
+    // SAFETY: 类别 C + D. `gicd_read` → 位清 → `gicd_write` 的**读改写**, 非原子:
+    // 同字 (16 路 SPI) 内若有并发配置者会互相覆盖. 本文件调用点均在启动期单线程
+    // 注册路径 (`configure_and_enable_device_spi`), 无并发写者. shift =
+    // (irq % 16) * 2 ≤ 30, `3 << shift` 不越 u32 边界; 只清本路 2 位, 保留同字
+    // 其他 SPI 的触发模式.
     unsafe {
         if !is_spi(irq) {
             return;
@@ -619,6 +740,9 @@ pub unsafe fn configure_spi_level(irq: u32) {
 ///
 /// 调用前需确保 Distributor 已初始化。
 pub unsafe fn configure_spi_edge(irq: u32) {
+    // SAFETY: 类别 C + D. 同 `configure_spi_level` 的读改写口径与并发前提.
+    // 差别是 `val | (1 << shift)` 只置本路 bit0 (边沿触发), 不动 bit1; shift ≤ 30
+    // 故移位不越 u32 边界. 块内无新增指针面.
     unsafe {
         if !is_spi(irq) {
             return;
@@ -670,6 +794,9 @@ static DEVICE_IRQ_HANDLERS: RacyCell<DeviceIrqTable> = RacyCell::new([None; DEVI
 /// 调用前需确保 GICD MMIO 已映射。
 #[inline]
 unsafe fn gicd_write64(offset: u64, val: u64) {
+    // SAFETY: 类别 D. 64 位形态, 唯一调用点 `route_spi_to_cpu0` 传
+    // `GICD_IROUTER + irq * 8` ⇒ 8 字节对齐 (u64 volatile 写的对齐前提). 其余同
+    // `gicd_write`: 不构造引用, `dsb sy` 前后夹住, 映射由 `# Safety` 传入.
     unsafe {
         core::arch::asm!("dsb sy");
         write_volatile(
@@ -689,6 +816,10 @@ unsafe fn gicd_write64(offset: u64, val: u64) {
 ///
 /// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
 unsafe fn route_spi_to_cpu0(irq: u32) {
+    // SAFETY: 类别 C + D. 块内只一次 `gicd_write64(GICD_IROUTER + irq*8, 0)`.
+    // 写 0 = Aff3:Aff2:Aff1:Aff0 全 0 ⇒ 路由到亲和值 0 的核 (CPU0); 该形态以
+    // ARE=1 为前提, 由 `init_distributor` 显式置位并经 `verify_post_conditions`
+    // fail-fast 校验. irq 上界同 `enable_spi` 口径, 由调用方传入合法 INTID.
     unsafe {
         // SIMPLIFIED: SPI 亲和路由固定为 CPU0 (硬编码); 影响: 次核上线后 SPI 仍只
         //   投递至 CPU0; 需扩展: 引入多核 SPI 亲和路由时按目标 CPU 计算 Affinity。
@@ -704,6 +835,12 @@ unsafe fn route_spi_to_cpu0(irq: u32) {
 ///
 /// 调用前需确保 Distributor 已初始化且 GICD MMIO 已映射。
 unsafe fn configure_and_enable_device_spi(irq: u32) {
+    // SAFETY: 类别 C + D. 块内全是 GICD 读改写与 `configure_spi_level` /
+    // `route_spi_to_cpu0` / `enable_spi` 组合, 无新增指针面. 次序: 先归 Group 1
+    // (否则 INTID >= 64 默认落 Group 0 → FIQ, 而 FIQ handler 只是桩) → 优先级
+    // → 触发模式 → 路由 → **最后使能**, 避免配置未完成即投递中断. IGROUPR 与
+    // IPRIORITYR 两处读改写只动本路位域, 保留同字其他 SPI 配置; 调用点
+    // `register_device_spi` 在启动期单线程执行, 故 RMW 无并发写者.
     unsafe {
         // 1. 分组 Group 1 (Non-secure, IRQ 信号). init_distributor 仅初始化了
         //    int 0..63 的 IGROUPR, INTID >= 64 的 SPI 默认落 Group 0 (FIQ),

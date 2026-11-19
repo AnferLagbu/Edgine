@@ -249,6 +249,18 @@ struct MultibootPtr(*const u8);
 // SAFETY: MultibootPtr 包装一个指向启动信息数据的裸指针, 启动早期写入
 // 一次, 之后只读. 访问受 MULTIBOOT_INFO_PTR Mutex 保护.
 unsafe impl Send for MultibootPtr {}
+// SAFETY: 跨核共享 `&MultibootPtr` 只暴露 `.0` 这个 Copy 裸指针**值**, 不暴露对指向
+// 数据的引用, 故 Sync 的风险面全在"指向的数据是否会被并发改写":
+// ① 唯一写入点 `boot_set_multiboot_info` 由汇编引导入口在跳入内核前调用一次 (单核,
+//    AP 未上电), 此后所有访问都经 `MULTIBOOT_INFO_PTR.lock()` 只读取值;
+//    `IrqSpinLock` 持锁期间本核关中断 ⇒ 与中断处理器再入同一锁互斥.
+// ② 指向的 MB2 信息块由引导器装入并自此只读, 且经 `multiboot2_info_region()` 进 PMM
+//    早期预留 (`lib.rs` 的 `pmm_early_reserve(base, size, "mb2-info")`) ⇒ buddy 不会
+//    把该区当空闲页分配出去, 运行期无别名写者 (ACPI 发现面在 PMM 建立之后仍要读它).
+// 类型自身不携带有效性/生命周期证明: 未登记时 `.0` 为 null, 消费者须自判 (如
+// `multiboot2_info_region` 的 `is_null` 分支). 附注: `IrqSpinLock<T>: Sync` 的界只要求
+// `T: Send` (`sync/irq_spinlock.rs`), 故本 Sync 断言不是该 static 的类型必需项, 而是
+// 对同一事实的显式声明.
 unsafe impl Sync for MultibootPtr {}
 
 static BOOT_INFO: OnceLock<BootInfo> = OnceLock::new();
@@ -464,6 +476,18 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
                 // SAFETY: tag_ptr 指向 MB2 标签表内有效 tag; +8/+12 (mod_start/mod_end,
                 // 32 位) 为该 tag 载荷, 标签表在启动期只读.
                 let mod_start = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
+                // SAFETY: MB2 tag 3 (引导模块) 的载荷布局 = mod_start@+8 / mod_end@+12
+                // (均 32 位物理地址, mod_end 是**开区间上界**), +16 起为 NUL 结尾的
+                // 命令行字符串. 本行只读 +12 处的 u32, 经裸指针 `read_unaligned` 取值
+                // 而不构造引用 ⇒ 无别名面, 也不对载荷作对齐假设.
+                // 越界防护的真实边界: 循环条件 `offset + 8 <= end` 只证明 8 字节标签头
+                // 在信息块内, **本函数不校验 `tag_size >= 16`** —— 载荷 +12..+16 的合法性
+                // 由「引导器交付格式正确的 MB2 表」这一外部契约承担; 截断的 tag 3 会读到
+                // 下一标签的字节 (已知局限, 登记不处置).
+                // 取值语义: `mod_end.saturating_sub(mod_start)` 使倒置/空区间得 0 而被
+                // 跳过, `mod_start != 0` 排除空指针, `initrd.is_none()` 只取首模块
+                // (initrd 约定为第一个 boot module). 结果作为物理区间交给 BootInfo;
+                // D4-h 早期搬移后消费者须经 `initrd_blob()` 取当前有效区.
                 let mod_end = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
                 let sz = mod_end.saturating_sub(mod_start);
                 if initrd.is_none() && sz > 0 && mod_start != 0 {

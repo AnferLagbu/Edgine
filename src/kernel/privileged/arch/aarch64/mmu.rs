@@ -69,6 +69,33 @@ static mut L1_IDMAP: AlignedPageTable = AlignedPageTable([0; 512]);
 /// - **对齐**: 4KB 对齐 (ARM MMU 硬件要求)
 static mut L2_DEVICE: AlignedPageTable = AlignedPageTable([0; 512]);
 
+// === unsafe 依据单源 (本文件页表写入与翻译控制寄存器位点共用) ===
+//
+// 类别 T「静态引导页表写入」: `L0_TABLE` / `L1_IDMAP` / `L2_DEVICE` 是 BSS 中的
+// `static mut AlignedPageTable`, `#[repr(align(4096))]` 满足硬件对页表 4KB 对齐的要求;
+// 字段 `.0` 位于偏移 0 ⇒ `[u64; 512]` 恰 4096 字节, 故 `write_bytes(..., 0, 512)` 与
+// `iter_mut()` 都落在该数组内, 无越界面. 唯一写者是 `init()`: 它在 MMU 启用前、单核
+// 阶段执行 (次核要到 `interrupt_late_init` / `secondary_cpu_bringup` 才由 `smp_init::init`
+// 拉起), 因此既无并发写, 也无硬件 walker 与软件写同时消费同一张表; `init_kernel_ttbr1`
+// 与 `alloc_user_page_table` 只经 `&raw const` 读. 取址一律 `&raw mut` / `&raw const`
+// 而非 `&` / `&mut`, 避免对 `static mut` 构造引用 (`static_mut_refs`). 表内条目存的是
+// **下一级表的物理地址** (硬件按 PA 遍历), 而三张表链接于高半区 (VMA = PA + KERNEL_BASE,
+// aarch64 的 KERNEL_BASE = 0xFFFF_0000_0000_0000), 故每个表地址都必须过 `mm::virt_to_phys`
+// —— 它是纯 `virt - KERNEL_BASE` 减法, 不查页表, 因而能在 MMU 尚未启用时使用, 但只对
+// 真正链接在高半区的地址成立.
+//
+// 类别 R「EL1 翻译控制寄存器 MSR + ISB」: `msr ttbr0_el1 / ttbr1_el1 / tcr_el1 /
+// mair_el1 / sctlr_el1, Xt` 都是 EL1 系统寄存器 (EL0 访问会陷入), 操作数只有 `in(reg)` /
+// `out(reg)` ⇒ 无指针解引用面; 未声明 `options(...)` 属保守 (编译器假定可能访存), 不构成
+// UB. 每次写后必须 `isb`: 翻译控制类寄存器的写入需要上下文同步事件才对后续取指/访存生效,
+// 否则流水线可能继续按旧翻译体制执行. 值的合法性由调用方承担 —— TTBR 必须是 4KB 对齐的
+// 表物理地址且该表已填好, TCR/MAIR 的字段编码必须与表的粒度/层级一致.
+//
+// 类别 B「屏障 + TLBI 序列」: 前置 `dsb sy` 等待此前所有显式访存 (含页表条目写入) 完成,
+// `tlbi vmalle1` 失效当前 VMID 下 EL1&0 的全部 stage-1 TLB 条目, 后置 `dsb sy` 等待失效
+// 完成, `isb` 同步上下文使后续访问重新走表. 这些指令本身无内存操作数, 但会改变翻译缓存,
+// 故次序不可省: 缺前置 DSB 会让 walker 读到陈旧表项, 缺后置 DSB/ISB 会让失效尚未生效.
+
 // ============================================================================
 // MMU 初始化
 // ============================================================================
@@ -92,6 +119,19 @@ static mut L2_DEVICE: AlignedPageTable = AlignedPageTable([0; 512]);
 /// - 页表所在物理内存 (BSS) 可访问
 /// - 在设置 TTBR0/TTBR1 前已确保旧映射一致性
 pub unsafe fn init() {
+    // SAFETY: 类别 T + R + B. 本块是引导页表的唯一写入点, 由 `boot/aarch64/entry.rs` 的
+    // `entry` 第 2 步调用 (在 UART 之前 —— UART 走高半区别名, MMU 未启用时该地址不可达),
+    // 此时单核、MMU 关闭、三张表尚无硬件消费者. 映射形状: L0[0] → L1_IDMAP; L1[0] →
+    // L2_DEVICE 的 512 个 2MB **Device** 块覆盖 [0, 0x4000_0000) —— QEMU virt 低 1GB 无
+    // DRAM (GIC@0x0800_0000 / UART@0x0900_0000), 以 Normal cacheable 属性访问 MMIO 会
+    // 数据异常/挂死; L1[1] 是 PA 0x4000_0000 起的 1GB Normal 块, 覆盖 DRAM (内核
+    // @0x4008_0000). 全部条目 `PT_AP_EL1_RW` ⇒ EL0 经本表不可访问. TCR: T0SZ=T1SZ=16 ⇒
+    // 两半区都是 48-bit VA, 硬件**从 level 0 起**遍历 (故 TTBR1 也必须是 4 级根, 见
+    // `init_kernel_ttbr1`); TG1=0b10 为 4KB 粒度, TG0=00 是复位值故不出现在或运算中.
+    // MAIR: Attr0=0x44 (Device-nGnRnE) 对应 `PT_ATTR_DEVICE` 的 AttrIndx=0; Attr4=0xFF
+    // (Normal WBWA) 对应 `PT_ATTR_NORMAL` = (0b0100<<2)|(0b0100<<8) 的 AttrIndx=4;
+    // Attr1=0xFF 由 KPTI trampoline 表用于 `.vectors` 与全局量页. 次序: 表写完 →
+    // dsb/isb → tlbi → dsb/isb → `enable_mmu` → `init_kernel_ttbr1`.
     unsafe {
         // 清零页表 (经 &raw mut 取裸指针, 避免对 static mut 取引用触发 static_mut_refs)
         ptr::write_bytes((&raw mut L0_TABLE.0).cast::<u64>(), 0, 512);
@@ -189,6 +229,12 @@ pub unsafe fn init() {
 /// docs/plan/archive/kpti-complete-project.md。
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn init_kernel_ttbr1() {
+    // SAFETY: 类别 T (只读 `&raw const`) + R + B. 与 TTBR0 共用同一张 4 级根: 高半区
+    // 别名 VA = KERNEL_BASE + PA 把 PA 放在 VA[38:0], VA[47:39] 恒 0 ⇒ L0 索引恒为 0,
+    // L1/L2/L3 索引与恒等映射完全相同, 故别名与恒等走同一条遍历路径. 本块的 TLBI 不与
+    // `init()` 末尾那次重复: 从 `enable_mmu` 到本次 MSR 之间, CPU 可能以 TTBR1_EL1 旧值
+    // 0 投机翻译高半区地址并缓存失败条目, 不失效就会在后续高半区访问命中过期条目而
+    // Translation fault. `set_ttbr1` 自带 isb, 此处再补 dsb/tlbi/dsb/isb 覆盖该窗口.
     unsafe {
         // 与 TTBR0 共用 4 级根: 高半区别名与恒等映射的各级索引一致, 无需独立表。
         // TTBR 承载表物理地址, 故经 virt_to_phys 转换 (表链接于高半区)。
@@ -223,6 +269,11 @@ pub fn alloc_user_page_table() -> u64 {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_ttbr0(val: u64) {
+    // SAFETY: 类别 R. 写低半区根表基址; 唯一调用方 `init()` 传入
+    // `virt_to_phys(&raw const L0_TABLE.0)` —— 4KB 对齐的 4 级表物理地址, 且该表在本块
+    // 之前已填好并经过 dsb/tlbi. 写入值高 16 位为 0 (TCR_EL1.A1 未置位 ⇒ ASID 取自
+    // TTBR0_EL1[63:48], 此处即 ASID 0). 运行期每进程根表切换不经本 setter: KPTI
+    // trampoline 与 `MmuArch::write_page_table_base` 各有自己的 asm.
     unsafe {
         core::arch::asm!("msr ttbr0_el1, {}", in(reg) val);
         core::arch::asm!("isb");
@@ -232,6 +283,9 @@ unsafe fn set_ttbr0(val: u64) {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_ttbr1(val: u64) {
+    // SAFETY: 类别 R. 写高半区根表基址; 唯一调用方 `init_kernel_ttbr1()` 传入与 TTBR0
+    // 相同的 `L0_TABLE` 物理地址 (共用依据见该函数). T1SZ=16 ⇒ 硬件从 level 0 起遍历,
+    // 故这里必须是 4 级根而非 L1 形态表 (历史缺陷见该函数文档段).
     unsafe {
         core::arch::asm!("msr ttbr1_el1, {}", in(reg) val);
         core::arch::asm!("isb");
@@ -241,6 +295,10 @@ unsafe fn set_ttbr1(val: u64) {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_tcr(val: u64) {
+    // SAFETY: 类别 R. 写翻译控制寄存器; 唯一调用方 `init()` 传入的 tcr 与本文件页表形状
+    // 绑定: T0SZ/T1SZ=16 (48-bit VA, 4 级) + TG1=4KB + SH0/SH1=Inner Shareable +
+    // ORGN0/1 与 IRGN0/1=Normal WBWA. 改这些字段而不改表结构会让 walker 按错误层级/粒度
+    // 消费表; 本 setter 不校验 val, 一致性由调用方保证.
     unsafe {
         core::arch::asm!("msr tcr_el1, {}", in(reg) val);
         core::arch::asm!("isb");
@@ -250,6 +308,10 @@ unsafe fn set_tcr(val: u64) {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn set_mair(val: u64) {
+    // SAFETY: 类别 R. 写内存属性间接寄存器; 唯一调用方 `init()` 传入的 mair 定义了页表
+    // 条目 AttrIndx 所索引的属性槽 (0=Device 0x44, 1=Normal 0xFF 供 KPTI trampoline,
+    // 4=Normal 0xFF). 未写入的槽保持 0x00, 硬件按 Device-nGnRnE 解释, 故新增 AttrIndx
+    // 必须同批扩 mair, 否则该索引的映射属性静默变成 Device.
     unsafe {
         core::arch::asm!("msr mair_el1, {}", in(reg) val);
         core::arch::asm!("isb");
@@ -263,6 +325,12 @@ unsafe fn set_mair(val: u64) {
 #[inline(never)]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn enable_mmu() {
+    // SAFETY: 类别 R + B. 读-改-写 SCTLR_EL1 的 M(bit0) / C(bit2) / I(bit12) 三位:
+    // 前置 dsb 保证页表与 TCR/MAIR/TTBR 写入对 walker 可见, 后置 isb 使新翻译体制对后续
+    // 取指生效 (ARM ARM D5.10.2). 三位一并置起是 P3.B/F-11 的要求 —— 按 ARM ARM 建议,
+    // 启用 MMU 时同时启用 C/I 以避免投机访问绕过 MMU. `out("x0") _` 显式声明 x0 被本 asm
+    // 破坏, 编译器因此不会把活跃值分配进 x0; 1 / 4 / (1<<12) 分三步 orr 是因为 LLVM 内联
+    // 汇编不接受复杂立即数表达式. 唯一调用方是 `init()`, 在表与 TCR/MAIR 就位之后.
     unsafe {
         // ARM ARM D5.10.2: 启用 MMU 前需要 DSB 确保所有之前操作可见,
         // 启用后需要 ISB 使 MMU 对后续指令生效.

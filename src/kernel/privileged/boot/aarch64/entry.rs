@@ -44,6 +44,31 @@ unsafe extern "C" {
 /// - BSS 段可写
 /// - 运行在 EL1（内核特权级）
 pub unsafe extern "C" fn entry() -> ! {
+    // SAFETY: 本块是 aarch64 内核唯一的 Rust 引导入口, 全部前提由 `boot/aarch64/start.S`
+    // 的 `el1_entry` 在跳入前建立 (末步 `ldr x9, =entry; br x9` —— 高半区 VMA 超出 `bl`
+    // 的 ±128MB 可达范围, 故用绝对跳转):
+    // ① 特权级/中断/并发: EL1h, SPSR_EL2 = 0x3C5 ⇒ DAIF 四位全屏蔽, 本块全程无中断;
+    //    AP 尚未由 PSCI CPU_ON 上电 ⇒ 单核独占, 块内所有 static 写入无竞争者.
+    // ② 栈: SP = `_boot_stack_top` (`.bootbss`, VMA == PA), 位于低半区且**不在**
+    //    `clear_bss` 的清零区间内, 故第 1 步不会毁掉正在使用的栈.
+    // ③ MMU **已启用**: start.S 4.3–4.7 已建 `_boot_l0/l1/l2` 三张引导页表 (L1[0] →
+    //    512×2MB Device 块覆盖 [0, 0x4000_0000), L1[1] → PA 0x4000_0000 起的 1GB
+    //    Normal 块), MAIR = 0x00FF_0000_FF44 / TCR = 0xB510_3510 与 `arch::mmu::init()`
+    //    同值, TTBR0 = TTBR1 = `_boot_l0` (高半区别名的 VA[47:39] 恒 0 ⇒ 同一张 L0
+    //    服务两半区). 故第 2 步 `mmu::init()` 是**同值重建**到 `.bss` 内的静态
+    //    AlignedPageTable 并重装 TTBR, 不是首次启用, 中间不存在未映射窗口; 高半区
+    //    `.bss` 与 UART 别名此刻已可访可写.
+    // ④ x0 已不再是 DTB 指针: `_start` 首条指令即把 x0 存入 `_fdt_addr`, 故第 0 步
+    //    asm 以 `out("x0") _` 声明 x0 被改写是安全的; DTB 改经 `fdt_addr_ptr` 高半区
+    //    别名读取 (`apply_fdt_overrides`). 第 0 步的 CPACR_EL1.FPEN = 0b11 并非冗余:
+    //    引导器直接把 CPU 交到 EL1 时 start.S 走 `beq el1_entry` 跳过 `el2_entry`,
+    //    而 FPEN 只在后者里设过.
+    // 次序硬约束 (逐条见下方各步注释): clear_bss 先于 write_boot_stack_canary (否则
+    // canary 被清零覆盖); mmu::init 先于 UART (UART 走 TTBR1 高半区别名);
+    // apply_fdt_overrides 在 MMU 之后、UART 之前; exception::init 先于 gic::init
+    // (开中断前须先装 VBAR). canary 校验失败走 spin_loop 停机、gic::init 返回 Err 走
+    // halt 停机, 均 fail-fast 不带病继续. 末尾 `kernel_init` 是 glue crate 的外部符号
+    // (P-71), 正常路径不返回.
     unsafe {
         // 0. 启用 FP/SIMD (编译器会生成 NEON 指令如 movi v0.2d)
         //    CPACR_EL1.FPEN[21:20] = 0b11 → 不 trap FP/SIMD
@@ -218,6 +243,21 @@ unsafe extern "C" {
 
 // SAFETY: `clear_bss` 是有效的 C ABI 函数指针; 参数列表与声明一致
 unsafe fn clear_bss() {
+    // SAFETY: `__bss_start` / `_kernel_end` 是 `privileged/link/aarch64.ld` 定义的链接
+    // 脚本符号 (前者在 `.bss` 段起点, 后者在段尾 ALIGN(4096) 之后), 声明为 `u8` 只为
+    // 取址 —— 本函数只用二者地址算区间, 从不解引用那个 u8 本身, 故无类型有效性面,
+    // u8 对齐恒 1 亦无对齐面. 用 `&raw mut` / `&raw const` 而非 `&` / `&mut`: 既避免
+    // 对 `static mut` 构造引用 (clippy::static_mut_refs), 也因这里只需要地址.
+    // 区间语义: [__bss_start, _kernel_end) = `.bss` + `.bss.*` + COMMON + 末尾至多
+    // 4095 字节的页对齐填充, 全在内核镜像的高半区 VMA 内. 调用时 start.S 的引导页表
+    // 已把 PA [0x4000_0000, 0x8000_0000) 映为 Normal 可写块 (L1[1]), 高半区 VA = PA +
+    // 0xFFFF_0000_0000_0000 ⇒ `write_bytes` 的目的区间已映射且可写; 该物理区也不会被
+    // PMM 分配出去 (`pmm::mark_reserved_pages` 按 `kernel_end` 把镜像区整段置已用).
+    // **低半区 `.bootbss` 不在区间内** (其地址远低于 `__bss_start`): 正在使用的引导栈、
+    // `_fdt_addr` (DTB 指针)、`_ap_boot_info` (次核启动槽) 与三张引导页表因此存活,
+    // 清零不会自毁. `bss_start >= bss_end` 提前返回使 `size` 不会下溢 (链接脚本异常时
+    // 退化为空操作, 而非写一个巨大区间). 唯一调用点是 `entry()` 第 1 步, 单核引导期,
+    // 无并发写者.
     unsafe {
         let bss_start = &raw mut __bss_start;
         let bss_end = &raw const _kernel_end as usize;

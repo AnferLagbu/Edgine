@@ -1064,8 +1064,95 @@ page_fault 1 + swap 1；sync 5 = mutex 2 + atomic 1 + rcu 1 + seqlock 1。这正
 
 描述：清 arch 58（含 `aarch64/gic.rs` 23、`aarch64/mod.rs` 10、`aarch64/mmu.rs` 7）+ cpu 7 + idt 4 + boot 4。
 方案：同批 5a 四步。
-状态：[]
+状态：[X]
 详情：最大子批。aarch64 独占位点须以 **aarch64 腿**取数验证（74 处只在 arm 维可见，§2.5 A）。
+本批**不翻硬执法**（kernel 树尚未归零）。
+**施工结果（2026-11-19）**：73 处棘轮位点全清、本批新写理由**零占位**——arch 58 =
+aarch64 52（gic 23 + mod 10 + mmu 7 + uart 5 + exception 3 + smp_init 3 + context 1）+
+x86_64 6（smp_init 3 + gdt 2 + acpi 1）；cpu 7 = msr 6 + cpuid 1；idt 4 = table 3 + mod 1；
+boot 4 = aarch64/entry 2 + boot/mod 2（block 1 + **impl 1**，后者是 `unsafe impl Sync for
+MultibootPtr`，本批唯一的 impl 面位点）。16 个改动文件全部纯增注释，`git diff` 零删除行、
+零非注释新增行（一处误缩的 uart.rs 分隔线已复原）。
+方法照批 5a–5d：先读内核对应实装再落笔、重复形态单源化、落笔后 grep 核实全部引用名与具体
+断言。**单源化**落八段「unsafe 依据单源」：`aarch64/gic.rs` 类别 D（GICD MMIO）/ R（GICR
+按亲和定位帧）/ S（ICC_* MRS/MSR）/ C（组合）；`aarch64/mod.rs` I（DAIF 立即数映射）/
+W（WFI 提示）；`aarch64/mmu.rs` T（静态 AlignedPageTable 所有权）/ R（TTBR/TCR/MAIR/SCTLR
+MSR）/ B（TLBI 序列）；`aarch64/uart.rs` U（PL011 MMIO）/ C；`aarch64/exception.rs` V
+（VBAR/DAIFCLR）/ X（诊断兜底直写 UART）；`aarch64/smp_init.rs` H（次核启动槽握手）；
+`cpu/msr.rs` M（RDMSR/WRMSR）/ F（`cpu_read_msr` 出参写）/ W（宽范围合法性检查）；
+`idt/table.rs` P（8259A 端口 I/O）。单位点文件（context / acpi / gdt / x86_64 smp_init /
+idt mod / boot 两处 / cpuid）改写逐处内联长注释，不建单源段。
+**落笔前被核实推翻的四条草稿断言**（方法③的价值实例）：① 原稿写「packed 布局使 ready/done
+4 字节对齐」——实测偏移 38 / 46 ⇒ `0x802E` / `0x8036` 均 2 mod 4，**非对齐**，改写成「x86 在
+EFLAGS.AC=0 下允许非对齐访问故无 #AC 面，这也正是必须走裸指针 volatile 而非引用的原因」。
+② 原稿写「对 busy 的 TSS 描述符重复 ltr 触发 #GP」——仓内无从证实，改为「装载后描述符即
+busy，不具幂等性」。③ 原稿写「QEMU i440fx/virt 的 FADT reset reg 是 I/O 0xCF9 故此分支不会
+跑」——`grep 0xCF9` 全仓零命中，断言撤回。④ 原以为 Rust `entry()` 运行时 MMU 尚未启用
+（因 entry 第 2 步才调 `mmu::init`）——读 `boot/aarch64/start.S` 的 `el1_entry` 4.3–4.7 证明
+**MMU 已启用**（引导页表在 `.bootbss`，MAIR/TCR 与 `mmu.rs::init` 同值，TTBR0=TTBR1=
+`_boot_l0`，末步 `ldr x9, =entry; br x9` 跳高半区 VMA），故 `mmu::init()` 是**同值重建**而非
+首次启用，注释按此写。另核实 `ProcessContext` 只有 align/offset 三条编译期断言、**无 size
+断言**，未写不存在的断言。
+**核实过的关键断言**（举其要）：`clear_bss` 的 `[__bss_start, _kernel_end)` 由
+`link/aarch64.ld` 定义为 `.bss` + COMMON + 末尾页对齐填充，**低半区 `.bootbss` 不在区间内**
+⇒ 正在使用的引导栈 / `_fdt_addr` / `_ap_boot_info` / 三张引导页表存活；x86_64 trampoline
+目的址 `0x8000` 恒不会被 PMM 分配出去（`mark_reserved_pages` 预留 `[0, kernel_end]`，内核
+LMA 起点 `0x100000` ⇒ page 8 恒在预留面），且必须恰为 `0x8000`（`SINFO_BASE equ 0x8008`
+绝对寻址 + SIPI vector `0x08 << 12`）；`start_ap` 的 `sfence` 声明 `options(nomem)` ⇒ **只约束
+CPU 侧 store 次序、不是编译器屏障**，跨核可见性靠 x86 TSO + SIPI 前 10 ms 延时；GICR 扫描
+以 `REDIST_SCAN_MAX_FRAMES`=1024 与 `GICR_TYPER.Last` 双限界、最坏触到 base+128KiB×1023 ⇒
+映射须覆盖全程且 fail-closed 返 `Err`；`enable_sgi` 的 `intid % 32` 只限界移位、**不校验
+intid < 16**；DAIF 立即数正确映射是 imm bit3=D / bit2=A / bit1=I / bit0=F（`#8` Debug /
+`#4` SError / `#2` IRQ / `#1` FIQ）；`MultibootPtr` 的 Sync 风险面全在「指向数据是否被并发
+改写」，而 MB2 信息块经 `multiboot2_info_region()` 进 PMM 早期预留（`"mb2-info"`）⇒ 运行期
+无别名写者。
+**棘轮读数**：182 → **109 处 / 32 文件 / 35 键**（−73；块 96 + impl 13）。kernel x86_64 腿
+**106** / aarch64 腿 **100**，并集 109；host-tests 与 src/user 两树 `entries` 仍 `[]`。17 个
+目标键全部归零、**零新增位点**（脚本 `under[:15]` 只显示前 15 行，idt 两键被显示截断而非
+未归零，已按侧车逐键核对）。**本批不翻硬执法**，翻 `-D` 在批 5g。
+**⑮ 检测器盲区在本批面内的读数（本批不改判据，待批 6 裁定）**：按与批 5d 同一窄短语集
+（`调用方保证指针/类型有效 (详见上下文)` / `调用方保证指针合法`）测 arch+cpu+idt+boot 四面，
+得 **117 处 / 17 文件**存量占位标签（本面 `调用方保证指针合法` 零命中，117 全是主
+boilerplate）；其中 **92 处是块级**——即**在棘轮射程内、却因已有占位标签而被位置判据接受、
+不计入债册**（idt/table 13 + x86_64/mod 11 + acpi 10 + aarch64/timer 8 + mmu 7 +
+exception 7 + boot/mod 7 + x86_64/smp_init 5 + gdt 4 + cpu/mod 4 + uart 3 + gic 3 + apic 3 +
+idt/safety 3 + psci 2 + freg/mod 1 + tss 1），另 25 处为 fn / extern 级（不在块/impl 射程）。
+放宽到 8 条短语的宽口径为 **160 处 / 21 文件**。⇒ 本批「零占位」只对**新写的 73 条**成立；
+本批面内的占位存量（92 块级）比批 5d 的 mm+sync 面（39）更大，⑮ 的甲案（加内容面审计腿）
+射程须按此读数估。按裁定**本批不改写既有占位文本**，fn 级占位行原样保留、新注释写在其下。
+**另登记只报告不处置的观察（§11.5，与批 4/5a/5b/5c/5d 各项合并待批 6 裁定）**：
+⑯ `arch/x86_64/trampoline.asm` 头部布局框写「50 字节 / `_pad`@+0x2E / 无 `done`」，与 54 字节
+`ApStartupInfo` 及 asm 本体自己的 +46/+50 偏移矛盾（注释陈旧，代码正确）。⑰ `acpi_reboot`
+的 SystemMemory 分支只取 FADT GAS 的低 32 位地址、不消费 RegisterBitWidth/AccessSize（恒
+字节写）、也不校验该地址是否在恒等映射窗内（窗外即缺页而非重启）——已在新 SAFETY 内就地
+登记为已知局限。⑱ `IdtPtr` 的 doc 写「+8 Base address」而 `repr(C, packed)` 布局 base 在 +2。
+⑲ `idt/types.rs` 陈旧链接 `[isr.asm](../../kernel/isr.asm)`（真路径 `privileged/boot/isr.asm`）。
+⑳ `remap_pic` 读旧主/从掩码后以 `let _ = (m, s)` 丢弃（不恢复）。㉑ `gic.rs::init_distributor`
+诊断行的位域标签与移位不一致（`(typer>>5)&0x1F` 标 "bits [5:0]"、`((typer>>8)&0x07)+1` 标
+"bits [10:8]"），仅日志面。㉒ `aarch64/mod.rs::interrupt_restore` 的 doc 段把立即数位序写反
+且 F/D 标签互换，**代码正确**（已按 Linux `daifclr #2`=IRQ 与本仓 `interrupt_enable` 交叉
+核实）⇒ 只登记文档缺陷，不改代码。㉓ `gic::verify_post_conditions` 读引导核静态别名，而配置
+路径用按亲和定位的帧，多核下二者可能不同核。㉔ `aarch64/smp_init.rs` 注释「80 字节对齐」
+措辞 vs 槽位 `.align 3`（8 字节对齐）实况。㉕ `parse_multiboot2` 不校验 `tag_size >= 16`，
+tag 3 载荷 +12 的越界防护只到 8 字节标签头（已就地登记为已知局限）。㉖ `unsafe impl Sync
+for MultibootPtr` 不是该 static 的类型必需项（`IrqSpinLock<T>: Sync` 只要求 `T: Send`）⇒
+冗余面，本批只补注释不删。另 `gic::deactivate` 全仓零调用方（`audit_unwired_pub_fn` R1
+报告面已机器跟踪，本批不改接线）。
+**七门槛（终态）**：① `./ci/build.sh all` RC=0（Passed 6 / Failed 0）；② `bash ci/audit.sh full`
+RC=0（自测 13/13；`safety_debt` 通过、债册 **109 处 / 35 键**；`missing_docs_debt` 0 处 / 0 键；
+废弃命名扫描 受检 1721 文件 / 历史面 KEEP 316 / 违规 0；`vacuous_needle` 受检 1313 `.rs`、
+违规 0；P-49 存量审计腿 10/10 无静默跳过；`check_doc_paths` 校验 19 份、设计册免报 3 条、
+无漂移；性能指标腿条目全部在绝对预算内；Lockbud 实编并分析 4/4 crate 零发现；QEMU 2/2
+（FAIL_OK=0）+ P-62 feature 运行维 4/4 + thread-stress 6/6；FP-06 白名单外 FP/SIMD 0；
+**因环境缺失未执行腿数 0**）；③ `make test-host` RC=0（204 套 / 1602 passed / 0 failed，
+与批 5c/5d 同读数——纯注释批）；④ `make test-kernel-host` RC=0（三成员 12 + 807 + 556 =
+1375 / 0 failed）；⑤ `make -f Makefile.ci ci-rustdoc` RC=0（x86_64 与 aarch64 两腿都真跑、
+各 exit 0）。**本批无新建文件**（16 个改动文件 + 侧车 + 本册 + 台账均已在索引内），故无需
+先 git add 再跑命名扫描。
+**文档回填后终态复跑**（`/tmp/b5e_terminal.log`，判据 = 日志内 `*-RC=` 回显，非后台通知退出码）：
+`T1-BUILD-RC=0`（Passed **6** / Failed **0**）、`T2-NAMING-RC=0`（受检 **1721 文件** / KEEP **316** /
+违规 **0**）、`T3-DOCPATHS-RC=0`（校验 **19 份** / 设计册免报 **3** 条 / **0 漂移**）——本册与台账
+两处文档改动未引入废弃命名违规或源码路径漂移。
 
 ### 批 5f・SAFETY 清零: privileged net + driver + egdf（51 处）
 

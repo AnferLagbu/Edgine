@@ -59,6 +59,25 @@ const UARTCR_RXE: u32 = 1 << 9; // Receive Enable
 /// LCR 配置: 8N1 (8 data bits, no parity, 1 stop bit)
 const UARTLCR_8N1: u32 = 0b11 << 5;
 
+// === unsafe 依据单源 (本文件全部 MMIO 位点共用) ===
+//
+// 类别 U「PL011 MMIO volatile 读写」: 地址由 `base()` = `PL011_BASE.load(Acquire)` 加
+// 本模块常量偏移构成. `PL011_BASE` 初值 0x0900_0000 是 QEMU virt 的物理地址, 由
+// `mmu::init` 的 L2_DEVICE (512 个 2MB Device 块, 覆盖 [0, 0x4000_0000)) 恒等映射;
+// 引导期若 DTB 探到别的基址, `entry.rs` 以 `< DEVICE_WINDOW_END` 过滤后经 `set_base`
+// 覆盖; 进入 EL0 前 `switch_to_high_half` 再按位或上 KERNEL_BASE (幂等), 使 TTBR0 换成
+// 用户表后 EL1 仍能经 TTBR1 访问同一设备. 指针只以 `(base() + offset) as *const u32` /
+// `*mut u32` 形态交给 `read_volatile` / `write_volatile`, **不构造引用** ⇒ 无别名与借用期
+// 约束; 偏移全部是 4 的倍数 (0x000/0x018/0x024/0x028/0x02C/0x030/0x038), 故只要基址
+// 4 字节对齐即满足 u32 自然对齐 —— `set_base` 不校验对齐, 由 DTB 给出的 PL011 帧基址
+// (页对齐) 保证. volatile 是必需的: 设备会在程序之外改变寄存器 (TXFF/RXFE 标志), 写
+// 寄存器也有设备副作用, 普通读写会被编译器优化掉或重排. 注意「读」并非一律无副作用:
+// 读 UARTDR 会弹出 RX FIFO 一项.
+//
+// 类别 C「组合块」: `init` / `putc` / `getc` 的块只是把 `read` / `write` 与轮询组合起来,
+// MMIO 依据继承类别 U; 各自另有前提 (MMU 已启用且基址已映射 / UART 已 init), 写在对应
+// 函数的 `# Safety` 段与块注释里.
+
 // ============================================================================
 // 寄存器 I/O
 // ============================================================================
@@ -66,12 +85,18 @@ const UARTLCR_8N1: u32 = 0b11 << 5;
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn read(offset: u64) -> u32 {
+    // SAFETY: 类别 U. offset 由本模块常量给出 (UARTFR / UARTDR), 落在 PL011 帧内;
+    // 本函数只被 `init` / `putc` / `getc` 调用, 三者都在基址已映射的前提下执行.
+    // 读 UARTFR 无副作用, 读 UARTDR 会弹出 RX FIFO 一项 (见类别 U).
     unsafe { read_volatile((base() + offset) as *const u32) }
 }
 
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn write(offset: u64, val: u32) {
+    // SAFETY: 类别 U. offset 由本模块常量给出 (UARTCR / UARTIBRD / UARTFBRD /
+    // UARTLCR_H / UARTIMSC / UARTDR), 均为整字写, 无需读-改-写; 写有设备副作用
+    // (UARTCR=0 关 UART, 写 UARTDR 触发发送), 故写入次序由调用方 `init` / `putc` 保证.
     unsafe {
         write_volatile((base() + offset) as *mut u32, val);
     }
@@ -87,6 +112,13 @@ unsafe fn write(offset: u64, val: u32) {
 ///
 /// 调用者必须确保在初始化 MMU 之后调用，且 `PL011_BASE` (0x09000000) 已映射。
 pub unsafe fn init() {
+    // SAFETY: 类别 U + C. 唯一调用方是 `boot/aarch64/entry.rs::entry` 第 3 步: 在
+    // `mmu::init` 之后 (0x0900_0000 或 DTB 覆盖值已经 Device 块映射)、在
+    // `apply_fdt_overrides` 之后 (`set_base` 已生效)、在 `exception::init` 之前.
+    // 次序: UARTCR=0 先关 UART → IBRD/FBRD 写波特率除数 → LCR_H 写 8N1+FIFO →
+    // IMSC=0 关中断 (本驱动是 polling 模式) → UARTCR 置 UARTEN|TXE|RXE. 除数按
+    // ~24MHz UARTCLK 估算 115200 (24e6/(16*115200)≈13.02 ⇒ IBRD=13, FBRD=0);
+    // 本驱动不从 DTB 取 clock-frequency, 故该除数是固定估值而非按实测时钟算出.
     unsafe {
         // 1. 禁用 UART
         write(UARTCR, 0);
@@ -120,6 +152,10 @@ pub unsafe fn init() {
 /// 调用者必须确保 UART 已初始化且 `PL011_BASE` MMIO 区域已映射。
 #[inline]
 pub unsafe fn putc(c: u8) {
+    // SAFETY: 类别 U + C. 轮询 UARTFR.TXFF 直到 TX FIFO 非满, 再写 UARTDR;
+    // `u32::from(c)` 是零扩展, 只有低 8 位是数据字节. 轮询**无超时上限**: 设备未就绪
+    // 或基址不可达时表现为死循环挂死而非报错 (与 `getc` 同形). 调用方须保证 UART 已
+    // `init` 且基址在当前翻译体制下可达 (见 `# Safety` 段).
     unsafe {
         // 等待 TX FIFO 非满
         while read(UARTFR) & UARTFR_TXFF != 0 {
@@ -137,6 +173,10 @@ pub unsafe fn putc(c: u8) {
 #[inline]
 #[must_use]
 pub unsafe fn getc() -> u8 {
+    // SAFETY: 类别 U + C. 轮询 UARTFR.RXFE 直到 RX FIFO 非空, 再读 UARTDR (该读弹出
+    // FIFO 一项), `low_u8_from_u32` 取低 8 位 —— 纯截断 (`to_le_bytes()[0]`), 无 panic 面.
+    // 与 `putc` 同样无超时上限. 本函数 `#[must_use]`: 读有副作用, 丢弃返回值等于静默
+    // 吞掉一个输入字节.
     unsafe {
         // 等待 RX FIFO 非空
         while read(UARTFR) & UARTFR_RXFE != 0 {

@@ -313,6 +313,28 @@ unsafe extern "C" {
 /// 调用者必须确保两个上下文指针有效且已初始化。
 #[inline]
 pub unsafe fn switch(from: *mut u8, to: *const u8) {
+    // SAFETY: 唯一调用方是 `Aarch64::context_switch` (arch/aarch64/mod.rs), 它先经
+    // `set_user_tls_base` 写 TPIDR_EL0 再调本函数; 上游 `Scheduler::context_switch_tail`
+    // (proc/scheduler.rs) 在中断关闭的调度器临界区内以 `addr_of_mut!` / `addr_of!` +
+    // `get_mut_unchecked` 取 PROCESS_TABLE 活动条目 `Mutex<ProcessContext>` 内的裸地址
+    // (刻意不持 MutexGuard, 见该处 B05-55 注释), 据此:
+    // - `from` 指向本任务**可写**的 ProcessContext, `to` 指向目标任务**已初始化**的
+    //   ProcessContext; 二者非空且生命周期覆盖本次切换. 单向切换分支的 `from` 是本核
+    //   per-CPU `scratch_ctx`, 只承接被丢弃的寄存器, 内容不再读回.
+    // - 汇编按固定偏移写 [x0] 的 0..136 (x19-x30/sp/系统寄存器) + 144..656 (V0-V31)
+    //   + 656/664 (FPCR/FPSR), 读 [x1] 最高至 824 (extra_regs_x8 末字段 x18). 这些偏移
+    //   由 proc/types.rs 的编译期断言钉住 (align_of == 16 / fpu_state == 144 /
+    //   extra_regs_x8 == 736), 其中 16 字节对齐是 `stp q` / `ldp q` 的前提.
+    //   `as usize as *const u64` 只改指针类型不改地址值, u64 的 8 字节对齐要求弱于
+    //   结构体实际的 16 字节对齐.
+    // - extern 声明把 prev 写成 `*const u64`, 但汇编照样经 x0 写入 ⇒ 指针的 const 形态
+    //   **不**构成只读保证; 调用期间不得存在指向同一 ProcessContext 的活跃 `&` / `&mut`
+    //   (调用方全程用裸指针, 满足此条).
+    // - 本调用不是普通函数返回: 入口 `msr daifset, #0xF` 屏蔽全部异常, 保存侧把 SPSR
+    //   写成常量 0x3C5 (EL1h + DAIF 四位全屏蔽)、ELR 写成返回地址. 内核续跑路径 `eret`
+    //   只在**本任务再次被调度上核时**回到调用点之后 (届时 DAIF 仍全屏蔽, 开中断归调用
+    //   侧的中断恢复路径, 本函数不自行开); EL0 首次进入路径 `br` 到 KPTI trampoline 后
+    //   永不回到本栈帧. 故调用点之后的局部变量在恢复路径上是陈旧值.
     unsafe {
         context_switch_asm(from as usize as *const u64, to as usize as *const u64);
     }

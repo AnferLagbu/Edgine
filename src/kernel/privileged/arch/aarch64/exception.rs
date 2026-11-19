@@ -968,9 +968,29 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     }
 }
 
+// === unsafe 依据单源 (本文件诊断输出与向量表/DAIF 设置位点共用) ===
+//
+// 类别 V「EL1 系统寄存器 MSR + ISB」: `msr vbar_el1, Xt` 与 `msr daifclr, #imm` 都是
+// EL1 系统寄存器写 (EL0 访问会陷入), 操作数只有 `in(reg)` 或立即数 ⇒ 无指针解引用面;
+// 未声明 `options(...)` 属保守, 不构成 UB. `vbar_el1` 写后必须 `isb`: VBAR 决定异常入口
+// 的取指地址, 不做上下文同步则后续异常可能仍按旧值取指. `daifclr` 是立即数形态, 立即数
+// 位与 DAIF 寄存器位的对应见 `arch/aarch64/mod.rs` 的类别 I (imm bit3=D / bit2=A /
+// bit1=I / bit0=F).
+//
+// 类别 X「异常上下文直写 UART」: 诊断兜底路径不经 klog (此时控制台/锁可能不可用), 直接
+// 调 `uart::putc` 与本模块 `exc_puthex`, 其 MMIO 依据见 `uart.rs` 的类别 U. 前提是 UART
+// 已 init 且基址在**当前翻译体制**下可达: EL1 异常入口已把 TTBR1 切回完整内核表, 而
+// `PL011_BASE` 在首次进入 EL0 前已被 `switch_to_high_half` 改成高半区别名, 故 EL0 来源
+// 的异常同样能输出.
+
 /// 辅助函数: 通过 UART 以十六进制输出 u64
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn exc_puthex(val: u64) {
+    // SAFETY: 类别 X. 块内只有位运算与 `uart::putc` (pub unsafe fn) 调用, 自身无指针
+    // 解引用也无 asm. 循环 shift 取 15..0 共 16 轮, 每轮 4 bit ⇒ 恰好覆盖 u64 全宽,
+    // 高位先出; nibble ≤ 15 ⇒ `b'0'+nibble` 与 `b'A'+nibble-10` 都落在 ASCII 数字/大写
+    // 字母区间, 无算术溢出. 调用方是本文件 `sync_exception_handler` 的内核故障兜底段
+    // (打印 ESR/FAR/ELR), 处于异常上下文且 UART 已就绪.
     unsafe {
         for shift in (0..16).rev() {
             let nibble = ((val >> (shift * 4)) & 0xF) as u8;
@@ -1035,6 +1055,12 @@ pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
 /// `VBAR_EL1` 是 **per-CPU** 寄存器: BSP 与每个 AP 均须各自调用本函数.
 /// AP 侧刻意不在此时开中断 (延后至 per-CPU 状态就绪, 见 `smp_init::ap_main`).
 pub unsafe fn init_vectors() {
+    // SAFETY: 类别 V. `&raw const exception_vector_table` 取的是本文件 global_asm 在
+    // `.vectors` 段定义的符号地址, `.balign 2048` 满足 VBAR_EL1 的 2KB 对齐要求; 该符号
+    // 声明为 `u8` 只用于取址, 不读其内容 ⇒ 无类型/对齐解引用面. 向量表链接于高半区,
+    // 故地址本身即 TTBR1 别名 (进入 EL0 后 TTBR0 是用户表, 低地址不可达). VBAR_EL1 是
+    // per-CPU 寄存器: BSP 经 `init()` 调用本函数, 每个 AP 在 `smp_init::ap_main` 内各自
+    // 调用; 所有任务共用同一张向量表, 故上下文切换不需要保存/恢复它.
     unsafe {
         let vbar = &raw const exception_vector_table as u64;
         core::arch::asm!("msr vbar_el1, {}", in(reg) vbar);
@@ -1050,6 +1076,11 @@ pub unsafe fn init_vectors() {
 ///
 /// 仅在启动阶段调用，调用前需确保向量表已链接到内核镜像中。
 pub unsafe fn init() {
+    // SAFETY: 类别 V. 组合块: 先 `init_vectors()` 装好 VBAR_EL1, 再 `msr daifclr, #0xF`
+    // 一次清 D/A/I/F 四个屏蔽位 (立即数 0xF = 四位全清). 次序不可颠倒 —— 先开中断后装
+    // 向量表会让首个异常按旧 VBAR 值取指. 唯一调用方是 `boot/aarch64/entry.rs::entry`
+    // 第 4 步, 早于第 5 步 `gic::init`: 此时 GIC 交付通路尚未打开, 故清 I 位不会立即收到
+    // 中断. AP 侧刻意不走本函数 (只调 `init_vectors`, 开中断延后到 per-CPU 状态就绪).
     unsafe {
         init_vectors();
         // 清除 DAIF (Debug/SError/IRQ/FIQ 掩码), 使能中断

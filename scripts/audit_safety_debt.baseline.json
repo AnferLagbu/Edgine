@@ -5,9 +5,9 @@
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {
-    "sites": 182,
-    "files": 48,
-    "keys": 52
+    "sites": 109,
+    "files": 32,
+    "keys": 35
   },
   "entries": [
     [
@@ -24,81 +24,6 @@
       "src/kernel/memory_allocator.rs",
       "impl",
       1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/context.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/exception.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/gic.rs",
-      "block",
-      23
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/mmu.rs",
-      "block",
-      7
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/mod.rs",
-      "block",
-      10
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/smp_init.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/uart.rs",
-      "block",
-      5
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/smp_init.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/boot/aarch64/entry.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/cpuid.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/msr.rs",
-      "block",
-      6
     ],
     [
       "src/kernel/privileged/driver/display/mod.rs",
@@ -164,16 +89,6 @@
       "src/kernel/privileged/glue/string.rs",
       "block",
       16
-    ],
-    [
-      "src/kernel/privileged/idt/mod.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/idt/table.rs",
-      "block",
-      3
     ],
     [
       "src/kernel/privileged/ioport.rs",

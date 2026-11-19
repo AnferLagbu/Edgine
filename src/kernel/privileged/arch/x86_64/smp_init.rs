@@ -184,6 +184,20 @@ pub fn init() {
 
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn copy_trampoline() {
+    // SAFETY: 源区间由链接符号 `ap_trampoline_start` / `ap_trampoline_end` 界定
+    // (trampoline.asm `section .trampoline` 的首尾), size = end - start 覆盖「2 字节 jmp
+    // + 6 字节填充 + 54 字节 ApStartupInfo 占位 + 全部引导代码」; 二者是同一 section 内
+    // 按序放置的代码符号, 取址只读不解引用, 区间恒有效且 end >= start, 故 `src.add(i)` /
+    // `dst.add(i)` 在 i ∈ [0, size) 内均不越界.
+    // 目的址 TRAMPOLINE_BASE = 0x8000 是**物理地址直接当 VA 用**, 依赖 boot 期低半区恒等
+    // 映射; 该页不会被 PMM 分配出去 —— `pmm::mark_reserved_pages` 把 [0, kernel_end] 的
+    // 全部页置已用, 而内核 LMA 起点 0x100000 (link/x86_64.ld) ⇒ page 8 恒在预留面内.
+    // 目的址必须恰为 0x8000: trampoline 以绝对地址寻址 info 槽 (`SINFO_BASE equ 0x8008`),
+    // 且 SIPI vector 0x08 ⇒ AP 从 0x08 << 12 = 0x8000 取指, 二者与本常量同源.
+    // 逐字节 `read_volatile` / `write_volatile`: AP 在 MMU/cache 关闭阶段以物理地址取指,
+    // 普通写可能被编译器合并或重排; u8 访问无对齐面. 拷贝同时把 info 槽清回镜像里的全零
+    // 初值 ⇒ 每个 AP 启动前由 `start_ap` 重填. 唯一调用方 `init()` 在 BSP 单上下文、
+    // 任何 SIPI 之前调用一次.
     unsafe {
         let src = ap_trampoline_start as *const u8;
         let end = ap_trampoline_end as *const u8;
@@ -199,6 +213,30 @@ unsafe fn copy_trampoline() {
 #[inline(never)]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
+    // SAFETY: 本块含三类 unsafe 面, 前提各不同.
+    // ① 分配与 static mut 槽: `alloc_zeroed(Layout::new::<ApPerCpu>())` 的 size/align 由
+    //    类型保证, 返回 null 即放弃本 AP; 非空时 `(*per_cpu).stack.as_ptr()` 是对新分配
+    //    独占内存的共享借用 (无其它别名), 栈顶 = 基址 + AP_STACK_SIZE. `AP_PER_CPU[idx]`
+    //    是 `static mut` 数组, 写入前提 = idx < MAX_CPUS (首行已判) **且串行独占**:
+    //    全仓唯一调用点是 `init()` 内对 MADT AP 列表的串行循环, 只由 BSP 经
+    //    `Arch::secondary_cpu_bringup()` 调一次 (依据见下方 AP_STARTUP_LOCK 退役注释,
+    //    回归守卫 host-tests/tests/arch_ap_startup_lock_removed_test.rs).
+    // ② info 槽写: TRAMPOLINE_BASE + AP_INFO_OFFSET = 0x8008 落在 `copy_trampoline` 刚
+    //    拷好的页内; `ApStartupInfo` 是 `#[repr(C, packed)]` 54 字节 (编译期 size 断言,
+    //    READY_OFFSET / DONE_OFFSET 由 `offset_of!` 派生并与 trampoline.asm 的 SINFO_*
+    //    互校), 10 个字段写均在槽内. packed 字段以裸指针 place 写, **不构造字段引用**
+    //    (packed 字段取引用即对齐 UB). 这些是普通写, 随后 `sfence` + INIT-SIPI; sfence
+    //    声明 options(nomem) ⇒ 只约束 CPU 侧 store 次序, 不是编译器屏障, 跨核可见性由
+    //    x86 TSO 与 SIPI 前 INIT_WAIT_US (10 ms) 延时保证; AP 侧 MMU 关闭时以物理地址读
+    //    同一页, 无需 cache 维护.
+    // ③ 握手读: ready / done 两个 `*const u32` 指向槽内偏移 38 / 46, 二者**非 4 字节
+    //    对齐** (0x802E / 0x8036) —— x86 在 EFLAGS.AC=0 (内核不开 alignment check) 下允许
+    //    非对齐访问, 故无 #AC 面, 但这也是必须走裸指针 volatile 而非引用的原因. 跨核写入
+    //    ⇒ `read_volatile` 必需, 否则自旋条件被提出循环. 等待**有界**: `Deadline::after_ms`
+    //    (READY_TIMEOUT_MS=100 / AP_ENTRY_TIMEOUT_MS=50, 时基未建立时回退 1000 / 500 轮),
+    //    超时即跳出并视本 AP 离线. done 由 `ap_entry` 在 register_cpu + per-CPU 状态 +
+    //    adopt_cpu_idle + arm_local 全部就绪后才置 1, 故「见 done」蕴含「本核已可调度」.
+    //    本函数不改动 IF (P2.C + F-12 已删显式 cli/sti).
     unsafe {
         if cpu_index as usize >= super::acpi::MAX_CPUS {
             return;
@@ -328,6 +366,14 @@ unsafe fn send_sipi(lapic_id: u32, vector: u8) {
 
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn timer_udelay(us: u32) {
+    // SAFETY: `out dx, al` 写 POST 诊断端口 0x80 (PC/AT 沿用的 io_delay 手法): Ring-0 下
+    // 的端口写, 无内存操作数 ⇒ options(nomem, nostack) 与指令语义一致 (未声明
+    // preserves_flags 属保守). 该端口是只写诊断口, 写它不驱动任何设备动作, 唯一目的是
+    // 消耗一次 I/O 总线周期.
+    // 延时是**近似值而非校准值**: 循环 us 次、每次一个端口写, 实际时长取决于总线/模拟器
+    // 的 I/O 延迟 (真机约 1 µs/次, QEMU 下远小于 1 µs), 故只用于 INIT-SIPI 序列与握手轮询
+    // 这类「数量级足够」的等待 (调用方: start_ap 的 INIT_WAIT_US / SIPI_DELAY_US /
+    // READY_POLL_US), 不承担精确计时 —— 精确时基归 timer 子系统.
     unsafe {
         for _ in 0..us {
             core::arch::asm!("out dx, al", in("dx") 0x80u16, in("al") 0u8, options(nomem, nostack));

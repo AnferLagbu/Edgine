@@ -110,10 +110,22 @@ unsafe fn read_8259_isr(slave: bool) -> u8 {
     }
 }
 
+// === unsafe 依据单源 (8259A 端口 I/O 两处共用: io_wait / remap_pic) ===
+//
+// 类别 P「legacy PIC 端口读写」: 全部操作经 `port_inb` / `port_outb` 两个 unsafe
+// fn 落到 IN/OUT 指令 —— 特权指令, 须 Ring 0; 端口地址是 8259A 的固定 I/O 地址
+// (主 0x20/0x21, 从 0xA0/0xA1, 延时 0x80), x86_64 平台上恒存在 (芯片组兼容逻辑).
+// 这两点块内无法证明, 由外层 unsafe fn 的调用方契约传入. 块内**无指针解引用**:
+// 入参出参都是 u8/u16 值, 故无别名、对齐或生命周期面; 风险全在「写硬件状态」的
+// 语义侧 (重映射改变 IRQ→向量映射, 掩码停投中断), 由调用时序与末尾全屏蔽兜住.
+
 /// I/O 等待
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn io_wait() {
+    // SAFETY: 类别 P. 写 POST 诊断端口 0x80 (硬件丢弃该写), 唯一目的是产生一次
+    // I/O 周期延时, 供 8259A 初始化序列在两条命令之间满足芯片要求的间隔;
+    // 不读回、不触任何内核内存.
     unsafe {
         port_outb(0x80, 0);
     }
@@ -122,6 +134,13 @@ unsafe fn io_wait() {
 /// 重映射 8259A PIC: IRQ0-7→vec32-39, IRQ8-15→vec40-47
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn remap_pic() {
+    // SAFETY: 类别 P. 按 ICW1(0x11)→ICW2(偏移)→ICW3(级联)→ICW4(0x01) 顺序初始化
+    // 主从两片, 每条命令后插 `io_wait` 满足芯片间隔; 主偏移 0x20 / 从 0x28 与
+    // `IRQ_BASE = 32` 一致 (IRQ0-7→vec32-39, IRQ8-15→vec40-47). 末尾把两片掩码
+    // 置 0xFF **屏蔽全部 legacy IRQ**, 故重映射后到 `enable_irq` 逐条放开之间
+    // 不会有 IRQ 投递到尚未编程的门上. 开头读出的旧掩码 m/s 未被恢复, 由
+    // `let _ = (m, s)` 显式丢弃. 唯一调用点是 `IdtManager::init` 的启动期块,
+    // 在门编程与 `load_idt` 之前.
     unsafe {
         let m = port_inb(0x21);
         let s = port_inb(0xA1);
@@ -451,6 +470,19 @@ impl IdtManager {
     /// 调用方需保证 IDT 表已初始化, 且当前 CPU 的中断已屏蔽.
     #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn load_idt(&self) {
+        // SAFETY: ① 「中断已屏蔽」由 `self.state.lock()` 满足 —— `IrqSpinLock`
+        // 锁内自动 cli, 同时保证取基址期间 `entries` 不被并发改写; 「表已初始化」
+        // 由本 fn `# Safety` 传入. ② `entries` 是 `IdtState` 内的定长 256 项数组,
+        // 而 `IdtManager` 存于 `static IDT_MANAGER_INSTANCE: OnceLock<…>`
+        // (`instance() -> &'static Self`) ⇒ 该内存整个内核生命周期存活, lidt 之后
+        // CPU 持续按 IDTR.BASE 取门描述符不会读到已释放内存. ③ base 取的是
+        // `entries` 的**链接地址** (低半区 LMA, 非 `KERNEL_BASE` 别名), 故 KPTI
+        // 收窄后用户页表须显式映射该页 (见 `idt_entries_base_lma` 的说明).
+        // ④ `IdtPtr` 是 `#[repr(C, packed)]` 的 10 字节 limit+base, 用
+        // `&raw const idt_ptr` 只取地址、不构造引用 ⇒ 不触 packed 字段引用 UB.
+        // ⑤ asm 只声明 options(nostack, preserves_flags) 而**不声明 nomem**:
+        // lidt 确实要读那 10 字节内存, 必须让编译器保留该读; 它只写 CPU 的 IDTR
+        // (per-CPU 状态, 不影响其他核), 不写内存、不动栈、不改标志.
         unsafe {
             let state = self.state.lock();
             let base_addr = state.entries.as_ptr() as u64;

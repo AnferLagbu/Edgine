@@ -451,6 +451,19 @@ pub unsafe extern "C" fn exception_handler(frame: *mut InterruptFrame) {
 #[cfg(target_arch = "x86_64")]
 #[unsafe(link_section = ".kpti_trampoline")]
 pub unsafe extern "C" fn irq_handler(frame: *mut InterruptFrame) {
+    // SAFETY: frame 由 isr.asm 的 `irq_stub` + `irq_common` 在本核内核栈上构建:
+    // stub 先 `push 0` (err_code) 再 `push 向量号` (int_no), `irq_common` 续压
+    // rax/rbx/rcx/rdx/rbp/rsi/rdi/r8..r15 后 `mov rdi, rsp` —— rsp 起的 176 字节与
+    // `InterruptFrame` 字段序 (r15…rax, int_no, err_code, rip, cs, rflags, rsp, ss)
+    // 逐槽对应; 该结构 `#[repr(C, packed)]` 对齐为 1, 无未对齐引用面. 指针有效性
+    // 由 asm 入口保证, 本块的 `is_null()` 只挡空指针, 不证明它指向该帧.
+    // `&*frame` 是共享借用且 `int_no` **按值**读出 (u64: Copy), 不取 packed 字段的
+    // 引用; 借用最后一次使用在 `vector` 行即由 NLL 结束, 其后把裸 `*mut` 交给
+    // `handle_irq` 不构成 `&`/`&mut` 重叠别名. `low_u8_from_u64` 是纯截断
+    // (`to_le_bytes()[0]`), 无 panic 面. stub 入口已 `cli`, 本函数不再开中断;
+    // lockdep 进出标记仅 `debug_assertions` / `lockdep` 构建编入, 默认构建零开销.
+    // 本函数经 `link_section = ".kpti_trampoline"` 落在 KPTI 用户页表也映射的入口
+    // 区段内 (上界 `_kpti_trampoline_end`, 见 mm/kpti.rs), 与 isr.asm stub 同区.
     unsafe {
         if frame.is_null() {
             return;

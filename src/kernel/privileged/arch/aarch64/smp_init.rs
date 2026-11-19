@@ -158,6 +158,24 @@ pub fn init() {
     }
 }
 
+// === unsafe 依据单源 (本文件启动槽握手字段读取位点共用) ===
+//
+// 类别 H「启动槽握手字段 volatile 读」: `boot_slot()` 返回
+// `(&raw const ap_boot_info_ptr).cast_mut()` —— `ap_boot_info_ptr` 是链接脚本
+// (`privileged/link/aarch64.ld`) 暴露的低半区 `.bootbss` 槽 `_ap_boot_info` 的高半区别名
+// (VA = _kernel_base + PA), 运行期经 TTBR1 可达; 槽在 `start.S` 内 `.align 3` ⇒ 8 字节
+// 对齐, 满足 u64 字段自然对齐. `ApBootInfo` 是 `#[repr(C)]` 的 10 × u64 = 80 字节, 编译期
+// `size_of` 断言与 `ap_entry_asm` 的偏移 0x00..0x48 一一对应 (`done` 在 0x40, `el` 在
+// 0x48). 该槽是 BSP 与 AP 的跨核共享内存, 且 AP 侧在 MMU/cache 尚未开启阶段以物理地址
+// 写它, 故读必须 `read_volatile`: 普通读会被编译器提出循环或缓存进寄存器, 自旋等待就
+// 永不退出. 取字段地址用 `&raw const (*slot).field` 而不构造 `&` / `&mut`, 避免与不在
+// 本编译单元别名分析内的跨核写者形成引用冲突.
+// 时序: BSP 写满槽 → `clean_to_poc` (逐 cache line `dc civac` + `dsb sy`) → PSCI `CPU_ON`
+// → 有界自旋 (`Deadline::after_ms(DONE_TIMEOUT_MS, DONE_TIMEOUT_LOOPS)`, 时基未建立时
+// 回退轮次上限) → 读到 `done != 0` 后 `fence(Acquire)` 配对 AP 侧的 Release. `start_ap`
+// 由 `init()` 逐个串行调用 (等一个 AP 登记完再启动下一个), 故同一时刻只有一个 AP 写该槽,
+// 槽可复用而无需 per-AP 数组.
+
 /// 上电单个 AP 并等待其上线登记; 成功返回 `Ok(())`, 失败返回 `Err(())`。
 ///
 /// `mpidr` 为 AP 的**原始** `MPIDR_EL1` (供 PSCI 寻址); `cpu_index` 为 BSP 为其
@@ -207,8 +225,15 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     // 有界等待 AP 置 done; 读用 volatile, 随后 Acquire 屏障配对 AP 的 Release.
     let mut deadline =
         crate::privileged::timer::Deadline::after_ms(DONE_TIMEOUT_MS, DONE_TIMEOUT_LOOPS);
+    // SAFETY: 类别 H. 读 `done` (偏移 0x40) 作自旋条件, volatile 保证每轮真读内存;
+    // 本块只读不写槽. 等待有界: 每轮由 `deadline.expired()` 判超时 (墙钟 5s, 时基未建立
+    // 时回退 1e8 轮), 不是无限自旋.
     while unsafe { core::ptr::read_volatile(&raw const (*slot).done) } == 0 {
         if deadline.expired() {
+            // SAFETY: 类别 H. 超时后读 `el` (偏移 0x48) 供诊断: AP stub 一进入就实测
+            // CurrentEL 并落槽, 早于任何其它动作. BSP 预写该字段为 0, 而 EL0 的编码也是
+            // 0b00, 故读数 0 既可能是「AP 连 stub 都没到」也可能是实测 EL0 —— 该字段只作
+            // 诊断线索, 上线判据仍是权威计数器. 只读, 无副作用.
             let el = unsafe { core::ptr::read_volatile(&raw const (*slot).el) };
             crate::klog_err!(
                 Kernel,
@@ -225,6 +250,10 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     // AP 已应答但未登记 (如 stub 因异常级不符进入 `ap_bad_el` 占位分支):
     // 以权威计数器判定, 未增加即视为离线, 并回报其记录的 EL 级供 E7 诊断.
     if crate::privileged::smp::get_cpu_count() == before {
+        // SAFETY: 类别 H. 与超时分支读同一 `el` 字段, 但语境不同: `done` 已置 1 且上方
+        // `fence(Acquire)` 已过, 而权威计数器未增加 ⇒ AP 应答但未登记 (如 stub 因异常级
+        // 不符进入 `ap_bad_el` 占位分支, 该分支只置 done 不登记). 读在 Acquire 之后, 故
+        // 能看到 AP 在置 done 之前写入的 el 值.
         let el = unsafe { core::ptr::read_volatile(&raw const (*slot).el) };
         crate::klog_err!(
             Kernel,

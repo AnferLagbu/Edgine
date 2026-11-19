@@ -1091,6 +1091,18 @@ pub fn gdt_set_kernel_rsp(rsp: u64) {
 /// 此函数修改 GDTR 寄存器, 会立即影响内存分段行为。
 #[inline]
 unsafe fn gdt_flush(gdt_ptr: GdtPtr) {
+    // SAFETY: lgdt 是 Ring-0 指令, 从内存操作数读 10 字节 GDTR 映像 (limit u16 + base u64).
+    // `gdt_ptr` **按值**传入 ⇒ `&raw const gdt_ptr` 指向本函数栈帧内的副本, asm 执行期间
+    // 恒有效; 只取裸指针不构造引用. `GdtPtr` 是 `#[repr(C, packed)]` (limit@0 / base@2,
+    // 共 10 字节无填充), 与硬件布局逐字节一致 —— packed 使 base 落在非 8 对齐偏移, 而
+    // x86 的 lgdt 内存操作数不要求对齐, 故无对齐故障面.
+    // 两个调用方 (`gdt_init` BSP / `gdt_init_ap` AP) 都在调用前填好 ptr.limit =
+    // size_of::<[GdtEntry; GDT_MAX_ENTRIES]>() - 1 与 ptr.base = entries.as_ptr(), 并已
+    // 写完 `init_gdt_entries` 与 entries[5]/[6] 的 TSS 描述符对; GDT 本体是 per-CPU 常驻
+    // 存储 (静态 BSP_GDT / `alloc_ap_gdt` 发布的 AP_GDT 槽), 生命周期覆盖内核运行, 且位于
+    // 内核高半区 ⇒ 在 KPTI 共享的内核半区里恒映射, CPU 后续按 GDTR.base 取描述符不缺页.
+    // options 只声明 nostack + preserves_flags, **不声明 nomem**: lgdt 真读那 10 字节.
+    // 本指令只换 GDTR, 不重载 CS 等段寄存器 (AP 路径随后必须调 `reload_cs`).
     unsafe {
         core::arch::asm!(
             "lgdt [{0}]",
@@ -1109,6 +1121,18 @@ unsafe fn gdt_flush(gdt_ptr: GdtPtr) {
 /// 此函数加载新的 TSS 到任务寄存器, 会标记 TSS 为 busy。
 #[inline]
 unsafe fn tss_flush(selector: u16) {
+    // SAFETY: ltr 是 Ring-0 指令, 把选择子装入 TR 并由 CPU 将对应 TSS 描述符置 busy.
+    // 唯一实参 SELECTOR_TSS = 0x28 ⇒ 描述符索引 0x28 >> 3 = 5, 正是两个调用方
+    // (`gdt_init` / `gdt_init_ap`) 在**本次 gdt_flush 之后**写入的 entries[5]/[6] 那对
+    // 64-bit TSS 描述符 (`tss_low` + `tss_high`): base = 本核 `gdt.tss` 地址, limit =
+    // size_of::<TaskStateSegment>() - 1, 覆盖整个 TSS; 该 TSS 已 `zeroed` 并经
+    // `init_stack_tops` 填好 RSP0 / IST 栈顶, 存储与 GDT 同属 per-CPU 常驻区.
+    // 次序硬约束: 必须先 gdt_flush 再 tss_flush (TR 装载按当前 GDTR 解析描述符);
+    // 每核只调一次 (BSP 与每个 AP 各一次), 装载后描述符即 busy, 不具幂等性.
+    // TSS 此后被 CPU 在每次特权级切换时读 (RSP0 / IST), 故须保持映射并随任务更新
+    // (运行期由 `gdt_set_kernel_rsp` 与 `cpu::arch::set_kernel_stack` 维护).
+    // `in(reg) selector` 以 16 位寄存器形态传入 (`{0:x}`), 指令本身无内存操作数;
+    // options 声明 nostack + preserves_flags, 不声明 nomem (ltr 经 GDTR 真读描述符).
     unsafe {
         core::arch::asm!(
             "ltr {0:x}",

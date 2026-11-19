@@ -18,6 +18,15 @@
 pub fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
     let (eax, ebx, ecx, edx): (u32, u32, u32, u32);
 
+    // SAFETY: CPUID 非特权指令 (Ring 3 亦可执行)、不访问内存, 本块 unsafe 的唯一
+    // 理由是 inline asm 与 **RBX 保留寄存器**: x86_64 上 LLVM 把 rbx 当保留寄存器,
+    // 不能直接作 asm 输出操作数, 故用两条 `xchg {tmp}, rbx` 把 rbx 借给 CPUID 再
+    // 换回 —— 进入时 tmp ← 旧 rbx、rbx ← 0, 退出时 tmp ← CPUID 的 ebx、rbx ← 旧值,
+    // 块结束时 rbx 与进入前逐位相同, 不破坏编译器对该寄存器的假设. `ebx_val` 先置
+    // 0 保证 xchg 输入侧有定义值. options(nomem, preserves_flags) 声明不碰内存、
+    // 不改标志 (CPUID 本身不动 EFLAGS); 未声明 nostack 属保守 (块内实际只用寄存器).
+    // leaf/subleaf 超范围会读到未定义值, 那是**语义**问题, 由 `cpuid_checked` 的
+    // 双层校验 (B03-18) 挡, 不构成本块的内存安全前提.
     unsafe {
         let mut ebx_val: u64 = 0;
         core::arch::asm!(

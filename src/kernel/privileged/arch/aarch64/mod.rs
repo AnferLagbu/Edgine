@@ -150,6 +150,29 @@ impl InterruptArch for Aarch64 {
         crate::privileged::glue::usize_from_u64(daif)
     }
 
+    // === unsafe 依据单源 (本文件 DAIF 与 WFI 位点共用) ===
+    //
+    // 类别 I「DAIF 屏蔽位读写」: `mrs {}, daif` 把 PSTATE 屏蔽位读进一个通用寄存器
+    // (`out(reg)`); `msr daifset/daifclr, #imm` 是**立即数**形态, 只改 PSTATE 的
+    // D/A/I/F 四个屏蔽位. 两者都不访问内存、无指针解引用面, 故不存在别名或对齐
+    // 风险; 未声明 `options(...)` 属保守 (编译器假定可能访存), 不构成 UB.
+    // 立即数与寄存器位的对应是 `imm = (DAIF >> 6) & 0xF`: DAIF 寄存器 bit9=D /
+    // bit8=A / bit7=I / bit6=F, 立即数 bit3=D / bit2=A / bit1=I / bit0=F ⇒
+    // `#8`=Debug、`#4`=SError、`#2`=IRQ、`#1`=FIQ. 语义侧: 清 I 位即刻开放本核 IRQ
+    // 投递, 调用点须保证向量表与 GIC 已就绪; `interrupt_restore` 必须逐位还原
+    // `interrupt_disable` 保存的完整 DAIF, 只还原 I 位会丢掉 D/A/F 的屏蔽状态
+    // (P3.C + F-14).
+    // 注: 下方 `interrupt_restore` 文档段把立即数位序写成 bit0=D…bit3=F (反了),
+    // 且 F/D 两个分支的标签互换; 分支实际测试的 DAIF 位与所写立即数配对是正确的,
+    // 勿按该文档段改代码 (已登记为预存文档缺陷).
+    //
+    // 类别 W「WFI 兜底循环」: `wfi` 是 hint 指令, 只让本核进入低功耗等待, 不访问
+    // 内存也不动栈 (故声明 `options(nomem, nostack)`); 它**可能被伪唤醒立即返回**,
+    // 所以必须包在 `loop` 里. 两处都在 `shutdown` / `reboot` 的 PSCI SMC 之后作
+    // 兜底: 固件未实现 SYSTEM_OFF/SYSTEM_RESET 时 SMC 会返回, 不能让控制流落回
+    // 调用者 (两函数都是 `-> !`). 执行前提是 EL1 —— EL0 执行 WFI 在
+    // SCTLR_EL1.NTWI=0 时会陷入 EL1, 而这两个入口只在内核关机/重启路径调用.
+
     /// 恢复完整 DAIF 屏蔽位 (D/A/I/F).
     ///
     /// P3.C + F-14: 历史版本仅恢复 IRQ (bit 7), 不恢复 D/A/F 位,
@@ -167,40 +190,56 @@ impl InterruptArch for Aarch64 {
         let daif = flags as u64;
         // F (FIQ) — bit 3 in immediate
         if (daif & (1 << 9)) == 0 {
+            // SAFETY: 类别 I. 立即数 #8 = bit3=D, 清 DAIF.D 解除Debug 异常屏蔽; 判据取
+            // saved DAIF 的 bit9 (D 位), 与立即数一一对应. 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifclr, #8");
             }
         } else {
+            // SAFETY: 类别 I. 立即数 #8 = bit3=D, 置 DAIF.D 恢复Debug 异常屏蔽 (saved bit9
+            // 非 0 ⇒ 原本屏蔽). 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifset, #8");
             }
         }
         // A (SError) — bit 2 in immediate
         if (daif & (1 << 8)) == 0 {
+            // SAFETY: 类别 I. 立即数 #4 = bit2=A, 清 DAIF.A 解除SError屏蔽; 判据取
+            // saved DAIF 的 bit8 (A 位), 与立即数一一对应. 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifclr, #4");
             }
         } else {
+            // SAFETY: 类别 I. 立即数 #4 = bit2=A, 置 DAIF.A 恢复SError屏蔽 (saved bit8
+            // 非 0 ⇒ 原本屏蔽). 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifset, #4");
             }
         }
         // I (IRQ) — bit 1 in immediate
         if (daif & (1 << 7)) == 0 {
+            // SAFETY: 类别 I. 立即数 #2 = bit1=I, 清 DAIF.I 解除IRQ屏蔽; 判据取
+            // saved DAIF 的 bit7 (I 位), 与立即数一一对应. 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifclr, #2");
             }
         } else {
+            // SAFETY: 类别 I. 立即数 #2 = bit1=I, 置 DAIF.I 恢复IRQ屏蔽 (saved bit7
+            // 非 0 ⇒ 原本屏蔽). 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifset, #2");
             }
         }
         // D (Debug) — bit 0 in immediate
         if (daif & (1 << 6)) == 0 {
+            // SAFETY: 类别 I. 立即数 #1 = bit0=F, 清 DAIF.F 解除FIQ屏蔽; 判据取
+            // saved DAIF 的 bit6 (F 位), 与立即数一一对应. 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifclr, #1");
             }
         } else {
+            // SAFETY: 类别 I. 立即数 #1 = bit0=F, 置 DAIF.F 恢复FIQ屏蔽 (saved bit6
+            // 非 0 ⇒ 原本屏蔽). 只改 PSTATE, 无内存面.
             unsafe {
                 asm!("msr daifset, #1");
             }
@@ -460,6 +499,10 @@ impl SystemArch for Aarch64 {
             asm!("smc #0", in("x0") func, options(nostack));
         }
         loop {
+            // SAFETY: 类别 W. 固件未实现 PSCI SYSTEM_OFF 时上方 SMC 会返回 (故那个
+            // 块不声明 noreturn), 本循环兜住控制流不外泄 —— `shutdown` 是 `-> !`.
+            // wfi 可能被伪唤醒立即返回, 故必须循环; 只声明 nomem/nostack 因为它不
+            // 访存不动栈. 本路径在 EL1 执行, 不触 EL0 的 WFI 陷入.
             unsafe {
                 asm!("wfi", options(nomem, nostack));
             }
@@ -474,6 +517,10 @@ impl SystemArch for Aarch64 {
             asm!("smc #0", in("x0") func, options(nostack));
         }
         loop {
+            // SAFETY: 类别 W. 同 `shutdown` 的兜底口径: PSCI SYSTEM_RESET 未实现时
+            // SMC 返回, 本循环保证 `reboot` (`-> !`) 不把控制流交回调用者. wfi 可
+            // 伪唤醒立即返回故必须循环; nomem/nostack 与它不访存不动栈一致.
+            // 本路径在 EL1 执行.
             unsafe {
                 asm!("wfi", options(nomem, nostack));
             }

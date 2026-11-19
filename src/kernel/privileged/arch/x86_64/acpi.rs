@@ -893,6 +893,22 @@ pub fn acpi_reboot() -> ! {
             }
             // 方式2: MMIO 空间 (reset_reg_space == 0)
             else if reset_reg_space == 0 && reset_reg_addr != 0 {
+                // SAFETY: `reset_reg_addr` 取自 FADT 的 GAS (Generic Address Structure)
+                // 字节 [4..8], 即复位寄存器 64 位地址的**低 32 位**; space == 0 表示
+                // SystemMemory (MMIO), 与上方 == 1 的 I/O 端口分支互斥, != 0 排除空地址.
+                // 地址来源链: `parse_all_tables` 遍历 RSDT/XSDT → 签名 "FACP" 且长度
+                // ≥ FADT_MIN_LEN → `parse_fadt` 存表物理地址与 header.length 到
+                // FADT_ADDR / FADT_LEN; 上方 `fadt_len >= FADT_RESET_MIN_LEN` (= 129,
+                // 覆盖 reset_reg + reset_value) 才读这两个字段, 故字段读不越表界.
+                // 本内核 ACPI 面不做 ioremap: 物理地址直接当 VA 用, 依赖 boot 期低半区
+                // 恒等映射 (低 4 GiB; kview 只保留 [0, ceil(kernel_end/2MiB)), 见
+                // `mm::user_va_lower_bound` 文档). 该 MMIO 地址是否落在此窗口内**本函数
+                // 不校验**, 由固件给出的 FADT 与平台映射保证; 窗口外即缺页而非复位.
+                // 写形态: 单字节 `*mut u8` 整写, 无读-改-写, u8 对齐恒为 1; volatile 必需
+                // —— 该写是设备侧复位触发, 编译器不得优化掉或重排. 写后不判定是否真复位,
+                // 未复位则落到下方键盘控制器 (0x64 / 0xFE) 回退路径.
+                // 已知局限 (登记不处置): ①GAS 高 32 位被丢弃, 4 GiB 以上的复位寄存器会
+                // 写错地址; ②不消费 GAS 的 RegisterBitWidth / AccessSize, 恒按字节写.
                 unsafe {
                     core::ptr::write_volatile(reset_reg_addr as *mut u8, reset_val);
                 }
