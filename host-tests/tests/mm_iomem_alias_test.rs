@@ -113,6 +113,9 @@ fn alias_registry_basic_checks() {
 fn alias_registry_release_and_capacity() {
     // ── unregister 后重新注册 (Drop 释放) ──
     {
+        // SAFETY: 同模块头契约 —— 只验别名注册表算法, 句柄从不做读/写, 伪造 phys
+        // 不被解引用 (`IoMem::new` 只做校验 + 注册 + `mmio_virt` 算术); 本处随后
+        // 显式 drop 以驱动 unregister, 验释放后同地址可重新注册.
         let m = unsafe { IoMem::new(PhysAddr(0x1000), 0x100, "dev1") };
         assert!(m.is_ok());
         drop(m); // IoMem 析构 → ALIAS_REGISTRY.unregister

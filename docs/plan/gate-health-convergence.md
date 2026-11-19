@@ -918,8 +918,71 @@ P-62 feature 运行维 **4/4** / lockdep 构建面双架构两侧符合 / UEFI(O
 
 描述：清 `tests/` 19 + `src/` 6。
 方案：同批 5a 四步；清完后 host-tests 腿翻 `-D clippy::undocumented_unsafe_blocks` 硬执法。
-状态：[]
+状态：[X]
 详情：测试代码的 SAFETY 理由须说明**被探针对象的不变量**，不是「测试用所以安全」。
+**施工结果（2026-11-19）**：25 处全清、**零占位**——`tests/` 19 = elf_verify_unification 9 +
+lib_string_strlen_safe 7 + mm_iomem_alias 1 + copy_user_exception 2；`src/` 6 =
+framekernel_bench 5 + dma_stream 1。方法照批 5a/5b 三步：先读内核对应实装再落笔、重复形态
+单源化、落笔后 grep 核实全部引用名与具体断言。**单源化**落在四段「unsafe 依据单源」
+（elf 的 `verify_elf` 三条路径 / strlen 的实际读取下标区间 / `SignalFrame` → 字节切片的
+`from_raw_parts` 四条前置 / `IoMem::new` 的四步实装），逐处只引类别 + 写该处特有不变量。
+**本批最重要的发现是形态订正而非补注释**：elf 9 处中 **7 处原本就有 SAFETY 注释**，但写在
+`assert_eq!(` **之前** ⇒ clippy **不认**（注释与 `unsafe {` 之间隔了非注释 token）。实测把注释
+**移进宏实参、紧贴 `unsafe {` 上一行**即被接受；`let x = unsafe {` 语句行的上一行同样被接受。
+故这 7 处是**位置错**、另 2 处（helper `call_verify_elf` 与 PhdrOutOfBounds 的 `assert_eq!`）
+才是真缺失。⇒ 项目「紧邻上一行」约定在**宏调用形态**下必须落到实参内部，写在宏名之前无效。
+**核实过的关键断言**（不是「内核会校验」式笼统话）：① `proc/elf/verify.rs` 的 `verify_elf`
+先判 `is_null() || elf_size < 64` **早返回 `TooSmall` 且该路径不解引用**，唯一读点是
+`cast::<Elf64Header>().read_unaligned()`（**不要求对齐**、范围恰 header 64 字节），phdr 表只做
+`checked_mul` / `checked_add` 的**算术**边界校验、**不读表内容** ⇒ PhdrOutOfBounds 用例缓冲
+100 字节而 `phdr_end = 176` **不构成越界读**（缺的 76 字节不被访问），TooManyPhdr 缓冲为
+`64 + 129 × 56 = 7288` 字节。② `privileged/iomem.rs` 的 `IoMem::new` 四步（零长 / 4 字节对齐 /
+`checked_add` 溢出 → `ALIAS_REGISTRY` 区间注册 → `mmio_virt` 地址算术 → `NonNull::new` 包装）
+**全程不解引用 phys**，本用例 6 个调用点只断言 Ok/Err、从不 read/write，句柄 Drop 即 unregister；
+`0x8000_1800` 恰为 a 区间末端 ⇒ **半开区间相接不算重叠**。③ `SignalFrame` 23 个字段全为 `u64`
+⇒ 无 padding、`size_of` = **184** 即对象实占字节数（由既有布局用例钉住），目标元素 `u8` 对齐要求 1、
+结构无 `UnsafeCell` / `Cell`、切片不逃逸出函数体。framekernel_bench 的 5 处补齐之外，**1 处既有
+笼统理由**（「phys 为纯算术载体」）同批重写为上述可核对的四步细节。
+**翻硬执法**：`ci/audit.sh` 的 host-tests 腿（`--release --all-targets --no-deps --target-dir
+other/target`）加 `-D clippy::undocumented_unsafe_blocks`（+3 行中文理由）。**lint 名显式点名是
+必需的**——该 lint 默认 allow，单靠 `-D warnings` 升不动它。接线形状锁
+`ci_entrypoint_unified_test.rs` 的 `test_audit_sh_clippy_pedantic_covers_four_trees` **臂①**
+旗标清单同批加该项（断言点 `:1240`；臂② 的 src/user 双架构腿已在批 5b 加过，不重复翻）。
+**两项负控制（均 `cp` + `sha256` 逐字节复原）**：① 往 `copy_user_exception_test.rs:494` 注入一个
+无 SAFETY 的 unsafe 块 ⇒ 门槛 2 该树腿 **RC=101**、判词 `error: unsafe block missing a safety
+comment`；② 从 `ci/audit.sh` 摘掉新旗标 ⇒ 形状锁 **RC=101**、判词「`host-tests` pedantic 腿缺
+`-D clippy::undocumented_unsafe_blocks`」（证接线有锁，静默退回棘轮形态会被拦）。
+**自捕订正 1 处（本批自己造成的红，已修）**：首轮 `G2-AUDIT-FULL-RC=1` 的**唯一**红因是我新写的
+elf 模块 doc 里裸写 `elf_size` 触发 `clippy::doc_markdown`（`-D clippy::pedantic` 隐含该 lint，
+且它**只作用于 doc 注释**、不管 `// SAFETY:` 行注释）⇒ 加反引号后先以**门槛原形命令**复验
+该树腿 RC=0，再重跑 `audit full` 得第二轮 RC=0。教训：手工检测跑只带
+`-W clippy::undocumented_unsafe_blocks`、**不带 pedantic**，故新增 doc 散文必须按门槛原形验一次。
+**棘轮读数**：261 → **236 处 / 64 文件 / 69 键**（−25；块 219 + impl 17），侧车 `host-tests/`
+条目 **0**，余量全在 kernel 树（x86_64 腿 172 / aarch64 腿 206，并集 236）；
+`--update-baseline` 收缩后复跑双向对账 **RC=0**。
+**七门槛（终态）**：`./ci/build.sh all` **RC=0**（Passed **6** / Failed **0**）·
+`bash ci/audit.sh full` **RC=0**（第二轮；**未执行腿数 0**、档位 full 覆盖步骤 0–4；
+selftest **13/13** / `safety_debt` 通过・并集 **236 处 / 64 文件 / 69 键** vs 债册 **236 / 69** /
+`missing_docs_debt` **0 处 / 0 键** / 废弃命名扫描受检 **1721 文件**・历史面 KEEP **316**・违规 **0** /
+`vacuous_needle` 受检 **1313 .rs**・违规 **0** / `check_doc_paths` **19 份**・**0 漂移**・免报 **3** /
+性能指标腿全表在绝对预算内 / Lockbud **4/4** 零发现 / QEMU **2/2**（FAIL_OK=0）/
+P-62 feature 运行维 **4/4** / 线程压力 **6/6** / lockdep 构建面探针双架构正向与默认两侧符合）·
+`make test-host` **RC=0**（**204 套 / 1602 passed / 0 failed**，与批 5b 同数——本批只补注释与
+旗标清单，未新增用例）· `make test-kernel-host` **RC=0**（三成员 **12+807+556=1375 / 0 failed**）·
+`make -f Makefile.ci ci-rustdoc` **RC=0**（双架构两腿真跑，**0 源码级 link 错误 + 0 私有项链接**）。
+**终态复跑**（本册与台账回填后）：`./ci/build.sh all` **RC=0**（Passed **6** / Failed **0**）·
+`scan_obsolete_naming` **RC=0**（受检 **1721 文件** / 历史面 KEEP **316** / 违规 **0**）·
+`check_doc_paths` **RC=0**（**19 份** / **0 漂移**，设计册计划新建路径免报 **3** 条）。
+本批**无新建文件**（11 个改动文件均已在索引内），故无需先 `git add` 再跑命名扫描。
+**新增一项工程外发现（§11.5 只报告不处置，与批 4 五项 + 批 5a 三项 + 批 5b 一项合并待批 6 裁定）**：
+⑩ `privileged/glue/string.rs:61` 的 `while *ptr != 0 && len < MAX_CSTR_LEN` **求值次序颠倒**——
+`&&` 左侧先解引用，故 `len` 已达上限时**仍多读一次**才由右侧退出，实际读取下标闭区间是
+`[0, min(MAX_CSTR_LEN, 首个 NUL 下标)]`；调用方缓冲**恰为 4096 字节且无 NUL** 时即越界读 1 字节
+（下标 4096）。同族 `glue/cstr.rs:106` 的扫描是 `while n < MAX_CSTR_LEN && *ptr.add(n) != 0`
+（**先判上限再解引用**）⇒ string.rs 这处是次序颠倒的**孤例**，修法现成。另 `:48-49` 的 `# Safety`
+只写「此函数通过 FFI 暴露给 C 代码使用」，**未陈述任何调用方义务**（能过 `missing_safety_doc`
+但内容空转）。本批 strlen 测试的 SAFETY 按**实际读取范围**落笔（`at_max` 用例正是该临界形态，
+靠 `to_cstr` 追加的 NUL 兜住），**未改实装**。
 
 ### 批 5d・SAFETY 清零: privileged mm + sync（54 处）
 

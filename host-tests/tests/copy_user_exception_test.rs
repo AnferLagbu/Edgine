@@ -9,6 +9,18 @@
 //! host-tests 不链接 edgine; 复刻 `copy_user` 的核心接口契约来
 //! 验证调用方语义: 返回 Result<usize, ()>, 失败时调用方必须
 //! 把 EFAULT / `SIG_IGN` 路径走通.
+//!
+//! ## unsafe 依据单源 (本文件两处 `SignalFrame` → 字节切片共用)
+//!
+//! 本文件是纯契约模型 (不链接内核), 两处 unsafe 都是把 `SignalFrame` 转成字节流,
+//! 分别喂给 `mock_copy_to_user` 与字段偏移断言. `from_raw_parts` 的前置条件逐条核对:
+//! ① **非空 + 连续已初始化内存**: 指针来自存活的 `&SignalFrame` (或同函数内的本地值),
+//! 长度取 `size_of::<SignalFrame>()`; 该结构 23 个字段全为 `u64` ⇒ 无 padding,
+//! `size_of` 即对象实占字节数 (由 `signal_frame_layout_size_matches_push_order` 钉住),
+//! 故切片不越出对象边界;
+//! ② **对齐**: 目标元素是 `u8` (对齐要求 1), 任何地址恒满足;
+//! ③ **借用期内不可变**: 结构无 `UnsafeCell` / `Cell` 字段, 共享借用期间无并发写;
+//! ④ **不逃逸**: 切片只在同一函数体内使用, 生命周期短于源对象.
 
 // ============================================================================
 // 模型: 异常表保护版 copy API 契约
@@ -174,6 +186,8 @@ fn try_deliver_signal(
 ) -> bool {
     let frame_size = core::mem::size_of::<SignalFrame>();
     let ret_addr_bytes = (frame_rsp + 8 + frame_size as u64).to_ne_bytes();
+    // SAFETY: 见模块头单源 —— sigframe 为调用方借入的存活 &SignalFrame,
+    // frame_size = size_of::<SignalFrame>() = 184 恰为对象字节数, 切片只在本函数内使用
     let sigframe_bytes = unsafe {
         core::slice::from_raw_parts(
             std::ptr::from_ref::<SignalFrame>(sigframe).cast::<u8>(),
@@ -444,6 +458,8 @@ fn signal_frame_bytes_roundtrip_preserves_register_values() {
         signum: 11,
     };
     let frame_size = core::mem::size_of::<SignalFrame>();
+    // SAFETY: 见模块头单源 —— sigframe 是本函数内的本地值, 构造后全程存活且无写;
+    // frame_size = 184 即对象字节数, bytes 只供下方四处字段偏移断言, 不逃逸出本函数
     let bytes =
         unsafe { core::slice::from_raw_parts((&raw const sigframe).cast::<u8>(), frame_size) };
     // 验证 r15 首字段 (小端序低字节在前)

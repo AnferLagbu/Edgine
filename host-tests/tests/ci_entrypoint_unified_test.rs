@@ -1377,6 +1377,9 @@ fn test_audit_sh_clippy_pedantic_covers_four_trees() {
             "--no-deps",
             "-D warnings",
             "-D clippy::pedantic",
+            // 门禁健康度收敛 批5c: 该树 SAFETY 存量已清零 ⇒ 由棘轮转硬执法.
+            // 少了这一项则新增无 SAFETY 块只在 full 档棘轮侧被拦, quick 档静默放行.
+            "-D clippy::undocumented_unsafe_blocks",
         ],
         "host-tests",
     );

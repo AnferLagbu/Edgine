@@ -25,6 +25,21 @@
 //! ## 保留
 //! 静态契约用例 (源码文本扫描 `user_proc.rs` / elf/mod.rs 无重复 magic 字面量,
 //! verify 子模块声明与委托) 为 B08-20 混合型文件的 `include_str` 部分, 原样保留.
+//!
+//! ## unsafe 依据单源 (本文件全部 `verify_elf` 调用点共用)
+//!
+//! 被探针对象 = `privileged/proc/elf/verify.rs` 的 `verify_elf`. 其 `# Safety` 契约是
+//! 「`elf_data` 指向 `elf_size` 字节可读内存」, 实装的可核对细节:
+//! ① `elf_data.is_null() || elf_size < size_of::<Elf64Header>()` (64) ⇒ **先早返回
+//! `TooSmall`**, 该路径不解引用;
+//! ② 唯一一次读是 `elf_data.cast::<Elf64Header>().read_unaligned()` ⇒ **不要求指针对齐**,
+//! 且读取范围恰为 header 那 64 字节;
+//! ③ phdr 表只做 `phoff + phnum * phentsize <= elf_size` 的**算术**边界校验 (溢出走
+//! `checked_mul` / `checked_add` → `Overflow`), **不读表内容** ⇒ 缓冲无需含真实 phdr 数据.
+//!
+//! 本文件缓冲全部来自测试自有 `Vec` (`make_elf` 按 header + phdr 表布局零填充, 或
+//! `vec![0u8; N]`), 借用在调用期间存活、无并发写; 传入长度恒取 `elf.len()` 与缓冲同源,
+//! 故各调用点只需写明「缓冲实长与 `elf_size` 的关系」及该用例落在上述哪条路径.
 
 use edgine::kernel::privileged::proc::elf::verify::{
     EM_AARCH64, EM_X86_64, ET_DYN, EXPECTED_E_MACHINE, VerifyError, VerifyResult,
@@ -71,8 +86,11 @@ fn make_elf(machine: u16, ty: u16, phnum: u16, phoff: u64, phentsize: u16) -> Ve
 /// 调用内核 `verify_elf` (unsafe: 传入 host 缓冲区指针 + 长度)
 ///
 /// # Safety
-/// `elf_data` 必须是 `elf_size` 字节的可读 host 内存 (由调用方 Vec 保证).
+/// `elf` 整个切片在调用期间必须可读 (由调用方持有的 `Vec` 借用保证).
 unsafe fn call_verify_elf(elf: &[u8]) -> Result<VerifyResult, VerifyError> {
+    // SAFETY: 见模块头单源 —— `elf.as_ptr()` 与 `elf.len()` 同源于一个存活借用,
+    // 指针指向的可读字节数恰等于传入的 elf_size, 满足 `verify_elf` 的 # Safety;
+    // 实装唯一读点是 read_unaligned, 故切片起始地址无需对齐.
     unsafe { verify_elf(elf.as_ptr(), elf.len() as u64) }
 }
 
@@ -169,8 +187,9 @@ fn verify_rejects_bad_magic() {
         u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     elf[0] = b'X'; // 破坏 magic
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源 —— elf 为 make_elf 产出的完整 host Vec (64 字节),
+        // 传入 len = elf.len() ⇒ 缓冲实长 == elf_size; 破坏 magic 只改内容不改长度
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::BadMagic
     );
@@ -186,8 +205,9 @@ fn verify_rejects_bad_class() {
         u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
     elf[4] = 1; // ELFCLASS32
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源 —— make_elf(phnum=0) 产出 64 字节 Vec, 传入 len 同源;
+        // 改 ident[4] 只改内容不改长度, 读点仍落在 header 64 字节内
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::BadClass
     );
@@ -203,8 +223,9 @@ fn verify_rejects_bad_machine() {
         64,
         u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源 —— make_elf(0x03, phnum=0) 产出 64 字节 Vec, len 同源;
+        // 机器码不符在 header 读之后的纯字段比较处返回, 不再触及缓冲其余部分
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::BadMachine
     );
@@ -213,8 +234,9 @@ fn verify_rejects_bad_machine() {
 #[test]
 fn verify_rejects_bad_phentsize() {
     let elf = make_elf(EM_X86_64, 2, 0, 64, 32); // phentsize 错
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源 —— phnum=0 ⇒ make_elf 只分配 header 那 64 字节
+        // (phentsize=32 只进 phdr 表尺寸算术, 不扩大缓冲), len 同源为 64
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::BadPhentsize
     );
@@ -229,8 +251,9 @@ fn verify_rejects_too_many_phdr() {
         64,
         u16::try_from(core::mem::size_of::<Elf64Phdr>()).expect("测试值必须能无损收窄"),
     );
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源 —— make_elf(phnum=129, phentsize=56) 产出
+        // 64 + 129*56 = 7288 字节 Vec, len 同源; 超限判定只读 header 字段, 表内容不被读
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::TooManyPhdr
     );
@@ -254,6 +277,9 @@ fn verify_rejects_phdr_out_of_bounds() {
     // SAFETY: words 前 100 字节为完整 host 缓冲
     let elf = unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 100) };
     assert_eq!(
+        // SAFETY: 见模块头单源 —— elf 借自 words (13 个 u64 = 104 字节容量) 的前 100
+        // 字节, len 同源为 100 ≥ header 64; phdr_end=176 > 100 由**算术**判越界,
+        // 实装不读表内容, 故缺的那 76 字节 phdr 数据不构成越界读
         unsafe { call_verify_elf(elf) }.unwrap_err(),
         VerifyError::PhdrOutOfBounds
     );
@@ -262,8 +288,9 @@ fn verify_rejects_phdr_out_of_bounds() {
 #[test]
 fn verify_rejects_too_small() {
     let elf = vec![0u8; 10]; // 远小于 sizeof(Elf64Header)=64
-    // SAFETY: elf 是完整 host Vec
     assert_eq!(
+        // SAFETY: 见模块头单源① —— 缓冲实长 10 == 传入 elf_size, 且 10 < 64 ⇒
+        // 实装在尺寸闸处早返回 TooSmall, 根本不解引用这 10 字节
         unsafe { call_verify_elf(&elf) }.unwrap_err(),
         VerifyError::TooSmall
     );
@@ -272,8 +299,9 @@ fn verify_rejects_too_small() {
 #[test]
 fn verify_null_ptr_is_too_small() {
     // 内核 verify_elf: null 指针 → TooSmall
-    // SAFETY: 显式 null 检查路径
     assert_eq!(
+        // SAFETY: 见模块头单源① —— `elf_data.is_null()` 是实装首个判据的左支,
+        // null + size 0 在该处早返回, 不构造任何引用、不解引用
         unsafe { verify_elf(core::ptr::null(), 0) }.unwrap_err(),
         VerifyError::TooSmall
     );

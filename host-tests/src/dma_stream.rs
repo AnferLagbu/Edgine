@@ -20,8 +20,14 @@ mod tests {
     /// 构造测试用 Frame (host 无真实物理页).
     ///
     /// # SAFETY
-    /// phys 仅为纯算术载体: `DmaStream::from_frame` 不 dereference 虚拟地址,
-    /// 仅做对齐/溢出/大小校验与状态机转换; 测试帧生命周期限于测试内, 无重复持有.
+    /// `Frame::from_raw` 的契约是「phys 为有效可分配物理地址且未被其他 Frame 持有」,
+    /// 本模块以伪造地址满足其**可验证的那一半**: phys 恒页对齐 (`from_raw` 内
+    /// `debug_assert`), 而「真实持有」这一半在 host 维**结构上不适用** ——
+    /// `privileged/frame.rs` 的 `Drop` 整体包在 `#[cfg(not(feature = "host-test"))]`
+    /// 内, host 构建下不触碰 PMM 持有计数, 故伪造地址既不会被归还也不会与真实帧
+    /// 争用计数. phys 亦仅为纯算术载体: `DmaStream::from_frame` 只经
+    /// `as_virt_ptr` (= `phys_to_virt` 加法) 取指针做非空/对齐/上限/溢出校验与
+    /// 状态机转换, **从不解引用**; 测试帧生命周期限于测试内, 无重复持有.
     unsafe fn frame(paddr: u64, order: u8) -> Frame {
         // SAFETY: 见函数文档 (前置条件与调用点相同)
         unsafe { Frame::from_raw(PhysAddr(paddr), order) }
@@ -55,6 +61,7 @@ mod tests {
         let d = DmaStream::from_frame(unsafe { frame(0, 17) }, DmaDirection::ToDevice);
         assert!(matches!(d, Err(DmaError::SizeTooLarge)));
         // 边界: order 16 = 256 MiB = DMA_MAX_SIZE (4K 倍数), 恰好允许
+        // SAFETY: 0x1000 页对齐, 见 frame() 说明 (host 维 Drop 不触碰 PMM)
         let d = DmaStream::from_frame(unsafe { frame(0x1000, 16) }, DmaDirection::ToDevice);
         assert!(d.is_ok());
     }

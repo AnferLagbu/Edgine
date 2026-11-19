@@ -5,41 +5,11 @@
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {
-    "sites": 261,
-    "files": 70,
-    "keys": 75
+    "sites": 236,
+    "files": 64,
+    "keys": 69
   },
   "entries": [
-    [
-      "host-tests/src/dma_stream.rs",
-      "block",
-      1
-    ],
-    [
-      "host-tests/src/framekernel_bench.rs",
-      "block",
-      5
-    ],
-    [
-      "host-tests/tests/copy_user_exception_test.rs",
-      "block",
-      2
-    ],
-    [
-      "host-tests/tests/elf_verify_unification_test.rs",
-      "block",
-      9
-    ],
-    [
-      "host-tests/tests/lib_string_strlen_safe_test.rs",
-      "block",
-      7
-    ],
-    [
-      "host-tests/tests/mm_iomem_alias_test.rs",
-      "block",
-      1
-    ],
     [
       "src/kernel/lib.rs",
       "block",

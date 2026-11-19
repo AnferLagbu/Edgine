@@ -14,6 +14,20 @@
 //! 内核 `strlen` 为 `pub unsafe extern "C" fn` (带 `#[unsafe(no_mangle)]`),
 //! 测试调用需 unsafe 块; 其扫描上限复用 `cstr::MAX_CSTR_LEN` (D1 统一), 测试侧
 //! 直接导入该 pub 常量, 消除镜像常量漂移.
+//!
+//! ## unsafe 依据单源 (本文件全部 `strlen` 调用点共用)
+//!
+//! 被探针对象 = `privileged/glue/string.rs` 的 `strlen`. 其契约是「`s` 为 null 或
+//! 指向以 `\0` 结尾的可读 C 串」, 而**实际读取范围**由实装循环决定:
+//! `while *ptr != 0 && len < MAX_CSTR_LEN` —— `&&` 左侧先求值, 故 `len` 已达
+//! `MAX_CSTR_LEN` 时**仍会解引用一次**才由右侧退出. 即读取下标闭区间为
+//! `[0, min(MAX_CSTR_LEN, 首个 NUL 下标)]`, 缓冲须在该区间内可读 (无 NUL 且缓冲
+//! 恰为 `MAX_CSTR_LEN` 字节时会多读 1 字节, 本文件各用例的缓冲均不落在该形态).
+//! null 指针走实装首行 `s.is_null()` 早返回, 不解引用.
+//!
+//! 本文件所有指针均来自**测试自有的本地 `Vec<i8>`** (`to_cstr` 末尾追加 `\0`,
+//! 或 `vec!` 定长填充), 借用在调用期间存活、无并发写, 故只需逐处核对
+//! 「缓冲长度 > 上述读取下标上界」. 各调用点注释只引本段 + 写该处的长度与 NUL 位置.
 
 use edgine::kernel::privileged::glue::cstr::MAX_CSTR_LEN;
 use edgine::kernel::privileged::glue::string::{strlen, strlen_safe};
@@ -39,6 +53,7 @@ fn test_strlen_null_returns_zero() {
 #[test]
 fn test_strlen_empty_string() {
     let s = to_cstr("");
+    // SAFETY: 见模块头单源 —— 缓冲 1 字节 (仅 NUL), 读至下标 0 即停
     let len = unsafe { strlen(s.as_ptr()) };
     assert_eq!(len, 0, "strlen of empty string must be 0");
 }
@@ -46,6 +61,7 @@ fn test_strlen_empty_string() {
 #[test]
 fn test_strlen_basic_ascii() {
     let s = to_cstr("hello");
+    // SAFETY: 见模块头单源 —— 缓冲 6 字节, NUL 在下标 5 ⇒ 读 0..=5
     let len = unsafe { strlen(s.as_ptr()) };
     assert_eq!(len, 5, "strlen(\"hello\") must be 5");
 }
@@ -56,6 +72,7 @@ fn test_strlen_stops_at_terminator() {
     let mut buf: Vec<i8> = b"abc".iter().map(|&b| b.cast_signed()).collect();
     buf.push(0);
     buf.extend(b"garbage".iter().map(|&b| b.cast_signed()));
+    // SAFETY: 见模块头单源 —— 缓冲 11 字节, NUL 在下标 3 ⇒ 读 0..=3, 尾部 garbage 不被读
     let len = unsafe { strlen(buf.as_ptr()) };
     assert_eq!(
         len, 3,
@@ -67,6 +84,8 @@ fn test_strlen_stops_at_terminator() {
 fn test_strlen_under_max_returns_full_length() {
     // 长度 < MAX_CSTR_LEN: 应当返回完整长度 (前提是 buf 实际以 \0 结尾)
     let s = to_cstr(&"x".repeat(MAX_CSTR_LEN - 1));
+    // SAFETY: 见模块头单源 —— 缓冲 MAX_CSTR_LEN 字节, NUL 在下标 MAX-1 ⇒ 读 0..=MAX-1,
+    // 未触上限故无「多读 1 字节」形态
     let len = unsafe { strlen(s.as_ptr()) };
     assert_eq!(
         len,
@@ -79,6 +98,8 @@ fn test_strlen_under_max_returns_full_length() {
 fn test_strlen_at_max_returns_max() {
     // 长度 == MAX_CSTR_LEN: 应当返回 MAX_CSTR_LEN (合法路径, 因遇到 \0 之前已到上限)
     let s = to_cstr(&"y".repeat(MAX_CSTR_LEN));
+    // SAFETY: 见模块头单源 —— 缓冲 MAX+1 字节, NUL 恰在下标 MAX ⇒ 读 0..=MAX 仍在界内
+    // (本用例正是「上限处多读 1 字节」的临界形态, 靠 to_cstr 追加的 NUL 兜住)
     let len = unsafe { strlen(s.as_ptr()) };
     assert_eq!(len, MAX_CSTR_LEN, "strlen at MAX boundary returns MAX");
 }
@@ -90,6 +111,8 @@ fn test_strlen_over_max_truncated_to_max() {
     // 测试场景: buf 长度 > MAX_CSTR_LEN 且全为非 \0 字符
     let buf: Vec<i8> = vec![b'a'.cast_signed(); MAX_CSTR_LEN + 100];
     // 不放 \0, strlen 必须在 MAX_CSTR_LEN 处停止
+    // SAFETY: 见模块头单源 —— 缓冲 MAX+100 字节且无 NUL ⇒ 读 0..=MAX (含上限那次多读),
+    // 余 99 字节不被读, 故「截断到 MAX」的断言不依赖越界读
     let len = unsafe { strlen(buf.as_ptr()) };
     assert_eq!(
         len, MAX_CSTR_LEN,
@@ -102,6 +125,7 @@ fn test_strlen_with_early_terminator_in_max_buffer() {
     // buf 长度 > MAX_CSTR_LEN, 但中间有 \0, 应在 \0 处停止 (而非 MAX_CSTR_LEN)
     let mut buf: Vec<i8> = vec![b'a'.cast_signed(); MAX_CSTR_LEN + 50];
     buf[10] = 0; // 在位置 10 终止
+    // SAFETY: 见模块头单源 —— 缓冲 MAX+50 字节, NUL 在下标 10 ⇒ 读 0..=10
     let len = unsafe { strlen(buf.as_ptr()) };
     assert_eq!(len, 10, "strlen stops at NUL even within MAX window");
 }

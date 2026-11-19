@@ -1572,18 +1572,30 @@ mod tests {
     fn test_iomem_alias_semantics() {
         // G-07: 直引内核 IoMem — 别名注册表为进程级全局态, 故单测合并为一个函数
         // 并使用独立地址段 (0x8000_1000 起), 避免与其他用例并发相互干扰.
-        // SAFETY: phys 为纯算术载体 (IoMem::new 不解引用该地址), 同 bench 语义.
+        //
+        // unsafe 依据单源 (本用例 6 个 `IoMem::new` 调用点共用):
+        // `IoMem::new` 的 SAFETY 契约要求 phys 指向有效 MMIO 区域, 但其实装只做
+        // ① 零长 / 4 字节对齐 / `checked_add` 溢出校验 ② `ALIAS_REGISTRY` 区间注册
+        // ③ `mmio_virt` 地址算术 ④ `NonNull::new` 包装, **全程不解引用 phys**;
+        // 本用例只断言 Ok/Err (即注册表的重叠判定算法), 从不对句柄做 read/write,
+        // 故伪造地址不会被访问. 句柄 Drop 即 unregister, 不残留占用其他用例槽位.
+        // SAFETY: 见上单源 —— 0x8000_1000 4 字节对齐, len 0x800 非零, 末端不溢出 u64
         let a = unsafe { IoMem::new(PhysAddr(0x8000_1000), 0x800, "bench.t1") };
         assert!(a.is_ok());
         // 完全不相邻 → 可注册
+        // SAFETY: 见上单源 —— [0x8000_2000, 0x8000_2800) 与 a 的 [0x8000_1000, 0x8000_1800) 无交集
         assert!(unsafe { IoMem::new(PhysAddr(0x8000_2000), 0x800, "bench.t2") }.is_ok());
         // 起点在内 → 冲突
+        // SAFETY: 见上单源 —— 起点 0x8000_1200 落在 a 区间内部, 重叠判定在解引用之前
         assert!(unsafe { IoMem::new(PhysAddr(0x8000_1200), 0x800, "bench.t3") }.is_err());
         // 起点边界 (完全在内) → 冲突
+        // SAFETY: 见上单源 —— [0x8000_1000, 0x8000_1400) 被 a 完全包含, 走同一重叠分支
         assert!(unsafe { IoMem::new(PhysAddr(0x8000_1000), 0x400, "bench.t4") }.is_err());
         // 起点在外, 末端在内 → 冲突
+        // SAFETY: 见上单源 —— 末端 0x8000_1100 越入 a 的起点, 左重叠分支同样只查注册表
         assert!(unsafe { IoMem::new(PhysAddr(0x8000_0800), 0x900, "bench.t5") }.is_err());
         // 与 a 末端相接 (不重叠) → 可注册
+        // SAFETY: 见上单源 —— 起点 0x8000_1800 恰为 a 的末端, 半开区间相接不算重叠
         assert!(unsafe { IoMem::new(PhysAddr(0x8000_1800), 0x800, "bench.t6") }.is_ok());
     }
 

@@ -579,9 +579,12 @@ popd > /dev/null
 #     cargo 的 RUSTC_WORKSPACE_WRAPPER 语义都覆盖不到它, 必须单独点名;
 #   · 四腿一律 `--no-deps`: path 依赖 (kernel / userlib) 的诊断已由步骤 2 与本腿其它
 #     成员负责, 不 `--no-deps` 会把同一诊断重复计数, 读数失真.
+# host-tests 树的 SAFETY 面已清零 (门禁健康度收敛 批5c), 故与 src/user 同形由存量棘轮
+# 转硬执法: 新增无 SAFETY 的 unsafe 块 / unsafe impl 在门槛 2 即红. lint 名显式点名是
+# 必需的 —— undocumented_unsafe_blocks 默认 allow, 单靠 `-D warnings` 升不动它.
 set +e
 HT_CLIPPY_OUT=$(cargo clippy --manifest-path host-tests/Cargo.toml --release --all-targets --no-deps \
-    --target-dir other/target -- -D warnings -D clippy::pedantic 2>&1)
+    --target-dir other/target -- -D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks 2>&1)
 HT_CLIPPY_RC=$?
 set -e
 printf '%s\n' "$HT_CLIPPY_OUT" | tail -10
