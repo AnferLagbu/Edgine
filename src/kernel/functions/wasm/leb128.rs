@@ -252,7 +252,7 @@ mod tests {
         );
     }
 
-    /// 收紧只改"越界有效位"的判定，不改截断语义与 `pos` 单调性（kani harness 的三条不变式面）。
+    /// 收紧只改"越界有效位"的判定，不改截断语义与 `pos` 单调性。
     #[test]
     fn truncation_and_position_are_unchanged() {
         let mut pos = 0usize;

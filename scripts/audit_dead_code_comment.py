@@ -49,8 +49,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 BASELINE_FILE = SCRIPT_DIR / "audit_dead_code_comment.baseline.json"
 
-# 五树扫描根 (与 P-50 丙 的四树口径同源, 另加 ABI crate src/rust).
-SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust", "kani-harness")
+# 四树扫描根 (与 P-50 丙 的三树口径同源, 另加 ABI crate src/rust; kani-harness 已整树退役).
+SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust")
 
 # vendored 目录按**路径分量**排除 (不按子串: 否则 net/smoltcp_impl.rs 会被误伤).
 VENDORED_DIRS = {"smoltcp", "vendor"}
@@ -188,7 +188,7 @@ def iter_attributes(lines):
 
 
 def scan():
-    """扫描五树, 返回 (死代码命中列表, 冻结抑制计数, 文件数, 构建参数命中列表)."""
+    """扫描四树, 返回 (死代码命中列表, 冻结抑制计数, 文件数, 构建参数命中列表)."""
     dead_hits = []
     frozen = Counter()
     file_count = 0
@@ -403,7 +403,7 @@ def main(argv=None) -> int:
         print(f"[FAIL-CLOSED] {exc}", file=sys.stderr)
         return 2
 
-    print(f"扫描: {file_count} 个 .rs (五树, 排除 vendored smoltcp)")
+    print(f"扫描: {file_count} 个 .rs (四树, 排除 vendored smoltcp)")
     print(f"死代码抑制族: {len(dead_hits)} 处 (硬零, 不进基线)")
     print(f"构建参数抑制: {len(build_hits)} 处 (硬零)")
     clippy_sites = sum(v for (_f, a), v in frozen.items() if "clippy::" in a)

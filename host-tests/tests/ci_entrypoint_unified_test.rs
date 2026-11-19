@@ -243,8 +243,8 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
         .split_whitespace()
         .collect();
     assert!(
-        required.len() >= 19,
-        "AUDIT_REQUIRED_LEGS 只点名 {} 条腿, 低于实测的 19 条 (18 被包装 + coupling)",
+        required.len() >= 17,
+        "AUDIT_REQUIRED_LEGS 只点名 {} 条腿, 低于实测的 17 条 (16 被包装 + coupling)",
         required.len()
     );
 
@@ -292,7 +292,7 @@ fn test_audit_sh_audit_legs_are_fail_closed() {
 ///    把整条腿摘掉 (P-49 已实测的「为绿而摘」动力).
 ///
 /// 五臂:
-/// ① 五树扫描根 / vendored 按路径分量排除 / 扫描根缺失 fail-closed 出口齐备;
+/// ① 四树扫描根 / vendored 按路径分量排除 / 扫描根缺失 fail-closed 出口齐备;
 /// ② 属性位置锚定检测 + 自测执行点 + 死代码抑制先于基线写入 (`dead_code` 永不进基线);
 /// ③ 基线唯一写入口是 --update-baseline, 读取侧必须双向对账 (over + under);
 /// ④ 腿在 `AUDIT_REQUIRED_LEGS` 里, `mark_leg` 与 `audit_leg_missing` 成对, 且位于 0.5n
@@ -310,7 +310,7 @@ fn test_p53_f9_dead_code_comment_gate_is_wired() {
     let baseline = read("../scripts/audit_dead_code_comment.baseline.json");
 
     for needle in [
-        r#"SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust", "kani-harness")"#,
+        r#"SCAN_ROOTS = ("src/kernel", "host-tests", "src/user", "src/rust")"#,
         r#"VENDORED_DIRS = {"smoltcp", "vendor"}"#,
         "for root in SCAN_ROOTS",
         "扫描根不存在",
@@ -733,8 +733,8 @@ fn test_p69_leg_manifest_is_reconciled_against_agents() {
 /// 病灶 (P-50 测绘):
 /// - `audit_comment_language.py` (F7) 与 `audit_c_naming.py` (I-07) 此前只扫 `src/kernel`,
 ///   于是「中文注释强制」只在内核层执法; host-tests / src/user / kani-harness 三树零覆盖
-///   (实测 66 + 3 + 2 处违规). 扩根后还必须逐根 fail-closed —— 根拼错要被读成配置错误,
-///   不能读成「扫描零违规」.
+///   (实测 66 + 3 + 2 处违规; kani-harness 后已整树退役, 现覆盖根为三树). 扩根后还必须
+///   逐根 fail-closed —— 根拼错要被读成配置错误, 不能读成「扫描零违规」.
 /// - `scripts/tests/audit_selftest.py` 的四个用例在自测文件里**复制**了检测算法,
 ///   检测器退化时自测照样全绿. 真调化后若不进 CI, 等于把 P-49 的「零调用者」换个位置复现.
 /// - `audit_repr_c.py` / `audit_volatile_access.py` / `audit_tlb_receive_order.py` 当时是
@@ -742,7 +742,7 @@ fn test_p69_leg_manifest_is_reconciled_against_agents() {
 ///   当成「全树无同类风险」. (P-61 乙 已把 repr(C) 扩为树级发现式; volatile / tlb 仍定点.)
 ///
 /// 判据:
-/// ① 两个审计脚本的 BASES 各含四根, 且扫描循环由 BASES 驱动 (声明但不使用 ⇒ 红);
+/// ① 两个审计脚本的 BASES 各含三根, 且扫描循环由 BASES 驱动 (声明但不使用 ⇒ 红);
 /// ② 两脚本都有「覆盖根缺失」fail-closed 出口并点名 P-50 丙;
 /// ③ 自测文件按路径真调检测器 (`spec_from_file_location` + 四个真实入口), 且不再含
 ///    「手动模拟」/「核心检测算法」这类复制实现的痕迹;
@@ -763,11 +763,10 @@ fn test_p50_audit_scope_and_selftest_are_wired() {
             r#"PROJECT_ROOT / "src" / "kernel""#,
             r#"PROJECT_ROOT / "host-tests""#,
             r#"PROJECT_ROOT / "src" / "user""#,
-            r#"PROJECT_ROOT / "kani-harness""#,
         ] {
             assert!(
                 py.contains(root),
-                "{path} 的 BASES 缺覆盖根 {root} —— {tree} 对三树重新失明 (P-50 丙)"
+                "{path} 的 BASES 缺覆盖根 {root} —— {tree} 对两树重新失明 (P-50 丙)"
             );
         }
         assert!(
@@ -1989,7 +1988,8 @@ fn test_p55_qemu_skip_and_pipe_failure_causes_are_visible() {
 /// 白名单必须列全 P-71 拆出的四个 crate (只写 `kernel` 会退化成只扫 glue 的假绿).
 ///
 /// 病灶: ① 「3 SAFETY 注释覆盖率统计」用 `grep -c "unsafe {"` 对 `grep -c "// SAFETY:"`
-/// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 `audit_safety_coverage.py` (1722/1722) 同名不同尺,
+/// 求比值, 实测 131% —— 与 0.5 组里恒阻断的 `audit_safety_coverage.py` (当时 1722/1722,
+/// 批4 收敛后只判 extern / 引用两面 = 146/146) 同名不同尺,
 /// 且百分比本身不成立; ② 「6 模块级 SAFETY 不变式」数的是注释文案出现频次, 实测全仓仅
 /// `user_proc.rs` 1 个文件命中、阈值 >=5 ⇒ 每次 full 都稳定打黄字. 删除后 Lockbud 4→3,
 /// QEMU 7→4. ③ Lockbud 派发器把第一个 `--` 之前的参数当自身 flags (未知 flag 被
@@ -2473,37 +2473,45 @@ fn test_p59_f8_is_enforced_by_rustc_missing_docs() {
 ///   而 host-tests / src/user 实测 154 处缺中文 doc (默认面) 不在任何门禁射程 ⇒ 须显式裁定.
 ///
 /// 判据:
-/// ① `once_cell` 覆盖四树 + 循环由 BASES 驱动 + 根缺失 fail-closed;
+/// ① `OnceCell` 统一性由四树 clippy `disallowed-types` 执法 + 已退役腿不回插到位清单
+///    (门禁健康度收敛 批4 / D-7 丙 改钉: 原钉 `audit_once_cell.py` 的 BASES 三面);
 /// ② `safety_coverage` 不再声称过滤 arch, 且 arch 确在实装射程 (`pub mod arch` 在位);
 /// ③ `c_naming` 读失败进 `read_errors` 并影响退出码, 不再静默 continue;
-/// ④ AGENTS §2.2 写明 F8 射程与「不在射程」的三树.
+/// ④ AGENTS §2.2 写明 F8 射程与「不在射程」的两树 (kani-harness 已整树退役).
 #[test]
 fn test_p60_scope_closure_and_silent_skips_fixed() {
-    let once_cell = read("../scripts/audit_once_cell.py");
     let safety = read("../scripts/audit_safety_coverage.py");
     let c_naming = read("../scripts/audit_c_naming.py");
     let agents = read(AGENTS_MD);
 
-    // ① OnceCell 四树 + fail-closed.
-    for root in [
-        r#"PROJECT_ROOT / "src" / "kernel""#,
-        r#"PROJECT_ROOT / "host-tests""#,
-        r#"PROJECT_ROOT / "src" / "user""#,
-        r#"PROJECT_ROOT / "kani-harness""#,
+    // ① OnceCell 统一性的替代执法 = 四树 clippy `disallowed-types` (门禁健康度收敛 批4,
+    //    D-7 丙: audit_once_cell.py 整腿退役). 改钉不删针 —— 原三面 (BASES 四树 / 循环由
+    //    BASES 驱动 / 根缺失 fail-closed) 钉的是自建脚本内部结构, 现钉替代执法点的覆盖面,
+    //    并钉住「已退役腿不许静默回插清单」.
+    for cfg in [
+        "../src/kernel/clippy.toml",
+        "../src/rust/clippy.toml",
+        "../host-tests/clippy.toml",
+        "../src/user/clippy.toml",
     ] {
         assert!(
-            once_cell.contains(root),
-            "audit_once_cell.py 的 BASES 缺覆盖根 {root} —— 「全项目统一」对三树重新失明 (P-60 甲)"
+            read(cfg).contains(r#"disallowed-types = ["spin::Once", "spin::OnceCell"]"#),
+            "{cfg} 缺 spin 两条目 —— OnceCell 统一性失去替代执法面 (D-7 丙)"
         );
     }
-    assert!(
-        once_cell.contains("for b in BASES"),
-        "audit_once_cell.py 声明了 BASES 但扫描循环不遍历它 —— 加根不生效的静默形态"
-    );
-    assert!(
-        once_cell.contains("覆盖根缺失 (fail-closed, P-60 甲)"),
-        "audit_once_cell.py 缺「覆盖根缺失」fail-closed 出口 —— 根拼错会被读成扫描零违规"
-    );
+    let audit_sh = read(AUDIT_SH);
+    for manifest in ["AUDIT_REQUIRED_LEGS=", "AUDIT_REQUIRED_LEGS_FULL="] {
+        let line = audit_sh
+            .lines()
+            .find(|l| l.trim_start().starts_with(manifest))
+            .unwrap_or_else(|| panic!("ci/audit.sh 缺 {manifest} 到位清单"));
+        for retired in ["once_cell", "invariants", "reverse_deps"] {
+            assert!(
+                !line.contains(retired),
+                "{manifest} 又点名已退役腿 {retired} —— 回插须先经裁定, 不许静默复活"
+            );
+        }
+    }
 
     // ② safety_coverage 注释与实装一致: 不再声称过滤 arch, 且 arch 确在扫描面.
     assert!(
@@ -2546,7 +2554,7 @@ fn test_p60_scope_closure_and_silent_skips_fixed() {
         "rustc `missing_docs`",
         "`audit_public_api_docs.py` 只判 `privileged/`",
         "不在 F8 射程",
-        "`host-tests` / `src/user` / `kani-harness`",
+        "`host-tests` / `src/user`",
     ] {
         assert!(
             sec_22.contains(needle),

@@ -633,12 +633,33 @@ token 才不认）⇒ 批 0 归因段与批 5a 方案①同批订正，批 5 的
 ### 批 4・退役与收敛 + 接线（**唯一一次 AGENTS 改动**）
 
 描述：在批 1/2/3 的替代执法已证明会红之后，摘恒真腿、收敛部分腿、接新腿，并同步全部连带面。
-方案：① 删 `audit_reverse_deps.py` 整腿（**只脚本 + full 清单条目**；已核: 无独立调起块（只走 2e 泛型循环）、
-host-tests 零锁针、selftest 零用例）；
-② `audit_once_cell.py` 处置**以 D-7 裁定为前提，不得径行整腿退役**（批 2 实测: kani-harness 面
-clippy 不可达，RC=101 / E0433 ×3）——D-7 甲＝整腿不动（本项取消）；乙＝`BASES` 收缩到 kani-harness
-单树 + `test_p60` ①面改钉；丙＝整腿退役（连带面＝quick 清单 + `:276-285` 调起块 + `test_p60` ①面改钉，
-**selftest 零用例**），并须在 AGENTS 显式记录该 2 文件面无执法；
+**2026-11-19 扩围**：用户裁定先退役现有 kani ⇒ 本批新增前置项 ⓪（kani-harness 整树退役），
+它同时把 D-7 的前提消解掉（那棵 clippy 不可达的树不存在了），故 ② 由「待裁」定为**丙 整腿退役**。
+方案：⓪ **退役 `kani-harness/` 整树**（4 条 `wasm/leb128` 证明因 `functions/wasm/types.rs:739` 的跨层
+`impl From<WasmError> for crate::privileged::syscall::Errno` 在 harness crate 内解析不到 `privileged`
+而 E0433 ×3，crate 级不可编译 ⇒ 4 条证明**一条都跑不了**；`make test-kani` 是手动腿、不在七门槛、
+无 CI 接线；内核源码零 `cfg(kani)`）。连带面＝`Makefile` 目标与 `.PHONY`、**三个审计脚本的扫描根**
+（`audit_c_naming` / `audit_comment_language` 的 `BASES`、`audit_dead_code_comment` 的 `SCAN_ROOTS`
+五树→四树，三者**逐根 fail-closed**，删树不改根即当场红）、`audit_safety_debt` 三处自述与侧车口径串、
+内核源码 3 处注释、`docs/design` 2 处、host-tests 契约锁改钉、AGENTS §1 布局表与 §2.2 F8 射程。
+**4 条证明的性质须留档**（对象是 `functions/wasm/leb128.rs` 的 `read_leb128_u32` / `read_leb128_i32` /
+`read_leb128_i64` / `read_name`，**不是 cpio**；每条同一形态: `CAP=12` 的符号字节数组 + `kani::assume`
+约束 `len <= bytes.len()` 与 `start <= slice.len()`，调用后 `assert!(pos >= start)` 与
+`assert!(pos <= slice.len())`，即「不 panic（含移位/算术/切片索引/`to_vec`）+ `pos` 单调不减 + 不越界」，
+unwind 依次 8/8/12/14；crate 根 `#![deny(unsafe_code)]`，harness 自述「试点阶段不接入 CI」），以免静默丢失；
+`privileged/sync/memorder.rs:24` 的「那属 Kani/模型检查」是**工具类别泛指**而非本仓 harness，保留不动。
+① 删 `audit_reverse_deps.py` 整腿（**原记「只脚本 + full 清单条目／已核无连带」不完整，施工前复核订正**：
+[audit_implicit_deps.py:53](../../scripts/audit_implicit_deps.py#L53) `import audit_reverse_deps as reverse_deps`
+并在 `:197-198` 调 `scan_comment_lines` / `scan_inline_cfg_test_blocks` ⇒ 径行删脚本会打断
+**full 档阻断腿 implicit_deps**。处置＝两个分类器连同 `RE_CFG_TEST_ATTR` / `RE_INLINE_MOD`
+**行为不变地迁入** `audit_implicit_deps.py`（实测迁前迁后输出**逐字节相同**: 生产 38 处 / 14 项 /
+注释 207 / 测试 61，自测腿同绿），再删脚本 + full 清单条目 + 其 `:7` 的「与 audit_reverse_deps 同源」自述；
+另两处连带面＝`ci/audit.sh` 2e 计时表行、[net/syscall.rs:580](../../src/kernel/functions/net/syscall.rs#L580)
+点名该腿的注释。host-tests 零锁针、selftest 零用例这两条原记**成立**）；
+② `audit_once_cell.py` **整腿退役（D-7 丙，2026-11-19 派生裁定）**——连带面＝quick 清单 +
+`:276-285` 调起块 + `test_p60` ①面**改钉到 clippy `disallowed-types` 配置**（不删针），
+selftest 零用例；kani-harness 已随 ⓪ 退役，故**不再有「2 文件无执法」的代价**，
+AGENTS 只须把 OnceCell 执法面改指 clippy 三树 + 壳/abi；
 ③ 删 `audit_invariants.py` **整腿**（含 `check_i6`，D-6 甲）——I1–I5 已由批 1 的 `forbid(unsafe_code)` 执法，
 I6 恒真且真实执法在 privileged safe API + F2；
 ④ `audit_safety_coverage.py` / `tools/audit_unsafe.py` 收敛为 **extern + 其它引用**面，
@@ -651,13 +672,114 @@ I6 恒真且真实执法在 privileged safe API + F2；
 [src/rust/clippy.toml:5](../../src/rust/clippy.toml#L5) 的空话自述（**两处同形，漏一处即留一句假话**）；
 ⑨ **同批**同步 §五 连带面清单全部条目，含那一次 `AGENTS.md` 改动；
 ⑩ 每条退役/收敛腿做**替代执法负控制**（注入违规 → 新执法点转红 → 复原），证明不是净损失。
-状态：[]
+状态：[X]
 详情：本批是门禁清单的唯一变更点，故 AGENTS 授权在此一次性用掉。
 **两条腿明确不在本批**: `audit_block_registration.py`（D-1 甲已裁定长期保留）、
 `audit_dead_code_comment.py`（**批 1 实测证伪后整腿保留**，§2.5 H / §3.3；原⑤「收 warn 级死代码族面」
-已撤回，本批**不碰该脚本一行**，其侧车基线与 selftest 用例同样不动）。
+已撤回，其**判据、侧车基线与 selftest 用例一律不动**）。
+**⓪ 带来的唯一例外（须显式记账，不是顺手改）**: 该脚本 `SCAN_ROOTS` 含 `kani-harness` 且
+`scan()` 对缺失根 `raise ScanError`（fail-closed）⇒ 删树后该腿必红，故本批必须把
+`SCAN_ROOTS` 五树改四树 + 三处「五树」自述（`:52` 注释 / `:191` docstring / `:406` 打印）同步，
+并同批把 [ci_entrypoint_unified_test.rs:313](../../host-tests/tests/ci_entrypoint_unified_test.rs#L313)
+的逐字针改钉到四树（**改钉不删针**）。侧车 `totals={sites:0,files:0}` / `entries=[]` / `_meta` 不含根清单
+⇒ 收缩扫描根**不改任何读数**，无需重录基线（已核）。
 ④ 之后「privileged unsafe 100% 覆盖」这一读数**不再成立也不再宣称**——块面改由棘轮腿报
 「399 处待补写」，这是 D-5 乙裁定的本意: 宁可显式欠账，不要虚高读数。
+
+**施工实测（2026-11-19，全部为真跑读数）**
+
+⓪ kani-harness 整树退役已落：`git rm` 4 文件（`Cargo.toml` / `Cargo.lock` / `src/lib.rs` / `src/wasm/mod.rs`）、
+`Makefile` 的 `test-kani` 目标与 `.PHONY` 摘除、三个审计脚本扫描根收缩（`audit_c_naming` /
+`audit_comment_language` 的 `BASES`、`audit_dead_code_comment` 的 `SCAN_ROOTS` 五树→四树 + 三处自述）、
+`audit_safety_debt` 三处口径串 + 侧车重导（**totals 逐字不变: 399 处 / 78 文件 / 83 键**，plain run RC=0
+⇒ 退役未损失任何 SAFETY 读数）、内核源码 3 处注释、`docs/design` 2 处、host-tests 契约锁改钉。
+必同步面（`docs/explain/` / `docs/design/` / `docs/README.md` / `README*.md` / `AGENTS.md`）
+kani 与三个退役脚本名**残留 0 处**；余下命中全在 host-tests 散文与扫描根注释的历史面。
+
+① 两个分类器迁入 `audit_implicit_deps.py` 后输出**逐字节相同**（生产 38 处 / 14 项 / 注释 207 / 测试 61）。
+② / ③ 整腿退役落地，quick 清单 17 条、full 清单 10 条（`safety_debt` 占第 5 槽）。
+④ 收敛后实测：`audit_safety_coverage.py` **56 模块 / 322 文件 / 146 处 / 缺 0 / RC=0**；
+`tools/audit_unsafe.py --summary` **146 = extern 127 + 引用 19**（19 处全是 `unsafe fn` 函数指针类型位置），
+`DELEGATED_KINDS = {block, fn, impl, trait}`，`_find_enclosing_fn` 与 60 行窗口、auto-trait 假豁免均已删。
+⑤ `is_unsafe_in_functions`（73 行）与 CRITICAL 级退役，**`check_raw_pointer_access` 保留**（F2 面不动）。
+⑥ 驼峰正则与检测块删除，`BASES` 三根。⑧ 两处 `clippy.toml:5` 同形空话自述均已订正。
+⑨ AGENTS **八处一次改完**（授权用掉，此后不得再改）：§1 布局表删 kani 行、§2.2 三行改写 + 一行新增
+（`audit_safety_debt.py`）+ 两行删除（invariants / once_cell）、附加门禁注与完整清单注（**26 个 / `scripts/` 23**）、
+F8 射程注（三树→两树）、新增「F4 执法分工」与「退役与收敛」两注、§3 四份 clippy 配置口径、
+§4.2 新增「执法点口径」注（I6 真实执法 = `dma_buf.rs` 的 `DmaStream` + `dma/engine.rs` 的 `alloc_coherent` + F2 黑名单）、
+§5 F1 改 `forbid` / F4 改四面分工；**§5 F9 逐字未动**。
+同批连带：`docs/explain/spec-engineering.md` 规则 4.1 / 4.2、`.github/workflows/ci-lint.yml` 删 Job 6（once-cell）
+与 Job 9（audit-invariants + artifact）共 −65 行、`docs/design/freg-design.md` 的 OnceCell 行改指四树 clippy、
+`net/syscall.rs:580` 注释改指编译期不可解析、`audit_orphaned_init.py:68` docstring 订正。
+**P-69 约束实测生效**：退役脚本名一旦以反引号出现在 AGENTS §2.2 即被反向对账判红（清单里已无该腿），
+故「退役与收敛」注以**描述式**写三条退役腿而不点名脚本；`tools/check_doc_paths.py` 改后 RC=0。
+2e 十腿连跑 **43.3s**（热跑 / 起始 load avg 0.66），其中 `safety_debt` **1.4s**、`missing_docs_debt` 11.8s
+——十腿里**两条真编译**；棘轮腿七个隔离 target 目录合计 **510M**。
+
+⑩ **六条替代执法负控制**（注入 → 读数 → `cp` + `sha256` 复原，三处复原全 `成功`、复原后 coverage RC=0 / debt RC=0）：
+
+| 控制 | 注入 | 新执法点读数 | 结论 |
+|---|---|---|---|
+| NC-1 | `dma_buf.rs` 追加无 SAFETY 的 `pub unsafe extern "C" fn` | 首轮 coverage **RC=0（假绿）**、`audit_unsafe --summary` 缺 SAFETY **1**；归因修复后 coverage **RC=1** 点名 `dma_buf.rs:286 (extern)` | 见下「NC-1 归因」，**发现并修掉一个真实盲区** |
+| NC-2 | 同文件追加无 SAFETY 的 `unsafe` 块 | `audit_safety_debt` **RC=1**：`✗ 新增 src/kernel/privileged/dma_buf.rs — block: 当前 1 / 债册 0` | 棘轮真拦新增 |
+| NC-3 | `functions/mod.rs` 加 `pub fn ncProbeCamel()` | clippy **RC=101**：`error: function ncProbeCamel should have a snake case name` | rustc `non_snake_case` 顶替驼峰面 |
+| NC-4 | `functions/mod.rs` 加真 `unsafe` 块 | clippy **RC=101**，诊断指向 `functions/mod.rs:38` 的 `#![forbid(unsafe_code)]` | crate 根 forbid 顶替脚本 unsafe 面 |
+| NC-5 | `dma_buf.rs` 加 `use crate::functions;` | `cargo check` **RC=101**：`error[E0432]: unresolved import crate::functions` / `no functions in the root` | 反向依赖由编译期保证；**实测码是 E0432 不是 E0433**（E0433 是 kani 那条 `crate::privileged::syscall::Errno` 路径形态） |
+| NC-6 | `src/kernel/clippy.toml` 的 `disallowed-types` 登记真实类型 | 三轮见下「NC-6 归因」；外部路径轮 **RC=101 / 78 处** | 配置 live，退役无净损失 |
+
+**NC-1 归因（本批唯一的功能性修复）**：`audit_safety_coverage.py` 的 `collect_rs_files` 只归集
+`base/mod.rs` + 每个声明模块的**目录**（`<mod>/mod.rs` 与 `<mod>/**/*.rs`），
+**顶层单文件模块**（`pub mod dma_buf;` → `dma_buf.rs`，无同名目录）从来不在射程内 ⇒
+实测漏 **25 个文件**（`cpu_local` / `dma_buf` / `dtb` / `iomem` / `ioport` / `userptr` / `page_table` …），
+本腿射程是 `tools/audit_unsafe.py`（`FW_DIR.rglob("*.rs")` 全树）的**真子集**。
+属 B01-13 那次「8 文件→动态发现」修复的遗留缺口，**当前潜伏**：25 个文件里 extern/引用面命中合计 **0**，
+故 146/146 读数不受影响、也没有真实缺口被藏住。处置＝`collect_rs_files` 补顶层单文件分支
+（**297 → 322 文件，146/146/缺 0 读数不变**），两腿自此同面。
+门禁侧本就双消费者：0.5 组 `unsafe` 腿取 `audit_unsafe --summary` 的「缺 SAFETY」数与
+`EXPECTED_MAX_SAFETY_MISSING=0` 比较（该工具自身 RC 恒 0 是**报告工具**语义，判红在消费侧），
+`safety_coverage` 腿取脚本 RC ⇒ 修复前 NC-1 已由前者拦下，修复后两者都拦。
+**回归锁**：`audit_selftest.py` 第 4 用例增两项断言（25 个单文件模块全在射程 / 归集面 == rglob 全树），
+**用例数仍 13**，`[Test N/13]` 标签与 `vacuous_needle_gate_test.rs:229` 的针不动；
+锁自身的负控制＝临时撤掉该分支 ⇒ **12/13、RC=1**，两项断言点名漏扫文件，复原后 13/13、RC=0。
+
+**NC-6 归因（探针形态错，不是执法缺口）**：三轮均**真编译**（`Checking kernel-privileged`，8.2s，非 Fresh）⇒
+「cargo 不把 `clippy.toml` 纳入指纹所以不重放」的假设**被证伪**。真因是路径形态：
+① `crate::privileged::sync::once_lock::OnceLock`（re-export 别名，`privileged/mod.rs:76` 有 `pub use crate as privileged;`）
+⇒ RC=0 / 0 命中；② 规范定义路径 `crate::sync::once_lock::OnceLock` ⇒ 仍 RC=0 / 0 命中
+⇒ **clippy `disallowed-types` 不解析本 crate 局部路径**（生态限制，须留档）；
+③ 复现批 2 P4 的外部路径 `core::cell::UnsafeCell` ⇒ **RC=101 / 78 处 `use of a disallowed type`**，
+与批 2 读数一致 ⇒ 内核配置在批 4 改动后仍 live。
+**退役无净损失的判据**：`git show HEAD:scripts/audit_once_cell.py` 实读，该腿**全部**执法面就是
+禁 `spin::Once` / `spin::OnceCell`（use 形态 + 行内代码形态，注释跳过），**不含**「必须用本项目类型」的正向要求
+⇒ 与 `disallowed-types = ["spin::Once", "spin::OnceCell"]` 的表达面重合，且 clippy 版更强
+（定义点与 use-only 导入都命中，批 2 cp 探针已证）；局部路径限制与本退役无关（禁单全是外部 crate 路径）。
+复原后再真编一次 **RC=0 / 0 命中**，避免 Fresh 单元重放本轮错误诊断（L5）造成门禁假红。
+
+**七门槛读数（串行三轮，判据 = 日志内 `*-RC=` 回显；`/tmp/gates_b4.out` → `/tmp/gates_b4_r2.out` → 收口轮 `/tmp/gates_b6.out`）**：
+首轮 G2 红一处，**病因是本批自己写的 doc 注释**——`ci_entrypoint_unified_test.rs:2476` 的
+`OnceCell` 未加反引号 ⇒ `-D clippy::pedantic` 下 `clippy::doc_markdown` 硬错、host-tests clippy 腿 exit=101；
+补反引号后第二轮全绿：`G1-RC=0`（Passed 6 / Failed 0，双架构链接均过）、`G2-RC=0`
+（`bash ci/audit.sh full`：**P-69 反向对账通过（文档点名腿无摘除）**、`audit_selftest` **13/13**、
+`safety_debt` 腿通过（债册 **399 处 / 83 键**）、`missing_docs_debt` **0 处 / 0 键**、
+QEMU **2/2**（FAIL_OK=0）、lockdep 构建面**双架构正向/默认两侧符合**、UEFI(OVMF) **可达面判据全符合**
+（`[THREAD]` 显式不判＝已登记预存缺陷）、aarch64 EGFS **三相判据全符合**、**本轮因环境缺失未执行腿数 0**）、
+`G3-RC=0`（`make test-host` **203 套 / 1599 passed / 0 failed**）、
+`G4-RC=0`（`make test-kernel-host` 三成员 **12 + 807 + 556 = 1375 / 0 failed**）、
+`G5-RC=0`（`ci-rustdoc` x86_64 与 aarch64 **两腿都真跑完**，0 源码级 link 错误 + 0 私有项链接）。
+**收口轮**（本册状态翻 `[X]` + 台账行回填之后，即提交前终态）复跑五腿 `*-RC=` **全 0**，逐项读数与第二轮**相同**
+（P-69 通过 / selftest 13/13 / 债册 399 处・83 键 / missing_docs_debt 0 处・0 键 / QEMU 2/2 / lockdep 双架构两侧 /
+UEFI 可达面全符合 / EGFS 三相 / 未执行腿数 0 / host-tests 203 套・1599・0 / 内核 host 1375・0 / rustdoc 双架构 0）；
+两条便宜文档腿另在终态单跑真 RC：`scan_obsolete_naming` **1720 文件 / 违规 0**（历史面 KEEP 316）、
+`check_doc_paths` **19 份 / 0 漂移**（设计册计划新建路径免报 3 条）。
+
+**工程外预存问题（§11.5 只报告不处置，待用户裁定）**：
+① `src/kernel/clippy.toml:22-23` 缺其 `src/rust` 孪生件所有的 P-59「惰性配置」警示；
+② `docs/explain/spec-engineering.md:55` 规则 8.3 把「非 test 禁 unwrap」归给 `audit_safety_coverage.py`（**假归属**），
+且 `unwrap_used` 在 `src/kernel` 任何配置里都未启用 ⇒ 该规则**无执法点**；
+③ `freg-design.md` 声称的 `indexing_slicing` / panic deny 组在 `src/kernel` 不存在；
+④ AGENTS §2.3「`src/user` 七成员」已漂移到 **10**（实测 lib / init / eash / install / fbterm / httpsrv /
+proctest / exectest / wasmstub / wasmrun）——**AGENTS 授权已用掉，本批不改**；
+⑤ `tools/check_tcb.sh`（步骤 0 的 F1 预检）在 crate 根 forbid 落地后亦属重复面，在本工程射程外，仅登记。
 
 ### 批 5a・SAFETY 清零: userlib（112 处）
 
@@ -741,8 +863,14 @@ I6 恒真且真实执法在 privileged safe API + F2；
 | host-tests 结构锁 | `ci_entrypoint_unified_test.rs`: **`test_p60_scope_closure_and_silent_skips_fixed`**（[:2481](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2481)，once_cell BASES 三组针在 [:2482-2505](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2482)）⇒ **按 D-7 裁定改钉**（丙＝整腿退役后改钉到 clippy 配置；乙＝改钉到「BASES 只含 kani-harness」+ clippy 三树配置；甲＝针不动）；**该测试是四面合针**（① once_cell 四树+BASES+fail-closed ② safety_coverage 不再声称过滤 arch ③ c_naming 读失败进 `read_errors` ④ AGENTS §2.2 写明 F8 射程），只改①，②③④ 须原样存活（②③ 指向的脚本批 4 只收敛不退役）；`test_audit_sh_carries_hard_rule_audits`（[:184](../../host-tests/tests/ci_entrypoint_unified_test.rs#L184)，[:105](../../host-tests/tests/ci_entrypoint_unified_test.rs#L105) 点名 `audit_safety_coverage.py`）、`test_audit_sh_audit_legs_are_fail_closed`（[:217](../../host-tests/tests/ci_entrypoint_unified_test.rs#L217)）、`test_p69_leg_manifest_is_reconciled_against_agents`（[:673](../../host-tests/tests/ci_entrypoint_unified_test.rs#L673)）、`test_p50_audit_scope_and_selftest_are_wired`（[:752](../../host-tests/tests/ci_entrypoint_unified_test.rs#L752)）、`test_p56_statistics_legs_removed_steps_renumbered_and_lockbud_states`（[:2000](../../host-tests/tests/ci_entrypoint_unified_test.rs#L2000)） | 这些针把**脚本内部结构**与 AGENTS 文本钉死；机制替换按先例**改钉不删针**。**`test_p53_f9_dead_code_comment_gate_is_wired`（[:302](../../host-tests/tests/ci_entrypoint_unified_test.rs#L302)）不在此列**——该腿整腿保留、接线不动，针无需改 |
 | 审计自测 | `scripts/tests/audit_selftest.py`: **只有 `test_audit_unsafe`（[:547](../../scripts/tests/audit_selftest.py#L547)）需改钉**——它钉 `scan_file` 对「fn 体内 unsafe 块上方无 SAFETY」的命中，批 4 把块面交 clippy 后须改钉到 extern 面。**`test_functions_boundary`（[:81](../../scripts/tests/audit_selftest.py#L81)）不需改钉**：实读该用例只断言 `check_forbidden_imports` 的 `FORBIDDEN_PRIVILEGED_IMPORT`，即批 4 **保留**的 F2 面（本轮复核订正，原记「两例都改钉」过宽）。**新增 `audit_safety_debt` 用例（含塌缩守卫负控制）与 13 处 `[Test N/13]` 标签已在批 3 落地**（第 13 用例，5 项断言：内置夹具 / 侧车缺失 fail-closed / 生成后对账 / 新增判红 / 塌缩守卫双路），批 4 不再重复此项；**标签有针**（[vacuous_needle_gate_test.rs:229](../../host-tests/tests/vacuous_needle_gate_test.rs#L229) 钉 `[Test 12/13]`），此后增删用例须同批改钉，否则 `./ci/build.sh all` 的 host 测试腿当场红。指向 invariants / once_cell / reverse_deps 的用例 **0 个**（已核：现 13 用例点名 7 个脚本＝functions_boundary / deadlock_matrix×5 / block_registration / audit_unsafe / coupling×3 / vacuous_needle / safety_debt） | 自测本身是 full 档阻断腿，指向已删脚本即红 |
 | 退役产物消费者 | `other/target/audit/invariants-report.json` **全仓零消费者**（只有 [audit_invariants.py:195](../../scripts/audit_invariants.py#L195) 这个写者） | 已核: 删腿无下游断点，不需要迁移消费面 |
+| **施工前复核新增的连带面**（原清单漏记） | ① [audit_implicit_deps.py:53](../../scripts/audit_implicit_deps.py#L53) 的 `import audit_reverse_deps`（**唯一 importer**，两个分类器已行为不变迁入，见批 4 ①）；② [.github/workflows/ci-lint.yml:211](../../.github/workflows/ci-lint.yml#L211) 调 `audit_once_cell.py`、`:309-347` 的 Job 9 调 `audit_invariants.py` 并上传其日志工件；③ [net/syscall.rs:580](../../src/kernel/functions/net/syscall.rs#L580) 注释点名 `audit_reverse_deps` 作反向依赖执法；④ [freg-design.md:887](../design/freg-design.md) 表行以 `audit_once_cell.py` 的行号论证「四树扫描自动纳入」；⑤ [audit_orphaned_init.py:68](../../scripts/audit_orphaned_init.py#L68) docstring 以 `audit_once_cell.py` 作行注释剥离口径的出处 | ①是**硬断点**（删脚本即打断 full 档阻断腿）；②虽从不触发（远程仅 Gitee）但留着即指向已删脚本的陷阱；③④⑤是失真引用，属 §6 必同步面（design 册在 `check_doc_paths` 射程内） |
 | clippy 配置 | [src/kernel/clippy.toml:5](../../src/kernel/clippy.toml#L5) 空话自述订正；**[src/rust/clippy.toml:5](../../src/rust/clippy.toml#L5) 是逐字相同的孪生假自述**（本轮读两份配置时发现，同批一并订正）；批 2 新建的 `host-tests/clippy.toml`、`src/user/clippy.toml` | 自述与实现不符属预存问题，本工程正是使其成真的那一轮 |
 | must-sync 文档 | `docs/explain/spec-engineering.md`（F 表指向 AGENTS，不自持副本）、`docs/README.md` 若点名脚本 | §6 要求 explain/根文档与代码同步；`check_doc_paths` 会查路径新鲜度 |
+| **kani 整树退役（⓪）** | `kani-harness/` 4 文件（`Cargo.toml` / `Cargo.lock` / `src/lib.rs` / `src/wasm/mod.rs`）；[Makefile:216](../../Makefile#L216) `.PHONY` 里的 `test-kani` + `:651-659` 目标块 | 该 crate 自带 `[workspace]`，不是任何 workspace 成员 ⇒ 删它不动构建图；但目标与 `.PHONY` 留着即指向已删目录 |
+| **三个扫描根（逐根 fail-closed）** | [audit_c_naming.py:26-33](../../scripts/audit_c_naming.py#L26) / [audit_comment_language.py:32-40](../../scripts/audit_comment_language.py#L32) 的 `BASES`；[audit_dead_code_comment.py:52-53](../../scripts/audit_dead_code_comment.py#L52) 的 `SCAN_ROOTS` | 三者对缺失根一律 fail-closed（返 1 / 返 2 / `raise ScanError`）⇒ **删树不改根即三腿当场红**，这是 ⓪ 最硬的连带面 |
+| **kani 自述与侧车口径串** | [audit_safety_debt.py:39](../../scripts/audit_safety_debt.py#L39) / `:72` / `:228`（侧车 `_meta.口径` 由 `:228` 的脚本常量派生）⇒ 改常量后 `--update-baseline` 重导，**须验 totals 仍 399** | 树退役后「该树 clippy 不可达」的自述失真；侧车是机器派生件，手改即违单源纪律 |
+| **源码与设计册散文** | [leb128.rs:255](../../src/kernel/functions/wasm/leb128.rs#L255) / [module.rs:993](../../src/kernel/functions/wasm/module.rs#L993) / [lib.rs:55](../../src/kernel/lib.rs#L55)；[freg-design.md:1298](../design/freg-design.md) / [sgeg-design.md:50](../design/sgeg-design.md) | 前三处是「以 kani-harness 为形式化验证载体」的失真注释；design 册属 §6 必同步面（`check_doc_paths` 射程）。`privileged/sync/memorder.rs:24` 属**工具类别泛指**，不动（§11.2） |
+| **kani 相关契约锁** | `ci_entrypoint_unified_test.rs`: `:295`/`:313`（F9 五树逐字针）、`:735`/`:762-770`（F7 与 I-07 的四根针）、`:2467`/`:2487-2506`（P-60 ①面）、`:2549`（AGENTS F8 三树针）；[td25_comment_language_test.rs:72-76](../../host-tests/tests/td25_comment_language_test.rs#L72)（临时骨架建根） | 一律**改钉不删针**；td25 是行为测试，骨架多建一个空根不会红但属 stale，同批清 |
 
 > **不要求同步的面**: `docs/plan/` 与 `docs/report/` 里点名 `audit_invariants` 的历史文档
 > （`code-audit-final-summary.md` / `unresolved-issues-2026-08-09.md` / `multithreading-project.md` /
@@ -751,10 +879,12 @@ I6 恒真且真实执法在 privileged safe API + F2；
 
 ---
 
-## 六、决策点（2026-11-18 全部已裁定）
+## 六、决策点（2026-11-19 全部已裁定）
 
 > 用户回复「授权」⇒ **D-1 甲 / D-2 甲 / D-3 甲 / D-4 甲**；批 0 出数后就两项新议题再裁定
-> ⇒ **D-5 乙 / D-6 甲**。六项均已闭合，**无开放决策**。据此:
+> ⇒ **D-5 乙 / D-6 甲**；2026-11-19 用户裁定「**先退役现有的 kani吧，以及先完成门禁的退役工程，
+> 这些测试等这些工程完成后再谈**」⇒ **D-7 丙**（派生，见下表）+ **kani-harness 整树退役**并入批 4
+> 作前置项。**七项均已闭合，无开放决策**。据此:
 > `audit_block_registration` **保留自建腿不动**；clippy 配置走**每树最小化**；
 > forbid 射程**只剩 functions `unsafe_code` 一项**（D-3 甲原含四树 warn 级 `dead_code`/`unused*`
 > 逐个 25 名，**批 1 实测证伪后撤回该半**，见 §2.5 H 与下表 D-3 订正），
@@ -771,7 +901,7 @@ I6 恒真且真实执法在 privileged safe API + F2；
 | **D-4** | 乙类是否后续立项 | 甲 本册登记为开放项，不施工 / 乙 另开一册逐项实测 | **甲**（用户本轮只授权甲类分批） |
 | **D-5** | SAFETY 面路径（批 0 出数 399 后新立） | 甲 立即补完 399 处注释再把块/fn/impl 面交 clippy（`-F` 硬零）/ **乙 clippy 检测 + 存量棘轮**（`-W` 取数、399 冻侧车、只拦新增、清零后翻硬） | **乙**。甲的成本基数比原估计大约 50 倍，赶工只会产出「调用方保证指针/类型有效 (详见上下文)」这类**占位理由**，把虚高读数再灌一遍；乙把欠账**显式化**，与 `audit_missing_docs_debt` 先例同构 |
 | **D-6** | I6 与 `audit_invariants` 处置（批 0 证伪后新立） | **甲 删 `check_i6`，整腿退役** / 乙 保留 I6 并把模式改指真实 DMA 面（`DmaStream` / `alloc_coherent`） | **甲**。I6 三模式全仓零命中 ⇒ 结构恒真，删腿不损失执法（§3.1「删腿即净收益」）；乙等于新造一条文本扫描腿去重复 safe API + F2 已有的执法。**记录义务**: AGENTS §4.2 须写明 I6 的真实执法面 |
-| **D-7** | `audit_once_cell` 处置（**批 2 实测后新立，待裁定**） | 甲 整腿保留不动（改判「不可替代」）/ **乙 部分收敛**：`BASES` 收缩到 **kani-harness 单树**，其余三树交 clippy / 丙 照原结论整腿退役，显式接受 kani-harness 2 文件失去执法 | **待用户裁定，批 4 以本项为前提**。病灶: 脚本扫四树 1442 文件，clippy 七腿**不含 kani-harness**，且该树实测 `cargo clippy` **RC=101**（E0433 ×3 + `unexpected_cfgs`）⇒「加一条 kani 腿」已堵死（批 2 详情三）。按用户判据该面生态工具**更弱**，与 `audit_dead_code_comment` 改判保留同型。取舍: 甲零成本但三树永久双执法；乙与另三条部分收敛腿同构、残余面最小（2 文件），且 vendored 扫描面不对称随之消失，代价是 `test_p60_scope_closure_and_silent_skips_fixed` 的①面针（BASES 四树 + fail-closed）须**改钉不删针**；丙损失执法，违「防回归优先固化门禁」偏好。**分类计数随裁定变**: 甲 → 2 整腿 + 3 部分 + 3 不可替代；乙 → 2 整腿 + 4 部分 + 2 不可替代；丙 → 维持 3/3/2 |
+| **D-7** | `audit_once_cell` 处置（批 2 实测后新立，**2026-11-19 已裁定＝丙**） | 甲 整腿保留不动（改判「不可替代」）/ **乙 部分收敛**：`BASES` 收缩到 **kani-harness 单树**，其余三树交 clippy / 丙 照原结论整腿退役，显式接受 kani-harness 2 文件失去执法 | **丙**（2026-11-19）。**裁定路径不是直接选项，而是用户「先退役现有的 kani」的派生结论**：kani-harness 整树退役后，四树面里那棵「clippy 不可达」的树不复存在，余下三树全由批 2 已实测 live 的 `disallowed-types` 执法 ⇒ 整腿退役**不再是执法净损失**，丙的原代价（2 文件无执法）随树消失，甲/乙 的前提（保住该树执法）已不成立。分类计数维持 **3 整腿退役 / 3 部分收敛 / 2 不可替代**。原病灶留档: 脚本扫四树 1442 文件，clippy 七腿**不含 kani-harness**，且该树实测 `cargo clippy` **RC=101**（E0433 ×3 + `unexpected_cfgs`）⇒「加一条 kani 腿」已堵死（批 2 详情三）。按用户判据该面生态工具**更弱**，与 `audit_dead_code_comment` 改判保留同型。取舍: 甲零成本但三树永久双执法；乙与另三条部分收敛腿同构、残余面最小（2 文件），且 vendored 扫描面不对称随之消失，代价是 `test_p60_scope_closure_and_silent_skips_fixed` 的①面针（BASES 四树 + fail-closed）须**改钉不删针**；丙损失执法，违「防回归优先固化门禁」偏好。**分类计数随裁定变**: 甲 → 2 整腿 + 3 部分 + 3 不可替代；乙 → 2 整腿 + 4 部分 + 2 不可替代；丙 → 维持 3/3/2 |
 
 ---
 

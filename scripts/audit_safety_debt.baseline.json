@@ -1,7 +1,7 @@
 {
   "_meta": {
     "generated_by": "python3 scripts/audit_safety_debt.py --update-baseline",
-    "口径": "clippy clippy::undocumented_unsafe_blocks 在七腿 (内核双架构 / host-tests --all-targets / src/user 双裸机三元组 / 壳 / edgine-abi) 的位点并集, 按 (文件, 形态) 记数; 形态 block=unsafe 块 / impl=unsafe impl; vendored 非 workspace 成员天然不出; kani-harness 与 unsafe extern / missing_safety_doc 面不在射程",
+    "口径": "clippy clippy::undocumented_unsafe_blocks 在七腿 (内核双架构 / host-tests --all-targets / src/user 双裸机三元组 / 壳 / edgine-abi) 的位点并集, 按 (文件, 形态) 记数; 形态 block=unsafe 块 / impl=unsafe impl; vendored 非 workspace 成员天然不出; unsafe extern / missing_safety_doc 面不在射程",
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {

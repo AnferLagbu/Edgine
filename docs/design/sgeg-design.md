@@ -47,7 +47,7 @@ SGEG 当前是一个横跨两个子树的完整子系统：
 
 - **TPM 是软件占位**：8 个 PCR 存在内存数组里（[secure_boot.rs:45](src/kernel/privileged/sgeg/secure_boot.rs)、[secure_boot.rs:347-368](src/kernel/privileged/sgeg/secure_boot.rs)），无硬件根、无密封存储。它可以作为接口形状的预演，不能作为信任根。
 - **密码学是混合策略**：SHA-256 自研并带 KAT（[crypto/sha256.rs:237-348](src/kernel/privileged/crypto/sha256.rs)）；常数时间比较自研、以 privileged 为权威（[identity.rs:15-19](src/kernel/privileged/sgeg/identity.rs)）；Ed25519 用 `ed25519-dalek`（[secure_boot.rs:91-100](src/kernel/privileged/sgeg/secure_boot.rs)）；CSPRNG 为 `rdrand` + TSC / 栈地址回退（[csprng.rs:30-58](src/kernel/privileged/sgeg/csprng.rs)）。每一块单独看都有理由，合起来却缺少一份统一的威胁模型——哪些威胁由哪一层承担，没有写清楚。
-- **验证面薄**：`kani-harness` 对 SGEG 零引用；host-tests 的权限回归用例以读源码文本、`contains` 断言为主（[fs_permissions_regression_test.rs:167-179](host-tests/tests/fs_permissions_regression_test.rs)、[fs_permissions_regression_test.rs:230-264](host-tests/tests/fs_permissions_regression_test.rs)），是结构锁而非行为验证。
+- **验证面薄**：host-tests 的权限回归用例以读源码文本、`contains` 断言为主（[fs_permissions_regression_test.rs:167-179](host-tests/tests/fs_permissions_regression_test.rs)、[fs_permissions_regression_test.rs:230-264](host-tests/tests/fs_permissions_regression_test.rs)），是结构锁而非行为验证。
 - **存储格式化混入安全子系统**：`SYS_SGEG_DISK_FORMAT` / `SYS_SGEG_DISK_PARTITION` / `SYS_SGEG_FAT_FORMAT` 等臂（[dispatch.rs:1476-1530](src/kernel/functions/syscall/dispatch.rs)）与安全判定无关，属"我需要存储"倒推出来的归属。
 
 ### 结构性判断

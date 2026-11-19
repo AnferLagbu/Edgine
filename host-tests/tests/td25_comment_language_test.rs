@@ -69,9 +69,9 @@ fn run_audit_on_fixture(files: &[(&str, &str)]) -> (i32, String, String) {
     let project_root = tmp.join("project");
     let p_kernel = project_root.join("src/kernel");
     fs::create_dir_all(&p_kernel).unwrap();
-    // 审计脚本的四个覆盖根逐根 fail-closed (P-50 丙): 骨架缺根时脚本会先报
+    // 审计脚本的三个覆盖根逐根 fail-closed (P-50 丙): 骨架缺根时脚本会先报
     // `覆盖根缺失` 并以退出码 2 结束, 所有 fixture 断言都会失真.
-    for root in ["host-tests", "src/user", "kani-harness"] {
+    for root in ["host-tests", "src/user"] {
         fs::create_dir_all(project_root.join(root)).unwrap();
     }
     // 复制脚本 (审计脚本会沿 PROJECT_ROOT 父目录找)

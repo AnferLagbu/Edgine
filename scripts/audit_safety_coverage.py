@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-M6.1 SAFETY 完备性审计脚本 — privileged 全量 SAFETY 覆盖
+M6.1 SAFETY 完备性审计脚本 — privileged 的 unsafe extern / 引用面
 
 修复 B01-13: 原脚本仅扫描硬编码 8 文件, 报告 53/53=100% 覆盖掩盖了剩余 2547 处
 unsafe 块. 现改为动态发现 privileged/mod.rs 中所有 pub mod, 全量扫描.
 
-检测函数委托给 tools/audit_unsafe.py (B01-15 已修复), 保持一致.
+检测函数委托给 tools/audit_unsafe.py, 保持一致. 门禁健康度收敛 批4 后该检测器只判
+extern + 其它引用两面 (clippy 的生态缺口), 块 / fn / impl / trait 四面交 clippy
+(块 / impl 的存量由 scripts/audit_safety_debt.py 棘轮对账, fn / trait 已由 CI
+`-D warnings` 硬执法) ⇒ 本脚本的「100% 覆盖」**只对该两面成立**,
+不再宣称「privileged 全部 unsafe 100% 覆盖」.
 
-退出码: 0 = 100% 覆盖, 1 = 有缺失
+退出码: 0 = 保留面 100% 覆盖, 1 = 有缺失
 """
 
 import argparse
@@ -45,10 +49,16 @@ def collect_rs_files(base: Path, modules: list[str]) -> list[Path]:
 
     对于简单模块 (e.g. 'mm'), 包含 mod.rs 和子目录所有 .rs.
     对于嵌套模块 (e.g. 'mm'), 子目录递归包含.
+    对于顶层单文件模块 (e.g. 'dma_buf' → dma_buf.rs, 无同名目录), 包含该 .rs.
     """
     files: set[Path] = set()
     files.add(base / 'mod.rs')  # 顶层 mod.rs 始终包含
     for mod in modules:
+        # 顶层单文件模块: 只归集目录会漏掉它们 (批4 负控制 NC-1 实测漏 25 个),
+        # 使本腿射程成为 tools/audit_unsafe.py (rglob 全树) 的真子集.
+        mod_file = base / f'{mod}.rs'
+        if mod_file.exists():
+            files.add(mod_file)
         mod_dir = base / mod
         mod_rs = mod_dir / 'mod.rs'
         if mod_rs.exists():
@@ -105,7 +115,7 @@ def main():
 
     # 人类可读报告
     print("=" * 78)
-    print("M6.1 SAFETY 完备性审计 — privileged 全量 (B01-13 修复)")
+    print("M6.1 SAFETY 完备性审计 — privileged extern / 引用面 (B01-13 修复)")
     print("=" * 78)
     print(f"  扫描模块: {len(modules)} 个 (从 privileged/mod.rs 动态发现)")
     print(f"  扫描文件: {len(files)} 个 .rs")
@@ -131,7 +141,7 @@ def main():
         print(f"❌ M6.1 失败: {len(all_gaps)} 处 SAFETY 缺失 (详见 --missing-only)")
         return 1
     else:
-        print("\n✓ M6.1 通过: 100% SAFETY 覆盖")
+        print("\n✓ M6.1 通过: extern / 引用面 100% SAFETY 覆盖")
         return 0
 
 

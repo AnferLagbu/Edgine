@@ -36,7 +36,7 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 4 代码质量
 
-4 项代码质量规则：4.1 functions 层新文件首行 #![deny(unsafe_code)] + //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API；4.2 privileged 层新 unsafe 块必须配 // SAFETY: <前提条件>; <调用方保证>; <硬件契约>；4.3 中文注释强制（audit_comment_language.py 硬阈值 0 violations）；4.4 公共 API 必须有文档注释（存在性由 rustc `missing_docs` 作准 —— 已清零模块写 #![deny(missing_docs)] 由编译门槛硬执法，存量由 audit_missing_docs_debt.py 棘轮拦新增；中文语言面由 audit_public_api_docs.py 判。旧文本写的 clippy missing_docs_in_crate_items 是不存在的 lint 名，据其声称的执法从未生效）。
+4 项代码质量规则：4.1 functions 层 crate 根 #![forbid(unsafe_code)]（编译期硬执法，覆盖块 / fn / impl / trait 四形，局部 allow 不能覆盖）+ 新文件首行 #![deny(unsafe_code)] + //! @SAFE: 本文件不含 unsafe 代码。所有 unsafe 操作已委托至 privileged API；4.2 privileged 层新 unsafe 块必须配 // SAFETY: <前提条件>; <调用方保证>; <硬件契约>（块 / impl 由 clippy undocumented_unsafe_blocks 检测、存量由 audit_safety_debt.py 棘轮拦新增，fn / trait 由 missing_safety_doc 在 -D warnings 下硬执法，unsafe extern / 引用面由 audit_safety_coverage.py 判 100%）；4.3 中文注释强制（audit_comment_language.py 硬阈值 0 violations）；4.4 公共 API 必须有文档注释（存在性由 rustc `missing_docs` 作准 —— 已清零模块写 #![deny(missing_docs)] 由编译门槛硬执法，存量由 audit_missing_docs_debt.py 棘轮拦新增；中文语言面由 audit_public_api_docs.py 判。旧文本写的 clippy missing_docs_in_crate_items 是不存在的 lint 名，据其声称的执法从未生效）。
 
 ### 5 中断与原子
 

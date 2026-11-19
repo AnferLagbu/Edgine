@@ -6,13 +6,14 @@ I-07 C 风格命名残留 audit
 
 设计契约:
   - 类型名禁用 C 后缀: u8_t / u16_t / u32_t / u64_t / i8_t / i16_t / i32_t / i64_t
-  - 函数名遵循 snake_case (clippy non_snake_case)
   - kmalloc/kfree 限 C-ABI extern "C" 函数使用, 不作为常规 Rust 标识符
   - 保留 Linux 兼容名 (如 sys_call_table) 由本脚本白名单
+  - 函数名 snake_case **不在本腿射程**: 由 rustc `non_snake_case` (warn-by-default)
+    执法, 四树 clippy 腿均带 `-D warnings` ⇒ 已是硬错 (门禁健康度收敛 批4 ⑥ 收敛).
+    原本腿以正则「近似 non_snake_case」, 属重复执法且精度更差, 已删.
 
 规则:
   - `u8_t` / `u32_t` / `i64_t` 等 C 类型后缀计数 = 0
-  - 函数名驼峰或大写: clippy::non_snake_case (本脚本以模式近似)
   - kmalloc/kfree 出现位置必须为 extern "C" 块或 #[no_mangle] 函数
 
 退出码: 0 = 通过, 1 = 有违规
@@ -23,13 +24,12 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# 覆盖根 (P-50 丙・全扩三树): I-07「C 命名残留」此前只扫 src/kernel, host-tests/
-# src/user/ kani-harness/ 长期不在覆盖内. 逐根 fail-closed, 根缺失即返 1.
+# 覆盖根 (P-50 丙 扩根; kani-harness 整树退役后余三根): I-07「C 命名残留」此前只扫
+# src/kernel, host-tests/ src/user/ 长期不在覆盖内. 逐根 fail-closed, 根缺失即返 1.
 BASES = [
     PROJECT_ROOT / "src" / "kernel",
     PROJECT_ROOT / "host-tests",
     PROJECT_ROOT / "src" / "user",
-    PROJECT_ROOT / "kani-harness",
 ]
 
 # C 风格类型后缀 (用于类型别名/字段类型/参数)
@@ -45,9 +45,6 @@ FN_C_NAMING = re.compile(r"\bfn\s+[a-zA-Z_]*?(kfree|kmalloc)\b")
 LEGACY_KMALLOC_NAMES = frozenset({
     "get_kmalloc",
 })
-
-# 驼峰命名 (用于函数名): [a-z]+[A-Z]
-CAMEL_CASE_FN = re.compile(r"\bfn\s+([a-z]+[A-Z][a-zA-Z0-9_]*)\b")
 
 # 允许位置: 注释、字符串字面量、extern "C" 块、宏定义
 ALLOW_LINE_MARKERS = (
@@ -146,16 +143,6 @@ def main() -> int:
                         issues.append(
                             f"{rel}:{lineno}: C 风格 fn 命名 `{m.group(0)}`: {line.strip()[:100]}"
                         )
-
-            # 驼峰 fn 名 (近似 non_snake_case)
-            m = CAMEL_CASE_FN.search(line)
-            if m:
-                # 排除 #[allow(non_snake_case)]
-                if "#[allow(non_snake_case)]" in line or "#[allow(non_snake_case," in line:
-                    continue
-                issues.append(
-                    f"{rel}:{lineno}: 驼峰 fn 名 `{m.group(1)}`: {line.strip()[:100]}"
-                )
 
     if issues:
         print("I-07 audit FAILED:")

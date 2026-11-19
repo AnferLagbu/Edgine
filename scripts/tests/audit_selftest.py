@@ -549,7 +549,14 @@ def test_block_registration() -> bool:
 
 
 def test_audit_unsafe() -> bool:
-    """B01-24 fixture 测试 4: 真调 scan_file 识别缺 SAFETY 注释的 unsafe 块."""
+    """B01-24 fixture 测试 4: 真调 scan_file 判 extern / 引用面的 SAFETY 覆盖.
+
+    门禁健康度收敛 批4 ④ 改钉: 块 / fn / impl / trait 四面已交 clippy 双 lint
+    (存量由 audit_safety_debt 棘轮对账), 本检测器只判 `unsafe extern` 与其它引用 ⇒
+    夹具三面同钉: extern 缺 SAFETY 判红 / extern 有 SAFETY 判白 / 委托四面不出读数.
+    第四项钉两腿同面 (批4 NC-1 归因): safety_coverage 腿原只归集模块**目录**,
+    顶层单文件模块 (dma_buf.rs 等 25 个) 全在射程外 ⇒ 注入 extern 缺口它判绿.
+    """
     print("\n[Test 4/13] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -558,7 +565,11 @@ def test_audit_unsafe() -> bool:
         fixture.write_text(
             "//! 自测 fixture\n"
             "/// 文档注释 (非 SAFETY)\n"
-            "pub fn test() {\n"
+            "pub unsafe extern \"C\" fn no_safety() {}\n"
+            "// SAFETY: 夹具理由 — 该 extern 声明的符号由链接期保证存在.\n"
+            "pub unsafe extern \"C\" fn with_safety() {}\n"
+            "pub unsafe fn delegated_fn() {}\n"
+            "pub fn delegated_block() {\n"
             "    unsafe { 0u8; }\n"
             "}\n",
             encoding="utf-8",
@@ -567,12 +578,50 @@ def test_audit_unsafe() -> bool:
         detector.PROJECT_ROOT = root
         hits = detector.scan_file(fixture)
 
-    missing = [h for h in hits if not h.has_safety]
-    return _check(
-        "检测缺 SAFETY 注释的 unsafe 块",
-        len(missing) >= 1,
-        f"fixture L4 unsafe 块上方无 SAFETY, 实测 hits={[(h.line, h.has_safety) for h in hits]}",
+    shape = [(h.line, h.kind, h.has_safety) for h in hits]
+    by_line = {h.line: h for h in hits}
+    checks = [
+        _check(
+            "extern 缺 SAFETY 判红",
+            3 in by_line and by_line[3].kind == "extern" and not by_line[3].has_safety,
+            f"fixture L3 `pub unsafe extern \"C\" fn` 上方只有文档注释, 实测 hits={shape}",
+        ),
+        _check(
+            "extern 有 SAFETY 判白",
+            5 in by_line and by_line[5].has_safety,
+            f"fixture L5 上方有 `// SAFETY:` 行, 实测 hits={shape}",
+        ),
+        _check(
+            "已交 clippy 的四面不出读数 (块 / fn / impl / trait)",
+            all(h.kind not in detector.DELEGATED_KINDS for h in hits),
+            f"fixture L6 unsafe fn 与 L8 unsafe 块属委托面, 实测 hits={shape}",
+        ),
+    ]
+
+    # 两腿同面: safety_coverage 的模块发现式归集必须等于 audit_unsafe 的 rglob 全树.
+    coverage = _load("audit_safety_coverage", SCRIPTS_DIR / "audit_safety_coverage.py")
+    base = coverage.PROJECT_ROOT / coverage.BASE
+    declared = coverage.discover_modules(base)
+    face = set(coverage.collect_rs_files(base, declared))
+    full_tree = set(base.rglob("*.rs"))
+    single_file_mods = {base / f"{m}.rs" for m in declared if (base / f"{m}.rs").exists()}
+    leaked = sorted(str(p.relative_to(base)) for p in (full_tree - face))
+    checks.append(
+        _check(
+            "顶层单文件模块在 safety_coverage 射程内",
+            bool(single_file_mods) and single_file_mods <= face,
+            f"实测 {len(single_file_mods)} 个单文件模块, 漏 "
+            f"{sorted(str(p.relative_to(base)) for p in (single_file_mods - face))[:5]}",
+        )
     )
+    checks.append(
+        _check(
+            "两腿同面 (safety_coverage 归集 == audit_unsafe rglob)",
+            face == full_tree,
+            f"归集 {len(face)} / 全树 {len(full_tree)}, 漏扫 {leaked[:5]}",
+        )
+    )
+    return all(checks)
 
 
 def test_coupling_edges() -> bool:

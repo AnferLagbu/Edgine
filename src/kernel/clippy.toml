@@ -2,7 +2,10 @@
 # Enforce strict safety and code quality standards
 #
 # 适用: Edgine Framekernel (Rust no_std 内核, 裸机)
-# 内核风格: 文档化所有公开 API, 强制 SAFETY 注释紧邻 unsafe 块。
+# SAFETY 注释面**不由本文件执法** —— 本文件只配阈值与 disallowed-*: 块 / impl 由 clippy
+# `undocumented_unsafe_blocks` 检测 (存量交 scripts/audit_safety_debt.py 棘轮对账),
+# fn / trait 由 `missing_safety_doc` (默认 warn, CI `-D warnings` 已升硬错).
+# 「SAFETY 紧邻上一行」是项目约定, 严于 clippy 判据 (后者接受空行间隔).
 
 # ── 内核风格阈值 ──────────────────────────────────────────────
 # Cognitive complexity limit - keep functions understandable

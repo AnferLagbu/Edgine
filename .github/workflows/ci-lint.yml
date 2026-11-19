@@ -193,29 +193,6 @@ jobs:
           fi
 
   # ========================================================================
-  # Job 6: functions OnceCell 单一抽象审计
-  # ========================================================================
-  once-cell:
-    name: functions OnceCell 单一抽象审计
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Python 3.x 安装
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 运行 OnceCell 审计
-        run: |
-          if python3 scripts/audit_once_cell.py 2>&1 | tail -8; then
-            echo "✅ functions 统一通过 sync::once::OnceCell"
-          else
-            echo "::error::有 functions 模块绕过 OnceCell 抽象"
-            exit 1
-          fi
-
-  # ========================================================================
   # Job 7: rustdoc 文档质量检查 (P1-I-30)
   # ========================================================================
   rustdoc-check:
@@ -303,48 +280,6 @@ jobs:
         with:
           name: coupling-audit-report
           path: other/build/log/audit_coupling.txt
-          retention-days: 14
-
-  # ========================================================================
-  # Job 9: audit_invariants 6 条安全不变式审计 (B01-18 接入 CI)
-  # ========================================================================
-  audit-invariants:
-    name: 6 条安全不变式审计 (I1-I6)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Python 3.x 安装
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 运行 6 条安全不变式审计
-        run: |
-          mkdir -p other/build/log
-          # B01-25: 移除 `|| true` 掩盖退出码的 fail-open bug.
-          # 原写法 `$(python3 ... || true)` 使命令替换的退出码恒为 0,
-          # 后续 ${PIPESTATUS[0]} 恒为 0, CI 永不因违规失败.
-          set +e
-          INVARIANTS_OUT=$(python3 scripts/audit_invariants.py 2>&1)
-          INVARIANTS_RC=$?
-          set -e
-          echo "$INVARIANTS_OUT" | tee other/build/log/audit_invariants.txt | tail -12
-          # B01-18: 退出码语义 (total_violations > 0 时 fail)
-          if [ "$INVARIANTS_RC" -ne 0 ]; then
-            echo "::error::6 条安全不变式存在违反"
-            echo "--- 违规详情 ---"
-            grep -A 1 '^  ✗' other/build/log/audit_invariants.txt | head -20
-            exit 1
-          fi
-          echo "✅ 6 条安全不变式全部满足"
-
-      - name: 上传报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: invariants-audit-report
-          path: other/build/log/audit_invariants.txt
           retention-days: 14
 
   # ========================================================================

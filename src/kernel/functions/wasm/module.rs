@@ -989,8 +989,7 @@ mod tests {
         assert!(matches!(parse_wasm(&bytes), Err(WasmError::Leb128Overflow)));
         // 注: 5 字节编码且末字节载荷超出剩余 4 位空间时, 当前被静默截断接受
         // (read_leb128_u32 只在续行位把 shift 推过 32 时报错)。该宽容度不产生
-        // panic 也不放大分配上界, 已按台账 P-42 登记待裁, 本轮不改 leb128 语义
-        // (kani-harness 以该解码器为形式化验证对象)。
+        // panic 也不放大分配上界, 已按台账 P-42 登记待裁, 本轮不改 leb128 语义。
     }
 
     #[test]

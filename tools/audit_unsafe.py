@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Edgine/Edgine Privileged Unsafe 块 SAFETY 注释自动审计
+Edgine privileged unsafe extern / 引用面 SAFETY 注释审计
 
-扫描 privileged/ 下所有 *.rs 文件, 列出每个 unsafe 引用位置 + 上方 5 行内
-是否含 SAFETY 注释, 输出一份诚实基线报告。
+射程 (门禁健康度收敛 批4 收敛后): 只判 `unsafe extern` 与「其它引用」(函数指针类型等)
+两面 —— 它们是 clippy 的生态缺口: `unsafe extern "C" { ... }` 无 SAFETY 时
+`undocumented_unsafe_blocks` 与 `missing_safety_doc` 都不报
+(docs/plan/gate-health-convergence.md §2.2 H 探针).
+块 / unsafe fn / unsafe impl / unsafe trait 四面已交 clippy 检测 (块 / impl 由
+`undocumented_unsafe_blocks`, 存量交 scripts/audit_safety_debt.py 棘轮腿对账;
+fn / trait 由 `missing_safety_doc`, CI `-D warnings` 已硬执法), 本脚本不再重复检测.
 
 用法:
     python3 tools/audit_unsafe.py                  # 人类可读表格
@@ -49,6 +54,12 @@ KIND_PATTERNS = [
     ("trait",  re.compile(r"unsafe\s+trait\b",            re.IGNORECASE)),
     ("extern", re.compile(r"unsafe\s+extern\b",           re.IGNORECASE)),
 ]
+
+# 已交 clippy 的四面 (门禁健康度收敛 批4): 块 / impl 由 `undocumented_unsafe_blocks`
+# 检测 (存量交 audit_safety_debt 棘轮对账, 批5 逐树翻 -D); fn / trait 由
+# `missing_safety_doc` (默认 warn, CI `-D warnings` 已硬执法) ⇒ 本腿只保留生态缺口
+# extern + ref (函数指针类型等其它引用), 这两面 clippy 都不报 (§2.2 H 探针).
+DELEGATED_KINDS = frozenset({"block", "fn", "impl", "trait"})
 
 
 def classify_kind(code: str) -> str:
@@ -130,95 +141,15 @@ def _scan_safety_window(lines: List[str], start_idx: int, max_lookback: int) -> 
     return False, ""
 
 
-def _find_enclosing_fn(lines: List[str], block_idx: int) -> int | None:
-    """unsafe 块专用: 从块行向上找**最近的** fn 签名 (0-indexed).
-
-    关键: 必须**最近**的 fn, 不能跨过当前 fn 找到上一个 fn.
-    unsafe 块位于 fn 体中, 其上方是 fn 体代码 ({), 跨过 fn 体是 impl 块或
-    其他 fn — 这些不算"包含"该 unsafe 块的 fn.
-
-    算法: 跟踪 brace_depth, 从 unsafe 块向上扫描, 跨过 { 时 depth++,
-    跨过 } 时 depth--, 遇到 fn 签名且 depth <= 0 时返回.
-    """
-    depth = 0
-    j = block_idx - 1
-    while j >= 0:
-        s = lines[j]
-        stripped = s.strip()
-        if not stripped:
-            j -= 1
-            continue
-        # 计算大括号平衡 (排除字符串/字符字面量内的括号 - 粗略)
-        # 这里只用于找 fn 边界, 粗略足够
-        # 先于 fn 检测避免被 fn 的 `)` 干扰
-        # fn 签名检测: 含 fn 关键字, 但不在 { / } 内, 且 depth 已跨过
-        # 简化: 当遇到 `fn <name>(` 且 depth == 0, 返回
-        # 但 unsafe 块的 { 可能还没匹配: depth 应从 0 开始 (进入块前)
-        # 实际上 unsafe 块上方紧挨 fn 体 { 之后, 跨过的代码含 { }, 所以 depth 累加
-        # 找最近的 fn: 当遇到非空非属性非注释行, 且不含 {, 视为 fn 边界
-        # 但这不准确. 改用更直接的方法: 找最近的 "fn <name>(" 关键字
-        if re.search(r"\b(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:extern\s+\"[^\"]+\"\s+)?(?:async\s+)?(?:const\s+)?(?:unsafe\s+)?fn\s+\w+\s*[<(]", stripped):
-            # 排除 unsafe { 块起点
-            if not stripped.startswith("unsafe {") and not stripped.startswith("unsafe{"):
-                # 检查是否在跨过的同一作用域内 (depth 边界)
-                # 简化: 取最近的 fn, 假定 unsafe 块所在 fn 是最近的 fn 签名
-                return j
-        j -= 1
-    return None
-
-
 def check_safety_above(lines: List[str], line_idx: int) -> tuple[bool, str]:
     """检查第 line_idx 行 (0-indexed) 上方是否有 SAFETY 注解.
 
-    修复 B01-15: 原 8 行窗口过窄漏报 `/// # Safety` (常在 10+ 行外的 doc comment).
-    新策略:
-      1. unsafe 块 (unsafe {): 向上扫描 60 行, 穿透 fn 体内部 (因为 SAFETY 可能在
-         fn 体中作为块注释出现), 但遇到上方 fn 签名或非注释代码时停止
-      2. unsafe fn/extern/impl/trait/ref: line_idx 本身就是 fn 签名, 直接扫描 60 行
-      3. SAFETY 严格匹配块注释 `(SAFETY|Safety):` 或 rustdoc 章节 `# Safety`
-
-    返回: (found, context_line). found=True 表示上方含 SAFETY 章节.
+    收敛后射程只剩 extern / 引用面, 当前行就是该引用本身 ⇒ 直接向上扫描 60 行,
+    跳过空行 / 属性块 / 纯注释行, 遇非注释代码即停 (B01-15 的三段属性状态机).
+    原「穿透 fn 体向上找 60 行、遇 fn 签名再找 60 行」的块规则已随块面交 clippy 一并
+    删除 —— 它会把上一个 fn 的 `/// # Safety` 记到本块头上, 是 100% 覆盖虚高读数的成因.
     """
-    raw_line = lines[line_idx]
-    is_block = bool(re.search(r"\bunsafe\s*\{", raw_line))
-
-    if is_block:
-        # unsafe 块: 从行号向上扫描 60 行, 跳过注释行与属性块,
-        # 但遇到 fn 体内部代码 (let / if / return) 不停止 — 因为 SAFETY 注释可能在其上方.
-        # 唯一停止条件: 遇到 fn 签名行 (表明已离开当前 fn)
-        in_attr = False
-        for j in range(line_idx - 1, max(line_idx - 61, -1), -1):
-            if j < 0:
-                break
-            s = lines[j].strip()
-            if not s:
-                continue
-            if SAFETY_BLOCK_RE.search(lines[j]) or SAFETY_SECTION_RE.search(lines[j]):
-                return True, lines[j].rstrip()
-            # 跨行属性块
-            if in_attr:
-                if "]" in s:
-                    in_attr = False
-                continue
-            if s.startswith("#["):
-                if s.endswith(")") or s.endswith("]"):
-                    continue
-                in_attr = True
-                continue
-            if s.startswith("reason") or s.startswith(","):
-                continue
-            if s.startswith("//") or s.startswith("///") or s.startswith("*") or s.startswith("/*"):
-                continue
-            # fn 签名检测: 表明已离开当前 fn
-            if re.search(r"\b(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?(?:extern\s+\"[^\"]+\"\s+)?(?:async\s+)?(?:const\s+)?(?:unsafe\s+)?fn\s+\w+\s*[<(]", s):
-                if not s.startswith("unsafe {") and not s.startswith("unsafe{"):
-                    # 找到 fn 签名: 从 fn 上方再扫描一次 (doc comment)
-                    return _scan_safety_window(lines, j, max_lookback=60)
-            # 其他 fn 体内部代码 (let / if / return) 不停止, 继续向上
-        return False, ""
-    else:
-        # unsafe fn/extern/impl/trait/ref: 当前行就是 fn, 向上扫描 60 行
-        return _scan_safety_window(lines, line_idx, max_lookback=60)
+    return _scan_safety_window(lines, line_idx, max_lookback=60)
 
 
 def scan_file(path: Path) -> List[UnsafeHit]:
@@ -239,12 +170,6 @@ def scan_file(path: Path) -> List[UnsafeHit]:
         stripped = raw_line.lstrip()
         if is_comment_line(stripped):
             continue
-        # B01-15 扩展: 豁免 `unsafe impl Send/Sync` 等编译器自动验证的安全标记.
-        # Rust 编译器对 Send/Sync impl 自动验证类型安全, 无需 SAFETY 注释.
-        # 包含 `unsafe impl Send` / `unsafe impl Sync` / `unsafe impl<T> Send for X`
-        # 等形式. 这些是类型系统自动证明, 不属于手工 unsafe 操作.
-        if re.search(r'\bunsafe\s+impl\b[^{]*\b(Send|Sync|Unpin)\b', raw_line):
-            continue
         # 豁免 `#[unsafe(...)]` 属性行 (如 #[unsafe(no_mangle)]).
         # unsafe 关键字在属性宏中, 不是手工 unsafe 操作, 由宏内部处理.
         if re.search(r'#\s*\[\s*unsafe\s*\(', raw_line):
@@ -252,6 +177,8 @@ def scan_file(path: Path) -> List[UnsafeHit]:
         # 排除字符串内 (粗略, 统计引号数量)
         # 如果行内含未闭合的字符串, 暂时放行 (Rust 单行字符串罕见)
         kind = classify_kind(raw_line)
+        if kind in DELEGATED_KINDS:
+            continue
         has_safety, ctx = check_safety_above(lines, idx)
         hits.append(UnsafeHit(
             file=rel,
@@ -273,7 +200,7 @@ def print_summary(hits: List[UnsafeHit]) -> None:
     for h in hits:
         by_kind[h.kind] = by_kind.get(h.kind, 0) + 1
 
-    print("=== Privileged Unsafe 块 SAFETY 注释基线 ===")
+    print("=== Privileged unsafe extern / 引用面 SAFETY 注释基线 ===")
     print(f"扫描目录:     {FW_DIR.relative_to(PROJECT_ROOT)}")
     print(f"扫描时间:     {__import__('datetime').datetime.now().isoformat(timespec='seconds')}")
     print()
@@ -311,9 +238,7 @@ def print_summary(hits: List[UnsafeHit]) -> None:
         print()
         print("  ⚠ 工具精度限制:")
         print("    当前为基于文本模式匹配的 SAFETY 检测, 部分场景无法识别:")
-        print("      - FFI 函数 (`pub unsafe extern \"C\" fn`) 上方 60+ 行外的 SAFETY")
-        print("      - 汇编/硬件上下文 (`core::arch::asm!` / `MSR` / `outb`) SAFETY")
-        print("      - 函数体内 unsafe 块上方 60+ 行外的块注释 SAFETY")
+        print("      - `unsafe extern` / FFI 函数 (`pub unsafe extern \"C\" fn`) 上方 60+ 行外的 SAFETY")
         print("    这些场景需人工复核 — 建议对 `--missing-only` 输出逐行验证.")
         print("    未来改进: 引入 syn crate 解析 Rust AST, 直接读取 doc comment.")
         print()
@@ -322,7 +247,7 @@ def print_summary(hits: List[UnsafeHit]) -> None:
 
 
 def print_human(hits: List[UnsafeHit], missing_only: bool) -> None:
-    print("=== Privileged Unsafe 块 SAFETY 注释基线 ===")
+    print("=== Privileged unsafe extern / 引用面 SAFETY 注释基线 ===")
     print(f"扫描目录: {FW_DIR.relative_to(PROJECT_ROOT)}")
     print(f"扫描时间: {__import__('datetime').datetime.now().isoformat(timespec='seconds')}")
     print()

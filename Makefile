@@ -213,7 +213,7 @@ WASI_DEMO_FIXTURE = scripts/fixtures/hello_wasi.wasm
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/edgine.img
 
-.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kernel-feature-release-compile test-kani test-unit \
+.PHONY: all clean run run-net debug log log-net iso run-iso disk run-disk user test test-host test-kernel-host test-kernel-host-release-compile test-kernel-feature-release-compile test-unit \
          test-all test-chaos test-smp test-smp-multicore
 
 ifeq ($(ARCH),aarch64)
@@ -646,16 +646,6 @@ test-kernel-feature-release-compile:
 	@echo "╚══════════════════════════════════════════════════╝"
 	@mkdir -p $(CURDIR)/$(REPORT_DIR)
 	@{ log=$(CURDIR)/$(REPORT_DIR)/kernel_feature_release_$$(date +%Y%m%d_%H%M%S).log; bash $(CURDIR)/scripts/check_kernel_feature_release_dims.sh > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
-	@echo ""
-
-# Kani 形式化验证: 独立 crate kani-harness/ 通过 #[path] 引真实 functions 源码,
-# 证明其核心安全不变式 (不 panic / pos 单调不减 / 不越界). 需本机已 `cargo kani setup`.
-test-kani:
-	@echo "╔══════════════════════════════════════════════╗"
-	@echo "║   Running Kani Formal Verification           ║"
-	@echo "╚══════════════════════════════════════════════╝"
-	@mkdir -p $(CURDIR)/$(REPORT_DIR)
-	@cd kani-harness && { log=$(CURDIR)/$(REPORT_DIR)/kani_$$(date +%Y%m%d_%H%M%S).log; cargo kani > "$$log" 2>&1; status=$$?; cat "$$log"; exit $$status; }
 	@echo ""
 
 test-unit: $(ARCH_BUILD_DIR)/kernel_test.bin user

@@ -36,8 +36,6 @@ x86_64 与 aarch64 两腿各报一次只记一次), 再聚合成 **(文件, 形�
 - vendored 子树 (`functions/net/smoltcp` 是 workspace `exclude` 的路径依赖,
   `src/user/vendor` 是目录源替换) **非 workspace 成员**, cargo 自动压其 lint
   上限 ⇒ 诊断天然不出, 无需人工排除清单;
-- `kani-harness` 树**不在七腿内** (该树 clippy 不可达, 实测 E0433), 与
-  `audit_once_cell` 的 D-7 同一处覆盖不对称;
 - 判「SAFETY 注释存在」而不判「注释是中文」或「理由是否成立」—— 语言面与理由质量
   不在任何机器判据内. 注释位置的判据**比「紧邻上一行」宽** (实测): 块前注释串允许
   空行间隔 (`privileged/mm/copy_user.rs` 四处「占位 SAFETY + 空行 + 块」均不报),
@@ -69,7 +67,7 @@ BUILD_STD_CFG = [
     "--config", 'unstable.build-std=["core","compiler_builtins","alloc"]',
     "--config", 'unstable.build-std-features=["compiler-builtins-mem"]',
 ]
-# 本腿射程内的四树 (与 clippy 七腿一致; kani-harness 不在内, 见 docstring).
+# 本腿射程内的四树 (与 clippy 七腿一致; kani-harness 退役后即全仓 Rust 面).
 FACES = ("src/kernel/", "host-tests/", "src/user/", "src/rust/")
 # 每腿: (腿名, cwd, workspace root, cargo 参数). workspace root 用于把 rustc 给的
 # 相对路径归一成仓内路径 —— cargo 以 workspace root 为 rustc 的 cwd, 与本机 cwd 无关.
@@ -225,7 +223,7 @@ def dump_baseline(entries: dict) -> str:
             "口径": f"clippy {LINT} 在七腿 (内核双架构 / host-tests --all-targets / "
                     "src/user 双裸机三元组 / 壳 / edgine-abi) 的位点并集, 按 (文件, 形态) 记数; "
                     "形态 block=unsafe 块 / impl=unsafe impl; vendored 非 workspace 成员天然不出; "
-                    "kani-harness 与 unsafe extern / missing_safety_doc 面不在射程",
+                    "unsafe extern / missing_safety_doc 面不在射程",
             "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, "
                            "该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零",
         },

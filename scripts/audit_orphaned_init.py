@@ -65,7 +65,7 @@ USE_LINE = re.compile(r"^\s*(?:pub\s+)?(?:use|mod)\s")
 
 
 def strip_comment(line: str) -> str:
-    """去掉行注释 (与 scripts/audit_once_cell.py 同口径: 首个 `//` 之后全弃)."""
+    """去掉行注释 (口径: 首个 `//` 之后全弃)."""
     if "//" in line:
         return line.split("//", 1)[0]
     return line

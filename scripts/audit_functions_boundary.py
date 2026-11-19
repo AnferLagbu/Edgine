@@ -3,10 +3,13 @@
 M6.3 functions→privileged 边界渗透检查脚本
 
 检查 functions/ 层是否:
-  (1) 包含任何 unsafe 代码块 / unsafe fn / unsafe trait
-  (2) 直接访问 privileged 内部模块 (而非公开 API)
-  (3) 使用裸指针 (*mut T, *const T) 直接解引用
-  (4) 跳过 #![deny(unsafe_code)] 的强制
+  (1) 直接访问 privileged 内部模块 (而非公开 API)
+  (2) 使用裸指针 (*mut T, *const T) 直接解引用
+  (3) 子模块间引入非白名单依赖
+
+**unsafe 关键字面不在本腿射程** (门禁健康度收敛 批4 ⑤): 块 / fn / impl / trait 四形由
+functions crate 根 `#![forbid(unsafe_code)]` 在编译期执法 (批1 已落), 严于本脚本的正则近似
+(后者跳过 `#!` / `#[` 属性行, 且对宏展开 / 跨行形态漏检), 故删除重复检测面.
 
 退出码: 0 = 通过, 1 = 有违规
 """
@@ -153,81 +156,6 @@ SAFE_PRIVILEGED_APIS = [
 ]
 
 
-def is_unsafe_in_functions(filepath):
-    """检查文件是否包含 unsafe 代码."""
-    issues = []
-
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-            lines = f.readlines()
-    except Exception:
-        return issues
-
-    # 模式 1: unsafe { 块
-    unsafe_block = re.compile(r'\bunsafe\s*\{')
-    # 模式 2: unsafe fn
-    unsafe_fn = re.compile(r'\bunsafe\s+fn\b')
-    # 模式 3: unsafe impl
-    unsafe_impl = re.compile(r'\bunsafe\s+impl\b')
-    # 模式 4: unsafe trait
-    unsafe_trait = re.compile(r'\bunsafe\s+trait\b')
-    # 模式 5: extern "C" (允许但记录)
-    extern_c = re.compile(r'\bextern\s+"C"\b')
-    # 模式 6: 裸指针解引用
-    raw_ptr_deref = re.compile(r'\*(?:const|mut)\s+\w+\s*[.\[]|as\s+\*(?:const|mut)\s+\w+')
-
-    for lineno_1, line in enumerate(lines, start=1):
-        stripped = line.strip()
-
-        # 跳过注释行
-        if stripped.startswith('//') or stripped.startswith('*') or stripped.startswith('///') or stripped.startswith('/*'):
-            continue
-
-        # 跳过 #![deny(unsafe_code)] 等 attribute 行
-        if stripped.startswith('#!') or stripped.startswith('#['):
-            continue
-
-        # 检查 unsafe
-        if unsafe_block.search(line):
-            issues.append({
-                'file': str(filepath),
-                'line': lineno_1,
-                'severity': 'CRITICAL',
-                'type': 'UNSAFE_BLOCK_IN_FUNCTIONS',
-                'message': 'functions 层禁止 unsafe 块',
-                'code': line.strip()[:200],
-            })
-        elif unsafe_fn.search(line):
-            issues.append({
-                'file': str(filepath),
-                'line': lineno_1,
-                'severity': 'CRITICAL',
-                'type': 'UNSAFE_FN_IN_FUNCTIONS',
-                'message': 'functions 层禁止 unsafe fn',
-                'code': line.strip()[:200],
-            })
-        elif unsafe_impl.search(line):
-            issues.append({
-                'file': str(filepath),
-                'line': lineno_1,
-                'severity': 'CRITICAL',
-                'type': 'UNSAFE_IMPL_IN_FUNCTIONS',
-                'message': 'functions 层禁止 unsafe impl',
-                'code': line.strip()[:200],
-            })
-        elif unsafe_trait.search(line):
-            issues.append({
-                'file': str(filepath),
-                'line': lineno_1,
-                'severity': 'CRITICAL',
-                'type': 'UNSAFE_TRAIT_IN_FUNCTIONS',
-                'message': 'functions 层禁止 unsafe trait',
-                'code': line.strip()[:200],
-            })
-
-    return issues
-
-
 def check_forbidden_imports(filepath):
     """检查 functions 是否导入了 privileged 的禁止内部模块."""
     issues = []
@@ -367,7 +295,6 @@ def scan_directory(base):
         if is_vendored(f):
             skipped += 1
             continue
-        all_issues.extend(is_unsafe_in_functions(f))
         all_issues.extend(check_forbidden_imports(f))
         all_issues.extend(check_raw_pointer_access(f))
     if skipped > 0:
@@ -390,7 +317,7 @@ def generate_report(issues, file_count):
     report.append(f'问题总数: {len(issues)}')
     report.append('')
 
-    for sev in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']:
+    for sev in ['HIGH', 'MEDIUM', 'LOW', 'INFO']:
         count = len(by_severity[sev])
         if count == 0:
             continue
@@ -530,7 +457,7 @@ def check_functions_inter_module_deps():
 
 def main():
     # B01-03: 退出码升级 — HIGH/MEDIUM 违规也应阻断 CI
-    # 通过 --strict-medium 启用 MEDIUM 阻断 (默认仅阻断 CRITICAL + HIGH)
+    # 通过 --strict-medium 启用 MEDIUM 阻断 (默认仅阻断 HIGH)
     # --strict-medium 设计: MEDIUM (functions 间非白名单依赖) 默认仅警告,
     # 但允许 CI 严格模式开启. 这样新代码不会因历史遗留触发 CI 失败,
     # 但 CI 可选择性开启.
@@ -565,15 +492,11 @@ def main():
         }, f, ensure_ascii=False, indent=2)
     print(f'\nJSON 报告保存至: {json_path}')
 
-    # B01-03: 退出码 — CRITICAL 必阻断, HIGH 必阻断,
-    # MEDIUM 仅在 --strict-medium 时阻断
-    critical = sum(1 for i in issues if i['severity'] == 'CRITICAL')
+    # B01-03: 退出码 — HIGH 必阻断, MEDIUM 仅在 --strict-medium 时阻断
+    # (CRITICAL 级随 unsafe 面收敛一并退役: 该级只由已删的 unsafe 检测面产出)
     high = sum(1 for i in issues if i['severity'] == 'HIGH')
     medium = sum(1 for i in issues if i['severity'] == 'MEDIUM')
 
-    if critical > 0:
-        print(f'\n>>> {critical} 个 CRITICAL 违规 (functions 包含 unsafe) <<<')
-        sys.exit(1)
     if high > 0:
         print(f'\n>>> {high} 个 HIGH 违规 (functions 访问 privileged 内部) <<<')
         sys.exit(1)

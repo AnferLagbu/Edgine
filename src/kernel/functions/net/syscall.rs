@@ -577,7 +577,7 @@ fn policy_to_abi(cfg: Dhcpv6PolicyConfig, enabled: bool) -> edgine_abi::dhcpv6::
 /// 读用户 [`edgine_abi::dhcpv6::EgDhcpv6Policy`] → 解码 `enabled` (仅 0/1) →
 /// [`validate_config`] 逐字段校验 → 写入 [`super::dhcpv6::driver::set_policy`].
 /// 用户内存搬运经 privileged 安全代理 (I4); 驱动调用留在 functions 层
-/// (privileged 生产代码禁反向依赖 functions, 见 `audit_reverse_deps`).
+/// (privileged 生产代码禁反向依赖 functions: P-71 拆 crate 后 `crate::functions` 在 privileged crate 内不可解析, 编译期即保证).
 ///
 /// # Errors
 /// 用户缓冲无效 → `Errno::Efault`; `enabled` 非 0/1 或策略字段非法 → `Errno::Einval`.

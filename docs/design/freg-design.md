@@ -884,7 +884,7 @@ FFI 错误码沿用 [api.rs:133](src/kernel/privileged/freg/api.rs) 的既有契
 | `scripts/audit_functions_boundary.py` | 344–345 | 删 `reset_config.rs` 的豁免行 | 文件被删 |
 | `scripts/audit_safety_coverage.py` | 19 | 不改（根仍是 `privileged`） | 新 crate 零 unsafe，由 `forbid` 证明 |
 | `scripts/audit_public_api_docs.py` | 49 | 不改（F8 语言面只判 `privileged/`） | 新 crate 用 `#![deny(missing_docs)]` 自证 |
-| `scripts/audit_once_cell.py` | 32–36 / 59 | 不改（`src/kernel` 根已覆盖新 crate） | 四树扫描自动纳入 |
+| clippy `disallowed-types`（四树 `clippy.toml`） | — | 不改（OnceCell 统一性已由四树 clippy 配置执法：kernel / rust 壳+abi / host-tests / src/user） | 自建审计腿已退役，四树配置自动纳入新 crate |
 | `scripts/audit_deadlock_matrix.py` | 30–31 | 不改（crate 无锁） | 纯函数 crate |
 | `scripts/audit_feature_semantics.py` | 37–38 | 不改（crate 无 feature） | 避免为审计加特征位 |
 
@@ -1295,7 +1295,7 @@ aarch64 帧草案（FIQ / SError，EL1）：
 
 1. **不分配**：crate 不依赖 `alloc`，`[dependencies]` 为空；`FregState` 定长。
 2. **不取锁，只用 `try_lock`**：crate 无 `Mutex` / `OnceLock`；状态由调用方以 `&mut FregState` 传入；privileged 侧只用 `try_lock`。
-3. **不再 panic**：`#![deny(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]`；Kani harness 验证无 panic 路径。
+3. **不再 panic**：`#![deny(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]`；无形式化验证载体（原 Kani harness 已整树退役，且其证明对象是 `wasm/leb128` 而非 freg）。
 4. **不递归**：privileged 的 `arbiter_claim` 用 `compare_exchange`；crate 状态机无回调、无重入。
 5. **迭代有界**：所有循环上界为 `MAX_DOMAINS` / `MAX_DEPS` / `MAX_AUDIT` 常量。
 6. **日志无锁 best-effort**：`FregEnv::log` 契约；实现侧只写无锁环或串口，失败静默。

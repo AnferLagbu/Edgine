@@ -17,7 +17,7 @@
 | `src/kernel/privileged/` | TCB 子树（允许 unsafe，硬件抽象） | 用户 决策 / AI 实施 |
 | `src/kernel/functions/` | 100% safe Rust 子树（策略与业务） | 用户 决策 / AI 实施 |
 | `src/kernel/functions/net/smoltcp/` | smoltcp vendored（3rd-party，锁定） | 升级时 用户 授权 + AI |
-| `src/user/`, `src/rust/`（含 `edgine-abi` ABI 常量单源）, `kani-harness/` | 用户态程序、ABI 常量单源与形式化验证 harness | AI 实施 / 用户 审查 |
+| `src/user/`, `src/rust/`（含 `edgine-abi` ABI 常量单源） | 用户态程序与 ABI 常量单源 | AI 实施 / 用户 审查 |
 | `host-tests/` | 主机端单元/集成测试（no_std + std） | AI 实施 / 用户 审查 |
 | `docs/plan/` | 工程与任务计划 | 用户 决策 + AI 撰写 |
 | `docs/design/` | 目标架构设计（子系统的设计立场文档，指向长期演化目标） | 用户 决策 + AI 撰写 |
@@ -47,14 +47,13 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 
 | 脚本 | 作用 | 对应 §5 硬规则 | CI 门禁 |
 |---|---|---|---|
-| `audit_functions_boundary.py` | functions 0 unsafe + 顶层 re-export 强制 | F1 + F2 | 强制 |
-| `audit_safety_coverage.py` | privileged unsafe 块 SAFETY 100% 覆盖 | F4 | 强制 |
+| `audit_functions_boundary.py` | functions 边界（privileged 内部模块 / 裸指针解引用 / 子模块非白名单依赖）+ 顶层 re-export 强制；**unsafe 关键字面不在本腿射程**，由 functions crate 根 `#![forbid(unsafe_code)]` 编译期执法 | F2（F1 由 `forbid` 执法） | 强制 |
+| `audit_safety_coverage.py` | privileged 的 `unsafe extern` / 引用面 SAFETY 100% 覆盖（块 / fn / impl / trait 四面交 clippy，见下「F4 执法分工」） | F4 | 强制 |
+| `audit_safety_debt.py` | clippy `undocumented_unsafe_blocks` 读数（块 / impl 两面）与机器派生存量侧车双向对账，只拦新增；存量清零后逐树翻 `-D` 转硬执法 | F4 存量棘轮 | 强制（full 档） |
 | `audit_deadlock_matrix.py` | 锁顺序 + 中断上下文 + 递归锁检测 | 附加门禁（锁顺序/中断上下文专项，P-68） | 强制 |
 | `audit_coupling.py` | 跨模块循环依赖（边 = 声明级 `use` / `pub use`，含跨行语句；非 use 行的限定调用不成边，P-73） | F3 | 强制 |
 | `audit_comment_language.py` | 中文注释强制 | F7 | 强制 |
-| `audit_invariants.py` | 6 安全不变式断言 | I1-I6 | 强制 |
-| `audit_once_cell.py` | OnceCell 模式统一 | 附加门禁 | 强制 |
-| `audit_c_naming.py` | C 命名规范 | 附加门禁 | 强制 |
+| `audit_c_naming.py` | C 命名规范（C 类型后缀 / kmalloc-kfree 位置）；函数名 snake_case 由 rustc `non_snake_case` 执法，不在本腿射程 | 附加门禁 | 强制 |
 | `audit_repr_c.py` / `audit_volatile_access.py` / `audit_static_mut.py` | repr(C) 字段错位 / volatile 访问 / static mut 防线 | 附加门禁 | 强制 |
 | `audit_orphaned_init.py` | 孤儿 init 编排入口（`no_mangle` + 零调用 + 体内聚合 ≥2 项 init） | 附加门禁（F9 配套，P-8） | 强制 |
 | `audit_unwired_pub_fn.py` | 未接线 syscall 编号（R2 CRITICAL）；零引用 pub fn（R1）仅报告 | 附加门禁（F9 配套，P-13） | 强制（R2） |
@@ -62,10 +61,12 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 | `audit_public_api_docs.py` + `audit_missing_docs_debt.py` | F8 两层执法：**语言面**（中文 doc 是否存在，`privileged/` 可达公共 API，默认面硬零 + impl 面对账）由前者判；**存在性面**由后者取 rustc `missing_docs` 编译器读数与存量债册棘轮对账（只拦新增）。已完成补写的模块改在文件内写 `#![deny(missing_docs)]`，由门槛 1/2 直接硬执法 | F8 | 强制（full 档） |
 | `audit_tcb_ratio.py` | TCB 占比统计（软 < 64%）| 软约束 | 报告 |
 
-> **附加门禁**：OnceCell / C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn / `audit_deadlock_matrix`（锁顺序与中断上下文专项，P-68）已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格/并发正确性专项防线，映射 I2/I5/I6 不变式与 `docs/explain/ref-lock-order.md` 的锁序约束；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。
-> **完整清单**：仓库共 28 个 `audit_*.py`（受控文件实测口径：`scripts/` 25 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`，P-59 追加第 9 条、P-79 追加第 10 条后共 10 条腿）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_reverse_deps` / `audit_public_api_docs` / `audit_missing_docs_debt` / `audit_smoltcp_purity` / `scan_obsolete_naming`（受控文本全量扫描，含 `Makefile` / `.asm`；`docs/plan` 与 `docs/report` 历史面 KEEP）/ `audit_vacuous_needle`（恒真反向针形态腿，P-79）+ 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`；`tools/check_doc_paths.py`（文档路径新鲜度，非 `audit_*.py` 族）亦已接入 `full` 档步骤 2g 阻断腿——校验反引号与 markdown 链接两形态源码引用，设计册计划新建路径按 git 全历史零命中免报（#255）.
+> **附加门禁**：C 命名 / repr(C) / volatile / static_mut / orphaned_init / unwired_pub_fn / `audit_deadlock_matrix`（锁顺序与中断上下文专项，P-68）已接入 CI 强制，但不占 §5 的 F1-F9 零容忍编号（属内存/风格/并发正确性专项防线，映射 I2/I5/I6 不变式与 `docs/explain/ref-lock-order.md` 的锁序约束；orphaned_init 与 unwired_pub_fn 属 F9 死代码与接线断点的专项，后者仅 R2 未分发 syscall 编号阻断，R1 存量零引用名单待逐项甄别后开 `--strict`）。OnceCell 统一性**不占审计腿名额** —— 由四树 `clippy.toml` 的 `disallowed-types` 在既有 clippy 腿内执法（见下「退役与收敛」）。
+> **完整清单**：仓库共 26 个 `audit_*.py`（受控文件实测口径：`scripts/` 23 + `scripts/tests/` 2 + `tools/audit_unsafe.py` 1；本表为常用核心门禁项，非穷举）. `block_registration`(I-43) / `tlb_receive_order`(S-14) / `aarch64_kernel_fp_free`(FP-06) 等专项亦在 `ci/audit.sh` 强制但未列入本表; P-49 收口后另有一组**仅 `full` 档执行**的存量审计腿接入 `ci/audit.sh` 步骤 2e（单源清单 = `AUDIT_REQUIRED_LEGS_FULL`，P-59 追加第 9 条、P-79 追加第 10 条，门禁健康度收敛批4 以 `audit_safety_debt` 置换退役的反向依赖腿后仍共 10 条腿）——阻断腿 `audit_implicit_deps` / `audit_feature_semantics` / `audit_safety_debt`（clippy SAFETY 读数与存量侧车双向对账，只拦新增）/ `audit_public_api_docs` / `audit_missing_docs_debt` / `audit_smoltcp_purity` / `scan_obsolete_naming`（受控文本全量扫描，含 `Makefile` / `.asm`；`docs/plan` 与 `docs/report` 历史面 KEEP）/ `audit_vacuous_needle`（恒真反向针形态腿，P-79）+ 自测腿 `audit_implicit_deps_selftest` / `audit_selftest`；`tools/check_doc_paths.py`（文档路径新鲜度，非 `audit_*.py` 族）亦已接入 `full` 档步骤 2g 阻断腿——校验反引号与 markdown 链接两形态源码引用，设计册计划新建路径按 git 全历史零命中免报（#255）.
 > **定点锁口径**（P-50 甲 / P-61 乙 / A-4 丁 更新）：`audit_repr_c.py` 已转为**树级发现式**——扫描 `src/kernel`（排除 vendored `smoltcp`）全部 `pub struct`，体内字段含 `UnsafeCell<` / `Cell<` / `NonNull<` 且**多字段**者必须带 `#[repr(C)]`；单字段唯一偏移恒为 0、无重排面，自动豁免（不设人工注册表）。原 2 个钉死条目保留为显式底线。`audit_volatile_access.py` 原为**定点回归锁**（4 字段 / 1 函数），A-4 丁（#124）已转为**树级发现式硬零**——扫描 `src/kernel`（同一 `smoltcp` 排除面）全部 struct 的 `Cell` / `UnsafeCell` 字段，标量载荷必须走 `read_volatile` / `write_volatile` 或 `addr_of!` / `as_ptr` 地址形态，单字段 / 泛型 / 原子 / 对象级载荷结构化豁免，不设人工注册表、不设存量基线（与 `audit_repr_c.py` 同构）。P-61 登记的 23 个 UnsafeCell 字段 / 44 个 `.get()` 访问点 / 14 个文件候选已在首轮全量合规（终态扫描面 606 `.rs` / 811 struct / 28 个内部可变单元字段，标量受检 7）。`audit_tlb_receive_order.py` 仍为**定点回归锁**（1 函数），只能证明清单内条目未丢调用次序，同类的**新**风险点不会被发现——定位为「定点回归锁，非树级防线」.
-> **F8 射程口径**（P-60 甲）：F8 的**编译器面** = rustc `missing_docs`，由 `audit_missing_docs_debt.py` 对 `src/kernel` 三个 workspace 成员取数；**语言面** = `audit_public_api_docs.py` 只判 `privileged/` 可达公共 API。`host-tests` / `src/user` / `kani-harness` 三树**不在 F8 射程**（口径裁定，非漏接）。OnceCell 统一性面（`audit_once_cell.py`）已按四树同范围扫描。
+> **F8 射程口径**（P-60 甲）：F8 的**编译器面** = rustc `missing_docs`，由 `audit_missing_docs_debt.py` 对 `src/kernel` 三个 workspace 成员取数；**语言面** = `audit_public_api_docs.py` 只判 `privileged/` 可达公共 API。`host-tests` / `src/user` 两树**不在 F8 射程**（口径裁定，非漏接；原第三树 kani-harness 已整树退役）。OnceCell 统一性面现由四树 clippy 配置的 `disallowed-types` 执法（见下「退役与收敛」）。
+> **F4 执法分工**（门禁健康度收敛 批3–批5，D-5 乙）：SAFETY 注释要求按 unsafe 形态分面执法，不再由单一自建脚本宣称「privileged 全部 unsafe 100% 覆盖」——① **unsafe 块 / unsafe impl**：clippy `undocumented_unsafe_blocks`（allow-by-default，且**不豁免 auto trait**），由 `audit_safety_debt.py` 以 `-W` 取七腿位点并集读数与机器派生侧车双向对账（存量 399 处 / 78 文件 / 83 键），只拦新增；批5a–5g 逐树清零后翻 `-D` 转硬执法。② **pub unsafe fn / unsafe trait**：clippy `missing_safety_doc`（默认 warn，四树 clippy 腿均带 `-D warnings` ⇒ 已是硬错）。③ **`unsafe extern "C"` 块与函数指针类型等引用面**：clippy 两个 lint 都不报（生态缺口），由 `audit_safety_coverage.py` 判 100%（实测 146 处 = extern 127 + 引用 19，缺 SAFETY 0）。「SAFETY 紧邻上一行」是项目约定，严于 clippy 判据（后者接受空行间隔）。
+> **退役与收敛**（门禁健康度收敛 批4；判据 = 「有比项目自建门禁更好的 rust 生态检查工具即为不必要」）：**三条自建腿整腿退役** —— ① 6 安全不变式断言腿：I1–I5 已由 functions crate 根 `#![forbid(unsafe_code)]` 与 F2 黑名单执法，I6 的检测模式全仓零命中（结构恒真），真实执法面见 §4.2；② OnceCell 统一性腿：四树 clippy 配置的 `disallowed-types = ["spin::Once", "spin::OnceCell"]` 覆盖同判据且更强（编译期解析真实类型路径，优于正则文本近似），删腿不删防线；③ privileged→functions 反向依赖腿：P-71 拆 crate 后 `crate::functions` 在 privileged crate 内不可解析，判据结构恒真，其两个分类器已原样迁入 `audit_implicit_deps.py`（输出逐字节一致）。**三处部分收敛**（删重复面、留生态缺口面）：`audit_functions_boundary.py` 删 unsafe 关键字面（交 `forbid`）、`audit_c_naming.py` 删函数名驼峰面（交 rustc `non_snake_case`）、`audit_safety_coverage.py` 与 `tools/audit_unsafe.py` 删块 / fn / impl / trait 四面（交 clippy，见上）。**两条不可替代**：`audit_deadlock_matrix.py`（锁序 + 中断上下文）与 `audit_dead_code_comment.py`（F9 侧车双向对账 + 构建参数层逃逸口，clippy 不扫构建脚本）。kani-harness 整树退役：其 crate 因 `WasmError → Errno` 的 `From` impl 跨 crate 不可解析而 E0433，四条 wasm/leb128 证明长期不可跑，且 `make test-kani` 不在七门槛内、无 CI 接线；验证工具选型另议。
 
 ### 2.3 验证门槛
 
@@ -85,7 +86,7 @@ make test-kernel-host              # 内核单元测试 (host 侧 #[cfg(test)] �
 - **Edition：** 2024
 - **目标架构：** x86\_64（主）+ aarch64（次）
 - **`rustfmt.toml`：** 仓库根 `rustfmt.toml`（4 空格缩进 + 垂直尾逗号；kernel / host-tests / src/rust / src/user 统一受检）
-- **Clippy 配置：** `src/rust/clippy.toml`（cognitive-complexity-threshold = 25）
+- **Clippy 配置：** 四份，按树就近生效（D-2 甲・每树最小化，不做 `CLIPPY_CONF_DIR` 统一）：`src/kernel/clippy.toml` 与 `src/rust/clippy.toml` 持内核风格阈值（cognitive-complexity 25 / type-complexity 250 / too-many-lines 100 / trivial-copy-size-limit 16）+ `disallowed-types`，后者同时被壳腿与独立 workspace 的 `edgine-abi`（按祖先目录回退）读到；`host-tests/clippy.toml` 与 `src/user/clippy.toml` **只放 `disallowed-types`**，不引入阈值（本树此前从未受其约束，引入会冒出未知存量）。四份的 `disallowed-types` 同值，是 OnceCell 统一性的唯一执法面
 - **`cargo-deny` 配置：** `src/rust/deny.toml`（许可证/漏洞/版本治理）
 
 ## 4. 架构责任分离（核心）
@@ -121,16 +122,18 @@ Q1: 该功能必须 unsafe 吗（直接碰硬件/页表/裸内存）？
 - **I5** 外设 MMIO/PIO 只能通过 privileged 安全代理
 - **I6** 外设 DMA 不可写入内核内存
 
+> **执法点口径**（门禁健康度收敛 批4，D-6 甲）：I1–I5 的硬执法在编译期与声明期 —— functions crate 根 `#![forbid(unsafe_code)]`（functions 写不出任何 unsafe，故无法篡改内核态 CPU 状态 / 直访内核内存 / 绕过安全入口）+ F2 黑名单（用户内存与 MMIO/PIO 只能经 privileged 安全代理，functions 不得触其内部模块）。**I6 的真实执法面 = privileged 侧 DMA safe API 的形状**（`src/kernel/privileged/dma_buf.rs` 的 `DmaStream`、`src/kernel/privileged/dma/engine.rs` 的 `alloc_coherent`：DMA 缓冲只能由这些入口分配，functions 拿不到可写入内核内存的 DMA 句柄）**+ F2 黑名单**。原不变式断言腿的 I6 检查以三个文本模式搜全仓，实测零命中（结构恒真，不构成执法），已随该腿整腿退役；本节六条不变式作为**设计自检清单**保留，不再宣称有逐条断言的审计腿。
+
 > 违反任一不变式 = 重新设计（不允许补丁式补救）.
 
 ## 5. 硬规则（零容忍，违反即拒收）
 
 | # | 规则 | 检查方式 |
 |---|---|---|
-| F1 | functions 层 0 unsafe | `#![deny(unsafe_code)]` + `audit_functions_boundary.py` |
+| F1 | functions 层 0 unsafe | functions crate 根 `#![forbid(unsafe_code)]`（编译期硬执法，局部 `allow` 不能覆盖；块 / fn / impl / trait 四形全覆盖） |
 | F2 | functions 禁止访问 privileged 内部模块 | `audit_functions_boundary.py` 黑名单 |
 | F3 | 新增代码禁止引入模块间循环依赖 | `audit_coupling.py` |
-| F4 | privileged 任何 unsafe 块必须配 `// SAFETY:` 注释 | `audit_safety_coverage.py` |
+| F4 | privileged 任何 unsafe 块必须配 `// SAFETY:` 注释 | 块 / impl 由 clippy `undocumented_unsafe_blocks` 检测 + `audit_safety_debt.py` 存量棘轮（full 档，只拦新增）；fn / trait 由 `missing_safety_doc`（`-D warnings` 已硬执法）；`unsafe extern` / 引用面由 `audit_safety_coverage.py` 判 100%（分工见 §2.2） |
 | F5 | 双架构编译 0 warning 0 error | `./ci/build.sh all` |
 | F6 | 核心审计全部通过 | 见 §2.2 |
 | F7 | 中文注释强制 | `audit_comment_language.py` 0 violations |

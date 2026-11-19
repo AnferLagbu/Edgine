@@ -4,11 +4,11 @@
 检查 functions 层模块对 privileged 全局静态状态的引用,
 检测通过全局静态变量产生的隐式依赖 (F2 / DECISION-J 存量债).
 
-口径依据与 audit_reverse_deps.py 同源 (docs/plan/framekernel-paradigm-enforcement.md §7.3):
+口径依据 (docs/plan/framekernel-paradigm-enforcement.md §7.3):
 - 整行注释 (`//` / `///` / `//!` / `/* */`) 内的名字是文档交叉引用, 不构成代码依赖;
 - 内联 `#[cfg(test)] mod X { ... }` 块 (花括号深度跟踪) 属测试载体, 不纳入整治;
 - 判定不了的按生产计 (fail-closed). functions 层当前无 `tests/` 测试载体目录, 也没有
-  `#[cfg(test)] mod X;` 外部测试文件声明, 故只复用上述两条; 若将来出现, 其引用会按生产
+  `#[cfg(test)] mod X;` 外部测试文件声明, 故只判上述两条; 若将来出现, 其引用会按生产
   计并使基线转红 —— 过度报告是 fail-closed 方向.
 
 P-49 甲・修正则: 原 `static_pattern` 允许 `[=;{]` 收尾, 于是
@@ -49,8 +49,10 @@ FUNCTIONS_BASE = REPO_ROOT / 'src' / 'kernel' / 'functions'
 PRIVILEGED_BASE = REPO_ROOT / 'src' / 'kernel' / 'privileged'
 BASELINE_FILE = SCRIPT_DIR / 'audit_implicit_deps.baseline.json'
 
-sys.path.insert(0, str(SCRIPT_DIR))
-import audit_reverse_deps as reverse_deps  # noqa: E402  复用 §7.3 口径分类器
+# cfg(test) 属性行 (含 all(test,...) 变体)
+RE_CFG_TEST_ATTR = re.compile(r'#\s*\[\s*cfg\s*\(\s*(all\s*\()?\s*test\b')
+# 内联模块声明起始 `mod X {`
+RE_INLINE_MOD = re.compile(r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?mod\s+(\w+)\s*\{')
 
 # privileged 全局状态变量 (functions 不应直接访问) —— 由 harvest_privileged_globals()
 # 动态收割, 不再维护硬编码名单.
@@ -77,6 +79,77 @@ ALLOWED_PATTERNS = [
     r'crate::functions::fs::VFS_MANAGER',
     r'crate::privileged::ipc::IPC_NAMESPACE',
 ]
+
+def scan_inline_cfg_test_blocks(lines: list[str]) -> set[int]:
+    """逐行扫描内联 cfg(test) 块, 返回覆盖的行号集合.
+
+    花括号深度跟踪: 遇 `#[cfg(test)]` + `mod X {` 进入测试上下文, 至配对 `}` 退出.
+    解析不出的结构不进入上下文 (fail-closed: 这些行的引用按生产计).
+    """
+    test_lines: set[int] = set()
+    cfg_pending = False  # 上一有效属性行是 cfg(test)
+    depth_stack: list[int] = []  # 退出深度
+    depth = 0
+
+    for idx, raw in enumerate(lines):
+        lineno = idx + 1
+        stripped = raw.strip()
+
+        # 跟踪已有测试块的深度闭合
+        if depth_stack and depth <= depth_stack[-1]:
+            depth_stack.pop()  # 已回到块外深度, 块结束
+        in_test = bool(depth_stack)
+
+        depth_before = depth
+        depth += raw.count("{") - raw.count("}")
+
+        if in_test:
+            test_lines.add(lineno)
+            continue
+
+        if RE_CFG_TEST_ATTR.search(stripped):
+            cfg_pending = True
+            continue
+
+        if cfg_pending:
+            if RE_INLINE_MOD.match(stripped):
+                # 内联块: 退出深度 = 块外层深度 (本行 `{` 之前的深度)
+                depth_stack.append(depth_before)
+                test_lines.add(lineno)
+            # 属性后无 mod 声明 (如直接跟 #[test] fn) — 仅标记属性行, 不误扩
+            cfg_pending = False
+
+    return test_lines
+
+
+def scan_comment_lines(lines: list[str]) -> set[int]:
+    """返回"注释行"行号集合.
+
+    覆盖 `//` / `///` / `//!` 行注释与 `/* ... */` 块注释 (含嵌套):
+    - 行首非空白起为 `//` → 注释行;
+    - 行首非空白起为 `/*` 或处于块注释内 → 注释行, 至配对 `*/` 退出.
+    仅排除"整行注释"; 行内代码后跟随的注释不整行排除 (fail-closed 计生产).
+    """
+    comment_lines: set[int] = set()
+    depth = 0  # 块注释嵌套深度
+    for idx, raw in enumerate(lines):
+        lineno = idx + 1
+        stripped = raw.lstrip()
+        if depth > 0:
+            comment_lines.add(lineno)
+            depth += stripped.count("/*") - stripped.count("*/")
+            if depth < 0:
+                depth = 0
+            continue
+        if stripped.startswith("//"):
+            comment_lines.add(lineno)
+        elif stripped.startswith("/*"):
+            comment_lines.add(lineno)
+            depth += stripped.count("/*") - stripped.count("*/")
+            if depth < 0:
+                depth = 0
+    return comment_lines
+
 
 # 存量债基线 = 侧车快照 BASELINE_FILE (机器派生, 见模块 docstring).
 # 键 = (仓库相对路径, privileged 全局名), 值 = 该组合的引用行数.
@@ -194,8 +267,8 @@ def scan_functions(privileged_globals: set[str]):
             prod.append({'file': str(path), 'line': 0, 'global': '<unreadable>',
                          'code': str(exc)})
             continue
-        comment_lines = reverse_deps.scan_comment_lines(lines)
-        test_lines = reverse_deps.scan_inline_cfg_test_blocks(lines)
+        comment_lines = scan_comment_lines(lines)
+        test_lines = scan_inline_cfg_test_blocks(lines)
 
         for idx, line in enumerate(lines, 1):
             matched = {m.group(0) for m in matcher.finditer(line)}

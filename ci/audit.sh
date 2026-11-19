@@ -62,8 +62,9 @@ audit_leg_missing() {
 # 故再加一道: 每条腿调起前 mark_leg 登记, 0.5n 处单点比对「期望清单 == 实际到位」.
 # 期望清单是手写字面 ⇒ 由 host-tests 结构锁 `test_audit_sh_audit_legs_are_fail_closed`
 # 与本清单互校 (AGENTS.md §2.2 的强制项必须逐项出现在此), 防它自身漂移.
-# 19 项 = 18 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
-AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn dead_code_comment"
+# 17 项 = 16 条被存在性包装的腿 (含两个 for 循环各展开 3 条) + 0.5k2 的 coupling.
+# (门禁健康度收敛 批4: invariants 与 once_cell 两腿整腿退役, 19 → 17.)
+AUDIT_REQUIRED_LEGS="tcb_ratio unsafe block_registration c_naming comment_language tlb_receive_order aarch64_kernel_fp_free repr_c volatile_access static_mut functions_boundary safety_coverage deadlock_matrix coupling orphaned_init unwired_pub_fn dead_code_comment"
 # ── P-49: 仅 full 档执行的存量审计腿清单 ──────────────────────
 # 六条脚本此前在仓内**零调用者** (P-49 测绘), §2.2 与 plan 里点名它们却没有任何本地执法
 # 路径. 本轮接入 step 2e —— 位置在 quick 早退分支**之后** ⇒ 不进 AUDIT_REQUIRED_LEGS
@@ -85,7 +86,12 @@ AUDIT_REQUIRED_LEGS="tcb_ratio invariants unsafe block_registration once_cell c_
 # `$r_i.*$R_MAX` 针, 当时只是被 clippy 的 needless_raw_string_hashes 顺带撞见, 不是执法.
 # 判白只有「针内含引号字符 ⇒ 被搜索的是逐字源码文本」一条内在规则, 不设人工豁免表;
 # 曾考虑的「针文本在仓内别处逐字存在」已实测否决 —— 台账会原文引用被修掉的恒真针.
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py reverse_deps:audit_reverse_deps.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py vacuous_needle:audit_vacuous_needle.py"
+# 门禁健康度收敛 批4 名额置换: reverse_deps 整腿退役 —— P-71 crate 拆分后
+# `crate::functions` 在 privileged crate 内不可解析, 该腿判据结构恒真 (退役前实测全仓
+# 3 处命中全在注释里); 其两个 §7.3 分类器已迁入 audit_implicit_deps.py, 执法面无损失.
+# 空出的名额接 safety_debt (批3 实装, D-5 乙): clippy `undocumented_unsafe_blocks`
+# 检测器读数与存量侧车双向对账, 只拦新增; 存量清零后转硬执法 (批5a-5g).
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py safety_debt:audit_safety_debt.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py vacuous_needle:audit_vacuous_needle.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -216,19 +222,6 @@ else
     audit_leg_missing "tcb_ratio" "$PROJECT_ROOT/scripts/audit_tcb_ratio.py"
 fi
 
-# ── 0.5c 6 安全不变式审计 (E9) ────────────────────────────────────
-if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_invariants.py" ]; then
-    mark_leg "invariants"
-    step "0.5c/6 6 安全不变式审计 (E9)"
-    if "$PROJECT_ROOT/scripts/audit_invariants.py" 2>&1 | tail -12; then
-        ok "6 安全不变式: 全部满足"
-    else
-        err "6 安全不变式: 有违反! 见上方输出"
-    fi
-else
-    audit_leg_missing "invariants" "$PROJECT_ROOT/scripts/audit_invariants.py"
-fi
-
 # privileged 全量 SAFETY 注释覆盖审计
 # quick 模式也会跑 (核心 fail-fast 门禁, 不需要 Lockbud 等 full 档重工具)
 # B01-27 修复: audit_unsafe.py 窗口逻辑缺陷 (属性闭合行/多行属性误报) 已修复,
@@ -268,21 +261,6 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_block
     fi
 else
     audit_leg_missing "block_registration" "$PROJECT_ROOT/scripts/audit_block_registration.py"
-fi
-
-# I-16: OnceCell 抽象统一性 audit — 防绕过 OnceCell 直接用 spin::Once
-# (P-60 甲: 覆盖根为四树 src/kernel / host-tests / src/user / kani-harness,
-#  原实现只扫 src/kernel/functions ⇒ 「全项目统一」的宣称另三树失明)
-if command -v python3 >/dev/null 2>&1 && [ -f "$PROJECT_ROOT/scripts/audit_once_cell.py" ]; then
-    mark_leg "once_cell"
-    step "0.5e/6 OnceCell 单一抽象 (I-16)"
-    if "$PROJECT_ROOT/scripts/audit_once_cell.py" 2>&1 | tail -8; then
-        ok "I-16: 四树统一通过 sync::once::OnceCell"
-    else
-        err "I-16: 有模块绕过 OnceCell 抽象用 spin::Once! 见上方输出"
-    fi
-else
-    audit_leg_missing "once_cell" "$PROJECT_ROOT/scripts/audit_once_cell.py"
 fi
 
 # I-07: C 风格命名残留 audit — 防 C 类型后缀/C 函数名混入 Rust 代码
@@ -734,7 +712,8 @@ fi
 
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
 # 用户裁定「丙・六脚本全接入 full」. P-49 时六条腿分两种形态; P-58 收口后八条腿全部阻断,
-# P-59 追加第 9 条 (missing_docs_debt) 亦阻断 —— 现九条腿无一有豁免分支:
+# P-59 追加第 9 条 (missing_docs_debt)、P-79 追加第 10 条 (vacuous_needle) 亦阻断, 批4 以
+# safety_debt 置换退役的 reverse_deps 后仍十条 —— 现十条腿无一有豁免分支:
 #   P-49 的报告腿 obsolete_naming 当时用的是旧扫描脚本 (P-58 后更名为 `scan_obsolete_naming.py`) —— 默认无条件
 #   退 0, 只有 --actionable-only 才判退出码, 而那口径 53 处里 46 处是扫描器自身源文本、
 #   另有大量 plan/report 历史正文, 读数不收敛 ⇒ 只能作报告腿. P-58 裁定「校正 + 升阻断」:
@@ -747,11 +726,12 @@ fi
 # 落点都按脚本自身口径解析 (audit_feature_semantics.py:37-38 用相对路径, :521 写
 # other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
 # 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
-# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (本轮九腿连跑合计 37.0s; 单跑
-# implicit_deps 1.8 / implicit_deps_selftest 6.6 / audit_selftest 0.1 / feature_semantics 0.1
-# / reverse_deps 0.4 / public_api_docs 7.8 / missing_docs_debt 15.8 / smoltcp_purity 3.7 /
-# obsolete_naming 1.0; 实测时本机 load avg ~17, 绝对值随负载浮动, 只有量级可比 —— P-49 当年
-# 空闲机的八腿合计口径是 ~14.5s).
+# 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (门禁健康度收敛 批4 名额置换后十腿
+# 连跑合计 43.3s, 热跑 / 起始 load avg 0.66: implicit_deps 1.5 / implicit_deps_selftest 6.1 /
+# audit_selftest 2.3 / feature_semantics 0.1 / safety_debt 1.4 / public_api_docs 5.8 /
+# missing_docs_debt 11.8 / smoltcp_purity 10.1 / obsolete_naming 1.4 / vacuous_needle 2.8;
+# 绝对值随负载与缓存浮动, 只有量级可比 —— P-49 当年空闲机八腿合计 ~14.5s, 上一轮九腿在
+# load ~17 下合计 37.0s).
 # 第 10 条 vacuous_needle (2026-11-07) 亦纯文本扫描: 一次 git ls-files + 全仓 .rs 读一遍,
 # 实测 1.8s (820 个受检文件). 它与 obsolete_naming 同为「扫描面 = 受控文件全集」的腿,
 # 差异在取数范围: 本腿只取 .rs (判据是 Rust 断言形态), 且用 `--cached --others
@@ -761,12 +741,20 @@ fi
 # public_api_docs 在 P-59 裁定 ② 后每次裸调都要逐 pub fn 判 impl 归属 (默认面硬零 + impl 面
 # 对账同源于一次扫描): 两面若靠 --strict 分流, 2e 的无参调起永远只判得到默认面, 533 处存量
 # 便没有执法点.
-# missing_docs_debt 是九腿里唯一真编译的腿 (其余各腿都是纯文本扫描, 无改动时不会更贵), 故它
-# 也是唯一受前序改动影响的腿: 刚动过 src/kernel 时实测 15.8s, 无改动热跑实测 7.7s, 首跑冷启
-# 30.2s. 它跑 `cargo clippy … -- -Dmissing_docs` 取编译器读数, 需工具链在位 (缺 cargo ⇒ RC=2
+# 十腿里**两条真编译**: missing_docs_debt 与 safety_debt (其余各腿都是纯文本扫描, 无改动时
+# 不会更贵), 故也只有这两条受前序改动影响. missing_docs_debt: 刚动过 src/kernel 时实测 15.8s,
+# 无改动热跑 7.7s, 首跑冷启 30.2s (批4 十腿连跑里热跑 11.8s). 它跑
+# `cargo clippy … -- -Dmissing_docs` 取编译器读数, 需工具链在位 (缺 cargo ⇒ RC=2
 # 转红, 与本文件步骤 2d 同语义), 并用独立 target 目录 other/target/audit-missing-docs
 # (实测 143M) 而非主目录: 尾旗标参与 cargo 的 unit fingerprint, 借主目录会把门槛 1/2 的全部
 # 产物判脏 (实测主目录门槛形 clippy 被搅脏后重编 kernel lib), 隔离目录只付自己的冷启动.
+# safety_debt (批3 实装 / 批4 接入) 同型但更贵: 取**七腿位点并集** (kernel 双架构 + host-tests
+# + src/user 双架构 + 壳 + edgine-abi), 每腿一个独立 target 目录
+# other/target/audit-safety-debt/<腿> (七目录合计实测 510M), 只开
+# `-W clippy::undocumented_unsafe_blocks` 一个 lint (不带 -D warnings / pedantic, 否则读数混入
+# 无关诊断). 批3 实测冷启 90s, 全 Fresh 热跑 ~1s (批4 十腿连跑里 1.4s); 每腿读数行自报
+# 「真编译」或「Fresh」, 不把缓存跑当成真编译凭据 —— 本工具链对 Fresh unit 复播诊断 (L5),
+# 脚本另有「读数 0 + 债册非零 + 七腿全 Fresh」的塌缩守卫, 疑似即 fail-closed 不生成基线.
 step "2e/6 存量审计腿接入 (P-49)"
 for P49_SPEC in $AUDIT_REQUIRED_LEGS_FULL; do
     P49_LEG="${P49_SPEC%%:*}"

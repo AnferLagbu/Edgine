@@ -29,14 +29,13 @@ from pathlib import Path
 from typing import Iterator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# 覆盖根 (P-50 丙・全扩三树): 此前只有 src/kernel ⇒ F7 对 host-tests/ src/user/
-# kani-harness/ 完全不生效, 而 §5 F7 写的是「中文注释强制」而非「内核中文注释强制」.
+# 覆盖根 (P-50 丙 扩根; kani-harness 整树退役后余三根): 此前只有 src/kernel ⇒ F7 对
+# host-tests/ src/user/ 完全不生效, 而 §5 F7 写的是「中文注释强制」而非「内核中文注释强制」.
 # 逐根 fail-closed: 任一根不存在即返 2 (不把"根拼错"读成"扫描零违规").
 BASES = [
     PROJECT_ROOT / "src" / "kernel",
     PROJECT_ROOT / "host-tests",
     PROJECT_ROOT / "src" / "user",
-    PROJECT_ROOT / "kani-harness",
 ]
 
 # 注释前缀 (/// 文档注释, // 行内, /* 块注释起始, * 块注释续行, // SAFETY:, // TODO:)
