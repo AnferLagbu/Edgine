@@ -1453,7 +1453,94 @@ functions 零 unsafe（**292 文件**）；TCB **54.1%** < 64%；SAFETY 引用�
 （**13 个行首状态字段** = 批 0/1/2/3/4/5a/5b/5c/5d/5e/5f/5g/6）；
 ③ 新文件**先 `git add`** 再跑 `scan_obsolete_naming`（扫 `git ls-files`）与 `check_doc_paths`；
 ④ 七门槛复跑取读数；⑤ 按路径 `git commit --only --pathspec-from-file`，不夹带其余暂存态。
-状态：[]
+状态：[X]
+详情：**五十八项工程外发现已按 §11.5 一次性合并提问，四组裁定全部取得（2026-11-19）**，
+分组恰好覆盖 ①–58 各一次（12 + 15 + 1 + 30 = 58）：
+
+| 组 | 项数 | 项号 | 用户裁定 | 落地 |
+|---|---|---|---|---|
+| **A・可达真缺陷与安全缺口** | 12 | ⑥ ⑩ ⑭ ㉚ ㉛ ㉜ ㊹ ㊺ ㊽ ㊾ ㊿ 51 | **单独立项分批修复** | 新册 [safety-gap-remediation.md](./safety-gap-remediation.md) 批 R1–R5 |
+| **B・latent UB / 约束错配 / 不可达** | 15 | ⑪ ⑫ ⑬ ⑰ ⑳ ㉓ ㉕ ㊶ ㊸ ㊻ ㊼ ㊱ ㊲ 52 56 | **并入同一工程后排批** | 同册批 R6–R8（52 属 SGEG 冻结面，**只裁定不施工**） |
+| **C・⑮ SAFETY 内容面盲区** | 1 | ⑮ | **甲 加内容面审计腿** | 新册 [safety-comment-fidelity.md](./safety-comment-fidelity.md) 批 C1 |
+| **D・注释/文档失真与冗余** | 30 | ① ② ③ **④** ⑤ ⑦ ⑧ ⑨ ⑯ ⑱ ⑲ ㉑ ㉒ ㉔ ㉖ ㉗ ㉘ ㉙ ㉝ ㉞ ㉟ ㊳ ㊴ ㊵ ㊷ 53 54 55 57 **58** | **授权改 AGENTS + 其余立项** | ④ 与 58 本批改 AGENTS；其余 28 项入新册批 C2–C7 |
+
+**⑮ 的裁定要点**：clippy 与棘轮只判 SAFETY 的**存在性与位置**，从不判**理由是否真实** ⇒
+占位短语照样通过且不计入债册，**债册归零 ≠ 理由真实**。内容面腿属**丙类・生态无对应物**
+（无任何生态工具判 SAFETY 理由的内容），故按本工程判据「有更好生态工具即为不必要」，
+**自建该腿正当**，与批 4 退役的三条腿性质相反。射程按批 5g 终态全树读数：
+**窄 251 处 / 57 文件、宽 463 处 / 92 文件**（该面 ⊃ 批 5 补写面，**不可**把批 5d 39 /
+批 5e 117 / 批 5f 14 相加）。改写工作拆到 C2–C5，**C1 本身不改任何既有注释**。
+
+**AGENTS.md 第二次授权已用掉（本批，5 处一次改完）**：批 4 那一次预授权用于八处收敛改写；
+本批为 ④ 与 58 取得**新的**一次授权，改动面 =
+① §2.2 核心审计表 `audit_safety_debt.py` 行：「存量棘轮」→ **F4 硬零**（侧车 `totals` 0 处 /
+0 文件 / 0 键、`entries` 空 ⇒ 任何新增位点即红）；
+② §2.2 完整清单的 `audit_safety_debt` 括注：「只拦新增」→「存量已清零 ⇒ 硬零」；
+③ §2.2 **F4 执法分工段 ①** 整段重写：补批 5a–5g 的棘轮全程读数
+（399 → 287 → 261 → 236 → 182 → 109 → 58 → **0**）、三树 + 2b feature 维**四个 `-D` 执法点**、
+以及「该 lint 默认 allow，单靠 `-D warnings` 升不动它」这一关键事实；② ③ 两面（`missing_safety_doc`
+与 `unsafe extern` / 引用面）原样不动；
+④ §2.3 门槛 2 的 `src/user`「**七成员** `--workspace`」→「**十成员**」（现树 `src/user/Cargo.toml`
+= lib / init / eash / install / fbterm / httpsrv / proctest / exectest / wasmstub / wasmrun）；
+⑤ §5 **F4** 行检查方式：「存量棘轮（只拦新增）」→「三树 clippy 腿 + 2b feature 维均显式 `-D`
+硬执法 + `audit_safety_debt.py` **硬零对账**（侧车已空 ⇒ 新增即红）」。
+**改前已核针面**：无任何 host-tests 针钉住「七成员」/「399」/ F4 段措辞 /「存量棘轮」；
+未增删脚本名 ⇒ **P-69 反向对账不受影响**；§2.2 现存针（「定点锁口径」/`audit_repr_c.py` /
+`audit_volatile_access.py` /「4 字段 / 1 函数」/「树级发现式」/「单字段唯一偏移恒为 0」/
+`audit_tlb_receive_order.py` /「非树级防线」/「P-61」/`audit_selftest` /「附加门禁（锁顺序/中断上下文专项，P-68）」）
+与 §2.3 针（「7. rustdoc 双架构全绿」/`make -f Makefile.ci ci-rustdoc` / 第 3 条档位）全部原样存活。
+
+**新登记第 59 项（④ 的同型漂移，本批只登记不施工）**：`ci/audit.sh` 的「改用 `--workspace`
+覆盖七成员」注释 + `host-tests/tests/ci_entrypoint_unified_test.rs` 两处「七个成员都是无 test
+harness 的裸机 crate」——成员数已 10，且「都无 test harness」对 `lib` **不成立**（它有内联单测，
+须 `cd src/user/lib && cargo test`）。本批只改 AGENTS §2.3 一处（授权射程），脚本注释与测试
+自述归新册 **C6 ⑥**，避免超出授权面。
+
+**C1 的开放前置（须再次授权，不得静默改）**：新增一条 full 档阻断腿会改变 AGENTS §2.2 的
+两处计数（「共 **10** 条腿」→ 11、「仓库共 **26** 个 `audit_*.py`」→ 27）与完整清单的腿名枚举。
+**批 4 与批 6 的两次授权均已用掉** ⇒ C1 施工前必须再次取得 AGENTS 改动授权；
+也不得为绕开授权而不接腿（不接腿即 ⑮ 甲裁定落空）。该前置已写进新册 C1 正文。
+
+**两册的分工边界**：safety-gap-remediation 修**代码缺口**（27 项，每项先写复现测试再修，
+修完须把源码内 `已登记缺口 (批6 待裁, 本批不改)` 段改写为真实依据或删除）；
+safety-comment-fidelity 修**注释与文档失真**（30 项 = D 组余 28 + ⑮ + 新 59，**不改代码**，
+读出的代码缺口按 §11.5 归前者）。两册项号都沿用本册 ①–58 全局编号，不重编号；
+行号一律以施工时现树 grep 为准（本册登记行号是补写 SAFETY **之前**的读数，批 5d–5g 纯增注释后
+已整体下移，例 `hrtimer_cancel` 登记 `:390` 现树 `:354`、`strlen` 判据行登记 `:61` 现树 `:89`）。
+
+**立项前现树复核订正了 4 条登记**（本册发现清单是补写 SAFETY 当时的快照，**不是免检依据**；
+订正详情见两新册各自的 §1.5）：⑲ `isr.asm` **文件存在**于 `privileged/boot/isr.asm`，
+错的是 `idt/types.rs` 的相对链接 `../../kernel/isr.asm`（**rustdoc 与 `check_doc_paths` 两道门禁
+都看不见**：显式 URL 非 intra-doc link、后者不扫源码注释）；⑳ `remap_pic` 真身在
+`privileged/idt/table.rs`（`arch/x86_64/interrupt.rs` **不存在**），且批 5e 的 SAFETY
+**已显式披露**丢弃旧掩码 + 全屏蔽后逐条放开是刻意设计 ⇒ 争点改为「那次读是否多余」，须裁定；
+㉖ / ㉟ 的「冗余 auto-trait」**已被批 5e/5f 显式披露为「非类型必需项的显式声明」**⇒ 不是失真，
+只裁定去留（且 `MultibootPtr(*const u8)` 的裸指针本身 `!Sync`，原登记的「auto trait 已自动成立」不确）；
+㉗ `set_driver_data` **全仓无定义**，真缺口是 `driver_as_mut` / `driver_as_ref` 的 `# Safety` doc
+**引用了不存在的函数名**。另 54 下方**已有就地订正注**（修法是改原句 + 删冗余注）、
+55 本轮 grep 在 `freg/domain.rs` **未命中** `spin::Mutex`（须复核是否仍成立）。
+**路径订正**：keyboard → `driver/input/keyboard.rs`、display → `driver/display/mod.rs`、
+aarch64 `interrupt_restore` → `arch/aarch64/mod.rs`（doc 的 DAIF 立即数位布局写成
+bit0=D/bit1=A/bit2=I/bit3=F，真实 **bit3=D/bit2=A/bit1=I/bit0=F**，代码正确）、
+`EGDFNode` → `egdf/devtree.rs`、`NetState: Sync` → `net/init/state.rs`。
+**占位面不止 `glue/string.rs`**：`idt/table.rs` 的 `cli()` 上方同型 ⇒ ⑮ 的窄口径 251 处有全树真实靶。
+
+**七门槛实测读数**（判据 = 日志内 `*-RC=` 回显，非后台包装退出码；本批只改 AGENTS + 3 份 plan
+并新建 2 份 plan，**零源码改动**）：`T1-BUILD-RC=0`（`./ci/build.sh all`，x86_64 与 aarch64
+均 build passed，Passed **6** / Failed **0**）· `T2-AUDIT-RC=0`（`bash ci/audit.sh full`，
+**档位 full**、覆盖步骤 0–4 全部腿含 2d/2e/2f/2g/Lockbud/QEMU，**未执行腿数 0**；
+TCB **54.1%**；SAFETY 引用面 **146/146 = 100%**；I-43 ✓、I-07 **0**；
+`audit_safety_debt` 打印「**✓ 硬零门禁: 七腿位点并集 0 处, 债册亦空 (批5g 收口)**」，
+七腿逐腿位点 **0** / 诊断 **0** / RC=0；`scan_obsolete_naming` 受检 **1723 文件** /
+历史面 KEEP **316** / 违规 **0**；`check_doc_paths` 校验 **19 份** / 设计册免报 **3** 条 /
+**0 漂移**；QEMU 真实启动 **2/2 通过**，`FAIL_OK=0`）· `T4-HOST-RC=0`（`make test-host`
+**204 套 / 1603 passed / 0 failed**，与批 5g 同读数——本批未增删测试）·
+`T6-KHOST-RC=0`（`make test-kernel-host` 三成员 **12 + 807 + 556 = 1375 / 0 failed**）·
+`T7-RUSTDOC-RC=0`（x86_64 exit **0** + aarch64 exit **0**，两腿都真跑，
+0 源码级 link 错误 + 0 私有项链接）。
+**已知开放项不参与判定**：QEMU 腿的 UEFI `[THREAD] FAIL: reap-timeout` 归因行仍在
+（BIOS 同镜像 5/5 PASS、UEFI 5/5 FAIL），属 `uefi-thread-exit-hang.md` 的 U-1/U-2 待授权件，
+脚本显式标注「供对账, 不参与判定」，**非本批引入的回归**。
 
 ---
 

@@ -1,0 +1,241 @@
+# SAFETY 内容保真与注释失真收敛工程
+
+> 一句话说清为什么有这个计划: [gate-health-convergence.md](./gate-health-convergence.md)
+> 批 5a–5g 把四树 SAFETY **缺失**存量清零（棘轮 399 → 0 处 / 0 文件 / 0 键，侧车 `entries` 空，
+> 三树 clippy 腿翻 `-D clippy::undocumented_unsafe_blocks` 硬执法）。但批 5g 的终态复核暴露了
+> 一个**位置判据永远看不见的面**：clippy 与棘轮只判「有没有、在不在正确位置」，**从不判理由是否真实**。
+> 占位短语（如「调用方保证」「此处安全」「见上文」）照样通过，且**不计入债册** ⇒
+> **债册归零 ≠ 理由真实**。用户 2026-11-19 裁定 **⑮ 走甲「加内容面审计腿」**；
+> 同批裁定的 D 组其余 28 项注释/文档失真与冗余项**另行立项**，本册即该立项。
+>
+> 姊妹册 [safety-gap-remediation.md](./safety-gap-remediation.md) 修**代码缺口**（27 项），
+> 本册修**注释与文档的失真**（30 项）。两册项号都沿用 gate-health 册的 ①–58 全局编号，不重编号。
+
+---
+
+## 一、为什么内容面腿是「丙类・生态无对应物」
+
+门禁健康度收敛的判据是「**有比项目自建门禁更好的 rust 生态检查工具即为不必要**」。
+按该判据，本册 C1 要加的内容面腿属**丙类**，与批 4 退役的三条腿（invariants / once_cell /
+reverse_deps）性质相反：
+
+| 面 | 生态工具 | 结论 |
+|---|---|---|
+| SAFETY **存在性 / 位置** | clippy `undocumented_unsafe_blocks`（块 / impl）、`missing_safety_doc`（fn / trait） | 已收敛给生态（批 3–批 5） |
+| `unsafe extern` / 引用面存在性 | clippy 两个 lint 都不报（生态缺口） | 保留 `audit_safety_coverage.py` |
+| SAFETY **理由真实性 / 占位识别** | **无任何生态工具判内容** | **丙类：自建腿正当** |
+
+故 C1 不是「重造轮子」，而是补生态确实不覆盖的一面。**但本册不得借 C1 之名扩围**：
+内容面腿只判「理由是否为占位/空泛」，不判「理由在技术上是否正确」——后者无法机械判定，
+只能靠批 5 的「先读实装再落笔」纪律与人工 review。
+
+### 1.5 登记本身也须复核（批 6 立项时已订正 4 条）
+
+gate-health 册的发现清单是**补写 SAFETY 当时**的快照。批 6 立项前逐项现树复核，
+订正下列四类误判（**施工时仍须再核一次**）：
+
+| 项 | 原登记 | 现树真相 |
+|---|---|---|
+| **⑲** | 「陈旧链接 `isr.asm`，该文件已不存在」 | **文件存在**于 `src/kernel/privileged/boot/isr.asm`；错的是 `idt/types.rs` 的 markdown 链接 `[isr.asm](../../kernel/isr.asm)`（从该文件出发解析到 `src/kernel/isr.asm`），正确相对路径是 `../boot/isr.asm`。**两道门禁都看不见**：显式 URL 非 intra-doc link ⇒ rustdoc 的 `broken-intra-doc-links` 不查；`check_doc_paths` 只扫 must-sync 文档、不扫源码注释 |
+| **㉖ / ㉟** | 「冗余 auto-trait impl」 | 批 5e/5f 的 SAFETY **已显式披露**它们是「非类型必需项的显式声明」（`MultibootPtr: Sync` 明写「不是该 static 的类型必需项」；`KeyboardDriver: Sync` 明写「auto Sync 本可派生，本 impl 只是显式化」）⇒ **不是失真**，只裁定去留；删之前须先核实字段真能派生 auto trait |
+| **㉗** | 「`set_driver_data` doc 失真 + 零调用方」 | `set_driver_data` **全仓无定义**，只被 `egdf/mod.rs` 的 `driver_as_mut` / `driver_as_ref` 两处 `# Safety` doc 引用 ⇒ 真缺口是 **doc 引用了不存在的函数名**；真实写入面是注册入口 `egdf_register` / `egdf_register_with_ops` 的 `driver_data` 形参 |
+| **55** | 「`freg/domain.rs` doc 称 `spin::Mutex`」 | 本轮 grep 在该文件**未命中** `spin::Mutex`（全文只有 `IrqSpinLock`）⇒ 须复核该项是否仍成立，可能已改写或登记位置有误 |
+
+**占位面不止 `glue/string.rs`**：`idt/table.rs` 的 `cli()` 上方同样是
+「调用方保证指针/类型有效 (详见上下文)」⇒ C1 的窄口径 251 处有真实靶，
+不是只在批 5g 改过的那一个文件里。
+
+---
+
+## 二、终态读数（C1 的射程基线，2026-11-19 实测）
+
+扫描面 = `src/kernel`（排除 vendored `smoltcp`）：
+
+| 口径 | 读数 | 含义 |
+|---|---|---|
+| SAFETY 标签行总量 | **2786 条 / 230 文件** | 全树所有 `// SAFETY:` 行 |
+| **窄口径**（禁占位短语清单命中） | **251 处 / 57 文件** | C1 侧车的初始存量 |
+| **宽口径**（含空泛/无实质依据形态） | **463 处 / 92 文件** | 改写工程的总工作面 |
+
+**两条不可违反的读数纪律**：
+
+1. **该面 ⊃ 批 5 的补写面**（债册只计「缺失」，内容面计「已存在但空泛」）⇒
+   **不可**把批 5d 的 39 / 批 5e 的 117 / 批 5f 的 14 相加当作本册工作面。
+2. 窄/宽两口径的**判据清单必须与侧车同批钉下**（机器派生，`--update-baseline` 为唯一写者），
+   本文不抄录逐项数量，避免双写漂移（与 F9 侧车同口径）。
+
+---
+
+## 三、批次条目
+
+### 批 C1・内容面审计腿实装（⑮ 甲）
+
+描述：新增 `scripts/audit_safety_content.py` + 机器派生侧车
+`scripts/audit_safety_content.baseline.json`，与 `audit_safety_debt.py` **同构**：
+禁占位短语清单（窄口径）+ 空泛形态清单（宽口径）→ 七腿位点并集取数 → 双向对账（只拦新增）
+→ 存量清零后转硬零。接入 `ci/audit.sh` `full` 档步骤 2e 的 `AUDIT_REQUIRED_LEGS_FULL`。
+方案：① 判据清单先按 §二 的窄/宽两口径实测钉下，侧车由 `--update-baseline` 生成，
+**不手改**；② 复用 `audit_safety_debt.py` 的**塌缩守卫**形态（total==0 且 baseline>0 且
+七腿无一真编译 ⇒ RC=2 拦 `--update-baseline`），防「编译失败被读成清零」；
+③ **接线形状锁**：`host-tests/tests/ci_entrypoint_unified_test.rs` 补臂，钉新腿在
+`AUDIT_REQUIRED_LEGS_FULL` 内、且 quick 档不含它；④ `audit_selftest` 补自测用例，
+**项数标签有针**（`host-tests/tests/vacuous_needle_gate_test.rs:229`）⇒ 增删自测用例
+必须同批改钉，否则 `./ci/build.sh all` 红；⑤ 两项负控制（注入占位理由 → 红；
+摘旗标 → 形状锁红），RC=101 取证；⑥ 逐批改写放在 C2–C5，**C1 本身不改任何既有注释**。
+**前置（开放，未授权）**：新增一条 full 档阻断腿会改变 `AGENTS.md` §2.2 的两处计数
+（「共 10 条腿」→ 11、「仓库共 26 个 `audit_*.py`」→ 27），以及完整清单的腿名枚举。
+**批 4 那一次 AGENTS 预授权已用掉；批 6 为 ④+58 取得的新授权亦已用掉** ⇒
+**C1 施工前必须再次向用户取得 AGENTS.md 改动授权**，不得静默改根文档，
+也不得为了绕开授权而不接腿（不接腿即本裁定落空）。
+状态：[]
+
+### 批 C2・arch + cpu + idt + boot 占位改写与注释失真（⑧ ⑯ ⑱ ⑲ ㉑ ㉒ ㉔ ㉖）
+
+描述：C1 侧车里 arch/cpu/idt/boot 面的占位理由改写（批 5e 曾在此面补写 73 处，
+其中 **arch 面 117 处（92 块级）属内容空泛**，是宽口径的最大单块），并修同面 8 项注释失真。
+方案：① 按批 5 方法逐处**先读内核实装再落笔**，重复形态单源化到模块级「unsafe 依据单源」段，
+落笔后把注释引用的全部内核函数名一次性 grep 核实存在；② 8 项失真：
+⑧ `arch/aarch64/exception.rs` doc 称 x1-x4 / asm 注释称 x1-x5，实装读 x1..x6；
+⑯ `trampoline.asm` 布局框标 50 字节而 `ApStartupInfo` 实为 54 字节；
+⑱ `IdtPtr` doc 称 base 在 +8 而 `repr(C, packed)` 下在 +2；
+⑲ `idt/types.rs` 的 `[isr.asm](../../kernel/isr.asm)` **相对路径错**（解析到不存在的
+`src/kernel/isr.asm`；真文件在 `privileged/boot/isr.asm`，应写 `../boot/isr.asm`）——
+**两道门禁都看不见**（显式 URL 非 intra-doc link；`check_doc_paths` 不扫源码注释），见 §1.5；
+㉑ `gic::init_distributor` 诊断位域标签与移位不一致；
+㉒ `arch/aarch64/mod.rs` `interrupt_restore` 的 doc 把 DAIF 立即数位布局写成
+bit0=D / bit1=A / bit2=I / bit3=F，真实是 **bit3=D / bit2=A / bit1=I / bit0=F**
+（位序写反 + F/D 互换；**代码与批 5e 补的体内 SAFETY 都正确，只改 doc**）；
+㉔ `smp_init` 注释称「80 字节对齐」而实装 `.align 3`（= 8 字节）；
+㉖ `boot/mod.rs` `MultibootPtr` 的 `Sync` impl——**现树 SAFETY 已显式声明它非类型必需项**
+（`IrqSpinLock<T>: Sync` 只要求 `T: Send`）⇒ 不是失真，**只裁定去留**；
+注意 `MultibootPtr(*const u8)` 的裸指针本身 `!Sync`，故「auto trait 已自动成立」的原登记**不确**，
+删之前须先核实真实派生面（§9.1 须问）。
+③ **禁写占位理由**（C1 的腿会拦）；④ 纯注释批须验**零删除行**（`git diff --numstat`）。
+状态：[]
+
+### 批 C3・mm + sync 占位改写
+
+描述：C1 侧车里 mm + sync 面的占位理由改写（批 5d 在此面补写 54 处，内容空泛存量 **39 处**）。
+方案：① 同批 5 方法；② mm 面重点核**页表 / PMM / DMA 缓冲**的真实依据
+（`DmaStream` / `alloc_coherent` 是 I6 的真实执法面，理由须指向它们而非空泛「已校验」）；
+③ sync 面重点核**锁层级与中断上下文**（理由须与 `docs/explain/ref-lock-order.md` 的层级号一致，
+不得写「调用方保证已持锁」而不指明哪把锁）；④ 本批**不改代码**——读出的代码缺口按 §11.5
+登记并归姊妹册，不顺手修。
+状态：[]
+
+### 批 C4・net + driver + egdf 占位改写与注释失真（㉗ ㉘ ㉙ ㉝ ㉞ ㉟ ㊳ ㊴）
+
+描述：C1 侧车里 net/driver/egdf 面的占位理由改写（批 5f 补写 51 处，内容空泛 **14 处**），
+并修同面 8 项失真。
+方案：① 同批 5 方法；② 8 项失真：
+㉗ `egdf/mod.rs` 的 `driver_as_mut` / `driver_as_ref` 两处 `# Safety` doc **引用不存在的函数名
+`set_driver_data`**（真实写入面 = 注册入口 `egdf_register` / `egdf_register_with_ops` 的
+`driver_data` 形参），且 doc 称「由驱动在 probe 阶段设置」与体内 SAFETY「由注册入口调用方传入」
+不一致；两函数全仓零调用方（按 F9 消除方式处置，**不得加 allow(dead_code)**）；
+㉘ `egdf/mod.rs` 的 `EGDFDevice` Send/Sync 上方 SAFETY 散文**截断**（首段在
+「其它字段均为 Copy 类型或」处断句）+ 紧接第二条 SAFETY **重复**；
+㉙ `net/init.rs` doc 称 `UninitCell` 而实装是 `static mut MaybeUninit`；
+㉝ 三处 SAFETY 引用 `check_user_buf`，真名是 `userptr::validate_user_buf`（**引用他人注释前先 grep 确认**）；
+㉞ `driver/input/keyboard.rs` 旧 SAFETY 称「单核内核」与 SMP 实装不符；
+㉟ 三处 auto-trait impl（`driver/input/keyboard.rs` 的 `KeyboardDriver: Sync` /
+`egdf/devtree.rs` 的 `EGDFNode: Send + Sync` / `net/init/state.rs` 的 `NetState: Sync`）——
+`KeyboardDriver` 那条**已被批 5f 显式披露为「auto Sync 本可派生、只是显式化」**⇒
+只裁定去留，不径行删（见 §1.5）；
+㊳ `net/save.rs` 魔数 doc 与常量**双不符**：doc 写 `"ANXS"` / `0x584E414C`，
+常量是 `0x584E_4153`（小端字节 `0x53 0x41 0x4E 0x58`）⇒ 字符串与 hex 都错——
+**属冻结命名产物面，只改 doc 不改常量字节**（改字节即破坏盘上格式兼容）；
+㊴ `driver/display/mod.rs` 的 DISPI 端口对（`VBE_DISPI_PORT_INDEX` / `VBE_DISPI_PORT_DATA`）
+重复 IoPort safe 代理（收敛为单一代理，**不改端口时序**）。
+③ net 面的「已校验」类假称若指向**真实代码缺口**，归姊妹册 R2，本册只改注释措辞使其不撒谎。
+状态：[]
+
+### 批 C5・kernel 其余面占位改写与注释失真（⑨ ㊷ 53 54 55 57）
+
+描述：C1 侧车里 glue/string、klog、lib.rs、freg、proc、syscall、timer、privileged 根、
+memory_allocator、ipc、sched、sgeg 面的占位理由改写（批 5g 补写 58 处），并修 6 项失真。
+方案：① 同批 5 方法；② 6 项失真：
+⑨ `functions/sgeg/storage/disk.rs` 的 `USER_DISK_INFO_SIZE = 76` 注释与实为 80 的结构不符
+（**无安全后果**，但属常量注释失真；改注释或改常量须先核 ABI 单源，不得单侧改）；
+㊷ `klog_init` doc 的初始化次序倒置（实装次序 = serial_init → register_defaults → KLOG_INIT.store）；
+53 `user_proc.rs` doc 过称 header 校验范围；
+54 `proc/scheduler.rs` 注释称「本函数开头 cli」而实际在调用方 `schedule()` 首行——
+**下方已有一条就地订正注**⇒ 修法是改原句本身并删那条冗余注，不是再加一层；
+55 `freg/domain.rs` doc 称 `spin::Mutex` 而实装是 `IrqSpinLock`——**本轮 grep 未命中
+`spin::Mutex`**，须先复核该项是否仍成立（见 §1.5），不成立即撤销该项并回写 gate-health 册；
+57 `glue/string.rs` 游离 SAFETY（不附着任何 unsafe 位点）+ **恰 12 处**测试模块窄占位
+「调用方保证指针/类型有效 (详见上下文)」（已核实）；**同型占位亦在 `idt/table.rs` 的 `cli()`**
+⇒ 归 C2 面，C1 的窄口径清单须覆盖全树而非只此文件。
+③ **57 的测试模块占位**：测试面不在债册射程（`--lib` 不带 `--all-targets`），
+但 C1 的内容面腿若扫测试模块则会计入 ⇒ 施工前须先裁定 C1 的扫描面是否含 `#[cfg(test)]`，
+并把裁定写进侧车口径（**不得两侧不一致**）。
+状态：[]
+
+### 批 C6・配置与工具自述、文档执法归属（① ② ③ ⑤ ⑦ 59）
+
+描述：6 项**非源码注释**的失真：clippy 配置缺警示、编码规范假归属、设计册声称不存在的 deny 组、
+工具重复面、配置级 warning、以及新发现的同型漂移 59。
+方案：① ① `src/kernel/clippy.toml` 补 P-59 惰性配置警示（阈值不生效的原因）；
+② ② `docs/explain/spec-engineering.md` 规则 8.3 把 `unwrap_used` 假归属给
+`audit_safety_coverage`（该腿不判 unwrap），且 `unwrap_used` **全仓无执法点** ⇒
+要么接执法点、要么把规范条文改为与现状相符（**二选一须问用户**，属决策灰色地带）；
+③ ③ `docs/design/freg-design.md` 声称的 `indexing_slicing` / `panic` deny 组**不存在** ⇒
+按 design 册口径（指向长期演化目标）改为「设计主张，尚未实装」或补实装（**须问用户**）；
+④ ⑤ `tools/check_tcb.sh` 的 F1 预检与 functions crate 根 `#![forbid(unsafe_code)]` 重复 ⇒
+按批 4 判据收敛（删重复面、留生态缺口面）；
+⑤ ⑦ `src/user/clippy.toml` 的 `disallowed-types` 在 `wasmrun` 报 2 条配置级 warning ⇒
+核清是成员不适用还是配置路径问题，**不得用 allow 压掉**（F9）；
+⑥ **59（新登记）**：`ci/audit.sh` 的「改用 `--workspace` 覆盖七成员」注释 +
+`host-tests/tests/ci_entrypoint_unified_test.rs` 两处「七个成员都是无 test harness 的裸机 crate」
+——`src/user/Cargo.toml` 现为 **10 成员**，且「都无 test harness」对 `lib` **不成立**
+（它有内联单测，须 `cd src/user/lib && cargo test`）。这是 ④ 的**同型漂移**：
+批 6 只改了 AGENTS §2.3 的「七成员→十成员」，脚本注释与测试自述未同批改 ⇒
+本项把三处口径一次对齐（**改测试自述须核该文件是否有针钉住这些字样**）。
+状态：[]
+
+### 批 C7・host-tests 定长字节窗口（㊵）
+
+描述：批 5f 修 `socket_multicast_membership_test` 的定长字节窗口补注释后落进汉字中间 panic
+（夹字符边界 + `.min(len)`），同批登记**同类窗口全仓 14 处 / 9 文件，修 1 登记 13**；
+批 5g 复核 13 处均不在其改动面 ⇒ 13 处仍开放。
+方案：① 逐处改为夹字符边界 + `.min(len)`（或改按字节窗口取 ASCII 子串），
+**四条针不动**（`socket_multicast_membership_test` 的断言形态是契约锁）；
+② 补窗口自测：构造「窗口恰落在多字节汉字中间」的输入，断言不 panic；
+③ 本批属 host-tests 树，该树 clippy 腿已带 `-D clippy::undocumented_unsafe_blocks`
+（批 5c 翻，**勿重复翻**）；④ 项数标签若有针须同批改钉。
+状态：[]
+
+### 批 C8・收口
+
+描述：本册状态字段全 `[X]`、`docs/plan/progress-active-tasks.md` 甲表行回填读数、
+memory 更新、按路径提交推送。
+方案：① C1 侧车窄/宽两口径读数归零后转硬零形态（与 `audit_safety_debt` 同构），
+并复核塌缩守卫未被削弱；② 新文件先 `git add` 再跑 `scan_obsolete_naming`（扫 `git ls-files`）
+与 `check_doc_paths`；③ 七门槛复跑取读数（判据 = 日志内 `*-RC=` 回显）；
+④ `git commit --only --pathspec-from-file`，不夹带其余暂存态；
+⑤ **复核 AGENTS 授权状态**：C1 若已取得授权并改了 §2.2 计数，须在 memory 记录该次授权已用掉。
+状态：[]
+
+---
+
+## 四、验证门槛与硬约束
+
+判据单源 = `AGENTS.md` §2.3（本册不复制清单，P-70 甲）。另加四条本册专属：
+
+1. **禁写占位理由**：C2–C5 的每处理由必须指向**具体实装依据**（哪个函数、哪把锁、哪个硬件约束），
+   且引用的内核符号名须 grep 核实存在。C1 的腿会机械拦占位短语。
+2. **纯注释批验零删除行**：`git diff --numstat` 的删除列须为 0（C2–C5 的注释改写面）；
+   有删除即说明动了代码，须归姊妹册或单独提问。
+3. **不改代码**：本册只改注释/文档/配置/工具自述。读出的代码缺口按 §11.5 登记，
+   归 [safety-gap-remediation.md](./safety-gap-remediation.md)，**不顺手修**。
+4. **AGENTS.md 须授权**：C1 的前置见该条正文。批 4 与批 6 的两次授权均已用掉。
+
+> **位置判据的已知陷阱**（批 5c–5g 实测，改写时同样适用）：
+> SAFETY 写在 `assert_eq!(` / `check!(` / `return G {` **之前不覆盖**宏实参行或字段行的 unsafe，
+> 须移进实参内；item 级 SAFETY 写在 `#[unsafe(no_mangle)]` 前只附到 item，体内块仍欠债；
+> 语句级 `#[cfg(...)]` 夹在 SAFETY 与 `unsafe {` 之间**仍被接受**；
+> rustfmt 把注释缩进归一到**语句级**（非下一行代码级）；
+> F7/TD-22 是**逐行**判定，折行的纯英文标识符列表单独成行即违规（该腿早退 ⇒ 后续步骤全不跑）。
+>
+> 门槛运行期间不改它读取面的源文件；根目录裸 `cargo fmt` 会改写 vendored smoltcp ⇒
+> 只对目标 crate 用 `--manifest-path`；共享工作树禁 stash/reset，负控制用 `cp` + `sha256`；
+> `audit_safety_debt` 的对账输出**只打印前 15 行**（缺行 ≠ 未归零）。
