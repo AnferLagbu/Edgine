@@ -37,6 +37,24 @@
 use super::vmm;
 use super::{PAGE_SIZE, PageFlags, PhysAddr, VirtAddr, is_user_leaf};
 
+// === unsafe 依据单源 (本模块页表访问的三类共用判据) ===
+//
+// 类别 P「新建子页表帧清零」: `pmm.alloc_page()` 刚返回的帧尚未挂入任何页表, 硬件
+// walker 与软件遍历者都到不了它; `PhysAddr::to_virt` 是 KERNEL_BASE 直射映射 (覆盖
+// 全部物理内存), 故整页可写. 清零一律先 `cast::<u8>()` 再 `write_bytes(..., PAGE_SIZE)`
+// —— 按 *mut u64 计数会清 8 页 (B05-55C).
+//
+// 类别 R「按索引读页表项」: 基址是上一级已判 present 的描述符帧地址 (或调用方传入的
+// 已注册根表), 同样经 KERNEL_BASE 转内核 VA; 索引来自 `0..512` / `0..256` 循环界,
+// 恒落在一页 512 项内. read_volatile 防编译器把页表内容缓存进寄存器.
+//
+// 类别 W「写回页表项」: 槽位地址由类别 R 的同一次读取得到, 互斥由 VMM_LOCK 保证 ——
+// `clone_user_page_table_cow` 取锁后调 `_inner`, 本模块的 `clone_child_pdpt/pd/pt`
+// 与 `for_each_cow_leaf(_in_pd)` 都只在该调用链内被调用, 故整棵子树在发布前只有本核
+// 可见; 父侧槽位的写回同样在这把锁内, 与拆除侧 (unmap / destroy) 串行化.
+//
+// 逐处注释只引类别并补该处特有的层级 / 索引 / 前置判定, 不重复上述判据.
+
 /// COW 标记: **用户可写** leaf → 只读; 其余情形**原值返回** (用户位未置、已只读、
 /// 非 leaf 描述符).
 ///
@@ -108,9 +126,8 @@ fn clone_user_page_table_cow_inner(parent_pml4: u64) -> Option<u64> {
     let child_pml4_phys = pmm.alloc_page()?;
     let kernel_pml4 = vmm::get_kernel_pml4();
 
-    // SAFETY: child_pml4_phys 刚由 PMM 分配, 物理地址有效;
-    // KERNEL_BASE 偏移后得到可访问的内核虚拟地址
     let child_pml4_virt = child_pml4_phys.to_virt().0 as *mut u64;
+    // SAFETY: 类别 P (见模块单源); 本帧是子根表 PML4, 清零后才装配内核高半区.
     unsafe {
         // B05-55C 根治: 必须 cast *mut u8, 否则 *mut u64 的 write_bytes 按
         // count × size_of::<u64>() 清零 32768 字节 (8 页), 覆盖后续物理页
@@ -228,8 +245,8 @@ fn clone_child_pdpt(parent_pml4e: u64, child_pml4_virt: *mut u64, i: usize) -> O
     let pmm = super::pmm::get_pmm();
     // 分配失败即回滚: 释放已建的子树页表帧 (此刻父页表未被改动、未登记任何持有者)
     let child_pdpt_phys = pmm.alloc_page()?;
-    // SAFETY: 刚分配的页, 通过 KERNEL_BASE 映射有效
     let child_pdpt_virt = child_pdpt_phys.to_virt().0 as *mut u64;
+    // SAFETY: 类别 P; 本帧是子 PDPT (子 PML4 第 i 项的下级), 清零后逐项下探.
     unsafe {
         // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
         core::ptr::write_bytes(
@@ -264,8 +281,8 @@ fn clone_child_pdpt(parent_pml4e: u64, child_pml4_virt: *mut u64, i: usize) -> O
 fn clone_child_pd(parent_pdpte: u64, child_pdpt_virt: *mut u64, j: usize) -> Option<()> {
     let pmm = super::pmm::get_pmm();
     let child_pd_phys = pmm.alloc_page()?;
-    // SAFETY: 刚分配的页
     let child_pd_virt = child_pd_phys.to_virt().0 as *mut u64;
+    // SAFETY: 类别 P; 本帧是子 PD (子 PDPT 第 j 项的下级).
     unsafe {
         // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
         core::ptr::write_bytes(
@@ -309,8 +326,8 @@ fn clone_child_pd(parent_pdpte: u64, child_pdpt_virt: *mut u64, j: usize) -> Opt
 fn clone_child_pt(parent_pde: u64, child_pd_virt: *mut u64, k: usize) -> Option<()> {
     let pmm = super::pmm::get_pmm();
     let child_table_phys = pmm.alloc_page()?;
-    // SAFETY: 刚分配的页
     let child_table_virt = child_table_phys.to_virt().0 as *mut u64;
+    // SAFETY: 类别 P; 本帧是子 PT (子 PD 第 k 项的下级), leaf 槽位随后原值复制.
     unsafe {
         // B05-55C 根治: cast *mut u8, 否则清零 8 页覆盖后续物理页
         core::ptr::write_bytes(
@@ -359,6 +376,8 @@ fn for_each_cow_leaf_in_pd(
         if (pde & 1) == 0 || (pde & 0x80) != 0 {
             continue;
         }
+        // SAFETY: 类别 R; child_pd 由 for_each_cow_leaf 从已判 present 的 child_pdpte
+        // 帧地址转来, k < 512 落在 PD 页内, 与上一行父侧读同锁步.
         let child_pde = unsafe { child_pd.add(k).read_volatile() };
         if (child_pde & 1) == 0 {
             continue;
@@ -399,6 +418,8 @@ fn for_each_cow_leaf(
         if (pml4e & 1) == 0 {
             continue;
         }
+        // SAFETY: 类别 R; child_pml4 是本次克隆新建的子根表 (child_root 经 to_virt),
+        // i 在 0..256 用户半区内, 与上一行父侧读同索引.
         let child_pml4e = unsafe { child_pml4.add(i).read_volatile() };
         if (child_pml4e & 1) == 0 {
             continue;
@@ -414,6 +435,8 @@ fn for_each_cow_leaf(
             if (pdpte & 1) == 0 || (pdpte & 0x80) != 0 {
                 continue;
             }
+            // SAFETY: 类别 R; child_pdpt 来自上一行已判 present 的 child_pml4e 帧地址,
+            // j < 512 落在 PDPT 页内.
             let child_pdpte = unsafe { child_pdpt.add(j).read_volatile() };
             if (child_pdpte & 1) == 0 {
                 continue;

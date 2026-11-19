@@ -42,6 +42,14 @@ pub struct RwLock<T: ?Sized> {
 // SAFETY: RwLock 通过内部自旋锁保护的状态机提供独占写访问与共享读访问.
 // UnsafeCell 提供内部可变性, 访问受锁获取门控.
 unsafe impl<T: ?Sized + Send> Send for RwLock<T> {}
+// SAFETY: 写者侧独占由 inner.lock + writer 标志保证, 该面只需 T: Send.
+// 但读者侧不成立: read() / try_read() 把 `&T` 交给 RwLockReadGuard (types.rs 的
+// `pub data: &'a T` + Deref), readers 计数允许多个读者同时持有 ⇒ 跨线程共享
+// &RwLock<T> 的健全性要求 T: Sync, 本 impl 却只约束 T: Send. 同仓 vendored
+// spin 的对应 impl 写的是 `T: Send + Sync` (src/user/vendor/spin/src/rwlock.rs).
+// 现状: 内核侧唯一泛型消费面是 functions/sync/scoped.rs 的 `impl<T> RwLockExt<T>
+// for RwLock<T>`, 未以 !Sync 的 T 跨线程实例化, 故缺口尚未被触发 (latent).
+// 本批只补注释、不改约束面; 该缺口已登记为工程外发现, 处置待用户裁定.
 unsafe impl<T: ?Sized + Send> Sync for RwLock<T> {}
 
 impl<T> RwLock<T> {

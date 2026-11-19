@@ -600,8 +600,9 @@ impl<T: ?Sized> PiMutex<T> {
     pub fn lock(&self, my_pid: u32, my_base_weight: u32) -> PiMutexGuard<'_, T> {
         loop {
             if self.try_acquire(my_pid, my_base_weight) {
-                // SAFETY: 已取得所有权, 持有期间独占访问 data
                 return PiMutexGuard {
+                    // SAFETY: try_acquire 返回 true ⇒ 所有权已登记给 my_pid (含接收
+                    // 定向移交), 本守卫存活期间对 data 独占; 失败分支不构造守卫.
                     data: unsafe { &mut *self.data.get() },
                     mutex: self,
                     pid: my_pid,
@@ -629,8 +630,9 @@ impl<T: ?Sized> PiMutex<T> {
     #[must_use]
     pub fn try_lock_guard(&self, my_pid: u32, my_base_weight: u32) -> Option<PiMutexGuard<'_, T>> {
         if self.try_acquire(my_pid, my_base_weight) {
-            // SAFETY: 已取得所有权, 持有期间独占访问 data
             Some(PiMutexGuard {
+                // SAFETY: 与 lock() 同一判据 —— try_acquire 成功即置持有者, 故可交出
+                // &mut data; 非阻塞失败时走 else 返回 None, 不触碰 data.
                 data: unsafe { &mut *self.data.get() },
                 mutex: self,
                 pid: my_pid,

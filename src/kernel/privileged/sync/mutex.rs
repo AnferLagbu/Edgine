@@ -62,6 +62,9 @@ unsafe extern "C" {
 // 要求 T: Send 是因为所有权可通过 lock/unlock 在线程间转移.
 // T: Sync 自动满足, 因为同一时刻仅一个线程可持有锁, 提供排他访问.
 unsafe impl<T: ?Sized + Send> Send for Mutex<T> {}
+// SAFETY: 共享 &Mutex<T> 只暴露 lock/try_lock, 二者都经 inner_spinlock 串行化后才交出
+// &mut T (MutexGuard.data), 同一时刻仅一个持有者 ⇒ 跨线程共享不产生对 T 的并发访问.
+// 故只需 T: Send (所有权可在线程间转移), 不必要求 T: Sync.
 unsafe impl<T: ?Sized + Send> Sync for Mutex<T> {}
 
 impl<T> Mutex<T> {

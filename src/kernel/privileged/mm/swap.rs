@@ -534,6 +534,11 @@ struct SwapState {
 
 // SAFETY: SwapState 由自旋锁保护
 unsafe impl Sync for SwapState {}
+// SAFETY: 三个字段的载荷全是整数与布尔 —— `IrqSpinLock<()>`、`UnsafeCell<SwapArea>`
+// (位图 + 计数 + `PhysAddr(pub u64)` + 标志)、`UnsafeCell<LruList>` (定长 `LruEntry` 数组,
+// 每项只有 u64 与 bool), 无裸指针也无借用, 故整体所有权可跨线程转移. 转移后对 area/lru
+// 的访问仍须先取 `SWAP.lock`: Send 只放开移动, 不放开并发访问.
+// (冗余面登记: 本 impl 与编译器自动推导同结论, 本批只补注释不删.)
 unsafe impl Send for SwapState {}
 
 static SWAP: SwapState = SwapState {
@@ -576,6 +581,10 @@ pub fn swap_deinit() -> bool {
 /// - **不更新 PTE** — 调用方需自行将 PTE 替换为 swap entry 或 unmap
 pub fn swap_out(virt_addr: u64, phys_addr: u64, _dirty: bool) -> Option<SwapEntry> {
     let _guard = SWAP.lock.lock();
+    // SAFETY: `SWAP` 是 'static 全局, `area.get()` 恒指向其 UnsafeCell 内的 SwapArea;
+    // 上一行已取 SWAP.lock (IrqSpinLock, 关中断自旋; 锁序层级 6, 见 ref-lock-order.md),
+    // 守卫 `_guard` 存活到函数结束 ⇒ 本核独占该 SwapArea, 此处构造 &mut 不与任何其它
+    // &/&mut 别名. 下方对 slot 位图与 storage 的读改写全在这把锁内.
     let area = unsafe { &mut *SWAP.area.get() };
 
     if !area.initialized {
@@ -654,6 +663,11 @@ pub fn swap_in(entry: SwapEntry) -> Option<PhysAddr> {
     let slot = entry.slot();
 
     let _guard = SWAP.lock.lock();
+    // SAFETY: 判据同 `swap_out` —— SWAP 为 'static 全局, 上一行已取 SWAP.lock 且守卫存活
+    // 到函数结束, 故本核独占 SwapArea, 此处 &mut 无别名; slot 释放与 storage 读均在锁内.
+    // 锁序缺口 (登记待裁定, 本批不改锁面): 本函数在持 SWAP.lock (层级 6) 期间调用
+    // `pmm::get_pmm().alloc_page()`, 后者内部 `acquire_lock()` 取 PMM 锁 (层级 1), 构成
+    // 6→1 降序嵌套, 与 ref-lock-order.md 声明的升序相反.
     let area = unsafe { &mut *SWAP.area.get() };
 
     if !area.initialized {
@@ -872,6 +886,10 @@ fn kswapd_softirq_handler() {
         let _guard = SWAP.lock.lock();
         // SAFETY: SWAP.lock 已加锁, area 和 lru 的内部可变性受锁保护
         let area = unsafe { &*SWAP.area.get() };
+        // SAFETY: 同一把 SWAP.lock 守卫下取 lru 的共享引用 —— LruList 与 SwapArea 同属
+        // 'static SWAP, 锁内无并发写者, 故本 & 不与任何 &mut 别名. 只读 active/inactive
+        // 计数供下方 SwapPolicyContext; 同块的 get_free_pages/get_total_pages 直读 PMM
+        // info 快照而不取 PMM 锁, 故本块不构成锁序嵌套.
         let lru = unsafe { &*SWAP.lru.get() };
         super::swap_trait::SwapPolicyContext {
             total_slots: SWAP_MAX_SLOTS as u64,
@@ -915,6 +933,10 @@ pub fn kswapd_wakeup() {
         let _guard = SWAP.lock.lock();
         // SAFETY: SWAP.lock 已加锁, area 和 lru 的内部可变性受锁保护
         let area = unsafe { &*SWAP.area.get() };
+        // SAFETY: 同一把 SWAP.lock 守卫下取 lru 的共享引用 —— LruList 与 SwapArea 同属
+        // 'static SWAP, 锁内无并发写者, 故本 & 不与任何 &mut 别名. 只读 active/inactive
+        // 计数供下方 SwapPolicyContext; 同块的 get_free_pages/get_total_pages 直读 PMM
+        // info 快照而不取 PMM 锁, 故本块不构成锁序嵌套.
         let lru = unsafe { &*SWAP.lru.get() };
         super::swap_trait::SwapPolicyContext {
             total_slots: SWAP_MAX_SLOTS as u64,

@@ -349,8 +349,10 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
     //    启用后, KPTI CR3 切换携带 PCID, TLB 条目按 PCID 隔离,
     //    无需每次切换都全局刷新 TLB, 显著降低 KPTI 性能开销.
     let pcid_enabled = if has_invpcid() {
-        // SAFETY: 读取 CR3 判断低 12 位是否为 0 (PCIDE 启用前提).
         let cur_cr3: u64;
+        // SAFETY: 只把 CR3 读进局部变量, 不写任何 CPU 状态; options(nostack, nomem)
+        // 声明该 asm 不碰栈与内存. 读出的低 12 位供下方 `trailing_zeros() >= 12` 判
+        // PCIDE 启用前提. 独占性由 kpti_init 的 `# Safety` 契约 (boot 阶段独占写入) 保证.
         unsafe {
             core::arch::asm!("mov {0}, cr3", out(reg) cur_cr3, options(nostack, nomem));
         }
@@ -372,8 +374,11 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
                 invpcid_flush_all();
             }
             // 重新加载 CR3 带 PCID_KERNEL
-            // SAFETY: kernel_pml4 来自 init 阶段的可信来源; PCIDE 已启用, CR3 低 12 位为 PCID.
             let new_cr3 = cr3_with_pcid(kernel_pml4, PCID_KERNEL);
+            // SAFETY: 写 CR3 换根表 —— kernel_pml4 是调用方按 `# Safety` 契约传入的
+            // 已初始化 KERNEL_PML4 物理地址; 上方已置 CR4.PCIDE(bit17) 并做过
+            // invpcid_flush_all, 故低 12 位承载 PCID_KERNEL 而非必须为 0, 且旧 TLB
+            // 条目已全清 (PCIDE 下 mov cr3 不再隐式刷新). options 不动栈与标志位.
             unsafe {
                 core::arch::asm!(
                     "mov cr3, {0}",

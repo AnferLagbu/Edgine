@@ -240,6 +240,8 @@ impl<T> IrqSpinLock<T> {
         }
         // 获取成功后才 cli (与 lock() 顺序一致, 保证 guard drop 时的 IF 语义)
         let prev = disable_interrupts();
+        // SAFETY: try_lock 已成功 (WouldBlock 已在上方提前返回 None) 且上一行已 cli,
+        // 本核 ISR 与其余核均无法进入同一临界区 ⇒ 对 data 的 &mut 独占, 与 lock() 同序.
         let data_ref = unsafe { &mut *self.data.get() };
         // SAFETY: 仅本线程访问 depth (cli 保证 ISR 不并发)。
         unsafe { &*self.depth.get() }.fetch_add(1, Ordering::Relaxed);

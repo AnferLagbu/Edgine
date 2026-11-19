@@ -860,6 +860,9 @@ impl Aarch64Vmm {
                     ptr::write_volatile(l1.add(l1_idx), 0);
                     l1_entry & 0x0000_FFFF_FFFF_F000
                 };
+                // SAFETY: dsb ishst 使上方对 L1 槽位的清零在 inner-shareable 域内先于
+                // 后续观测完成, 其它核的 walker 不会再取到指向 L2 的旧表项; 屏障之后
+                // 才 free_table_locked 归还 L2 帧. 本路径在 acquire_lock 的 VMM_LOCK 内.
                 unsafe {
                     core::arch::asm!("dsb ishst");
                 }
@@ -873,6 +876,10 @@ impl Aarch64Vmm {
                         ptr::write_volatile(l0.add(l0_idx), 0);
                         l0_entry & 0x0000_FFFF_FFFF_F000
                     };
+                    // SAFETY: 同一屏障判据, 作用对象是 L0 槽位: dsb ishst 保证该清零
+                    // 先于「归还 L1 帧」被 inner-shareable 域内其它核观测到; 随后
+                    // mirror_l0_slot_to_el1_view 把清零同步到 EL1 视图 (KPTI S3),
+                    // 再 free_table_locked. 全程在 VMM_LOCK 内.
                     unsafe {
                         core::arch::asm!("dsb ishst");
                     }
@@ -1200,9 +1207,11 @@ impl Aarch64Vmm {
             return None;
         }
 
-        // SAFETY: table descriptor frame bits contain valid PA → phys_to_virt → kernel VA
         let l1 = phys_to_virt(l0_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l1_idx = l1_index(vaddr);
+        // SAFETY: l0_entry 已判 `& 0b11 == 0b11` (table descriptor), 其帧地址位域是
+        // 有效 PA, phys_to_virt 转内核直射 VA; l1_index 是 `(vaddr >> 30) & 0x1FF`
+        // ⇒ < 512, add 落在该页 512 项内. read_volatile 防编译器缓存页表内容.
         let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_idx)) };
         if l1_entry & 0b11 == 0b01 {
             // L1 block (1GB)
@@ -1215,9 +1224,11 @@ impl Aarch64Vmm {
             return None;
         }
 
-        // SAFETY: L1 table descriptor frame → phys_to_virt → kernel VA
         let l2 = phys_to_virt(l1_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l2_idx = l2_index(vaddr);
+        // SAFETY: l1_entry 已排除 block(`0b01`) 并判 `& 0b11 == 0b11`, 故其帧地址位域
+        // 指向有效 L2 表; l2_index 是 `(vaddr >> 21) & 0x1FF` ⇒ < 512, 不越页.
+        // read_volatile 防编译器缓存页表内容.
         let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_idx)) };
         if l2_entry & 0b11 == 0b01 {
             // L2 block (2MB)
@@ -1230,9 +1241,11 @@ impl Aarch64Vmm {
             return None;
         }
 
-        // SAFETY: L2 table descriptor frame → phys_to_virt → kernel VA
         let l3 = phys_to_virt(l2_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l3_idx = l3_index(vaddr);
+        // SAFETY: l2_entry 已排除 block(`0b01`) 并判 `& 0b11 == 0b11`, 故其帧地址位域
+        // 指向有效 L3 表; l3_index 是 `(vaddr >> 12) & 0x1FF` ⇒ < 512, 不越页.
+        // read_volatile 防编译器缓存页表内容.
         let l3_entry = unsafe { ptr::read_volatile(l3.add(l3_idx)) };
         if l3_entry & 0b11 != 0b11 {
             return None;
@@ -1342,6 +1355,12 @@ impl Aarch64Vmm {
         let child = phys_to_virt(child_paddr) as *mut u64;
 
         for i in 0..256 {
+            // SAFETY: parent_paddr 是调用方传入的已注册用户页表根, child_paddr 刚由
+            // alloc_table 分配并清零, 两者经 phys_to_virt 都落在内核直射映射内;
+            // i < 256 只覆盖 L0 用户半区 (内核高半区不复制), add(i) 不越页.
+            // 并发面: 本函数自身不取 VMM_LOCK, 子表尚未发布故写侧只有本核; 父表读侧
+            // 无锁保护 —— 其唯一入口是 FFI 导出 vmm_clone_user_page_table, 全仓无调用方
+            // (活体 fork 走 COW 版 clone_user_page_table_cow), 故该缺口尚未被触发.
             unsafe {
                 let entry = ptr::read_volatile(parent.add(i));
                 ptr::write_volatile(child.add(i), entry);
@@ -1376,6 +1395,10 @@ impl Aarch64Vmm {
         let l0 = phys_to_virt(root_paddr) as *mut u64;
 
         for i in 0..256 {
+            // SAFETY: root_paddr 非空 (上方提前返回) 且经 phys_to_virt 落在内核直射
+            // 映射内; i < 256 只遍历 L0 用户半区, add(i) 不越页. 上方已 acquire_lock
+            // 取 VMM_LOCK 并做过系统级 TLB 失效序列, 故本核独占改表、其它核已不再用
+            // 该表; 仅对 `& 0b11 == 0b11` 的 table descriptor 递归, block/无效项跳过.
             unsafe {
                 let entry = ptr::read_volatile(l0.add(i));
                 if entry & 0b11 == 0b11 {

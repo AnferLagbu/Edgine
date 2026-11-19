@@ -988,9 +988,77 @@ P-62 feature 运行维 **4/4** / 线程压力 **6/6** / lockdep 构建面探针�
 
 描述：清 mm 38 + sync 16（含 `mm/cow.rs` 7、`mm/vmm_aarch64.rs` 7、`sync/atomic.rs` 7）。
 方案：同批 5a 四步。
-状态：[]
+状态：[X]
 详情：TCB 核心，理由须落到页表所有权 / 内存序 / 锁序不变量（I1–I6 与 `ref-lock-order.md`）。
 本批**不翻硬执法**（kernel 树尚未归零）。
+**施工结果（2026-11-19）**：54 处棘轮位点全清、本批新写理由**零占位**——mm 38 = cow 7 +
+vmm_aarch64 7 + slab 5 + swap 5 + kmalloc 4 + vmm_x86_64 3 + pmm 3 + kpti 2 + copy_user 1 +
+pcache 1；sync 16 = atomic 7 + rcu 4 + pi_mutex 2 + irq_spinlock 1 + mutex 1 + rwlock 1。
+方法照批 5a/5b/5c 三步：先读内核对应实装再落笔、重复形态单源化、落笔后 grep 核实全部引用名
+与具体断言。**4 处属位置订正而非缺失**（kpti 2 + pi_mutex 2）：原注释已存在，但被
+`let cur_cr3: u64;` / `let new_cr3 = …;` 语句行、或 `return PiMutexGuard {` /
+`Some(PiMutexGuard {` 结构体首行与 `unsafe {` 隔开 ⇒ clippy 不认；pi_mutex 的订正形态与批 5c
+elf 同源——注释须移进结构体字面量内部、紧贴 `data:` 字段行。其余 50 处为真缺失。
+**单源化**落两段「unsafe 依据单源」：`sync/atomic.rs` 类别 A（i32 槽位重解释为 `AtomicI32`：
+core 保证同尺寸 / 同位有效性、对齐恒等于尺寸，调用方契约 ptr 有效 / 对齐 / 持续有效，七函数
+一律 SeqCst）；`mm/cow.rs` 类别 P / R / W（新建子页表帧清零 / 按索引读页表项 / 写回页表项，
+互斥由 `VMM_LOCK`）。逐处只引类别 + 写该处特有不变量。
+**核实过的关键断言**（不是「内核会校验」式笼统话）：① `kmalloc::HeapHeader::from_data_ptr`
+只做 `sub(size_of::<Self>())` 的**纯算术逆变换、不解引用**，`HeaderRef::from_data_ptr` 委托它；
+两处 `copy_nonoverlapping` 的调用面是 `reallocate`（**不是** `realloc`，落笔前 grep 订正）与
+`process_early_allocations`，dst 均为独立新块。② `slab.rs` 的 `raw::zero_memory` 解析到
+**slab 自己的** `pub(crate) mod raw`，不是 kmalloc 的同名模块（落笔前 grep `\braw\b|^use |^mod `
+核实）；唯一调用面 `KmemCache::new_slab` 在调用前已判 `bitmap_end <= page_end`。③ kswapd 两处
+ctx 块**不构成锁序嵌套**——`get_free_pages` / `get_total_pages` 直读 `self.info.get()`、**不取**
+PMM 锁；而 `alloc_page` 内部 `acquire_lock()` **取** PMM 锁 ⇒ 后者构成下面 ⑭ 的降序嵌套。
+两条都 grep 到实装后才落笔，未写「无锁」式假保证。④ `pmm.rs` 3 处落在 `pub(crate) mod raw`，
+三段文本互不相同——`host-tests/tests/safety_boilerplate_test.rs` 的 `MAX_DUPLICATES = 5` 只对
+`pmm.rs` 硬执法（全仓清单腿仅报告）。⑤ `copy_user::setup_recovery` 外层块只写「两架构 asm
+各自另有注释 + 恢复点簿记走 `PER_CPU_EXCEPTION_CTX` 的 SeqCst 原子槽」，不重复内层的硬件断言。
+**棘轮读数**：236 → **182 处 / 48 文件 / 52 键**（−54；块 168 + impl 14）。kernel x86_64 腿
+**125** / aarch64 腿 **157**，并集 182；host-tests 与 src/user 两树 `entries` 均 `[]`（批 5b/5c
+已翻 `-D`，本批不动）。**本批不翻硬执法**，翻 `-D` 在批 5g。
+**七门槛（终态）**：① `./ci/build.sh all` RC=0（Passed 6 / Failed 0）；② `bash ci/audit.sh full`
+RC=0（自测 13/13；`safety_debt` 通过、债册 182 处 / 52 键；`missing_docs_debt` 0 处 / 0 键；
+废弃命名扫描 受检 1721 文件 / 历史面 KEEP 316 / 违规 0；`vacuous_needle` 受检 1313 `.rs` 通过；
+`check_doc_paths` 校验 19 份、设计册免报 3 条、无漂移；性能指标腿全部在绝对预算内；Lockbud
+4/4 crate 零发现；QEMU 2/2（FAIL_OK=0）+ P-62 feature 运行维 4/4 + thread-stress 6/6；FP-06
+白名单外 FP/SIMD 0；**因环境缺失未执行腿数 0**）；③ `make test-host` RC=0（204 套 / 1602 passed /
+0 failed，与批 5c 同读数——纯注释批）；④ `make test-kernel-host` RC=0（三成员 12 + 807 + 556 =
+1375 / 0 failed）；⑤ `make -f Makefile.ci ci-rustdoc` RC=0（x86_64 与 aarch64 两腿都真跑、各 exit 0）。
+**本批无新建文件**（17 个改动文件均已在索引内），故无需先 git add 再跑命名扫描。
+**文档回填后终态复跑**（`/tmp/b5d-terminal.log`，判据 = 日志内 `*-RC=` 回显，非后台通知退出码）：
+`T1-BUILD-RC=0`（Passed 6 / Failed 0）、`T2-NAMING-RC=0`（受检 1721 文件 / 历史面 KEEP 316 /
+违规 0）、`T3-DOCPATHS-RC=0`（校验 19 份必须与代码同步的文档 / 设计册免报 3 条 / 无漂移）——
+本册与台账两处文档改动未引入废弃命名违规或源码路径漂移。
+**新增四项工程外发现（§11.5 只报告不处置，与批 4 五项 + 批 5a 三项 + 批 5b 一项 + 批 5c 一项
+合并待批 6 裁定）**：⑪ [sync/rwlock.rs:53](../../src/kernel/privileged/sync/rwlock.rs#L53) 的
+`unsafe impl<T: ?Sized + Send> Sync for RwLock<T>` **缺 `T: Sync` 约束**——`read()` / `try_read()`
+把 `&T` 同时交给多个读者，`T: Send` 不足以让 `&T` 跨线程共享；同仓 vendored spin 用的是
+`T: Send + Sync`。唯一泛型消费面 [functions/sync/scoped.rs:72](../../src/kernel/functions/sync/scoped.rs#L72)
+未以 `!Sync` 的 `T` 实例化 ⇒ latent。⑫ [mm/slab.rs:1032](../../src/kernel/privileged/mm/slab.rs#L1032)
+的 `slab_dump_cache`：`# Safety` 只要求「合法 C 字符串」却用 `from_utf8_unchecked`（非 UTF-8
+字节即 UB），且逐字节扫描**无长度上限**（未终止缓冲区会越界读）；FFI 导出、全仓无调用方 ⇒ latent。
+⑬ [mm/vmm_x86_64.rs:1814](../../src/kernel/privileged/mm/vmm_x86_64.rs#L1814) 的
+`Vmm::ensure_pml4_user` **不取 `VMM_LOCK`** 就对共享 `KERNEL_PML4` 槽位取 `&mut` 做读-改-写，
+同索引并发调用即两个 `&mut` 别名；唯一入口是 FFI 导出 `vmm_ensure_pml4_user`、全仓无调用方 ⇒ latent。
+⑭ [mm/swap.rs](../../src/kernel/privileged/mm/swap.rs) 的 `swap_in` 在持 `SWAP.lock`（层级 6）
+期间调 `pmm::get_pmm().alloc_page()`，后者内部 `acquire_lock()` 取 PMM 锁（层级 1）⇒ **6→1 降序
+嵌套**，与 `ref-lock-order.md` 声明的升序相反（`swap_out` 同形）。四项均已在源码内就地登记，
+本批不改约束面 / 锁面 / 接线。
+**另登记一项检测器盲区（⑮，本批不改判据，待批 6 裁定）**：棘轮与 clippy 只判「`unsafe {` 上方
+有无紧邻 SAFETY」，**不判内容** ⇒ mm + sync 面内另有 **39 处存量占位文本**
+（`调用方保证指针/类型有效 (详见上下文)` / `调用方保证指针合法` 等）被位置判据接受、**不计入债册**：
+mm 34 = vmm_aarch64 15 + copy_user 5 + slab 5 + vmm_x86_64 4 + api 1 + cow 1 + kmalloc 1 +
+page_fault 1 + swap 1；sync 5 = mutex 2 + atomic 1 + rcu 1 + seqlock 1。这正是 D-5 乙裁定词里
+预言的「占位理由把虚高读数再灌一遍」的**存量形态**：债册归零 ≠ 理由真实。故本批的「零占位」
+只对**本批新写的 54 条**成立，不宣称 mm + sync 全占位面已清。处置两条路（待裁定）：甲 加一条
+**内容面**审计腿（禁占位短语清单 + 存量棘轮，与 `audit_safety_debt` 同构）并把改写分到批 5e–5g
+各自面内；乙 不加腿，只在批 5e–5g 顺手改写本批面内的占位文本，接受「无执法、靠 review」。
+**另有三项只登记不处置的观察**：`pcache_copy_to_user` 全仓零引用（`audit_unwired_pub_fn` R1
+已机器跟踪，本批不改接线）；`unsafe impl Send for SwapState` 与编译器自动推导同结论（冗余面，
+本批只补注释不删）；`vmm_aarch64.rs` 的 `protect_page` 等路径把 `// SAFETY:` 写在**无 unsafe 的
+`let l0 = …` 语句**上方（标签错位，该处无 unsafe 可报故不计入棘轮）。
 
 ### 批 5e・SAFETY 清零: privileged arch + cpu + idt + boot（73 处）
 
@@ -1019,7 +1087,10 @@ P-62 feature 运行维 **4/4** / 线程压力 **6/6** / lockdep 构建面探针�
 
 ### 批 6・收口
 
-描述：台账与册内状态同步、memory 更新、按路径提交推送。
+描述：台账与册内状态同步、memory 更新、按路径提交推送；并**合并提交 §11.5 十五项工程外发现
+（①–⑮）的处置裁定**——其中 ⑥ `auth_login` 参数序颠倒与 ⑩ `strlen` 上限多读 1 字节是真缺陷，
+⑪–⑭ 是 latent 的约束 / 锁序 / 别名缺口，⑮ 是 SAFETY 检测器的**内容面盲区**（甲 加内容面审计腿 /
+乙 只逐批改写不加腿）。
 方案：① 本册状态字段全 `[X]`；② `docs/plan/progress-active-tasks.md` 甲表行回填读数
 （**13 个行首状态字段** = 批 0/1/2/3/4/5a/5b/5c/5d/5e/5f/5g/6）；
 ③ 新文件**先 `git add`** 再跑 `scan_obsolete_naming`（扫 `git ls-files`）与 `check_doc_paths`；

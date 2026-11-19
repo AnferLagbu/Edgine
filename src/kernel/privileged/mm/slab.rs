@@ -232,6 +232,9 @@ pub(crate) mod raw {
     /// - `ptr` 必须指向 `len` 字节的合法可写区
     #[inline]
     pub unsafe fn zero_memory(ptr: *mut u8, len: usize) {
+        // SAFETY: 「ptr 指向 len 字节合法可写区」由 fn 的 `# Safety` 契约保证; 本模块唯一
+        // 调用面是 `KmemCache::new_slab`, 它在调用前已判 `bitmap_end <= page_end`, 故位图区
+        // 整段落在刚由 PMM 分配的 slab 页内. ptr 已是 *mut u8, write_bytes 按字节计数.
         unsafe {
             core::ptr::write_bytes(ptr, 0, len);
         }
@@ -373,6 +376,9 @@ impl KmemCache {
         let ns = unsafe { SlabRef::new_unchecked(new_slab) };
         ns.set_next(self.slabs_free);
         if !self.slabs_free.is_null() {
+            // SAFETY: 上一行已判非空; 该指针是本缓存 free 链上的既有表头, 由 `new_slab`
+            // 建链时写入并初始化. 独占性来自 `allocate` 的 `&mut self` —— 调用方经
+            // `GENERAL_CACHES.lock()` 取得描述符后才进入本函数, 故此处改 prev 无并发写者.
             let old = unsafe { SlabRef::new_unchecked(self.slabs_free) };
             old.set_prev(new_slab);
         }
@@ -1029,6 +1035,12 @@ pub unsafe extern "C" fn slab_dump_cache(name: *const u8) {
         klog_slab!("[SLAB] Cache name is null");
         return;
     } else {
+        // SAFETY: name 非空由上方分支保证; 「NUL 结尾且调用期间不被释放」由 fn 的 `# Safety`
+        // 契约保证, 故 add(len) 的逐字节扫描在遇到终止符前始终落在该字符串内.
+        // 契约缺口 (登记待裁定, 本批不改代码与文档): `# Safety` 只要求 NUL 结尾 C 字符串,
+        // 未要求合法 UTF-8, 而下方用 from_utf8_unchecked —— 非 UTF-8 字节即构成 UB; 扫描
+        // 亦无长度上限, 传入未终止的缓冲区会越界读. 本函数是 FFI 导出的调试入口, 全仓无
+        // 调用方, 故缺口尚未被触发 (latent).
         unsafe {
             let mut len = 0;
             while *name.add(len) != 0 {
@@ -1061,7 +1073,12 @@ pub unsafe extern "C" fn slab_dump_cache(name: *const u8) {
                 klog_slab!(
                     "[SLAB]   partial[{}]: obj_count={} active={}",
                     count,
+                    // SAFETY: ptr = sr.as_ptr(), sr 由上方对非空 current 构造; current 取自
+                    // cache.slabs_partial 链, 表头由 `new_slab` 建链时初始化. 此处只读
+                    // obj_count; 独占性由上方 `GENERAL_CACHES.lock()` 的守卫 (仍在作用域内) 保证.
                     unsafe { (*ptr).obj_count },
+                    // SAFETY: 同一 ptr、同一把锁守卫, 此处只读 active_count; 两次读之间
+                    // 无写者插入, 故两个计数取自同一次一致快照.
                     unsafe { (*ptr).active_count }
                 );
                 current = sr.next();

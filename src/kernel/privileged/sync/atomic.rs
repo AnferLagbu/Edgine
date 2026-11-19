@@ -65,6 +65,19 @@ impl Default for AtomicBool {
 // 原子操作辅助函数 (与 C 版本兼容的 FFI 接口)
 // ============================================================================
 
+// === unsafe 依据单源 (下面七个 `atomic_*` 导出函数共用) ===
+//
+// 类别 A「i32 槽位重解释为 AtomicI32」: 七个函数的 body 都是
+// `&*(ptr as *const AtomicI32)` 再调一个原子方法. 该重解释成立的前提两条:
+// ① 布局等价 —— core 保证原子整数与其底层整数同尺寸、同位有效性, 且原子类型的
+//    对齐恒等于其尺寸; `AtomicI32` 尺寸 4 ⇒ 对齐 4, 与本仓两个目标架构
+//    (x86_64 / aarch64) 上 `i32` 的对齐 4 一致, 故重解释不抬高对齐要求.
+// ② 调用方契约 —— 各函数 `# Safety` 段要求 `ptr` 有效、正确对齐且调用期间持续
+//    有效, 即该槽位确实是被并发访问的原子变量, 而非只被单线程读写的普通 i32.
+// 逐处注释只引「类别 A」并补该处特有的运算 / 内存序语义, 不重复上述两条.
+// 七个函数一律 `SeqCst`: 这些导出面供 C 侧与 Rust 侧混用, 不承担 Release/Acquire
+// 配对推理, 取最强序以免调用方误判可见性.
+
 /// 原子加一 (Atomic increment)
 ///
 /// # Arguments
@@ -79,6 +92,7 @@ impl Default for AtomicBool {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_inc(ptr: *mut i32) -> i32 {
+    // SAFETY: 类别 A (见本节单源); fetch_add(1) 是单槽位 RMW, 返回加一前的旧值.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.fetch_add(1, Ordering::SeqCst)
@@ -93,6 +107,7 @@ pub unsafe extern "C" fn atomic_inc(ptr: *mut i32) -> i32 {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_dec(ptr: *mut i32) -> i32 {
+    // SAFETY: 类别 A; fetch_sub(1) 溢出按 i32 补码回绕 (原子运算不 panic), 返回旧值.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.fetch_sub(1, Ordering::SeqCst)
@@ -107,6 +122,7 @@ pub unsafe extern "C" fn atomic_dec(ptr: *mut i32) -> i32 {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_cmpxchg(ptr: *mut i32, oldval: i32, newval: i32) -> bool {
+    // SAFETY: 类别 A; 成功与失败两序均 SeqCst, 比较失败时不写槽位, 只返回 is_ok().
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic
@@ -123,6 +139,7 @@ pub unsafe extern "C" fn atomic_cmpxchg(ptr: *mut i32, oldval: i32, newval: i32)
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_add(ptr: *mut i32, val: i32) -> i32 {
+    // SAFETY: 类别 A; val 由调用方给定且不校验范围, fetch_add 按补码回绕返回旧值.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.fetch_add(val, Ordering::SeqCst)
@@ -137,6 +154,7 @@ pub unsafe extern "C" fn atomic_add(ptr: *mut i32, val: i32) -> i32 {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_sub(ptr: *mut i32, val: i32) -> i32 {
+    // SAFETY: 类别 A; 与 atomic_add 互为逆运算, 同样不校验 val 范围、按补码回绕.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.fetch_sub(val, Ordering::SeqCst)
@@ -151,6 +169,7 @@ pub unsafe extern "C" fn atomic_sub(ptr: *mut i32, val: i32) -> i32 {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_set(ptr: *mut i32, val: i32) {
+    // SAFETY: 类别 A; store 只发布新值不读旧值, 故不是 RMW, 无返回值可丢.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.store(val, Ordering::SeqCst);
@@ -165,6 +184,7 @@ pub unsafe extern "C" fn atomic_set(ptr: *mut i32, val: i32) {
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_read(ptr: *const i32) -> i32 {
+    // SAFETY: 类别 A; 入参为 *const i32, cast 后只取共享引用做 load, 不写槽位.
     unsafe {
         let atomic = &*ptr.cast::<core::sync::atomic::AtomicI32>();
         atomic.load(Ordering::SeqCst)

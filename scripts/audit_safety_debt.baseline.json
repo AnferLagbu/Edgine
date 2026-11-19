@@ -5,9 +5,9 @@
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {
-    "sites": 236,
-    "files": 64,
-    "keys": 69
+    "sites": 182,
+    "files": 48,
+    "keys": 52
   },
   "entries": [
     [
@@ -191,61 +191,6 @@
       11
     ],
     [
-      "src/kernel/privileged/mm/copy_user.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/cow.rs",
-      "block",
-      7
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "block",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/kpti.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/pcache.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "block",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
-      "block",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "block",
-      7
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "block",
-      3
-    ],
-    [
       "src/kernel/privileged/net/init.rs",
       "block",
       4
@@ -298,36 +243,6 @@
     [
       "src/kernel/privileged/sgeg/audit.rs",
       "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/atomic.rs",
-      "block",
-      7
-    ],
-    [
-      "src/kernel/privileged/sync/irq_spinlock.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/pi_mutex.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "block",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/rwlock.rs",
-      "impl",
       1
     ],
     [

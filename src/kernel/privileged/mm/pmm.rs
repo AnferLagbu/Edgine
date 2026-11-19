@@ -135,6 +135,10 @@ pub(crate) mod raw {
     /// - `ptr` 必须指向 `len` 字节的合法可写区
     #[inline]
     pub unsafe fn zero_memory(ptr: *mut u8, len: usize) {
+        // SAFETY: 可写区契约由调用方按上方 `# Safety` 履行 —— 本函数的内核调用面是
+        // RawMetaStore::setup_bitmap/counts/owner/cow, 传入的都是 phys_to_virt(区段物理
+        // 基址) 的内核直射 VA, 区段页对齐且尚未交给分配器使用. ptr 已是 *mut u8,
+        // write_bytes 按字节计数写满 len, 不越界.
         unsafe {
             core::ptr::write_bytes(ptr, 0, len);
         }
@@ -146,6 +150,9 @@ pub(crate) mod raw {
     /// - `ptr` 必须指向 `len` 字节的合法可写区
     #[inline]
     pub unsafe fn fill_memory(ptr: *mut u8, val: u8, len: usize) {
+        // SAFETY: 可写区判据同 zero_memory (调用方履行 `# Safety`); 区别在填充值由
+        // 调用方给定并负责其语义 —— setup_meta 填 BUDDY_ALLOCATED 标记, setup_links
+        // 填 0xFF 使每个 u64 拼成 u64::MAX 哨兵. 本函数只按字节写满 len, 不解释 val.
         unsafe {
             core::ptr::write_bytes(ptr, val, len);
         }
@@ -158,6 +165,10 @@ pub(crate) mod raw {
     /// - 两区互不重叠
     #[inline]
     pub unsafe fn copy_memory(dst: *mut u8, src: *const u8, len: usize) {
+        // SAFETY: 唯一调用面是 RawMetaStore::copy_payload (relocate_early_regions):
+        // 源区在引导窗内、目的区在窗外新拨地址, 两区互斥 ⇒ 满足 copy_nonoverlapping
+        // 的不重叠前提; 两侧都是 phys_to_virt 的内核直射 VA, 各 len 字节可读/可写,
+        // 且搬移发生在启动期单核、PMM 尚未对外分配时, 无并发写者.
         unsafe {
             core::ptr::copy_nonoverlapping(src, dst, len);
         }

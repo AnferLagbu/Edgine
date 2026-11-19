@@ -726,8 +726,11 @@ impl VirtualMemoryManager {
         let pmm = get_pmm();
         let pml4_phys = pmm.alloc_page()?;
 
-        // SAFETY: pml4_phys from PMM, phys_to_virt valid; zero for clean state
         let pml4_virt = pml4_phys.to_virt();
+        // SAFETY: pml4_phys 刚由 PMM alloc_page 分配, 尚未写入任何上级页表项、也未
+        // 加载进 CR3, 故硬件 walker 与其它核都到不了它, 本核独占初始化;
+        // to_virt 的 KERNEL_BASE 直射映射覆盖全部物理内存 ⇒ 整页可写.
+        // 指针已 cast 为 *mut u8, write_bytes 按字节计数清 PAGE_SIZE (不是 8 页).
         unsafe {
             core::ptr::write_bytes(
                 pml4_virt.0 as *mut u8,
@@ -1824,8 +1827,14 @@ impl VirtualMemoryManager {
             return;
         }
 
-        // SAFETY: Setting USER bit on PML4 entry; KERNEL_PML4 valid, index in range
         let pml4_virt = PhysAddr(pml4_base).to_virt();
+        // SAFETY: pml4_base 非空 (上方提前返回) 且是已初始化的 KERNEL_PML4 物理地址,
+        // to_virt 的 KERNEL_BASE 直射映射使该页可访问; v.pml4_idx() < 256 由上方 KPTI
+        // 安全门保证, 故 add(idx) 落在该页 512 项内. 写后 flush_tlb_remote 失效远端
+        // 缓存的无 U 位旧条目 (S-9).
+        // 并发面缺口 (登记待裁定, 本批不改锁面): 本函数不取 VMM_LOCK 却对共享根表槽位
+        // 取 &mut 做读-改-写, 同索引并发调用即构成两个 &mut 别名. 当前唯一入口是
+        // FFI 导出 vmm_ensure_pml4_user, 全仓无调用方, 故缺口尚未被触发 (latent).
         unsafe {
             let pml4 = pml4_virt.0 as *mut PageTableEntry;
             let entry = &mut *pml4.add(v.pml4_idx());
@@ -2045,8 +2054,12 @@ impl VirtualMemoryManager {
                 // 深拷贝 2MB 巨页
                 let huge_phys = pmm.alloc_pages(512)?;
                 let huge_virt = PhysAddr(huge_phys.as_u64()).to_virt().0;
-                // SAFETY: parent_huge is valid 2MB kernel VA
                 let parent_huge = (parent_pde & 0x000F_FFFF_FFFF_F000) + KERNEL_BASE;
+                // SAFETY: 上方已判 present(bit0) 且 PS(bit7) 置位 ⇒ parent_pde 是 2MB
+                // 巨页描述符, 掩码取出的帧地址按硬件要求 2MB 对齐, 加 KERNEL_BASE 后
+                // 落在直射映射内, 2MB 可读. 目的 huge_phys 刚由 alloc_pages(512) 分配
+                // (512 × 4KB = 2MB 连续), 尚未挂入任何页表 ⇒ 整段可写且与源帧互不重叠,
+                // 满足 copy_nonoverlapping 的不重叠前提.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         parent_huge as *const u8,

@@ -268,6 +268,11 @@ pub fn is_user_buf(ptr: u64, len: usize) -> bool {
 // SAFETY: 调用方需保证在异常恢复有意义的上下文中调用 (即即将访问用户内存).
 #[inline(never)]
 unsafe fn setup_recovery() -> (u64, Option<u64>) {
+    // SAFETY: 本块包住下方两架构的 `asm!` (各自另有注释) 与恢复点簿记. asm 只用 PC 相对
+    // 寻址算出恢复标签地址, options(nostack, pure, readonly) 声明不碰栈与内存, 无副作用;
+    // 恢复点经 `set_exception_recovery` 写入 PER_CPU_EXCEPTION_CTX[cpu] 的 SeqCst 原子槽,
+    // 故无需额外锁. 「即将访问用户内存、与 teardown_recovery 配对且不嵌套」由上方调用方
+    // 契约保证 —— 它使安装的恢复点恰好覆盖随后那段受保护的用户内存访问.
     unsafe {
         clear_exception_flag();
 

@@ -99,6 +99,10 @@ impl HeapHeader {
     /// # Safety
     /// 调用方须保证 `data` 由某次合法分配返回
     pub unsafe fn from_data_ptr(data: *mut u8) -> *mut Self {
+        // SAFETY: 本函数只做指针算术, 不解引用 —— `sub(size_of::<Self>())` 是 `data_ptr()`
+        // 的逆变换. `HeapHeader` 为 `#[repr(C)]` 且位于每个分配块起始、数据区紧跟其后, 故
+        // 按头部尺寸回退即落回同一块的头部起始. 「data 由某次合法分配返回」由 fn 的
+        // `# Safety` 契约保证, 它同时使回退结果仍在本块内 (不越界构造指针).
         unsafe { data.sub(core::mem::size_of::<Self>()) as usize as *mut Self }
     }
 }
@@ -132,6 +136,9 @@ pub(crate) mod raw {
         /// - 必须持有堆锁
         #[inline]
         pub unsafe fn from_data_ptr(data: *mut u8) -> Self {
+            // SAFETY: 委托 `HeapHeader::from_data_ptr` 的纯算术逆变换, 本函数自身不解引用.
+            // 「data 由先前分配返回」与「持堆锁」两条由 fn 的 `# Safety` 契约保证 —— 后者
+            // (`KernelHeap::acquire_lock`) 使随后经本 `HeaderRef` 的读改写对本核独占.
             unsafe { Self(HeapHeader::from_data_ptr(data)) }
         }
 
@@ -288,6 +295,10 @@ pub(crate) mod raw {
     /// - `ptr` 必须指向 `len` 字节的合法可写区域
     #[inline]
     pub unsafe fn zero_memory(ptr: *mut u8, len: usize) {
+        // SAFETY: 「ptr 指向 len 字节合法可写区」由 fn 的 `# Safety` 契约保证; 本模块唯一
+        // 调用面是 `KernelHeap::early_allocate`, 传入 early_allocs 数组第 idx 项的地址
+        // (idx < MAX_EARLY_ALLOCS 已在上方判过), 按 size_of::<EarlyHeapAlloc>() 字节清零
+        // 恰好覆盖该项. ptr 已是 *mut u8, write_bytes 按字节计数, 不按元素尺寸放大.
         unsafe {
             core::ptr::write_bytes(ptr, 0, len);
         }
@@ -301,6 +312,10 @@ pub(crate) mod raw {
     /// - 两区不得重叠
     #[inline]
     pub unsafe fn copy_nonoverlapping(src: *const u8, dst: *mut u8, len: usize) {
+        // SAFETY: 可读 / 可写 / 不重叠三条由 fn 的 `# Safety` 契约保证, 两处调用面各自成立 ——
+        // `reallocate` 的 dst 是刚分配出的独立新块 (旧块此时尚未释放), `process_early_allocations`
+        // 的 dst 来自 allocate_first_fit、src 是 early_buffer 内的早期块, 两区互斥.
+        // 本函数只按字节搬 len, 不解释内容.
         unsafe {
             core::ptr::copy_nonoverlapping(src, dst, len);
         }

@@ -331,6 +331,12 @@ fn rcu_read_unlock_impl() {
 /// 调用者必须在 RCU 读临界区内
 #[inline]
 pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
+    // SAFETY: 本函数不解引用 `ptr`, 只把它的值拷出, 故不要求 `ptr` 指向有效对象;
+    // `&raw const ptr` 取的是本函数按值传入的参数槽地址, read_volatile 强制一次真实
+    // 内存读, 不让编译器把该指针值当纯 SSA 常量折叠或省略. Acquire fence 与
+    // `rcu_read_lock_impl` 的 Acquire 语义、发布方的 Release 写配对, 使临界区内能看到
+    // 新指针所指对象的完整初始化. 「处于读临界区内」由 fn 的 `# Safety` 契约保证
+    // (nesting > 0 ⇒ 本 CPU 报静止前旧值不被回收).
     unsafe {
         fence(Ordering::Acquire);
         ptr::read_volatile(&raw const ptr)
@@ -343,6 +349,11 @@ pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
 /// 调用者确保旧值在所有 RCU 读者退出前不被释放
 #[inline]
 pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
+    // SAFETY: `slot` 有效、可写、对齐且为发布方独占写的共享指针槽, 由 fn 的 `# Safety`
+    // 契约与调用方保证. Release fence 置于发布写之前, 使 new_val 所指对象的全部初始化
+    // 先于该写对其它 CPU 可见, 与读者侧 `rcu_dereference` 的 Acquire 配对;
+    // write_volatile 保证这次发布写不被编译器合并或省略. 旧值回收不在本函数职责内 ——
+    // 须待所有读者退出 (synchronize_rcu 宽限期 / call_rcu 回调), 由契约约束调用方.
     unsafe {
         fence(Ordering::Release);
         ptr::write_volatile(slot, new_val);
@@ -457,6 +468,10 @@ pub unsafe fn call_rcu(head: *mut RcuHead, func: unsafe fn(*mut RcuHead)) {
         return;
     }
 
+    // SAFETY: head 非空 (上方已提前返回), 其有效性与「func 正确处理 head 指向内存」由
+    // fn 的 `# Safety` 契约保证. 这两次写发生在入链之前 —— 回调链挂接在下方 cli 之后
+    // 才做, 此刻 head 尚未对其它 CPU 可见, 故本 CPU 独占初始化 next/func, 无需额外锁;
+    // next 先置空再填 func, 保证入链后 process_callbacks 读到的是完整回调头.
     unsafe {
         (*head).next = ptr::null_mut();
         (*head).func = Some(func);
@@ -523,6 +538,9 @@ pub fn process_callbacks() {
     while !cur.is_null() {
         // SAFETY: cur was in the callback linked list, each node is valid
         let next = unsafe { (*cur).next };
+        // SAFETY: cur 非空由循环条件保证; 整条链已在上方 cli 期间从本 CPU 槽位摘下并
+        // 置空, 遍历期本 CPU 独占 (中断里新来的 call_rcu 只会挂到已清空的新链上),
+        // 故读 func 与读 next 同一判据. 该字段在入链前已由 call_rcu 初始化完毕.
         let func = unsafe { (*cur).func };
 
         if let Some(f) = func {
