@@ -786,10 +786,61 @@ proctest / exectest / wasmstub / wasmrun）——**AGENTS 授权已用掉，本�
 描述：清 `src/user/lib` 的 112 处（其中 `lib/src/sys.rs` 独占 110），形态高度重复（syscall 包装）。
 方案：① 逐处补**紧邻上一行**的中文 SAFETY 注释（项目约定，**严于** clippy 判据——后者允许空行间隔，见批 0 归因订正）；② 重复形态的理由**单源化**（模块级说明 + 每处指向
 具体不变量，不复制粘贴同一句空话）；③ 跑棘轮腿确认读数下降 → `--update-baseline` 收缩侧车；④ 七门槛。
-状态：[]
+状态：[X]
 详情：**不得写占位理由**（如现存的「调用方保证指针/类型有效 (详见上下文)」）——每处须给出
 指针来源 / 对齐 / 生命周期 / 并发前提的具体依据。这正是 D-5 取乙而非甲的理由: 赶工 399 处
 只会把假读数再灌一遍。本批清完 src/user 树仍余 26 处（批 5b），**不翻硬执法**。
+**施工结果（2026-11-19）**：112 处全清（`lib/src/sys.rs` 110 + `lib/src/heap.rs` 1 +
+`lib/src/str.rs` 1），零占位——每处先读内核对应 syscall 实装再落笔，按**实际入口**写
+（`copy_from_user` / `validate_user_buf` + `write_struct_to_user` / `check_user_ptr` + 只读 /
+`UserWritePtr::checked_new` / `as_kstr` 4096 字节上限扫描），不写笼统「内核会校验」。
+**单源化**落在 `sys.rs` 模块级新增「unsafe 依据单源」段：门 **G**（寄存器与 clobber 契约）
++ 包装层五类 **S** 纯标量 / **B** 借用缓冲 / **P** 路径串 / **T** 结构体 / **R** 裸指针；
+逐处注释只引用类别 + 写该处特有的不变量（如 `proc_list` 的写入上界是
+`max_entries × 内核定长条目` 而**非** `buf.len()`、`recvfrom` 的 UDS v1 分支显式不回填源地址、
+`fb_open` 内核只校验**起始地址**后即写整个结构、`str.rs` 的全局暂存区不可重入且返回切片
+只在下次调用前有效）。**连带订正 2 行**（属本次单源化的组成部分，非顺手改）：模块头寄存器
+契约原写 `aarch64 x1-x4=args` 且 x86_64 缺 `r9=a6`，与 `sys6` / `svc_handler` 实装不符 ⇒
+改为 `x1-x6` 并补 `r9=a6`；门 G 的 aarch64 依据按 `arch/aarch64/exception.rs:597` 的
+`svc_handler`（取帧 `x0` 编号 / `x1..x6` 参数 / 结果写回 `x0`，陷入帧全量保存弹回 `x0..x30`）
+与 `proc/proc_ops.rs:940`、`arch/aarch64/context.rs:229` 的「用户库 asm 只声明 x0 为输出」
+注释核实后落笔（原稿把该注释误挂在 exception.rs，已订正）。
+**棘轮读数**：399 → **287 处 / 75 文件 / 80 键**（userlib 三键 `sys.rs` 110 / `heap.rs` 1 /
+`str.rs` 1 全归零），`--update-baseline` 收缩侧车后复跑双向对账 **RC=0**；src/user 树仍余
+**26 处**（x86_64 腿 23 / aarch64 腿 26，并集 26）⇒ 按方案**不翻硬执法**，归批 5b。
+**userlib 内联单测**（标准门槛不覆盖，须 `cd src/user/lib && cargo test`）：**10 passed / 0 failed**。
+`cargo fmt --manifest-path src/user/Cargo.toml --all -- --check` **RC=0**；src/user 双裸机三元组
+`--release --workspace --no-deps -- -D warnings -D clippy::pedantic` 两腿 **RC=0**。
+**两项工程外发现只报告不处置（§11.5，待用户裁定）**：⑥ `auth_login` 的 note/password 在
+userlib↔内核 ABI 两侧**参数序颠倒**——userlib `sys2(SYS_SGEG_LOGIN, n.ptr, p.ptr)` → 内核
+`auth_login_syscall(password_ptr=a0, note_ptr=a1)` → `pwm_login(note=a1, password=a0)` →
+`session::login` → `find_by_note(note)`；唯一调用方 `src/user/eash/src/commands/identity.rs:22`
+按 (note, password) 传 ⇒ 内核拿**密码串**查用户、拿 **note 串**验密码，`login` 命令应恒失败。
+本批 SAFETY 注释刻意不写「哪个参数是 note」，以免把错误映射固化进单源说明。
+⑦ `src/user/clippy.toml` 的 `disallowed-types` 在不依赖 spin 的 `wasmrun` 腿报 2 条**配置级**
+warning（`spin::Once` / `spin::OnceCell` does not refer to a reachable type），两腿 RC 仍 **0**、
+不影响执法（该 crate 本就无 spin 使用面），属批 2 四树配置化的已知副作用。
+⑧ aarch64 syscall 参数寄存器**注释漂移**（内核侧，非本批改动面）：`arch/aarch64/exception.rs:594`
+的 `svc_handler` doc 写 `x1-x4=args`、`:314` 汇编注释写 `x1-x5`，而实装 `:627-632` 读
+`frame.x1..x6` 六个参数（结果写回 `frame.x0`）——本批单源说明按**实装**落笔，未沿用该注释。
+**自审订正 1 处（本批自己写错的断言）**：`proc_exit` 的 aarch64 兜底原写「EL0 执行 wfi 合法」，
+经核 `boot/aarch64/start.S:123`（`msr sctlr_el1, xzr`）+ `arch/aarch64/mmu.rs:272-281`（只置
+M/C/I 三位）⇒ **NTWI=0 ⇒ EL0 WFI 陷入 EL1**，且 EL0 同步向量只特判 `EC=0x15`(SVC)、其余一律进
+`sync_exception_handler`（`exception.rs:302-310`）⇒ 改为与 `exit_group` 同形的条件式表述。
+该订正在门槛 2 跑完后落笔（避免改动门禁正在读取的面），随后复跑受影响腿。
+**七门槛（终态）**：`./ci/build.sh all` **RC=0**（Passed **6** / Failed **0**）·
+`bash ci/audit.sh full` **RC=0**（**未执行腿数 0**；P-69 通过 / selftest **13/13** /
+`safety_debt` 通过・债册 **287 处 / 80 键** / `missing_docs_debt` **0 处 / 0 键** / QEMU **2/2** /
+lockdep 构建面双架构两侧符合 / UEFI(OVMF) 可达面全符合且 `[THREAD]` 显式不判 /
+aarch64 COW 四判据 + EGFS 三相全符合）· `make test-host` **RC=0**（**203 套 / 1599 passed /
+0 failed**）· `make test-kernel-host` **RC=0**（三成员 **12+807+556=1375 / 0 failed**）·
+`make -f Makefile.ci ci-rustdoc` **RC=0**（双架构两腿真跑，**0 源码级 link 错误 + 0 私有项链接**）。
+wfi 订正后复跑：src/user 双裸机三元组 clippy 两腿 **RC=0**、
+`cargo fmt --manifest-path src/user/Cargo.toml -- --check` **RC=0**、棘轮腿 **RC=0**（287/80 不变）、
+userlib 内联单测 **10 passed / 0 failed**。
+**终态复跑**（wfi 订正 + 本册/台账回填后）：`./ci/build.sh all` **RC=0**（Passed **6** / Failed **0**）、
+`scan_obsolete_naming` **RC=0**（受检 **1720 文件** / 历史面 KEEP **316** / 违规 **0**）、
+`check_doc_paths` **RC=0**（**19 份** / **0 漂移**，设计册计划新建路径免报 3 条）。
 
 ### 批 5b・SAFETY 清零: 其余用户 crate（26 处）
 

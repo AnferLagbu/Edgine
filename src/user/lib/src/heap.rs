@@ -326,6 +326,10 @@ unsafe impl GlobalAlloc for UserAlloc {
         // SAFETY: ptr 由本分配器 alloc 返回; 对齐 > ALIGN 时数据指针前存有块头
         // 指针, 否则块头就在 ptr - HEADER_SIZE. 复原块头后持锁释放.
         let block = if align > ALIGN {
+            // SAFETY: ptr 由本分配器 alloc 返回且 align > ALIGN, 故 alloc 已在
+            // aligned - size_of::<*mut Header>() 处回填块头指针 (见上方 alloc 分支);
+            // aligned 是 align (>= ALIGN=16, 2 的幂) 的倍数, 减一个指针宽度后仍按
+            // *mut Header 对齐且落在本块内, 读一个指针宽度即复原块头.
             unsafe { *((ptr as usize - core::mem::size_of::<*mut Header>()) as *const *mut Header) }
         } else {
             (ptr as usize - HEADER_SIZE) as *mut Header

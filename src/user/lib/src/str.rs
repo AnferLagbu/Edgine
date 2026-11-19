@@ -28,6 +28,10 @@ static mut PARSE: ParseBuf = ParseBuf {
 };
 
 pub fn parse_args(line: &[u8]) -> (&'static [*const u8], usize) {
+    // SAFETY: PARSE 是本模块唯一的全局解析暂存区, 取 &mut 时不存在其它活引用 ——
+    // 前提是本函数不被重入 (返回的 ptrs 指向同一块 buf, 嵌套调用会互相覆盖) 且
+    // 不在多线程下并发调用 (无锁保护); 用户态命令行解析是单线程一次性场景.
+    // 返回的切片只在下一次 parse_args 调用前有效, 调用方须在该窗口内消费完毕.
     let parse = unsafe { &mut *core::ptr::addr_of_mut!(PARSE) };
     let mut argc = 0;
     let mut in_arg = false;

@@ -5,9 +5,9 @@
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {
-    "sites": 399,
-    "files": 78,
-    "keys": 83
+    "sites": 287,
+    "files": 75,
+    "keys": 80
   },
   "entries": [
     [
@@ -404,21 +404,6 @@
       "src/user/install/src/wizard/probe.rs",
       "block",
       7
-    ],
-    [
-      "src/user/lib/src/heap.rs",
-      "block",
-      1
-    ],
-    [
-      "src/user/lib/src/str.rs",
-      "block",
-      1
-    ],
-    [
-      "src/user/lib/src/sys.rs",
-      "block",
-      110
     ],
     [
       "src/user/proctest/src/main.rs",
