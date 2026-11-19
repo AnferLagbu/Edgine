@@ -208,6 +208,37 @@ pub(crate) fn endpoint_from_smol(
     }
 }
 
+// === unsafe 依据单源 (sm_fi socket 操作) ===
+//
+// 本文件 unsafe 块分四类, 逐处注释只引类别 + 写该处特有不变量.
+//
+// 类别 A「自取锁外壳」: pub unsafe extern C 的 sm_* 入口. 块内取 NET_STATE
+//   (IrqSpinLock) 锁, guard 活到块尾, 覆盖块内全部 unsafe 操作; 这些操作只有
+//   socket_set() 解引用、要求「已持 NET_STATE 锁」的 *_locked / process_dhcp_events、
+//   sockaddr 编解码 (类别 C) 与 k_free 归还. 阻塞入口 (accept/connect/send/recv/
+//   sendto/recvfrom) 的块是 loop, 每轮重新取锁, 挂起前显式 drop(guard), 不持锁睡眠.
+// 类别 B「已持锁内核实现」: *_locked 私有函数. 锁由类别 A 外壳或 poll_network 持有,
+//   本函数不重复加锁 (IrqSpinLock 非可重入, 同核重复加锁自旋死锁). 块内 unsafe =
+//   socket_set() 解引用 + sockaddr 编解码 + k_free (unsafe extern C) + 槽位交换.
+//   raw::* accessor 本身是 safe fn, 其内部 unsafe 已各自注释.
+// 类别 C「sockaddr 编解码」: write_sockaddr / parse_endpoint_trait / parse_endpoint.
+//   SockaddrIn (16B) / SockaddrIn6 (28B) 均 #[repr(C)] 且字段序与 Linux 一致, 读写
+//   一律用 unaligned 形态, 故不要求指针对齐, 只要求区间已初始化 (读) / 可写 (写).
+//   指针来源两种: bind/connect/sendto 经 net::syscall 层把用户 sockaddr 先 copy-in
+//   再重编码到内核栈数组 (8B / 28B) 后传下来; accept/getsockname/getpeername/recvfrom
+//   的 addr/addrlen 是用户指针直传.
+// 类别 D「用户 msghdr/iov 直读」: sm_sendmsg / sm_recvmsg. functions 层
+//   (functions::net::syscall 的 sendmsg_syscall / recvmsg_syscall) 已校验 msg 56 字节
+//   可读、iov 数组 iovlen*16 字节范围, 并限 iovlen 属于 [1,1024]; 本层复用同一上界,
+//   故 lens/bases 两个 [_; 1024] 栈数组不越界.
+//
+// 已知局限 (登记不改, 见门禁健康度收敛工程 批 5f):
+// - userptr::validate_user_buf 只做地址区间校验 (ptr > 0 且 ptr+len <= USER_ADDR_MAX),
+//   不验证已映射/可写; accept/getsockname/getpeername/recvfrom 的 addr/addrlen 与
+//   sendmsg/recvmsg 的逐条 iov_base/iov_len 在 syscall 层未做区间校验即直传本层.
+// - 本层直读直写用户内存不经 mm::copy_user 的 stac/clac 包裹, CR4.SMAP 置位时
+//   (cpu 按 CPUID 启用) ring0 访问用户页会触发 #PF.
+
 /// 将 `NetEndpoint` 写入 sockaddr C 结构体 (供 recvfrom/getsockname/getpeername 返回地址).
 ///
 /// 双栈 (DECISION-032): V4 写 `SockaddrIn` (16 字节), V6 写 `SockaddrIn6` (28 字节).
@@ -223,6 +254,10 @@ pub(crate) unsafe fn write_sockaddr(
     addrlen: *mut u32,
     ep: &crate::privileged::net::iface_trait::NetEndpoint,
 ) {
+    // SAFETY: 类别 C. 按 ep.addr 族写 SockaddrIn (16B) 或 SockaddrIn6 (28B), 均
+    // write_unaligned 故不要求 addr 对齐; addr 为 NULL 已早退, addrlen 为 NULL 时
+    // 跳过长度回写. 非空指针的容量与可写性由调用方契约保证 (见单源已知局限:
+    // accept/getsockname/getpeername 路径的用户指针未经区间校验).
     unsafe {
         if addr.is_null() {
             return;
@@ -301,6 +336,9 @@ struct SockaddrIn6 {
 pub(crate) unsafe fn parse_endpoint_trait(
     addr: *const u8,
 ) -> Option<crate::privileged::net::iface_trait::NetEndpoint> {
+    // SAFETY: 类别 C. 先 read_unaligned 读前 2 字节族号, 再按族 (2/10) 读 16B/28B
+    // 结构; 全用 unaligned 形态故不要求 addr 对齐, addr 为 NULL 已早退. 区间已初始化
+    // 由调用方契约保证: bind/connect/sendto 路径实为内核栈上重编码数组 (见类别 C).
     unsafe {
         if addr.is_null() {
             return None;
@@ -341,6 +379,8 @@ pub(crate) unsafe fn parse_endpoint_trait(
 /// # Safety
 /// 同 `parse_endpoint_trait`.
 pub(crate) unsafe fn parse_endpoint(addr: *const u8) -> Option<IpEndpoint> {
+    // SAFETY: 类别 C. 本块只把 addr 原样转交 parse_endpoint_trait (契约同该函数),
+    // 再对返回值做纯值翻译 endpoint_to_smol, 不新增指针操作.
     unsafe { parse_endpoint_trait(addr).map(endpoint_to_smol) }
 }
 
@@ -380,6 +420,9 @@ fn endpoint_to_listen(ep: crate::privileged::net::iface_trait::NetEndpoint) -> I
 /// - 必须 `NET_LOCK` 持有。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_socket(domain: i32, sock_type: i32, _protocol: i32) -> i32 {
+    // SAFETY: 类别 A. NET_STATE.lock() 的 _guard 覆盖全块; 块内 unsafe 操作是
+    // socket_set() 解引用与 raw::socket_open_stub (要求已持锁). 未初始化早退
+    // -E_NODEV, 活动槽数按 I-47 先判 active < get_max_sockets() 再分配.
     unsafe {
         if !is_network_initialized() {
             return -E_NODEV;
@@ -491,6 +534,8 @@ fn next_ephemeral() -> Option<u16> {
 /// - `NET_LOCK` 持有。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_bind(slot_id: i32, addr: *const u8, addrlen: u32) -> i32 {
+    // SAFETY: 类别 A. 本块只做「取 NET_STATE 锁 + 调 sm_bind_locked」, 后者契约
+    // 要求调用方已持该锁, _guard 活到块尾故满足; addr 的 sockaddr 契约原样转交.
     unsafe {
         let _guard = NET_STATE.lock();
         sm_bind_locked(slot_id, addr, addrlen)
@@ -503,6 +548,10 @@ pub unsafe extern "C" fn sm_bind(slot_id: i32, addr: *const u8, addrlen: u32) ->
 /// - `addr` 必须是有效的 sockaddr 指针, 含 `_addrlen` 字节已初始化。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_bind_locked(slot_id: i32, addr: *const u8, _addrlen: u32) -> i32 {
+    // SAFETY: 类别 B. 锁由 sm_bind 外壳持有, 本函数不重复加锁. 块内 unsafe =
+    // socket_set() 解引用 + parse_endpoint_trait(addr) 两次 (UDP/TCP 分支各一);
+    // 槽位与 fd_type 先校验, handle 缺失早退 -E_BADF, 故 sockets.get_mut 的
+    // handle 来自本槽登记值.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
@@ -586,6 +635,8 @@ unsafe fn sm_bind_locked(slot_id: i32, addr: *const u8, _addrlen: u32) -> i32 {
 /// `NET_LOCK` 持有; 由 `sys_listen` 分发, 调用方验证权限。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_listen(slot_id: i32, backlog: i32) -> i32 {
+    // SAFETY: 类别 A. 取 NET_STATE 锁后调 sm_listen_locked (契约要求已持锁),
+    // _guard 活到块尾; 本块无其它指针操作.
     unsafe {
         let _guard = NET_STATE.lock();
         sm_listen_locked(slot_id, backlog)
@@ -597,6 +648,8 @@ pub unsafe extern "C" fn sm_listen(slot_id: i32, backlog: i32) -> i32 {
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_listen_locked(slot_id: i32, _backlog: i32) -> i32 {
+    // SAFETY: 类别 B. 锁由 sm_listen 外壳持有. 块内 unsafe 只有 socket_set()
+    // 解引用; 槽位/fd_type/handle 三重校验后才取 tcp::Socket 并置监听.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
@@ -665,6 +718,9 @@ pub unsafe extern "C" fn sm_accept(
     // P5d (DECISION-096): 阻塞 accept 至就绪 / 信号 (-EINTR) / SO_RCVTIMEO 到点 (-E_AGAIN).
     // 绝对死线首次挂起时算一次, 重挂复用同一绝对值 (不因重挂而延长超时).
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮 NET_STATE.lock() 的 guard 覆盖
+    // sm_accept_locked 调用; 挂起前显式 drop(guard) 再 scheduler_block, 不持锁睡眠.
+    // addr/addrlen 原样转交 sm_accept_locked (类别 C 契约).
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -712,6 +768,10 @@ pub unsafe extern "C" fn sm_accept(
 /// - `addr`/`addrlen` 同 [`sm_accept`]。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_accept_locked(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+    // SAFETY: 类别 B. 锁由 sm_accept 外壳每轮持有. 块内 unsafe = socket_set()
+    // 解引用、raw::socket_open_stub 建新槽、回滚路径 k_free 归还缓冲 (指针来自
+    // k_malloc 且尚未释放, 归还后立即经 raw setter 置 NULL)、write_sockaddr 回写
+    // 对端地址 (类别 C). 槽位交换只改 raw 表内的 handle/缓冲指针值, 不复制缓冲内容.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
@@ -836,6 +896,8 @@ pub unsafe extern "C" fn sm_connect(
     // (失败) 唤醒; 非阻塞 / 中断路径 → 发起后返 -E_INPROGRESS (POSIX 异步 connect).
     // UDP connect 为同步登记 (sm_connect_locked 内即时完成), 不涉及等待.
     // Phase A: 单发发起 (含参数/NET_CONFIGURED/UDP 同步/连接错误映射), 复用 locked.
+    // SAFETY: 类别 A. 本块取 NET_STATE 锁后调 sm_connect_locked (契约要求已持锁),
+    // guard 活到块尾; addr 的 sockaddr 契约原样转交 (类别 C).
     let rc = unsafe {
         let _guard = NET_STATE.lock();
         sm_connect_locked(slot_id, addr, addrlen)
@@ -849,6 +911,9 @@ pub unsafe extern "C" fn sm_connect(
     // P5d (DECISION-096): 阻塞 connect 叠加信号 (-EINTR) 与 SO_SNDTIMEO (-E_INPROGRESS)
     // 两条退出 (绝对死线首次挂起算一次、重挂复用).
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮重新取 NET_STATE 锁, 块内 unsafe =
+    // socket_set() 共享解引用读 TCP 状态 (判 Established/Closed); 挂起前释放 guard,
+    // 不持锁睡眠. UDP (fd_type != 1) 同步完成直接返 0.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -920,6 +985,9 @@ pub unsafe extern "C" fn sm_connect(
 /// - `addr` 必须指向有效的 sockaddr 结构, 至少 `_addrlen` 字节。
 /// - 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_connect_locked(slot_id: i32, addr: *const u8, _addrlen: u32) -> i32 {
+    // SAFETY: 类别 B. 锁由 sm_connect 外壳持有. 块内 unsafe = parse_endpoint(addr)
+    // (类别 C) 与 socket_set() 解引用 (TCP/UDP 两分支各一); 槽位/fd_type/handle
+    // 校验后才取 socket, 端点表登记经 raw accessor.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
@@ -1037,6 +1105,9 @@ pub unsafe extern "C" fn sm_send(
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe 只有
+    // socket_set() 解引用; buf/len 由调用方保证有效可读 (send/sendto 路径传的是
+    // 已 copy-in 的内核 Vec), 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1142,6 +1213,9 @@ pub unsafe extern "C" fn sm_recv(
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe 只有
+    // socket_set() 解引用; buf/len 由调用方保证有效可写 (recvfrom_syscall 传内核栈
+    // bounce 缓冲), 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1243,6 +1317,9 @@ pub unsafe extern "C" fn sm_sendto(
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe =
+    // parse_endpoint(addr) (类别 C, 仅指定目标地址分支) + socket_set() 解引用;
+    // data 为已 copy-in 的内核 Vec, 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1341,6 +1418,9 @@ pub unsafe extern "C" fn sm_recvfrom(
     let pid = process_get_current_pid();
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
+    // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe =
+    // socket_set() 解引用 + write_sockaddr 回写对端地址 (类别 C, addr/addrlen 为
+    // 用户指针直传); buf 为内核栈 bounce 缓冲, 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1436,6 +1516,12 @@ pub unsafe extern "C" fn sm_sendmsg(
     _flags: i32,
     blocking: bool,
 ) -> i32 {
+    // SAFETY: 类别 D. msg 非空已早退; functions 层已校验 msg 56 字节可读与 iov
+    // 数组范围, 本处按同一布局读 msg+16 (iov 指针) / msg+24 (iovlen), 并复用
+    // iovlen 属于 [1,1024] 上界故 lens/bases 不越界; total 用 checked_add 防溢出,
+    // IobRegion::alloc(total) 成功后 off+lens[i] <= total 恒成立, 故 copy_nonoverlapping
+    // 的目标区间在 region 内且与源 iov 不重叠 (region 是新分配内核缓冲).
+    // 源 iov_base/iov_len 未经区间校验 (见单源已知局限). 末尾委托 sm_send (类别 A).
     unsafe {
         if msg.is_null() {
             return -E_FAULT;
@@ -1521,6 +1607,10 @@ pub unsafe extern "C" fn sm_recvmsg(
     _flags: i32,
     blocking: bool,
 ) -> i32 {
+    // SAFETY: 类别 D. 同 sm_sendmsg 的 msghdr/iov 读取依据与 iovlen 上界; cap 用
+    // checked_add 防溢出, region 容量 = cap. 委托 sm_recv 读入 region (内核缓冲),
+    // 再按 cp = min(lens[i], left) 拆分回 iov, off+cp <= n <= cap 故源区间在 region 内;
+    // 目标 iov_base 为用户指针, 未经区间校验 (见单源已知局限).
     unsafe {
         if msg.is_null() {
             return -E_FAULT;
@@ -1603,6 +1693,11 @@ pub unsafe extern "C" fn sm_recvmsg(
 /// `NET_LOCK` 持有; 由 `sys_close` 分发, cred 校验已通过。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_close(slot_id: i32) -> i32 {
+    // SAFETY: 类别 A. _guard 覆盖全块; 块内 unsafe = socket_set() 解引用 (remove
+    // socket) 与 k_free 归还四个缓冲指针 (tcp/udp 的 rx/tx). 归还顺序在 sockets.remove
+    // 之后 (TD-07: smoltcp socket 已 drop, buf 借用结束); 每个指针先判非空再 k_free,
+    // 归还后立即经 raw setter 置 NULL 并清 handle/fd_type, 故不会二次释放.
+    // 这些指针均由 k_malloc 分配且只在本锁内被访问.
     unsafe {
         let _guard = NET_STATE.lock();
 
@@ -1700,6 +1795,8 @@ pub unsafe extern "C" fn sm_close(slot_id: i32) -> i32 {
 /// `slot_id` 须为合法 socket 槽位; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_shutdown(slot_id: i32, how: i32) -> i32 {
+    // SAFETY: 类别 A. 取 NET_STATE 锁后调 sm_shutdown_locked (契约要求已持锁),
+    // _guard 活到块尾; 本块无指针操作.
     unsafe {
         let _guard = NET_STATE.lock();
         sm_shutdown_locked(slot_id, how)
@@ -1711,6 +1808,9 @@ pub unsafe extern "C" fn sm_shutdown(slot_id: i32, how: i32) -> i32 {
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_shutdown_locked(slot_id: i32, how: i32) -> i32 {
+    // SAFETY: 类别 B. 锁由 sm_shutdown 外壳持有. 块内 unsafe 只有 socket_set()
+    // 解引用; 槽位/fd_type 校验与 how 合法性判定 (非法 how 返 -E_INVAL) 后才对
+    // socket 执行 shutdown.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return -E_BADF;
@@ -1760,6 +1860,8 @@ unsafe fn sm_shutdown_locked(slot_id: i32, how: i32) -> i32 {
 /// `slot_id` 须为合法槽位; 内部持 `NET_STATE` 锁串行化.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_socket_poll(slot_id: i32, events: i16) -> i16 {
+    // SAFETY: 类别 A. 取 NET_STATE 锁后调 sm_socket_poll_locked (契约要求已持锁),
+    // _guard 活到块尾; 本块无指针操作.
     unsafe {
         let _guard = NET_STATE.lock();
         sm_socket_poll_locked(slot_id, events)
@@ -1771,6 +1873,9 @@ pub unsafe extern "C" fn sm_socket_poll(slot_id: i32, events: i16) -> i16 {
 /// # Safety
 /// 调用方必须持有 `NET_STATE` 锁 (非可重入自旋锁, 重复加锁会死锁)。
 unsafe fn sm_socket_poll_locked(slot_id: i32, events: i16) -> i16 {
+    // SAFETY: 类别 B. 锁由 sm_socket_poll 外壳持有. 块内 unsafe 只有 socket_set()
+    // 解引用; 非法槽位/非 socket 返回 POLLNVAL, handle 缺失同样早退, 故 get 的
+    // handle 来自本槽登记值.
     unsafe {
         let Some(slot) = as_slot(slot_id) else {
             return POLLNVAL;
@@ -2152,6 +2257,9 @@ pub unsafe extern "C" fn sm_getsockopt(
 /// - `NET_LOCK` 持有; 由 `sys_getsockname` 分发.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+    // SAFETY: 类别 A. _guard 覆盖全块; 块内 unsafe = socket_set() 解引用取本地
+    // 端点 + write_sockaddr 回写 (类别 C, addr/addrlen 为用户指针直传, 可为 NULL
+    // 由该函数早退/跳过).
     unsafe {
         let _guard = NET_STATE.lock();
 
@@ -2229,6 +2337,9 @@ pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *m
 /// - `NET_LOCK` 持有; 由 `sys_getpeername` 分发.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
+    // SAFETY: 类别 A. _guard 覆盖全块; 块内 unsafe = socket_set() 解引用 +
+    // write_sockaddr 回写对端端点 (类别 C). TCP 取 socket 自身 remote_endpoint,
+    // UDP 取 D1 对端端点表 (未 connect 返 -E_NOTCONN), 两条回写路径共用同一指针契约.
     unsafe {
         let _guard = NET_STATE.lock();
 
@@ -2283,6 +2394,9 @@ pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *m
 /// `NET_LOCK` 持有; 由 `sys_poll`/`sys_select` 分发。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_poll_sockets() -> i32 {
+    // SAFETY: 类别 A. _guard 覆盖全块; 块内 unsafe = socket_set() 解引用 +
+    // process_dhcp_events (契约要求已持 NET_STATE 锁, 见 init.rs 该函数 # Safety).
+    // 随后按槽位遍历统计就绪数, raw accessor 为 safe fn.
     unsafe {
         let _guard = NET_STATE.lock();
 

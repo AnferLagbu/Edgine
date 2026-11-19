@@ -438,10 +438,31 @@ pub fn display_probe_controllers() {
 // 端口 I/O 辅助函数 (x86_64 专用)
 // ============================================================================
 
+// === unsafe 依据单源 (display 端口 I/O) ===
+//
+// 类别「DISPI 端口对」— port_outw / port_inw 是 Bochs VBE DISPI 索引口
+// (VBE_DISPI_PORT_INDEX = 0x01CE) 与数据口 (VBE_DISPI_PORT_DATA = 0x01CF) 的访问原语.
+// 依据:
+// - 特权级: 内核运行于 CPL=0, in/out 对任意端口均被允许, 不查 TSS 的 I/O 许可位图;
+// - asm 面: 两条指令只动 ax/dx, options(nomem, nostack) 声明不触碰内存与栈; 未声明
+//   preserves_flags, 故编译器按 flags 可能被破坏保守处理;
+// - 配对互斥: 索引→数据是两次独立 I/O, 非原子. 唯一消费者 read_bochs_disp_mode()
+//   只被 probe_vga_fb_via_pci() 在 MMIO 路径失败后的回退分支调用 (该函数又只在
+//   display_init() 的 Multiboot2 帧缓冲不可用分支被调, 遍历 CLASS_DISPLAY 中
+//   subclass=0x00 的 VGA 设备并在首个成功探测处返回), 全仓无第二个 0x01CE/0x01CF
+//   使用者, 故配对期间不会被另一路径插入改索引. 注意 SMP 已在
+//   boot_interrupt_timer_init 阶段完成 secondary_cpu_bringup(), 互斥依据是
+//   「唯一消费者 + 仅 BSP 启动期探测」而非「单核」.
+// - 收敛点 (登记不改): 本对原语与 privileged::ioport::IoPort 安全代理重复, 后者
+//   已带端口区间独占校验; 迁移属结构改造, 超出 SAFETY 补注释批范围.
+
 #[cfg(target_arch = "x86_64")]
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn port_outw(port: u16, val: u16) {
+    // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 out 的目标是 dx 选定的索引口
+    // 或数据口, 写入值 val 为 16 位 DISPI 寄存器值; 端口号由调用方
+    // read_bochs_disp_mode() 以 VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 常量传入.
     unsafe {
         core::arch::asm!("out dx, ax", in("dx") port, in("ax") val, options(nomem, nostack));
     }
@@ -451,6 +472,9 @@ unsafe fn port_outw(port: u16, val: u16) {
 #[inline]
 // SAFETY: 调用方保证指针/类型有效 (详见上下文)
 unsafe fn port_inw(port: u16) -> u16 {
+    // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 in 从 dx 选定的数据口读回
+    // 16 位寄存器值到 ax; 读前调用方已先 out 索引口选定寄存器, 两次 I/O 的配对
+    // 互斥依据见单源 (唯一消费者 + 一次性调用).
     unsafe {
         let ret: u16;
         core::arch::asm!("in ax, dx", out("ax") ret, in("dx") port, options(nomem, nostack));

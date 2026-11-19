@@ -5,9 +5,9 @@
     "disposition": "D-5 乙: 待办清单而非豁免面 —— 批 5a–5g 逐树补写 SAFETY, 该树清零后翻 -D 硬执法, 侧车随之收缩; 全仓归零后本腿转硬零"
   },
   "totals": {
-    "sites": 109,
-    "files": 32,
-    "keys": 35
+    "sites": 58,
+    "files": 20,
+    "keys": 22
   },
   "entries": [
     [
@@ -24,41 +24,6 @@
       "src/kernel/memory_allocator.rs",
       "impl",
       1
-    ],
-    [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/kexec.rs",
-      "block",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/uefi.rs",
-      "block",
-      5
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "block",
-      2
     ],
     [
       "src/kernel/privileged/frame.rs",
@@ -104,36 +69,6 @@
       "src/kernel/privileged/klog/mod.rs",
       "block",
       11
-    ],
-    [
-      "src/kernel/privileged/net/init.rs",
-      "block",
-      4
-    ],
-    [
-      "src/kernel/privileged/net/init/cmd.rs",
-      "block",
-      3
-    ],
-    [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "block",
-      27
-    ],
-    [
-      "src/kernel/privileged/net/init/state.rs",
-      "impl",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "block",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/syscall.rs",
-      "block",
-      1
     ],
     [
       "src/kernel/privileged/proc/elf/mod.rs",

@@ -241,6 +241,13 @@ impl EGDFDevice {
     /// `T` 与 `set_driver_data` 写入时的具体类型一致.
     #[must_use]
     pub unsafe fn driver_as_mut<T>(&mut self) -> &mut T {
+        // SAFETY: driver_data 是类型擦除的 *mut u8, 由注册入口 (egdf_register /
+        // egdf_register_with_ops) 的调用方传入, EGDF 不校验其指向的具体类型;
+        // 故 T 必须与注册时写入的实际类型一致, 且该值已初始化、按 T 的对齐要求
+        // 对齐、在借用期间存活 (driver_owned=false 时内存由驱动方管理).
+        // 返回的 &mut T 生命周期绑定 &mut self, 调用方不得同时持有第二个可变借用;
+        // EGDF_DEVICES 锁只保护注册表 Vec, 不保护指针所指对象, 跨核互斥须由驱动
+        // 自身的锁保证. 本函数当前全仓零调用方.
         unsafe { &mut *self.driver_data.cast::<T>() }
     }
 
@@ -252,6 +259,10 @@ impl EGDFDevice {
     /// `T` 与 `set_driver_data` 写入时的具体类型一致.
     #[must_use]
     pub unsafe fn driver_as_ref<T>(&self) -> &T {
+        // SAFETY: 同 driver_as_mut 的类型/对齐/存活契约 (driver_data 由注册入口
+        // 调用方传入, EGDF 不做类型校验), 区别是本处只产生 &T 共享借用: 要求该值
+        // 在借用期间不被任何 &mut 别名改写, 且 T 与注册时的实际类型一致.
+        // EGDF_DEVICES 锁不保护指针所指对象. 本函数当前全仓零调用方.
         unsafe { &*(self.driver_data as *const T) }
     }
 

@@ -482,6 +482,11 @@ fn negotiate_scancode_set(cmd_port: &IoPort, data_port: &IoPort) {
 
 // SAFETY: 单核内核, 键盘操作无并发
 unsafe impl Send for KeyboardDriver {}
+// SAFETY: KeyboardDriver 的字段 (ModifierState / KeyboardBuffer / DeviceInfo / bool /
+// 两个 IoPort) 全是自有 plain 数据, 无内部可变性, auto Sync 本可派生, 本 impl 只是
+// 显式化 (非类型必需: 唯一存储点 KEYBOARD_DEVICE 是 IrqSpinLock<Option<Box<…>>>,
+// 而 IrqSpinLock<T>: Sync 只要求 T: Send). 跨核互斥的真实依据是该锁: 取锁期间本核
+// 中断屏蔽, &mut 独占借出, 不存在两核同时写同一 KeyboardDriver 的路径.
 unsafe impl Sync for KeyboardDriver {}
 
 impl Driver for KeyboardDriver {
@@ -559,6 +564,12 @@ impl KeyboardDriver {
         // 由 PC 枚举确定, 不与其他 IoPort 实例重叠.
         let data_port = unsafe { IoPort::new(PS2_DATA_PORT, 1, "ps2-data") }
             .expect("ps2-data port init failed");
+        // SAFETY: IoPort::new 的 unsafe 是契约标记 (内部只校验 len != 0 与 base+len
+        // 不溢出), 契约要求端口区间有效且不与其它 IoPort 实例重叠. 本处 PS2_CMD_PORT
+        // = 0x64 长度 1, 与上一行 data_port 的 0x60 长度 1 不重叠; 全仓 IoPort::new
+        // 只有本函数这两处, 故无第二个实例覆盖这两个口. 0x64 另被复位路径
+        // (arch/x86_64/mod.rs 与 acpi.rs 的键盘控制器脉冲复位) 以裸 outb 使用,
+        // 不经 IoPort 且只在重启/关机时执行, 不构成 IoPort 区间冲突.
         let cmd_port =
             unsafe { IoPort::new(PS2_CMD_PORT, 1, "ps2-cmd") }.expect("ps2-cmd port init failed");
         Self {

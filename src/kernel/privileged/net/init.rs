@@ -91,6 +91,13 @@ pub use cmd::*;
 /// - `SOCKET_STORAGE` (惰性堆置切片) 由 `sockets::socket_storage()` 分配并初始化, 供 `SocketSet` 长期借用
 /// - `SOCKET_SET` 是 `UninitCell<SocketSet<'static>>`, 初始化后只读
 unsafe fn init_sockets() {
+    // SAFETY: 本块经 addr_of_mut! 取 static mut SOCKET_SET (实际类型
+    // MaybeUninit<SocketSet<static>>) 的裸指针并 write 初值 (P-64: 不对 static mut
+    // 直接取引用). 依据: 上方 SOCKETS_INITIALIZED 的 Acquire 早退使已初始化时不再写;
+    // 写入只发生在调用方保证的串行临界区内 (契约见本函数 # Safety), 此时无其它核
+    // 持有 SOCKET_SET 的引用; 复位路径 query::reset_network_state 在 NET_STATE 锁内
+    // 清该标志, 故重写同样在锁内. socket_storage() 的堆切片由 SocketSet 长期借用,
+    // 不在此释放.
     unsafe {
         if SOCKETS_INITIALIZED.load(Ordering::Acquire) {
             return;
@@ -107,6 +114,10 @@ unsafe fn init_sockets() {
 /// - 调用前必须已执行 `init_sockets` 完成 `SOCKET_SET` 初始化
 /// - 返回的指针仅在同一线程的 socket 调度上下文内使用, 不得跨线程共享
 unsafe fn socket_set() -> *mut SocketSet<'static> {
+    // SAFETY: 本块只把 static mut SOCKET_SET 的 MaybeUninit 转成 *mut SocketSet
+    // (as_mut_ptr 不解引用、不要求已初始化), 经 addr_of_mut! 避免对 static mut 取引用.
+    // 返回指针的有效性由调用方契约保证: init_sockets 已执行, 且指针只在持
+    // NET_STATE 锁的 socket 调度上下文内解引用 (见各调用点注释).
     unsafe { (*core::ptr::addr_of_mut!(SOCKET_SET)).as_mut_ptr() }
 }
 
@@ -251,6 +262,11 @@ pub unsafe fn poll_network() {
     // 出临界区后才登记 hrtimer (锁序约束见 `init/poll_timer.rs`).
     // 不预先赋 `None`: 临界区内的早退路径直接 `return`, 能走到下面即已赋值.
     let next_poll_ns: Option<u64>;
+    // SAFETY: 本块的 unsafe 操作是 raw::socket_set() 解引用与 process_dhcp_events
+    // (两者契约均要求已持 NET_STATE 锁). 块内 NET_STATE.try_lock() 的 _guard 活到
+    // 块尾, 覆盖全部访问; try_lock 失败即 return, 故 ISR 上下文不阻塞. device_mut /
+    // stack_mut 为 None 时同样早退. SOCKET_SET 已初始化是 socket_set() 的调用契约
+    // (见该函数 # Safety), 由本函数的调用时序保证.
     unsafe {
         use crate::privileged::net::{
             SOCKET_WAIT_QUEUES, WAITER_ACCEPT, WAITER_CONNECT, WAITER_READ, WAITER_WRITE,
@@ -473,6 +489,10 @@ fn as_u32_handle(h: smoltcp::iface::SocketHandle) -> u32 {
 unsafe fn smol_handle_from_u32(raw: u32) -> smoltcp::iface::SocketHandle {
     // SAFETY: 同 `as_u32_handle`, 字段类型 usize, transmute_copy 安全.
     let raw_usize = raw as usize;
+    // SAFETY: smoltcp::iface::SocketHandle 定义为单字段 tuple struct
+    // (pub struct SocketHandle(usize)), 故 usize → SocketHandle 的 transmute_copy
+    // 两侧大小恒等 (编译期由 transmute_copy 强制), 不依赖 repr(transparent).
+    // raw 须为同构 smoltcp 版本下 as_u32_handle 的输出 (契约见本函数 # Safety).
     unsafe { core::mem::transmute_copy::<usize, smoltcp::iface::SocketHandle>(&raw_usize) }
 }
 

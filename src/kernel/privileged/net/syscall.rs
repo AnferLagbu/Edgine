@@ -150,6 +150,11 @@ pub fn raw_read_sun_family(ptr: u64) -> Result<u16, Errno> {
     }
     // SAFETY: ptr 由 check_user_buf 验证为可读 2 字节
     let lo = unsafe { core::ptr::read_volatile(ptr as *const u8) };
+    // SAFETY: 与上一行 lo 同源: ptr 已由 userptr::validate_user_buf(ptr, 2) 校验,
+    // ptr+1 仍在该 2 字节区间内. read_volatile 防止编译器把两次字节读合并或缓存
+    // (用户内存可被其它核并发改写). 已知局限 (登记不改): validate_user_buf 只做
+    // 地址区间校验 (不验证已映射), 且本处不经 mm::copy_user 的 stac/clac 包裹,
+    // CR4.SMAP 置位时 ring0 直读用户页会触发 #PF.
     let hi = unsafe { core::ptr::read_volatile((ptr + 1) as *const u8) };
     Ok(u16::from_be_bytes([hi, lo]))
 }

@@ -171,6 +171,13 @@ impl EGDFNode {
 // SAFETY: EGDFNode 访问由 DEV_TREE 锁 (Mutex) 串行化.
 // 无需 UnsafeCell, 因为我们已用 Mutex 保护的集合.
 unsafe impl Send for EGDFNode {}
+// SAFETY: EGDFNode 全部字段 (u32 / &static str / Vec / BTreeMap / Option /
+// DeviceState / FirmwareBlob) 都是自有数据或 static 共享引用, 无内部可变性,
+// auto Sync 本可派生, 本 impl 只是显式化. 真实互斥依据: 节点只存在于 DEV_TREE
+// (IrqSpinLock<DevTree>) 的 Vec 内, 改节点需 &mut self, 只能由 lock() 独占借出
+// (持锁期间本核中断屏蔽); 对外暴露的 &EGDFNode 只在持锁期间经 devtree_walk
+// 回调借出, devtree_get_node 只给克隆. 锁保护的是 Vec 结构与节点字段,
+// 不是节点内部可变单元 (本类型无此类单元).
 unsafe impl Sync for EGDFNode {}
 
 static NEXT_NODE_ID: AtomicU32 = AtomicU32::new(1);

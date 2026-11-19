@@ -179,6 +179,14 @@ impl KexecSubsystem {
         // 在实际实现中, 这里应该通过 PMM 确保地址可用
         let dst_ptr = dst_addr as *mut u8;
         let dst_size = src_data.len();
+        // SAFETY: 本块把 src_data 复制到 dst_ptr. 已成立的前提: 上方已拒绝 Executing
+        // 状态, 且 src_data.len() 不超过该段类型上限 (KEXEC_MAX_KERNEL_SIZE /
+        // KEXEC_MAX_INITRD_SIZE / KEXEC_MAX_CMDLINE), 故 count 不越源切片, 源指针
+        // 来自有效已初始化切片.
+        // 已知局限 (登记不改): dst_addr 未经 PMM 校验是否已映射且可写, 也未校验
+        // 源/目标区间不重叠 (copy_nonoverlapping 的前提), 且形参文档称其为物理地址
+        // 而此处直接当虚拟地址用 (未加 KERNEL_BASE 偏移). 当前 load_segment 全仓
+        // 零调用方 (sys_kexec 的 cmd 0 只记录元数据不复制), 故该路径不可达.
         unsafe {
             // 检查目标地址可写 (简化: 直接写入)
             core::ptr::copy_nonoverlapping(src_data.as_ptr(), dst_ptr, dst_size);

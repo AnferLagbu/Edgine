@@ -170,6 +170,12 @@ pub unsafe fn save_unchecked<F>(filler: F)
 where
     F: FnOnce(&mut NetSnapshot),
 {
+    // SAFETY: 块内 unsafe 操作 = NET_SNAPSHOT_LOCK.data_ptr() (契约: 调用方已持本锁
+    // 且不得同时经 guard 的 DerefMut 借用同一数据) 与对该指针的整体赋值.
+    // 依据: 本函数唯一调用方 save() 先取 NET_SNAPSHOT_LOCK 再调本函数, guard 活到
+    // 写入之后; 写入值 snap 是本地 NetSnapshot (Copy + repr(C) POD), 经 seal() 填好
+    // 魔数/版本/校验和后才整体覆盖, 故读侧不会看到半写状态. filler 只拿到本地
+    // &mut snap, 不接触全局静态.
     unsafe {
         let mut snap = NetSnapshot::empty();
         filler(&mut snap);
@@ -187,6 +193,10 @@ where
 /// 调用方必须持有 `NET_SNAPSHOT_LOCK`. 返回值是 `NetSnapshot` 的副本, 不
 /// 持有对全局静态的可变引用, 调用方后续修改不会影响全局.
 pub unsafe fn load_unchecked() -> NetSnapshot {
+    // SAFETY: data_ptr() 的契约是调用方已持 NET_SNAPSHOT_LOCK 且不经 guard 的
+    // DerefMut 同时借用; 本函数唯一调用方 load() 先取锁再调本函数. 解引用只做
+    // 一次整体读取, NetSnapshot 是 Copy POD, 返回副本而非对全局静态的引用,
+    // 故调用方后续修改不会回写全局, 也不产生 &mut 重入.
     unsafe { *NET_SNAPSHOT_LOCK.data_ptr() }
 }
 

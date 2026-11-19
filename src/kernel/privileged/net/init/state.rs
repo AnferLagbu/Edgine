@@ -121,6 +121,13 @@ pub struct NetState {
 // 在 NET_STATE (IrqSpinLock) 保护下串行访问, 无跨线程共享裸指针.
 // 各字段为 Vec<T>, 满足 Send/Sync 所需的内层 T: Send 约束.
 unsafe impl Send for NetState {}
+// SAFETY: NetState 含 Vec<*mut u8> 裸指针字段 (tcp/udp 的 rx/tx 缓冲表), 裸指针
+// 既非 Send 也非 Sync, 故 auto trait 不成立, 需显式 impl. 依据: 这些指针只由
+// k_malloc 分配 / k_free 释放, 且只在 NET_STATE (IrqSpinLock) 锁内经 raw accessor
+// 读写与归还, 不向锁外传递别名; 持锁期间本核中断屏蔽, 故不存在两核同时解引用
+// 同一缓冲指针的路径. 就唯一存储形态 static NET_STATE 而言 Sync 非类型必需
+// (IrqSpinLock<T>: Sync 只要求 T: Send), 本 impl 断言 &NetState 可跨核共享,
+// soundness 依据与 Send 同源.
 unsafe impl Sync for NetState {}
 
 impl NetState {

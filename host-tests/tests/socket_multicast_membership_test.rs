@@ -197,7 +197,13 @@ fn membership_bridge_keeps_iface_bookkeeping_order() {
 fn close_releases_membership_before_mutating_table() {
     let src = read_src(SM_FI);
     let start = src.find("fn sm_close(").expect("D11: sm_close 不存在");
-    let body = &src[start..start + 3_000];
+    // 定长窗口按字节取, 末尾必须落在字符边界上: 函数体内的中文注释是多字节,
+    // 直接切 start+3_000 会落进字符中间而 panic (与被锁的接线语义无关).
+    let mut end = (start + 3_000).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &src[start..end];
 
     assert!(
         body.contains("raw::mc_slot_bits(slot)"),

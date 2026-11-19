@@ -1158,9 +1158,128 @@ RC=0（自测 13/13；`safety_debt` 通过、债册 **109 处 / 35 键**；`miss
 
 描述：清 net 38（含 `net/init/sm_fi.rs` 27）+ driver 10 + egdf 3。
 方案：同批 5a 四步。
-状态：[]
+状态：[X]
 详情：`sm_fi.rs` 单文件 27 处，宜先核其 unsafe 形态是否可**收敛到更少的 unsafe 块**
 （减少块数比补注释更根本），但结构改造超出本工程范围 ⇒ 只补注释，发现的可收敛点**登记不顺手改**（§11.5）。
+**施工结果**：12 个源文件、51 处位点全部补写（net 38 = `init/sm_fi.rs` 27 + `init.rs` 4 +
+`init/cmd.rs` 3 + `save.rs` 2 + `syscall.rs` 1 + `init/state.rs` 1；driver 10 = `uefi.rs` 5 +
+`display/mod.rs` 2 + `input/keyboard.rs` 2 + `kexec.rs` 1；egdf 3 = `mod.rs` 2 + `devtree.rs` 1）。
+diff **+255 行 / −0 行**，新增行中**非注释行 0**（仅 3 行单源段后的空分隔行）⇒ 纯注释批，
+零语义改动。三段模块级「unsafe 依据单源」：`display/mod.rs` 的 **DISPI 端口对**（CPL=0 下
+in/out 不受限、`options(nomem, nostack)` 不带 `preserves_flags`、index/data 配对非原子的依据
+是**唯一消费者 + 仅 BSP 启动期探测**而非「单核」）、`driver/uefi.rs` 的 **系统表定长字段**
+（签名门 fail-closed、偏移 0x00/0x18/0x58/0x60/0x68/0x70 皆 8 的倍数而 0x20 是 4 的倍数、
+volatile 理由）、`net/init/sm_fi.rs` 的 **类别 A 自取锁外壳 / B 已持锁内核实现 / C sockaddr
+编解码 / D 用户 msghdr·iov 直读**（27 处逐处只引类别 + 写该处特有不变量与实际被调方）。
+**核实过的关键断言**（举其要）：display 端口对的真实调用链是 `probe_vga_fb_via_pci()`
+（遍历 CLASS_DISPLAY 中 subclass=0x00 的 VGA 设备、首个成功探测即返回）← `display_init()`
+的 Multiboot2 帧缓冲不可用分支，而 SMP 早已由 `boot_interrupt_timer_init` 内的
+`secondary_cpu_bringup()` 上线 ⇒ **初稿「只在 PCI 回退路径被调用一次 / 单核」两条断言均被
+grep+read 推翻后重写**；keyboard 的 `IoPort::new` 全仓只有 `cmd_port`/`data_port` 两处实例
+（0x64 len 1 与 0x60 len 1 不重叠），0x64 另被 `arch/x86_64/mod.rs` 与 `acpi.rs` 的复位路径
+以裸 `outb` 使用（仅 reboot/shutdown）；`KeyboardDriver`/`EGDFNode`/`NetState` 三个 auto-trait
+impl **均非类型必需**（`IrqSpinLock<T>: Sync` 只要求 `T: Send`），真实互斥依据是各自那把锁；
+`net/init.rs` 的 `SOCKET_SET` 实装是 `static mut MaybeUninit<SocketSet<'static>>`（**不是**
+doc 声称的 `UninitCell`），`as_mut_ptr` 不解引用故不要求已初始化，`try_lock` 的 `_guard`
+覆盖整块且 None 早退 ⇒ **不写「socket_set 先于 NET_READY 初始化」这类次序断言**（实测
+`NET_READY.store(true)` 在 `init.rs` 内先于 `raw::init_sockets()`，次序与直觉相反）；
+`SocketHandle` 是 `pub struct SocketHandle(usize)` 单字段 ⇒ `transmute_copy` 尺寸相等；
+`uefi.rs` 五处系统表读的**唯一调用方** `lib.rs::boot_deferred_init` 传 0 ⇒ 五读当前全不可达；
+`kexec.rs::load_segment` 全仓零调用方（`sys_kexec` cmd 0 只记元数据）；`sm_fi.rs` 的
+`net_clear_waiter` 是 **safe** 函数，未误列为 unsafe 操作。注释引用的内核函数名/常量已一次性
+grep 核实存在（`display_init` / `probe_vga_fb_via_pci` / `read_bochs_disp_mode` /
+`secondary_cpu_bringup` / `boot_interrupt_timer_init` / `boot_deferred_init` / `devtree_get_node` /
+`devtree_walk` / `DeviceState` / `IobRegion` / `get_max_sockets` / `scheduler_block` /
+`endpoint_to_smol` / `KERNEL_BASE` / `seal` / `USER_ADDR_MAX` / `E_BADF`=9 / `E_INVAL`=22 /
+`E_NODEV`=19 / `SocketHandle` / `uefi_init`），**未引用不存在的 `set_driver_data`**（该名字只
+出现在 egdf 的旧 doc 里，见 ㉗）。
+**棘轮读数**：109 → **58 处 / 20 文件 / 22 键**（−51；块 48 + impl 10）。kernel x86_64 腿
+**55** / aarch64 腿 **53**，并集 58；host-tests、src/user 双架构、shell-rust、shell-edgine-abi
+五腿均 **0**。13 个目标键全部归零、**零新增位点**（脚本 `under[:15]` 只显示前 15 行，
+`sm_fi.rs` 27 等键被显示截断而非未归零，已按侧车逐键核对）。侧车 `--update-baseline` 收缩
+（+3 / −68 行），收缩后裸跑 RC=0。**本批不翻硬执法**（kernel 树尚未归零），翻 `-D` 在批 5g。
+**余 58 处分布**（与批 5g 描述逐项核对一致）：`glue/string.rs` 16 / `klog/mod.rs` 11 /
+`lib.rs` 6 / `timer/hrtimer.rs` 4 / `memory_allocator.rs` 3 / `proc/elf/mod.rs` 2 /
+`syscall/dispatch.rs` 2 / `syscall/mod.rs` 2 / `frame.rs` 1 / `freg/{domain,recoverable,types,undo_log}.rs`
+各 1 / `ioport.rs` 1 / `ipc/dynamic.rs` 1 / `proc/scheduler.rs` 1 / `proc/user_proc.rs` 1 /
+`sched/sched_trait.rs` 1 / `sgeg/audit.rs` 1 / `vmspace.rs` 1。
+**⑮ 检测器盲区在本批面内的读数（本批不改判据，待批 6 裁定）**：按与批 5d/5e 同一窄短语集
+（`调用方保证指针/类型有效 (详见上下文)` / `调用方保证指针合法`）测 net+driver+egdf 三面，
+得 **14 处 / 7 文件**，**与本批改前同读数**（本批新写 51 条无一落入窄集）：
+`display/mod.rs` 3 / `input/keyboard.rs` 1 / `driver/virtio/queue.rs` 3 / `egdf/composite.rs` 2 /
+`egdf/mod.rs` 2 / `net/api.rs` 1 / `net/smoltcp_impl.rs` 2。放宽到 8 条短语的宽口径为
+**48 处 / 16 文件**（改前 47）；扫描面 63 个 `.rs`、421 行 SAFETY 标签。宽口径 +1 的来源已
+核实：本批新增行中命中宽短语的共 7 行，但扫描判据要求该行含 `SAFETY` / `# Safety` 记号，
+故只有 1 行被计入（`sm_fi.rs` 的「写入只发生在调用方保证的串行临界区内 (契约见本函数
+# Safety)」）⇒ **宽口径增量不是新占位，而是判据的记号前提所致**。按裁定**本批不改写既有
+占位文本**（如 `keyboard.rs` 的「单核内核, 键盘操作无并发」原样保留，新注释写在其下）。
+⇒ 三批累计占位存量：mm+sync 面 39（批 5d）、arch+cpu+idt+boot 面 117 其中 92 块级（批 5e）、
+net+driver+egdf 面 14（本批）；⑮ 甲案（加内容面审计腿）射程须按此三读数估。
+**可收敛点（按详情要求登记不顺手改，§11.5）**：① `sm_fi.rs` 有 **6 组「自取锁外壳 +
+`*_locked` 内核实现」配对**（bind / listen / accept / connect / shutdown / socket_poll），
+外壳里的 unsafe 块**只为持锁期间取 `&mut` 与 socket_set**，本身无独立硬件事由 ⇒ 若把
+`*_locked` 改为接收由 guard 派生的 `&mut NetState`（Asterinas 式 **guard-as-capability**）、
+并在 guard 上提供 safe 的 socket_set 访问器，可消去约 **13 个 unsafe 块**（比补注释更根本）。
+属结构改造，超出本工程范围，**本批只补注释**。② `display/mod.rs` 的 DISPI 端口对
+（`port_outw`/`port_inw`）重复实现了 `IoPort` 已有的 safe 代理能力 ⇒ 可改用 `IoPort` 消去
+2 个块（同批 5f 的 ㊴）。
+**首轮门槛红与归因（本批直接导致的连带面，已在本批修复）**：首轮 `BUILD-RC=1` /
+`HOST-RC=2` **同一病因** —— `host-tests/tests/socket_multicast_membership_test.rs` 的
+`close_releases_membership_before_mutating_table` 用**定长字节窗口** `&src[start..start + 3_000]`
+截取 `sm_close` 函数体，本批给该函数补 SAFETY 注释后窗口末端落进多字节汉字中间，panic
+「end byte index 75954 is not a char boundary; it is inside '未'」。修法 = 窗口末端夹到字符
+边界（`while !src.is_char_boundary(end) { end -= 1; }`）并加 `.min(src.len())`，**四条针不动**
+（实测相对偏移 `mc_slot_bits` 1110 / `mc_addr_at` 1391 / `mc_force_leave` 1541 /
+`leave_multicast_group` 1698，全在 3000 窗内）；单套复跑 11/11 RC=0，随后七门槛全绿。
+按 §9.3/§11.5 属本批改动直接导致的遗留项 ⇒ 本批修复不另询问。**同类定长窗口全仓 14 处 /
+9 文件**（本批修 1、登记 13，见 ㊵），13 处**均不在批 5g 的改动面**上，按 §11.2 不顺手改。
+**另登记只报告不处置的观察（§11.5，与批 4/5a–5e 各项合并待批 6 裁定；本批新增 ㉗–㊵，
+累计 40 项）**：㉗ `egdf/mod.rs` 的 `driver_as_mut`/`driver_as_ref` doc 引用**不存在的**
+`set_driver_data`（真实写入点是 `egdf_register`/`egdf_register_with_ops`），且两函数全仓零
+调用方（R1 报告面）。㉘ `egdf/mod.rs` 的 `unsafe impl Send for EGDFDevice` 上方有两段 SAFETY，
+前一段散文**截断**（「其它字段均为 Copy 类型或」后无下文）且与后一段重复。㉙ `net/init.rs`
+的 doc 写 `SOCKET_SET` 是 `UninitCell<SocketSet<'static>>`，实装是 `static mut MaybeUninit`。
+㉚ `net/syscall.rs` 六处 SAFETY 宣称指针「已校验」（`addr/addrlen`、`src_ptr/src_len_ptr`、
+两处 `msg_ptr`、两处 `addr_ptr/addrlen_ptr`）而实装**无任何校验**（I4 面）。㉛ `sm_fi.rs`
+的逐 iov `base`/`len` 同样被注释宣称为已校验，而 functions 侧从不校验 ⇒
+`copy_nonoverlapping` 长度与目的址无界（I4，**可触内核内存**，是本批发现中风险最高一条）。
+㉜ `net/syscall.rs` 的 `raw_read_*`/`raw_write_*` 不走 stac/clac，而 CR4.SMAP 已按 CPUID 开启
+⇒ 用户页访问会 #PF；`cpu/mod.rs` 的安全代理清单**漏列**这两个入口。㉝ 三处 SAFETY 引用
+`check_user_buf`，真名是 `userptr::validate_user_buf`（且它只做**范围**校验）。㉞
+`keyboard.rs` 保留的旧 SAFETY「单核内核, 键盘操作无并发」与 SMP 已在线的实况不符（陈旧措辞，
+新注释已在其下写明真实依据）。㉟ 冗余 auto-trait impl 三处：`KeyboardDriver: Sync`、
+`EGDFNode: Send + Sync`、`NetState: Sync`（与 ㉖ `MultibootPtr` 同类，本批只补注释不删）。
+㊱ `driver/kexec.rs::load_segment` 把 doc 声称的物理地址**当 VA 用**（不加 `KERNEL_BASE`）、
+`dst_addr` 未经 PMM 校验映射/可写、无 src/dst 重叠检查，且全仓零调用方（已就地登记为已知
+局限）。㊲ `driver/uefi.rs` 五处系统表读**当前全不可达**（唯一调用方 `boot_deferred_init`
+传 0），且对齐/映射/固件预留均未校验、doc 的 PA/VA 口径不一致（已就地登记为已知局限）。
+㊳ `net/save.rs` 的魔数 doc 写 `"ANXS"` / `0x584E414C`，常量实为 `0x584E_4153`（末字节
+0x53='S' vs 0x4C='L'）⇒ 拼写与数值双不符；属**冻结命名产物面**，本批不动、不加豁免。
+㊴ `display/mod.rs` 的 DISPI 端口对重复 `IoPort` safe 代理（亦见上「可收敛点」②）。
+㊵ **host-tests 定长字节窗口 14 处 / 9 文件**（`td17_table_kernel_error_test.rs` 400、
+`td19_proc_kernel_error_test.rs` 600/400/600/400/500、`td18_fs_kernel_error_test.rs` 600/300、
+`p24_neighbor_rate_limit_test.rs` 200、`virtio_vring_layout_contract_test.rs` 1200、
+`net_poll_at_hrtimer_test.rs` 400、`net_snapshot_test.rs` 5000、`socket_wait_queue_test.rs` 4000、
+`socket_multicast_membership_test.rs` 2000）—— 与被锁语义无关的**脆性截断**，任何给被锁函数
+补注释的工程都可能踩红；本批修 1 处、余 13 处登记（可选处置：统一夹字符边界 / 改按函数体
+边界取窗 / 加「窗口须覆盖全部针」的自测）。
+**七门槛（终态，`/tmp/b5f_gates2.log`，判据 = 日志内 `*-RC=` 回显）**：① `./ci/build.sh all`
+RC=0（Passed **6** / Failed **0**）；② `bash ci/audit.sh full` RC=0（自测 **13/13**；
+`safety_debt` 通过、并集 **58 处 / 20 文件 / 22 键** 与债册一致；`missing_docs_debt` **0 处 /
+0 键**；废弃命名扫描 受检 **1721 文件** / 历史面 KEEP **316** / 违规 **0**；`vacuous_needle`
+受检 **1313 `.rs`** / 违规 **0**；P-49 存量审计腿 **10/10** 无静默跳过；`check_doc_paths`
+校验 **19 份** / 设计册免报 **3 条** / **0 漂移**；性能指标腿 **24 项**全部在绝对预算内
+（3 passed）；Lockbud 实编并分析 **4/4 crate** 零发现；QEMU **2/2**（FAIL_OK=0）+ P-62
+feature 运行维 **4/4** + thread-stress **6/6**；FP-06 白名单外 FP/SIMD **0**；**因环境缺失
+未执行腿数 0**；档位 **full**）；③ `make test-host` RC=0（**204 套 / 1602 passed / 0 failed**，
+与批 5c/5d/5e 同读数——纯注释批）；④ `make test-kernel-host` RC=0（三成员 **12 + 807 + 556
+= 1375 / 0 failed**）；⑤ `make -f Makefile.ci ci-rustdoc` RC=0（x86_64 与 aarch64 两腿都真跑、
+各 exit **0**）。**本批无新建文件**（12 个源文件 + 1 个 host-test + 侧车 + 本册 + 台账均已在
+索引内），故无需先 git add 再跑命名扫描。
+**文档回填后终态复跑**（`/tmp/b5f_terminal.log`，判据 = 日志内 `*-RC=` 回显，非后台通知退出码）：
+`T1-BUILD-RC=0`（Passed **6** / Failed **0**）、`T2-NAMING-RC=0`（受检 **1721 文件** / KEEP **316** /
+违规 **0**）、`T3-DOCPATHS-RC=0`（校验 **19 份** / 设计册免报 **3** 条 / **0 漂移**）——本册与台账
+两处文档改动未引入废弃命名违规或源码路径漂移。
 
 ### 批 5g・SAFETY 清零: kernel 其余（58 处）
 
@@ -1174,10 +1293,12 @@ RC=0（自测 13/13；`safety_debt` 通过、债册 **109 处 / 35 键**；`miss
 
 ### 批 6・收口
 
-描述：台账与册内状态同步、memory 更新、按路径提交推送；并**合并提交 §11.5 十五项工程外发现
-（①–⑮）的处置裁定**——其中 ⑥ `auth_login` 参数序颠倒与 ⑩ `strlen` 上限多读 1 字节是真缺陷，
-⑪–⑭ 是 latent 的约束 / 锁序 / 别名缺口，⑮ 是 SAFETY 检测器的**内容面盲区**（甲 加内容面审计腿 /
-乙 只逐批改写不加腿）。
+描述：台账与册内状态同步、memory 更新、按路径提交推送；并**合并提交 §11.5 四十项工程外发现
+（①–㊵，批 5g 若新增则续编）的处置裁定**——其中 ⑥ `auth_login` 参数序颠倒与 ⑩ `strlen` 上限
+多读 1 字节是真缺陷，⑪–⑭ 是 latent 的约束 / 锁序 / 别名缺口，⑮ 是 SAFETY 检测器的**内容面
+盲区**（甲 加内容面审计腿 / 乙 只逐批改写不加腿；三批累计占位存量读数见批 5d/5e/5f），
+㉚–㉜ 是 net syscall 面的 **I4 用户指针校验缺口**（㉛ 逐 iov `base`/`len` 无界可触内核内存，
+风险最高），㊵ 是 host-tests **定长字节窗口脆性截断**（14 处 / 9 文件，批 5f 修 1 登记 13）。
 方案：① 本册状态字段全 `[X]`；② `docs/plan/progress-active-tasks.md` 甲表行回填读数
 （**13 个行首状态字段** = 批 0/1/2/3/4/5a/5b/5c/5d/5e/5f/5g/6）；
 ③ 新文件**先 `git add`** 再跑 `scan_obsolete_naming`（扫 `git ls-files`）与 `check_doc_paths`；

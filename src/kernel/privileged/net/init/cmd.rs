@@ -33,6 +33,10 @@ use super::state::NET_STATE;
 /// `NET_READY` 由网络栈在链路就绪后置位。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eg_net_start_dhcp() -> i32 {
+    // SAFETY: 块内唯一 unsafe 操作是 poll_network() (契约: try_lock 保证 ISR 安全,
+    // 内部 raw accessor 由 NET_STATE 互斥). NET_READY 的 Acquire 读为 false 时早退,
+    // 故只在网络栈就绪后驱动一次 poll; 本函数不持 NET_STATE 锁, 由 poll_network
+    // 内部 try_lock 自行取得, 无嵌套加锁.
     unsafe {
         if !NET_READY.load(Ordering::Acquire) {
             return -1;
@@ -53,6 +57,11 @@ pub unsafe extern "C" fn eg_net_start_dhcp() -> i32 {
 /// - 调用方保证 NET 已初始化。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn eg_net_static_ip(cidr_str: *const u8, gw_str: *const u8) -> i32 {
+    // SAFETY: 块内 unsafe 操作 = cstr_to_str (要求 NUL 终止且调用期间内存有效)
+    // 与 raw accessor 的锁内使用. NET_READY 为 false 早退; NET_STATE.lock() 的
+    // _guard 覆盖 cidr/gw 解析与 stack 配置全过程. 两个 C 字符串由唯一调用方
+    // functions::net::static_ip 在内核 Vec 内构造并补 NUL, 调用期间不释放,
+    // 故 cstr_to_str 的契约由构造方式保证.
     unsafe {
         if !NET_READY.load(Ordering::Acquire) {
             return -1;
@@ -112,6 +121,10 @@ unsafe fn cstr_to_str(ptr: *const u8) -> Option<&'static str> {
     }
     // SAFETY: 调用方保证 NUL 终止; 扫描长度无上界约束 (FFI 契约)
     let mut len = 0usize;
+    // SAFETY: 逐字节扫描到 NUL 为止. ptr 非空已在上方早退; 调用方契约保证 ptr
+    // 指向 NUL 终止且调用期间有效的内存, 故 ptr.add(len) 始终落在该字符串对象内.
+    // 已知局限 (登记不改): 扫描无长度上界, 契约被违反时会越界读; 当前唯一调用方
+    // 传入内核侧构造的 NUL 终止 Vec, 不触发该形态.
     while unsafe { *ptr.add(len) } != 0 {
         len += 1;
     }

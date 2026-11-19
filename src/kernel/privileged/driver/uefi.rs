@@ -407,6 +407,21 @@ impl UefiSubsystem {
         );
     }
 
+    // === unsafe 依据单源 (EFI_SYSTEM_TABLE 只读解析) ===
+    //
+    // 类别「系统表定长字段」: 下列 read_volatile 只读 addr + 固定偏移处的定长字段,
+    // 不跟随任何取出的指针 (runtime/boot/config/vendor 只记录地址值). 依据:
+    // - 签名门: 先读 ST_OFF_SIGNATURE(0x00) 比对 EFI_SYSTEM_TABLE_SIGNATURE
+    //   (0x5453_5953_2049_4249), 不符即 has_uefi=false 并返回 (fail-closed),
+    //   故后续字段读取只在签名已匹配的表上进行;
+    // - 对齐: 偏移 0x00/0x18/0x58/0x60/0x68/0x70 均为 8 的倍数, 0x20 为 4 的倍数,
+    //   故 u64 读要求 addr 本身 8 字节对齐、u32 读要求 4 字节对齐 (UEFI 规范保证
+    //   系统表按其自然对齐放置);
+    // - volatile: 字段位于固件保留内存, 用 read_volatile 防止编译器合并/重排读取.
+    // 已知局限 (登记不改): addr 的映射存在性、对齐与固件保留区归属均未在本函数校验;
+    // 形参文档称物理内存而指针直接当虚拟地址用. 当前唯一调用方 (lib.rs 的
+    // boot_deferred_init) 传 0, 故 addr==0 早退, 下列读取全不可达.
+
     /// 解析 `EFI_SYSTEM_TABLE` — 验证签名 + 提取运行时/引导服务与配置表入口。
     ///
     /// 仅做**只读解析与记录**, 不调用任何 UEFI 运行时服务 (调用需固件仍处
@@ -427,13 +442,23 @@ impl UefiSubsystem {
         // SAFETY: 同上 — 已通过签名校验, 系统表结构有效, 读取定长字段.
         let runtime =
             unsafe { core::ptr::read_volatile((addr + ST_OFF_RUNTIME_SERVICES) as *const u64) };
+        // SAFETY: 类别「系统表定长字段」(见本节单源). 本处读 ST_OFF_BOOT_SERVICES(0x60)
+        // 的 u64 引导服务表指针值, 只记录不解引用.
         let boot = unsafe { core::ptr::read_volatile((addr + ST_OFF_BOOT_SERVICES) as *const u64) };
+        // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_NUM_TABLE_ENTRIES(0x68) 的 u64
+        // 配置表条目数, 落原子量前按 u32::MAX 截断.
         let entries =
             unsafe { core::ptr::read_volatile((addr + ST_OFF_NUM_TABLE_ENTRIES) as *const u64) };
+        // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_CONFIG_TABLE(0x70) 的 u64
+        // 配置表数组地址值, 只记录不解引用.
         let config =
             unsafe { core::ptr::read_volatile((addr + ST_OFF_CONFIG_TABLE) as *const u64) };
+        // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_FIRMWARE_VENDOR(0x18) 的 u64
+        // 厂商字符串指针值, 只记录不解引用.
         let vendor =
             unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_VENDOR) as *const u64) };
+        // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_FIRMWARE_REVISION(0x20) 的
+        // u32 版本号 (该字段宽 4 字节, 故读 u32 而非 u64).
         let fw_rev =
             unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_REVISION) as *const u32) };
 
