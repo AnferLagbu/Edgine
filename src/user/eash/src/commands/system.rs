@@ -1,5 +1,7 @@
 use core::fmt::Write;
-use userlib::sys::{gethostname, reboot as sys_reboot, sethostname};
+use userlib::sys::{
+    REBOOT_CMD_HALT, REBOOT_CMD_RESTART, gethostname, reboot as sys_reboot, sethostname,
+};
 /// 系统命令: osinfo, host, ps, reboot, halt
 use userlib::{print, println};
 
@@ -94,11 +96,11 @@ pub fn ps(_: &Cmd) {
 /// reboot: 重启系统
 pub fn reboot(_: &Cmd) {
     println("Rebooting...");
-    let _ = sys_reboot(0); // cmd=0: normal reboot
+    let _ = sys_reboot(REBOOT_CMD_RESTART);
 }
 
 /// halt: 关机
 pub fn halt(_: &Cmd) {
     println("Halting...");
-    let _ = sys_reboot(1); // cmd=1: shutdown/halt
+    let _ = sys_reboot(REBOOT_CMD_HALT);
 }

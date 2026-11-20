@@ -203,7 +203,34 @@ recvfrom、getsockname，以及 getpeername 的两条分支）统一经 `user_ad
 `nostack` 与压栈的矛盾（改 `options(noreturn)` 或提供栈）；② 51 **改调仓内已有的
 `arch/aarch64/psci.rs::system_reset()`**（`PSCI_SYSTEM_RESET = 0x8400_0009`），
 不在 syscall 层重写 SMCCC 汇编；③ 两架构 reboot 路径补 QEMU 腿断言（真重启可观测）。
-状态：[]
+详情：① ㊿ `raw` 子模块新增 `#[repr(C, packed)] struct Idtr { limit: u16, base: u64 }`
+（size 10 / base 偏移 2），asm 去掉 `options(nostack)` 改为「提供当前内核栈」并保留
+`spin_loop` 兜底；内联单测 `idtr_layout_is_cpu_ten_byte_form` 锁 size 与
+`offset_of!(Idtr, base)`。② 51 `reboot_via_psci` 只做转发 `psci::system_reset()`
+（HVC/SMC conduit 由设备树探测、功能号 0x8400_0009、PSCI 不可用时写零地址触发异常，
+仍发散）；同时补 `psci::invoke` 的 SMCCC clobber —— x1..x3 一并声明
+`lateout("xN") _`（原只声明 x0，固件改写 x1..x3 后编译器可假设其保值）。③ 新增
+`src/user/reboottest` 载荷（打印请求行后 `reboot(REBOOT_CMD_RESTART)`，机制返回即打
+`[REBOOT] FAIL` 非零退出）+ Makefile 双架构 `reboottest.bin` 接线 +
+`scripts/qemu_reboot_test.sh`（把 reboottest 打成专用 cpio 作 `/init`，**不带
+`-no-reboot`**；判据 = 请求行 ≥2 次 + `Entering Ring 3`/`Entering EL0` ≥2 次 +
+无 `[REBOOT] FAIL`），接入 `ci/audit.sh` full 档步骤 4 末位。
+④ 施工调研另读出清单外用户可见缺口（§11.5 提问后按用户裁定「以用户侧约定为准」
+本轮一并修）：`eash reboot` 传 0、`halt` 传 1，而内核 `reboot_mechanism` 原为
+0=停机自旋 / 1=重启 ⇒ 两条命令行为互换。命令码上收 `edgine-abi::reboot`
+（`REBOOT_CMD_RESTART=0` / `REBOOT_CMD_HALT=1`），内核分支按常量交换，eash 与
+install 完成页改用同源常量；`host-tests/tests/reboot_cmd_semantics_test.rs` 四条锁
+（ABI 值 / 内核分支落真复位路径 / 两侧调用形态 / 源码内缺口段清零）。
+负控制三条（均注入后转红并复原）：去掉 `packed` ⇒ 内联单测 RC=101
+（`64 位 IDTR 必须是 10 字节`）；`reboot_mechanism` 两分支写回原语义 ⇒ x86 真重启腿
+RC=1（请求行仅 1 次）；`reboot_via_psci` 注入停机自旋 ⇒ aarch64 真重启腿 RC=1
+（请求行仅 1 次）。
+收口读数：`build.sh all` RC=0（Passed 6 / Failed 0）· `audit.sh full` RC=0
+（未执行腿数 0、Lockbud 4/4、QEMU 2/2 + feature 4/4、线程组压力 6/6、reboot
+真重启腿双架构通过）· `make test-host` **208 套 / 1616 passed / 0 failed** ·
+`make test-kernel-host` **12 + 811 + 562 = 1385 / 0 failed** · `ci-rustdoc`
+双架构 exit 0。
+状态：[X]
 
 ### 批 R4・FFI 字符串与分配器契约（⑩ ㊺）
 

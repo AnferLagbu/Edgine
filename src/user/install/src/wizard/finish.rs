@@ -37,7 +37,7 @@ pub fn execute() -> i32 {
     read_line(&mut buf);
     println("Rebooting system...");
     delay_loop(10_000_000);
-    let _ = sys::reboot(0);
+    let _ = sys::reboot(sys::REBOOT_CMD_RESTART);
     0
 }
 

@@ -386,6 +386,19 @@ pub mod raw {
 
     // ============= CPU 控制指令集中点 =============
 
+    /// 64 位模式下 `lidt` 读取的伪描述符 (IDTR 内存形态).
+    ///
+    /// 布局 = 2 字节 limit + 8 字节 base, 共 10 字节. `packed` 是必需的: 默认
+    /// `repr(C)` 会把 base 对齐到偏移 8 (总长 16), 而 CPU 按偏移 2 读取 base.
+    #[cfg(target_arch = "x86_64")]
+    #[repr(C, packed)]
+    struct Idtr {
+        /// IDT 字节数减一; 0 表示只有第 0 号表项可用 (本处刻意置 0 以制造三重故障).
+        limit: u16,
+        /// IDT 线性基址; 本处置 0 (limit=0 时不会被解引用).
+        base: u64,
+    }
+
     /// 加载空 IDT 后触发异常，重启 `CPU（x86_64`）。
     ///
     /// # Safety
@@ -393,20 +406,21 @@ pub mod raw {
     /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "x86_64")]
     pub unsafe fn reboot_via_idt() -> ! {
+        // 形态约束 (㊿ 已修): ① 64 位 IDTR 恒为 10 字节 (2 字节 limit + 8 字节 base),
+        // `Idtr` 的 `repr(C, packed)` 布局保证 base 落在偏移 2 且无填充; ② `int 0`
+        // 会向当前内核栈压入 EFLAGS/CS/RIP, 故 asm 不声明 `nostack` —— 调用方按
+        // `# Safety` 契约在有效内核栈上调用.
+        let idtr = Idtr { limit: 0, base: 0 };
         // SAFETY: 本块是 `reboot_via_idt` 的实现体, 其 `# Safety` 契约要求调用方已关闭
-        // 其它 CPU (本函数不返回)。`lidt [rdi]` 以 rdi 指向的伪描述符加载空 IDT
+        // 其它 CPU (本函数不返回)。`lidt [rdi]` 以 rdi 指向的 10 字节伪描述符加载空 IDT
         // (limit=0, base=0), 随后 `int 0` 在无门可用的 IDT 上触发异常 → 双重故障 →
         // 三重故障复位, 这是 x86 无键盘控制器时的重启手段; 尾部 `spin_loop` 循环只是
         // 复位未生效时的兜底, 不依赖 asm 正常返回。
-        // 已登记缺口 (批6 待裁, 本批不改): ① 64 位模式下 IDTR 是 10 字节 (2 字节 limit
-        // + 8 字节 base), 而实参是 `&[0u16; 4]` = 8 字节 ⇒ `lidt` 越界读 2 字节;
-        // ② `int 0` 会压栈 (EFLAGS/CS/EIP), 与 `options(nostack)` 声明矛盾。
         unsafe {
             core::arch::asm!(
                 "lidt [rdi]",
                 "int 0",
-                in("rdi") &[0u16; 4],
-                options(nostack)
+                in("rdi") &raw const idtr,
             );
             loop {
                 core::hint::spin_loop();
@@ -414,25 +428,42 @@ pub mod raw {
         }
     }
 
-    /// 通过 SVC 触发 PSCI reset（aarch64）。
+    /// 通过 PSCI `SYSTEM_RESET` 重启（aarch64）。
     ///
     /// # Safety
     ///
     /// 本函数不返回；调用方须确保已关闭其他 CPU。
     #[cfg(target_arch = "aarch64")]
     pub unsafe fn reboot_via_psci() -> ! {
-        // SAFETY: 本块是 `reboot_via_psci` 的实现体, 其 `# Safety` 契约要求调用方已关闭
-        // 其它 CPU。`svc #0` 陷入固件, 尾部 `spin_loop` 循环是复位未生效时的兜底;
-        // `nostack` 成立 (svc 指令本身不访问内核栈)。
-        // 已登记缺口 (批6 待裁, 本批不改): 本实现与 PSCI 规范不符 —— x0=0 不是
-        // SYSTEM_RESET 功能号 (本仓 `arch/aarch64/psci.rs` 已定义 PSCI_SYSTEM_RESET =
-        // 0x8400_0009 并实现 `system_reset()`), 且 QEMU virt 的 conduit 是 HVC 而非 SVC;
-        // 另 SMCCC 会破坏 x0..x3 等寄存器却未声明 clobber。正确路径是改调 `psci::system_reset()`。
-        unsafe {
-            core::arch::asm!("svc #0", in("x0") 0u64, options(nostack));
-            loop {
-                core::hint::spin_loop();
-            }
+        // 51 (已修): 重启语义现由仓内唯一 PSCI 实现承担 ——
+        // `arch/aarch64/psci.rs` 按设备树 `/psci.method` 选择 HVC/SMC conduit
+        // (QEMU virt = HVC)、以 `PSCI_SYSTEM_RESET (0x8400_0009)` 作功能号, 并在
+        // `invoke` 内声明 SMCCC 破坏的 x1..x3. 本地重写汇编会同时丢掉这三项,
+        // 故此处只做转发; `system_reset` 内部在 PSCI 不可用时以写零地址触发异常,
+        // 同样不返回, 满足本函数的发散签名.
+        crate::privileged::arch::aarch64::psci::system_reset()
+    }
+
+    /// ㊿ 回归锁: IDTR 内存形态必须是 CPU 读取的 10 字节 (base 紧跟 limit).
+    ///
+    /// 旧实参 `&[0u16; 4]` 是 8 字节, `lidt` 会越界多读 2 字节; 若有人把
+    /// `Idtr` 改回默认 `repr(C)`, base 会落到偏移 8 且总长变 16, 本测试即红.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    mod tests {
+        use super::Idtr;
+
+        #[test]
+        fn idtr_layout_is_cpu_ten_byte_form() {
+            assert_eq!(
+                core::mem::size_of::<Idtr>(),
+                10,
+                "64 位 IDTR 必须是 10 字节"
+            );
+            assert_eq!(
+                core::mem::offset_of!(Idtr, base),
+                2,
+                "base 必须紧跟 2 字节 limit (不能有对齐填充)"
+            );
         }
     }
 }

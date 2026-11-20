@@ -192,6 +192,9 @@ USER_HTTPSRV_ELF = $(RUST_USER_TARGET)/httpsrv
 USER_TEST_ELF = $(RUST_USER_TARGET)/proctest
 USER_EXECTEST_ELF = $(RUST_USER_TARGET)/exectest
 USER_WASMSTUB_ELF = $(RUST_USER_TARGET)/wasmstub
+# R3: 真重启腿载荷 (scripts/qemu_reboot_test.sh 以它为 /init 打包专用 cpio);
+# 不参与出货 initramfs 归档布局, 只在 cpio 规则里作构建依赖.
+USER_REBOOTTEST_ELF = $(RUST_USER_TARGET)/reboottest
 # P1: 用户态 wasmi 运行时桩 (wasm_userspace feature 选桩, 见 functions/wasm/stub.rs)
 USER_WASMRUN_ELF = $(RUST_USER_TARGET)/wasmrun
 
@@ -244,10 +247,11 @@ ifeq ($(ARCH),x86_64)
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
       $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
-      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin $(USER_PROBE_WASM) $(USER_CPIO)
+      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
+      $(USER_BUILD_DIR)/reboottest.bin $(USER_PROBE_WASM) $(USER_CPIO)
 	@echo "User programs built successfully (Rust)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF) $(USER_REBOOTTEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link.x -C link-arg=-nostdlib -C link-arg=-no-pie" cargo build --release --target $(RUST_TARGET)
 
@@ -286,6 +290,10 @@ $(USER_BUILD_DIR)/wasmstub.bin: $(USER_WASMSTUB_ELF)
 $(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@$(OBJCOPY) --strip-all $< $@
+
+$(USER_BUILD_DIR)/reboottest.bin: $(USER_REBOOTTEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@$(OBJCOPY) --strip-all $< $@
 endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
@@ -315,10 +323,11 @@ ifeq ($(ARCH),aarch64)
 user: $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
       $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
       $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
-      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin $(USER_PROBE_WASM) $(USER_CPIO)
+      $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
+      $(USER_BUILD_DIR)/reboottest.bin $(USER_PROBE_WASM) $(USER_CPIO)
 	@echo "User programs built (Rust aarch64)"
 
-$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF): $(USER_SRCS)
+$(USER_INIT_ELF) $(USER_SHELL_ELF) $(USER_INSTALL_ELF) $(USER_FBTERM_ELF) $(USER_HTTPSRV_ELF) $(USER_TEST_ELF) $(USER_EXECTEST_ELF) $(USER_WASMSTUB_ELF) $(USER_WASMRUN_ELF) $(USER_REBOOTTEST_ELF): $(USER_SRCS)
 	@echo "Building Rust user programs (aarch64)..."
 	cd $(RUST_USER_DIR) && RUSTFLAGS="-C link-arg=-T$$(pwd)/link_aarch64.x -C link-arg=-nostdlib" cargo build --release --target $(RUST_TARGET)
 
@@ -358,6 +367,10 @@ $(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@$(OBJCOPY) --strip-all $< $@
 
+$(USER_BUILD_DIR)/reboottest.bin: $(USER_REBOOTTEST_ELF)
+	@mkdir -p $(USER_BUILD_DIR)
+	@$(OBJCOPY) --strip-all $< $@
+
 # aarch64 侧同样需 kernel 源码前置依赖 (与下方 x86_64 规则 / RUST_LIB_TEST 的 E-06 教训同因):
 # 缺它则 .a 已存在时 make 跳过 cargo 重建, 静默沿用陈旧二进制.
 # 末尾 $(KERNEL_FEATURES_STAMP) = P-62 甲 的 feature 戳记边 (规则级, 见文件顶部说明):
@@ -389,6 +402,7 @@ $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD
               $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
               $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
               $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
+              $(USER_BUILD_DIR)/reboottest.bin \
               $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@

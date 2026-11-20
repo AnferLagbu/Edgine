@@ -138,14 +138,15 @@ pub fn sys_arch_prctl(code: u64, addr: u64) -> i64 {
     super::sys_arch_prctl(code, addr)
 }
 
-/// reboot 机制: cmd=0 停机, cmd=1 重启 (TCB: 操作 IDT/PSCI)
+/// reboot 机制: cmd=`REBOOT_CMD_RESTART`(0) 重启, cmd=`REBOOT_CMD_HALT`(1) 停机自旋
+/// (TCB: 操作 IDT/PSCI)
+///
+/// 语义与命令码单一权威源 = `edgine_abi::reboot`; 用户态 `eash reboot/halt` 与
+/// `install` 完成页用同一组常量 (R3 修: 此前内核侧 0/1 写反).
 #[must_use]
 pub fn reboot_mechanism(cmd: i32) -> i64 {
     match cmd {
-        0 => loop {
-            core::hint::spin_loop();
-        },
-        1 => match () {
+        edgine_abi::reboot::REBOOT_CMD_RESTART => match () {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: reboot_via_idt 仅在 x86_64 停机/重启路径调用,
             // 此时无其他线程运行, IDT 操作安全
@@ -156,6 +157,9 @@ pub fn reboot_mechanism(cmd: i32) -> i64 {
             () => unsafe { super::raw::reboot_via_psci() },
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             () => loop {},
+        },
+        edgine_abi::reboot::REBOOT_CMD_HALT => loop {
+            core::hint::spin_loop();
         },
         _ => crate::privileged::syscall::Errno::Einval.as_ret(),
     }

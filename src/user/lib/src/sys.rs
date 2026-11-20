@@ -101,6 +101,12 @@ pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
 /// SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3, 单一权威源 `edgine-abi`)
 pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = edgine_abi::sched::SYS_SGEG_SCHED_SNAPSHOT;
 
+/// reboot 命令码 (单一权威源 `edgine-abi`): 0 = 重启, 1 = 停机.
+///
+/// 内核 `privileged::syscall::api::reboot_mechanism` 按同一组常量分派;
+/// 两侧共用可避免"命令语义各写裸数字"的漂移 (R3 修的正是该形态的写反).
+pub use edgine_abi::reboot::{REBOOT_CMD_HALT, REBOOT_CMD_RESTART};
+
 // POSIX open flags
 pub const O_RDONLY: i32 = 0;
 pub const O_WRONLY: i32 = 1;
@@ -747,6 +753,7 @@ pub fn sethostname(name: &[u8]) -> i32 {
 pub fn reboot(cmd: i32) -> i64 {
     // SAFETY: S 类 — 唯一参数是命令码数值 (经 arg_bits 转 u64), 不是指针;
     // 门只搬运值, 内核按数值分派重启命令, 无用户内存访问.
+    // cmd 取 [`REBOOT_CMD_RESTART`] / [`REBOOT_CMD_HALT`] (单一权威源 `edgine-abi`).
     unsafe { sys1(SYS_SGEG_REBOOT, arg_bits(i64::from(cmd))) }
 }
 pub fn proc_list(buf: &mut [u8], max_entries: u32) -> i32 {

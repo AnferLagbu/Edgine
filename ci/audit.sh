@@ -1108,6 +1108,27 @@ if [ "$MODE" = "full" ]; then
         else
             err "aarch64 EGFS 磁盘挂载真跑腿失败 (exit=$EGFS_DISK_RC, 全量输出见 $EGFS_DISK_EVIDENCE)"
         fi
+
+        # R3: reboot 双路径真重启腿 (专项脚本 scripts/qemu_reboot_test.sh).
+        # 既有启动腿一律带 `-no-reboot`, 故"重启真的发生"从未被任何门禁观测过;
+        # 本腿以专用 PID 1 载荷 (src/user/reboottest) 调 reboot 后**允许 QEMU 复位**,
+        # 判据 = 同一份 /init 的请求行与进用户态里程碑各出现 >=2 次 (第二轮真引导),
+        # 且无 `[REBOOT] FAIL` (机制未复位而返回). x86_64 覆盖 `lidt`+`int 0` 三重
+        # 故障复位, aarch64 覆盖 PSCI SYSTEM_RESET (HVC conduit + 功能号 + clobber).
+        # 排在本步骤最后: 只构建默认镜像, 不切 feature, 无需尾部复原.
+        REBOOT_EVIDENCE="$EVIDENCE_DIR/audit_reboot_cycle.log"
+        set +e
+        REBOOT_OUT=$("$PROJECT_ROOT/scripts/qemu_reboot_test.sh" all 2>&1)
+        REBOOT_RC=$?
+        set -e
+        printf '%s\n' "$REBOOT_OUT" > "$REBOOT_EVIDENCE"
+        printf '%s\n' "$REBOOT_OUT" | tail -8
+        printf '   全量输出: %s\n' "$REBOOT_EVIDENCE"
+        if [ "$REBOOT_RC" -eq 0 ]; then
+            ok "reboot 双路径真重启腿: 双架构复位后二次引导成立 (R3)"
+        else
+            err "reboot 双路径真重启腿失败 (exit=$REBOOT_RC, 全量输出见 $REBOOT_EVIDENCE)"
+        fi
     else
         skip_leg "qemu" "工具缺失: qemu-system-x86_64 / qemu-system-aarch64 不在 PATH (安装后本腿即执行)"
     fi

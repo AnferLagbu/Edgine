@@ -36,6 +36,10 @@ fn conduit() -> PsciMethod {
 /// PSCI 函数合法 (如 `CPU_ON` 的 x2 须为次核入口的物理地址).
 unsafe fn invoke(func: u64, x1: u64, x2: u64, x3: u64) -> i64 {
     let ret: i64;
+    // SMCCC (PSCI 的调用约定) 明确 x0..x3 为调用破坏寄存器: 固件可任意改写.
+    // x0 以 `lateout` 取返回值, x1..x3 必须一一声明为 `lateout("xN") _`,
+    // 否则编译器会假设它们在 asm 后仍保持入参值, 可能把跨 asm 存活的值留在
+    // 这些寄存器里 (51 的 clobber 缺口).
     match conduit() {
         // SAFETY: 探测到 HVC conduit, 固件经 HVC 陷阱提供 PSCI 服务.
         PsciMethod::Hvc => unsafe {
@@ -46,6 +50,9 @@ unsafe fn invoke(func: u64, x1: u64, x2: u64, x3: u64) -> i64 {
                 in("x2") x2,
                 in("x3") x3,
                 lateout("x0") ret,
+                lateout("x1") _,
+                lateout("x2") _,
+                lateout("x3") _,
                 options(nostack),
             );
         },
@@ -58,6 +65,9 @@ unsafe fn invoke(func: u64, x1: u64, x2: u64, x3: u64) -> i64 {
                 in("x2") x2,
                 in("x3") x3,
                 lateout("x0") ret,
+                lateout("x1") _,
+                lateout("x2") _,
+                lateout("x3") _,
                 options(nostack),
             );
         },
