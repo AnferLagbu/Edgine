@@ -426,26 +426,23 @@ pub(crate) fn sys_rt_sigaction(signum: i32, act: u64, oact: u64) -> i64 {
     };
 
     if oact != 0 {
-        if !raw::check_user_buf(oact, 8) {
-            return Errno::Efault.as_ret();
-        }
-        let old = crate::privileged::proc::get_sigaction(
+        let Some(old) = crate::privileged::proc::get_sigaction(
             pid,
             crate::privileged::glue::u8_from_i32(signum),
-        );
-        match old {
-            // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-            Some(v) => unsafe { raw::write_u64(oact as *mut u64, v) },
-            None => return Errno::Einval.as_ret(),
+        ) else {
+            return Errno::Einval.as_ret();
+        };
+        // 完整判据 (区间/回绕/已映射/对齐) 与 SMAP 代理由 raw::write_u64 自带.
+        if !raw::write_u64(oact, old) {
+            return Errno::Efault.as_ret();
         }
     }
 
     if act != 0 {
-        if !raw::check_user_buf(act, 8) {
+        // 完整判据 (区间/回绕/已映射/对齐) 与 SMAP 代理由 raw::read_u64 自带.
+        let Some(new_action) = raw::read_u64(act) else {
             return Errno::Efault.as_ret();
-        }
-        // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-        let new_action = unsafe { raw::read_u64(act as *const u64) };
+        };
         match crate::privileged::proc::set_sigaction(
             pid,
             crate::privileged::glue::u8_from_i32(signum),
@@ -466,20 +463,18 @@ pub(crate) fn sys_rt_sigprocmask(how: i32, set: u64, oset: u64) -> i64 {
     };
 
     if oset != 0 {
-        if !raw::check_user_buf(oset, 8) {
+        let old = crate::privileged::proc::get_blocked_mask(pid);
+        // 完整判据与 SMAP 代理由 raw::write_u64 自带.
+        if !raw::write_u64(oset, old) {
             return Errno::Efault.as_ret();
         }
-        let old = crate::privileged::proc::get_blocked_mask(pid);
-        // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-        unsafe { raw::write_u64(oset as *mut u64, old) };
     }
 
     if set != 0 {
-        if !raw::check_user_buf(set, 8) {
+        // 完整判据与 SMAP 代理由 raw::read_u64 自带.
+        let Some(new_set) = raw::read_u64(set) else {
             return Errno::Efault.as_ret();
-        }
-        // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-        let new_set = unsafe { raw::read_u64(set as *const u64) };
+        };
         let old = crate::privileged::proc::get_blocked_mask(pid);
         let updated = match how {
             SIG_BLOCK => old | new_set,
@@ -506,40 +501,29 @@ pub(crate) fn sys_sigaltstack(ss: u64, old_ss: u64) -> i64 {
 
     let result = crate::privileged::proc::process_with_mut(pid, |proc| {
         if old_ss != 0 {
-            if !raw::check_user_buf(old_ss, 24) {
-                return Errno::Efault.as_ret();
-            }
             let cur_addr = proc.sigaltstack_addr.load(Ordering::Acquire);
             let cur_size = proc.sigaltstack_size.load(Ordering::Acquire);
             let cur_flags = proc.sigaltstack_flags.load(Ordering::Acquire);
-            // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-            unsafe {
-                raw::write_u64(old_ss as *mut u64, cur_addr);
-                raw::write_u64((old_ss + 8) as *mut u64, u64::from(cur_flags));
-                raw::write_u64((old_ss + 16) as *mut u64, cur_size);
+            // 完整判据与 SMAP 代理由 raw::write_u64 自带 (三字段各自校验).
+            let written = raw::write_u64(old_ss, cur_addr)
+                && raw::write_u64(old_ss + 8, u64::from(cur_flags))
+                && raw::write_u64(old_ss + 16, cur_size);
+            if !written {
+                return Errno::Efault.as_ret();
             }
         }
 
         if ss != 0 {
-            if !raw::check_user_buf(ss, 24) {
+            // 完整判据 (区间/回绕/已映射/对齐) 与 SMAP 代理由 raw::read_u64 自带;
+            // 一次读三字段, 任一失败即 EFAULT.
+            let (Some(new_addr), Some(new_flags_raw), Some(new_size)) = (
+                raw::read_u64(ss),
+                raw::read_u64(ss + 8),
+                raw::read_u64(ss + 16),
+            ) else {
                 return Errno::Efault.as_ret();
-            }
-            // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-            let new_addr = unsafe { raw::read_u64(ss as *const u64) };
-            // SAFETY: 上方已 `raw::check_user_buf(ss, 24)` 校验整段 24 字节落在用户地址空间
-            // (`userptr::validate_user_buf`), 本处读偏移 8 的 flags 字段仍在该范围内;
-            // `read_u64` 是 `read_volatile`, 只读按值取 u64, 不构造引用、不写用户内存;
-            // `low_u32_from_u64` 是纯截断 (取低 32 位), 无 panic 面。
-            // 已登记缺口 (批6 待裁, 本批不改): `validate_user_buf` 只判地址区间上界,
-            // **不判 8 字节对齐、不判已映射**, 且 `ptr + len` 是未检查加法可回绕; 而
-            // `raw::read_u64` 的 SAFETY 声称对齐已校验, 也未走 stac/clac 用户内存安全代理。
-            let new_flags_in = crate::privileged::glue::low_u32_from_u64(unsafe {
-                raw::read_u64((ss + 8) as *const u64)
-            });
-            // SAFETY: 同上一处: `check_user_buf(ss, 24)` 已覆盖偏移 16 的 size 字段,
-            // `read_u64` 为 `read_volatile` 只读按值取, 不构造引用、不写用户内存。
-            // 对齐/映射校验缺口与 stac/clac 缺失同上一处登记 (批6 待裁, 本批不改)。
-            let new_size = unsafe { raw::read_u64((ss + 16) as *const u64) };
+            };
+            let new_flags_in = crate::privileged::glue::low_u32_from_u64(new_flags_raw);
 
             if (new_flags_in & SS_DISABLE) != 0 {
                 proc.sigaltstack_addr.store(0, Ordering::Release);
@@ -782,9 +766,10 @@ pub fn sys_fb_open(info_ptr: u64, _flags: u64) -> i64 {
         _pad: [0; 3],
     };
 
-    let dst = info_ptr as *mut FbInfo;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    unsafe { raw::write_struct(dst, &info) };
+    // 完整判据 (区间/回绕/已映射/对齐) 与 SMAP 代理由 raw::write_struct 自带.
+    if !raw::write_struct(info_ptr, &info) {
+        return Errno::Efault.as_ret();
+    }
     0
 }
 

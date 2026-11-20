@@ -66,13 +66,12 @@ impl UserReadPtr {
 
     /// 从裸指针安全构造 (先经范围校验)。
     ///
-    /// 内部先执行 `validate_user_buf` 地址范围校验, 通过后构造 `UserReadPtr`。
-    /// 相比 `new`, 本方法在构造时即拦截非法地址 (NULL / 越界), 调用方无需
-    /// 自行校验。注意: 范围校验不验证页表映射存在性, 与 `new` 的契约一致
-    /// (映射保证由调用方/页表机制承担, 见模块 doc)。
+    /// 内部先执行 `validate_user_buf` 完整校验 (区间上界 + 加法回绕 + 已映射),
+    /// 通过后构造 `UserReadPtr`。相比 `new`, 本方法在构造时即拦截非法地址
+    /// (NULL / 越界 / 回绕 / 未映射), 调用方无需自行校验。
     ///
     /// # 返回
-    /// 指针为 NULL 或超出用户地址空间范围时返回 `None`。
+    /// 上述任一判据不满足时返回 `None`。
     #[must_use]
     pub fn checked_new(ptr: *const u8, len: usize) -> Option<Self> {
         if !validate_user_buf(ptr as u64, len as u64) {
@@ -140,13 +139,12 @@ impl UserWritePtr {
 
     /// 从裸指针安全构造 (先经范围校验)。
     ///
-    /// 内部先执行 `validate_user_buf` 地址范围校验, 通过后构造 `UserWritePtr`。
-    /// 相比 `new`, 本方法在构造时即拦截非法地址 (NULL / 越界), 调用方无需
-    /// 自行校验。注意: 范围校验不验证页表映射存在性, 与 `new` 的契约一致
-    /// (映射保证由调用方/页表机制承担, 见模块 doc)。
+    /// 内部先执行 `validate_user_buf` 完整校验 (区间上界 + 加法回绕 + 已映射),
+    /// 通过后构造 `UserWritePtr`。相比 `new`, 本方法在构造时即拦截非法地址
+    /// (NULL / 越界 / 回绕 / 未映射), 调用方无需自行校验。
     ///
     /// # 返回
-    /// 指针为 NULL 或超出用户地址空间范围时返回 `None`。
+    /// 上述任一判据不满足时返回 `None`。
     pub fn checked_new(ptr: *mut u8, len: usize) -> Option<Self> {
         if !validate_user_buf(ptr as u64, len as u64) {
             return None;
@@ -249,13 +247,23 @@ pub fn validate_user_ptr(ptr: u64) -> bool {
     ptr > 0 && ptr < USER_ADDR_MAX
 }
 
-/// 验证用户态缓冲区 [ptr, ptr+len) 是否完全在用户空间.
+/// 验证用户态缓冲区 [ptr, ptr+len) 是否完全在用户空间且已映射.
+///
+/// 判据 (I4 用户内存代理的单一入口):
+/// 1. `ptr` 非 NULL 且小于 [`USER_ADDR_MAX`];
+/// 2. `ptr + len` 用 `checked_add` 求值, 回绕即拒绝 (不能用未检查加法绕过上界);
+/// 3. `ptr + len` 不超过 [`USER_ADDR_MAX`];
+/// 4. 区间覆盖的每一页在当前进程用户页表中已映射.
 ///
 /// # B03-21 修复
 /// 之前 `len == 0` 直接 `return true`, `validate_user_buf(0, 0)` 返回 true
 /// 但 0 是 NULL 指针, 绕过 NULL 检查。现在 `len == 0` 时仍校验 `ptr != 0`。
 /// 语义: 零长度缓冲区只接受 NULL 之外的合法用户指针 (与 Linux `copy_from_user`
 /// 行为一致 — 长度 0 时仍要求非 NULL 指针)。
+///
+/// # host-test 构建
+/// host 侧无真实页表模型, 判据 4 恒真 (只锁判据 1–3 的契约); 映射面由
+/// privileged 单测与 QEMU/e2e 腿覆盖.
 #[inline]
 #[must_use]
 pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
@@ -263,7 +271,56 @@ pub fn validate_user_buf(ptr: u64, len: u64) -> bool {
         // 零长度但要求 ptr 非 NULL (避免 (NULL, 0) 绕过校验)
         return ptr != 0;
     }
-    validate_user_ptr(ptr) && ptr + len <= USER_ADDR_MAX
+    if !validate_user_ptr(ptr) {
+        return false;
+    }
+    // 回绕必须显式拒绝: `ptr + len` 回绕到小值会同时绕过上界判据.
+    let Some(end) = ptr.checked_add(len) else {
+        return false;
+    };
+    end <= USER_ADDR_MAX && user_range_mapped(ptr, end)
+}
+
+/// 验证 typed 用户访问: `ptr` 对齐到 `align_of::<T>()` 且 `size_of::<T>()` 字节
+/// 落在合法且已映射的用户区间内.
+///
+/// 供按类型做 `read_volatile` / `write_volatile` 的助手使用 —— 这类访问要求
+/// 指针对齐, 字节区间判据 [`validate_user_buf`] 单独不覆盖对齐面.
+#[inline]
+#[must_use]
+pub fn validate_user_aligned<T>(ptr: u64) -> bool {
+    let align = core::mem::align_of::<T>() as u64;
+    ptr.is_multiple_of(align) && validate_user_buf(ptr, core::mem::size_of::<T>() as u64)
+}
+
+/// 逐页确认 `[start, end)` 在当前进程用户页表中已映射.
+#[cfg(not(feature = "host-test"))]
+fn user_range_mapped(start: u64, end: u64) -> bool {
+    use crate::privileged::config::memory::PAGE_SIZE;
+    use crate::privileged::mm::{VirtAddr, Vmm, get_current_pml4};
+
+    // 取当前任务用户页表根 (KPTI 下由内核视图根按互指标记解析回用户根).
+    let root = get_current_pml4();
+    if root == 0 {
+        return false;
+    }
+    let mut va = start & !(PAGE_SIZE - 1);
+    while va < end {
+        if Vmm::translate_in_pml4(root, VirtAddr(va)).is_none() {
+            return false;
+        }
+        let Some(next) = va.checked_add(PAGE_SIZE) else {
+            return false;
+        };
+        va = next;
+    }
+    true
+}
+
+/// host-test 构建无页表硬件模型, 映射面恒真 (契约锁只覆盖区间/回绕判据).
+#[cfg(feature = "host-test")]
+fn user_range_mapped(_start: u64, _end: u64) -> bool {
+    true
 }
 
 /// Safe 包装: 向用户空间写入一个 Copy 结构体.
@@ -346,5 +403,22 @@ mod tests {
     fn test_checked_new_write_accepts_valid() {
         let p = 0x2000 as *mut u8;
         assert!(UserWritePtr::checked_new(p, 64).is_some());
+    }
+
+    /// ㊾ 负控制: `ptr + len` 回绕到小值时不得被上界判据放行.
+    #[test]
+    fn test_validate_user_buf_rejects_wrapping_range() {
+        assert!(!validate_user_buf(u64::MAX, 2));
+        assert!(!validate_user_buf(USER_ADDR_MAX - 1, 2));
+        assert!(validate_user_buf(0x1000, 8));
+    }
+
+    /// ㊾ 负控制: typed 访问必须额外满足 `align_of::<T>()` 对齐.
+    #[test]
+    fn test_validate_user_aligned_requires_alignment() {
+        assert!(!validate_user_aligned::<u64>(0x1001));
+        assert!(validate_user_aligned::<u64>(0x1000));
+        assert!(!validate_user_aligned::<u32>(0x1002));
+        assert!(validate_user_aligned::<u32>(0x1004));
     }
 }

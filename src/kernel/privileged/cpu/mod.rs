@@ -696,8 +696,13 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
 
         // bit 9 = OSFXSR, bit 10 = OSXMMEXCPT (SSE/SSE2 必需).
         // P4.B.3: bit 20 = SMEP (Ring 0 拒绝执行 USER 页), bit 21 = SMAP (Ring 0 拒绝访问 USER 页).
-        // SMAP 启用后, 所有用户内存代理点 (copy_user.rs 5 函数 + userptr.rs 2 函数)
-        // 必须用 stac/clac 包裹用户访问. 见 DECISION-054.
+        // SMAP 启用后, 所有用户内存代理点必须用 stac/clac 包裹用户访问 (见 DECISION-054):
+        // - `mm/copy_user.rs` 5 个 copy/clear/strlen 入口;
+        // - `userptr.rs` 2 个结构体读写包装;
+        // - `syscall/mod.rs::raw` 的 read/write u64、结构体与 rlimit 助手;
+        // - `net/syscall.rs` 的 `raw_read_u32` / `raw_write_u32` / `raw_read_sun_family`;
+        // - `net/init/sm_fi.rs` 的 sockaddr 回写与 msghdr/iov 直读直写.
+        // 新增直接触碰用户内存的入口必须同步加入本清单并自带 smap 包裹.
         let mut new_cr4 = cr4 | (1 << 9) | (1 << 10);
         if features.contains(CpuFeatures::SMEP) {
             new_cr4 |= 1 << 20;

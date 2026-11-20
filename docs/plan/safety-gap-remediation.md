@@ -146,7 +146,29 @@ stac/clac 而 SMAP 已开（㉜）、`validate_user_buf` 只判上界 + `ptr+len
 ④ 注意 `validate_user_buf` 现树有**三个同名定义**（`userptr.rs` / `syscall/api.rs` /
 `syscall/mod.rs`），施工前须先核清转发关系，避免只改一处；⑤ host 只锁契约，
 真搬运归 privileged 单测 + QEMU/e2e（CR4 口径）。
-状态：[]
+详情：核清转发关系后确认**单一定义**为 `privileged/userptr.rs::validate_user_buf`，
+`syscall/api.rs` 与 `syscall/mod.rs` 仅为同名转发壳 ⇒ 只改单点即全量生效。落地内容：
+① `validate_user_buf` 补 `checked_add` 回绕拒绝与逐页"已映射"判据（`get_current_pml4` +
+`Vmm::translate_in_pml4` 逐页走查；host-test 构建无页表模型，映射面恒真，只锁区间/回绕契约），
+新增 `validate_user_aligned::<T>` 承载 typed 访问的对齐判据；② `syscall/raw` 的
+`read_u64` / `write_u64` / `write_u64_pair` / `write_struct` 改为**入参为用户地址数值的自校验安全函数**
+（判据不满足返回 `None`/`false`，不做任何用户访问），dispatch 四个调用点与 `sys_fb_open`
+改走该入口，`read_u64` 的"对齐已校验"假称由真实对齐判据兑现；③ `net/syscall.rs` 六入口
+（accept / recvfrom / sendmsg / recvmsg / getsockname / getpeername）按 `sockaddr` 上限 28 字节、
+`msghdr` 56 字节、`addrlen` 4 字节补完整校验；`raw_read_u32` / `raw_write_u32` /
+`raw_read_sun_family` 与 `syscall/raw` 全部直读直写助手、`sm_fi` 的 sockaddr 回写与
+`msghdr`/iov 直读直写均以 `smap_begin`/`smap_end` 包裹（`sockaddr` 回写同时从
+`ptr::write` 改为 `write_unaligned`，消除 addrlen 对齐 UB），`cpu/mod.rs` 代理清单同步扩列；
+④ 顺带修出 host-test 构建的 SMAP 探针：`smap_is_enabled` 在 host-test 下读 CR4 是特权指令
+（SIGSEGV），改为 cfg 门控恒 false；⑤ `sm_fi.rs` 与 `net/syscall.rs` 的就地缺口登记段
+改写为真实依据。新增 `host-tests/tests/user_ptr_validation_r2_test.rs`（6 用例：回绕、
+对齐、raw 助手拒绝、api 助手拒绝、六入口 EFAULT、SMAP 接线源码锁）与 2 个内联单测；
+三负控制均注入后转红（RC=101）并复原。
+收口读数：`build.sh all` RC=0（Passed 6 / Failed 0）· `audit.sh full` RC=0（未执行腿数 0、
+Lockbud 4/4、QEMU 2/2 + P-62 feature 4/4）· `make test-host` **207 套 / 1612 passed / 0 failed** ·
+`make test-kernel-host` **12 + 811 + 560 = 1383 / 0 failed** · `qemu_boot_test.sh x86_64` 1/1
+（含 TCP SOCKNAME/PEERNAME/RECVFROM 路径实跑）· `ci-rustdoc` 双架构 exit 0。
+状态：[X]
 
 ### 批 R3・reboot 双路径（㊿ 51）
 

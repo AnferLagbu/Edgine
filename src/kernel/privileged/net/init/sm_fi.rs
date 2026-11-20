@@ -15,6 +15,7 @@ use super::{
     MAX_SM_FD, NET_STATE, Ordering, get_max_sockets, is_network_initialized, process_dhcp_events,
     raw, socket_set,
 };
+use crate::privileged::mm::copy_user::{smap_begin, smap_end};
 use crate::privileged::net::mcast::{MC_MAX_GROUPS, McError};
 use crate::privileged::net::slots;
 use crate::privileged::net::{
@@ -233,12 +234,16 @@ pub(crate) fn endpoint_from_smol(
 //   base/len 都经 `validate_user_buf` 校验落在用户地址空间内 (validate_iov_list).
 //   本层复用同一上界, 故 lens/bases 两个 [_; 1024] 栈数组不越界.
 //
-// 已知局限 (登记不改, 见门禁健康度收敛工程 批 5f):
-// - userptr::validate_user_buf 只做地址区间校验 (ptr > 0 且 ptr+len <= USER_ADDR_MAX),
-//   不验证已映射/可写; accept/getsockname/getpeername/recvfrom 的 addr/addrlen
-//   在 syscall 层未做区间校验即直传本层.
-// - 本层直读直写用户内存不经 mm::copy_user 的 stac/clac 包裹, CR4.SMAP 置位时
-//   (cpu 按 CPUID 启用) ring0 访问用户页会触发 #PF.
+// 用户内存访问依据 (安全缺口 ㉚ ㉜ ㊾ 收口后):
+// - 区间/映射: 本层收到的用户指针由 `net::syscall` 六个入口 (accept /
+//   recvfrom / sendmsg / recvmsg / getsockname / getpeername) 经
+//   `userptr::validate_user_buf` 完整校验 —— 判据 = 非 NULL + 上界 +
+//   `checked_add` 回绕拒绝 + 逐页已映射; 函数层的 iov `base`/`len` 另由
+//   `validate_iov_list` 逐条校验.
+// - SMAP: 本层对**用户指针**的直读直写 (sockaddr 回写、msghdr 与 iov 直读直写)
+//   均以 `smap_begin` / `smap_end` 包裹, CR4.SMAP 置位时 ring0 不会触发 #PF.
+//   `parse_endpoint_trait` / `sm_setsockopt` 收到的是 syscall 层重编码后的内核
+//   栈缓冲, 不涉及用户页.
 
 /// 将 `NetEndpoint` 写入 sockaddr C 结构体 (供 recvfrom/getsockname/getpeername 返回地址).
 ///
@@ -257,12 +262,12 @@ pub(crate) unsafe fn write_sockaddr(
 ) {
     // SAFETY: 类别 C. 按 ep.addr 族写 SockaddrIn (16B) 或 SockaddrIn6 (28B), 均
     // write_unaligned 故不要求 addr 对齐; addr 为 NULL 已早退, addrlen 为 NULL 时
-    // 跳过长度回写. 非空指针的容量与可写性由调用方契约保证 (见单源已知局限:
-    // accept/getsockname/getpeername 路径的用户指针未经区间校验).
+    // 跳过长度回写. 非空指针的区间与映射由 syscall 层完整校验 (见上方用户内存依据).
     unsafe {
         if addr.is_null() {
             return;
         }
+        smap_begin();
         match ep.addr {
             crate::privileged::net::iface_trait::IpAddr::V4(v4) => {
                 let sin = SockaddrIn {
@@ -273,7 +278,7 @@ pub(crate) unsafe fn write_sockaddr(
                 };
                 core::ptr::write_unaligned(addr.cast::<SockaddrIn>(), sin);
                 if !addrlen.is_null() {
-                    core::ptr::write(
+                    core::ptr::write_unaligned(
                         addrlen,
                         crate::privileged::glue::low_u32_from_usize(
                             core::mem::size_of::<SockaddrIn>(),
@@ -292,10 +297,14 @@ pub(crate) unsafe fn write_sockaddr(
                 core::ptr::write_unaligned(addr.cast::<SockaddrIn6>(), sin6);
                 if !addrlen.is_null() {
                     let size = core::mem::size_of::<SockaddrIn6>();
-                    core::ptr::write(addrlen, crate::privileged::glue::low_u32_from_usize(size));
+                    core::ptr::write_unaligned(
+                        addrlen,
+                        crate::privileged::glue::low_u32_from_usize(size),
+                    );
                 }
             }
         }
+        smap_end();
     }
 }
 
@@ -1535,11 +1544,14 @@ pub unsafe extern "C" fn sm_sendmsg(
             return -E_BADF;
         }
         // 读 Msghdr
-        // SAFETY: msg 由 functions 校验可读 56 字节 (u64 Linux x86_64 / aarch64 布局).
+        // 依据: msg 由 functions 校验可读 56 字节 (u64 Linux x86_64 / aarch64 布局);
+        // smap_begin/end 取消/恢复 CR4.SMAP 对用户页的拦截 (外层已是 unsafe 块).
+        smap_begin();
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16).cast::<u64>());
         let msg_iovlen_us = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
             msg.add(24).cast::<u64>(),
         ));
+        smap_end();
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
             return -E_INVAL;
         }
@@ -1552,12 +1564,15 @@ pub unsafe extern "C" fn sm_sendmsg(
         let mut lens: [usize; 1024] = [0usize; 1024];
         let mut bases: [u64; 1024] = [0u64; 1024];
         for i in 0..msg_iovlen_us {
-            // SAFETY: msg_iov + i*Iovec(16) 可读 16 字节 (functions 校验 iov 范围).
+            // 依据: msg_iov + i*Iovec(16) 可读 16 字节 (functions 校验 iov 范围);
+            // smap 包裹同上方 msghdr 读取.
+            smap_begin();
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
             let iov_len = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
                 (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
+            smap_end();
             bases[i] = iov_base;
             lens[i] = iov_len;
             if iov_base == 0 || iov_len == 0 {
@@ -1579,12 +1594,15 @@ pub unsafe extern "C" fn sm_sendmsg(
             if bases[i] == 0 || lens[i] == 0 {
                 continue;
             }
-            // SAFETY: iov_base 由 functions 校验 lens[i] 字节可读; region 容量 >= total >= off+lens[i].
+            // 依据: iov_base 由 functions 校验 lens[i] 字节可读; region 容量 >= total >= off+lens[i];
+            // smap_begin/end 包裹用户源区间的读取.
+            smap_begin();
             core::ptr::copy_nonoverlapping(
                 bases[i] as *const u8,
                 region.as_mut_ptr().add(off),
                 lens[i],
             );
+            smap_end();
             off += lens[i];
         }
 
@@ -1623,10 +1641,13 @@ pub unsafe extern "C" fn sm_recvmsg(
         if as_slot(slot_id).is_none_or(|slot| raw::fd_type(slot) == 0) {
             return -E_BADF;
         }
+        // 依据: 同 sm_sendmsg, smap_begin/end 包裹 msghdr 读取 (CR4.SMAP).
+        smap_begin();
         let msg_iov_ptr = core::ptr::read_unaligned(msg.add(16) as *const u64);
         let msg_iovlen_us = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
             msg.add(24) as *const u64,
         ));
+        smap_end();
         if msg_iovlen_us == 0 || msg_iovlen_us > 1024 {
             return -E_INVAL;
         }
@@ -1638,11 +1659,14 @@ pub unsafe extern "C" fn sm_recvmsg(
         let mut lens: [usize; 1024] = [0usize; 1024];
         let mut bases: [u64; 1024] = [0u64; 1024];
         for i in 0..msg_iovlen_us {
+            // 依据: 同 sm_sendmsg 的逐 iov 读取 (smap 包裹).
+            smap_begin();
             let iov_base =
                 core::ptr::read_unaligned((msg_iov_ptr as *const u8).add(i * 16).cast::<u64>());
             let iov_len = crate::privileged::glue::usize_from_u64(core::ptr::read_unaligned(
                 (msg_iov_ptr as *const u8).add(i * 16 + 8).cast::<u64>(),
             ));
+            smap_end();
             bases[i] = iov_base;
             lens[i] = iov_len;
             if iov_base == 0 || iov_len == 0 {
@@ -1680,8 +1704,11 @@ pub unsafe extern "C" fn sm_recvmsg(
                 continue;
             }
             let cp = core::cmp::min(lens[i], left);
-            // SAFETY: iov_base 由 functions 校验 cp 字节可写.
+            // 依据: iov_base 由 functions 校验 cp 字节可写; smap_begin/end 包裹
+            // 用户目的区间的写入 (CR4.SMAP).
+            smap_begin();
             core::ptr::copy_nonoverlapping(region.as_mut_ptr().add(off), bases[i] as *mut u8, cp);
+            smap_end();
             off += cp;
             left -= cp;
         }

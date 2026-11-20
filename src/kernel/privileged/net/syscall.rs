@@ -8,6 +8,7 @@
 //! functions 层通过 privileged 层接口访问,本模块是 functions/net/syscall.rs 的 TCB 后端.
 
 use crate::privileged::errno::Errno;
+use crate::privileged::mm::copy_user::{smap_begin, smap_end};
 use crate::privileged::mm::{
     copy_from_user as safe_copy_from_user, copy_to_user as safe_copy_to_user,
 };
@@ -17,6 +18,12 @@ use crate::privileged::userptr;
 use crate::privileged::net::socket_types::{
     Domain, SOCK_NONBLOCK, SockAddrIn, SockAddrUn, SockType,
 };
+
+/// 用户地址回写缓冲上限 (`sockaddr_in6` = 28 字节; V4 为 16 字节).
+///
+/// accept / recvfrom / getsockname / getpeername 的 `addr` 由 sm 层按对端族直接回写,
+/// 本层按该上限统一校验 (sm 的安全契约要求最多 28 字节可写).
+const USER_SOCKADDR_MAX: u64 = 28;
 
 // ============================================================================
 // 用户空间数据搬运 (TCB)
@@ -116,9 +123,14 @@ pub fn raw_read_u32(ptr: u64) -> Result<u32, Errno> {
     if ptr == 0 || !userptr::validate_user_buf(ptr, 4) {
         return Err(Errno::Efault);
     }
-    // SAFETY: ptr 由 check_user_buf 验证为可读 4 字节
-    let v = unsafe { core::ptr::read_unaligned(ptr as *const u32) };
-    Ok(v)
+    // SAFETY: 上方已校验 4 字节区间合法且已映射; smap_begin/end 取消/恢复
+    // CR4.SMAP 对用户页的拦截; read_unaligned 不要求对齐.
+    unsafe {
+        smap_begin();
+        let v = core::ptr::read_unaligned(ptr as *const u32);
+        smap_end();
+        Ok(v)
+    }
 }
 
 /// 写入 4 字节 u32
@@ -129,9 +141,12 @@ pub fn raw_write_u32(ptr: u64, v: u32) -> Result<(), Errno> {
     if ptr == 0 || !userptr::validate_user_buf(ptr, 4) {
         return Err(Errno::Efault);
     }
-    // SAFETY: ptr 由 check_user_buf 验证为可写
+    // SAFETY: 上方已校验 4 字节区间合法且已映射; smap_begin/end 取消/恢复
+    // CR4.SMAP 对用户页的拦截; write_unaligned 不要求对齐.
     unsafe {
+        smap_begin();
         core::ptr::write_unaligned(ptr as *mut u32, v);
+        smap_end();
     }
     Ok(())
 }
@@ -148,15 +163,16 @@ pub fn raw_read_sun_family(ptr: u64) -> Result<u16, Errno> {
     if ptr == 0 || !userptr::validate_user_buf(ptr, 2) {
         return Err(Errno::Efault);
     }
-    // SAFETY: ptr 由 check_user_buf 验证为可读 2 字节
-    let lo = unsafe { core::ptr::read_volatile(ptr as *const u8) };
-    // SAFETY: 与上一行 lo 同源: ptr 已由 userptr::validate_user_buf(ptr, 2) 校验,
-    // ptr+1 仍在该 2 字节区间内. read_volatile 防止编译器把两次字节读合并或缓存
-    // (用户内存可被其它核并发改写). 已知局限 (登记不改): validate_user_buf 只做
-    // 地址区间校验 (不验证已映射), 且本处不经 mm::copy_user 的 stac/clac 包裹,
-    // CR4.SMAP 置位时 ring0 直读用户页会触发 #PF.
-    let hi = unsafe { core::ptr::read_volatile((ptr + 1) as *const u8) };
-    Ok(u16::from_be_bytes([hi, lo]))
+    // SAFETY: 上方已校验 [ptr, ptr+2) 区间合法且已映射; smap_begin/end 取消/恢复
+    // CR4.SMAP 对用户页的拦截. read_volatile 防止编译器把两次字节读合并或缓存
+    // (用户内存可被其它核并发改写).
+    unsafe {
+        smap_begin();
+        let lo = core::ptr::read_volatile(ptr as *const u8);
+        let hi = core::ptr::read_volatile((ptr + 1) as *const u8);
+        smap_end();
+        Ok(u16::from_be_bytes([hi, lo]))
+    }
 }
 
 /// 从用户指针读 `sockaddr_un` (110 字节布局: family u16 + path`[108]`)
@@ -317,8 +333,14 @@ pub fn accept_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64, blocking: b
     if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    // addr/addrlen 非 0 时须为有效可写用户指针; sm_accept 校验并直写 (同 getsockname 约定).
-    // SAFETY: addr/addrlen 为已校验的用户指针 (可为 0 表示不关心), sm 层直接回写.
+    // addr/addrlen 可为 0 (表示不关心); 非 0 时须为完整合法的用户可写区间
+    // (区间上界 + 加法回绕 + 已映射), sm 层按 sockaddr 布局直接回写.
+    if (addr_ptr != 0 && !userptr::validate_user_buf(addr_ptr, USER_SOCKADDR_MAX))
+        || (addrlen_ptr != 0 && !userptr::validate_user_buf(addrlen_ptr, 4))
+    {
+        return Errno::Efault.as_ret();
+    }
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_accept(
             slot_id,
@@ -472,12 +494,18 @@ pub fn recvfrom_syscall(
     if !userptr::validate_user_buf(buf_ptr, u64::from(len)) {
         return Errno::Efault.as_ret();
     }
+    // src/src_len 可为 0 (不关心对端地址); 非 0 时须为完整合法的用户可写区间.
+    if (src_ptr != 0 && !userptr::validate_user_buf(src_ptr, USER_SOCKADDR_MAX))
+        || (src_len_ptr != 0 && !userptr::validate_user_buf(src_len_ptr, 4))
+    {
+        return Errno::Efault.as_ret();
+    }
     // 在栈上准备临时缓冲
     let want = (len as usize).min(MAX);
     let mut stack_buf = [0u8; MAX];
     // D9: 改调 sm_recvfrom 取回对端地址; data 仍走内核栈 bounce (保 P0-I-37 异常表保护),
-    // 对端 sockaddr 按 accept/getsockname 约定由 sm 层直写用户 src_ptr (可为 0, null-guard 已备).
-    // SAFETY: stack_buf 为内核栈缓冲, src_ptr/src_len_ptr 为已校验的用户指针 (可为 0).
+    // 对端 sockaddr 按 accept/getsockname 约定由 sm 层直写用户 src_ptr (可为 0).
+    // SAFETY: stack_buf 为内核栈缓冲, src_ptr/src_len_ptr 为上方已校验的用户指针 (可为 0).
     let n = unsafe {
         net_socket::sm_recvfrom(
             slot_id,
@@ -604,7 +632,11 @@ pub fn sendmsg_syscall(slot_id: i32, msg_ptr: u64, flags: i32, blocking: bool) -
     if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    // SAFETY: msg_ptr 为已校验的用户指针, sm 层按 msghdr 布局读取.
+    // Linux msghdr 布局共 56 字节, sm 层按该布局读取; 完整判据含已映射校验.
+    if !userptr::validate_user_buf(msg_ptr, 56) {
+        return Errno::Efault.as_ret();
+    }
+    // SAFETY: 上方已校验 msg_ptr 的 56 字节区间合法且已映射, sm 层按 msghdr 布局读取.
     let rc = unsafe { net_socket::sm_sendmsg(slot_id, msg_ptr as *const u8, flags, blocking) };
     i64::from(rc)
 }
@@ -615,7 +647,11 @@ pub fn recvmsg_syscall(slot_id: i32, msg_ptr: u64, flags: i32, blocking: bool) -
     if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    // SAFETY: msg_ptr 为已校验的用户指针, sm 层按 msghdr 布局读写.
+    // Linux msghdr 布局共 56 字节, sm 层按该布局读写; 完整判据含已映射校验.
+    if !userptr::validate_user_buf(msg_ptr, 56) {
+        return Errno::Efault.as_ret();
+    }
+    // SAFETY: 上方已校验 msg_ptr 的 56 字节区间合法且已映射, sm 层按 msghdr 布局读写.
     let rc = unsafe { net_socket::sm_recvmsg(slot_id, msg_ptr as *mut u8, flags, blocking) };
     i64::from(rc)
 }
@@ -626,7 +662,13 @@ pub fn getsockname_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64
     if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    // SAFETY: addr_ptr/addrlen_ptr 为已校验的用户指针 (可为 0), sm 层直接回写.
+    // addr/addrlen 非 0 时须为完整合法的用户可写区间; sm 层直接回写.
+    if (addr_ptr != 0 && !userptr::validate_user_buf(addr_ptr, USER_SOCKADDR_MAX))
+        || (addrlen_ptr != 0 && !userptr::validate_user_buf(addrlen_ptr, 4))
+    {
+        return Errno::Efault.as_ret();
+    }
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_getsockname(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
     };
@@ -639,7 +681,13 @@ pub fn getpeername_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64
     if slot_id < 0 {
         return Errno::Ebadf.as_ret();
     }
-    // SAFETY: addr_ptr/addrlen_ptr 为已校验的用户指针 (可为 0), sm 层直接回写.
+    // addr/addrlen 非 0 时须为完整合法的用户可写区间; sm 层直接回写.
+    if (addr_ptr != 0 && !userptr::validate_user_buf(addr_ptr, USER_SOCKADDR_MAX))
+        || (addrlen_ptr != 0 && !userptr::validate_user_buf(addrlen_ptr, 4))
+    {
+        return Errno::Efault.as_ret();
+    }
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_getpeername(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
     };

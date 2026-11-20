@@ -150,105 +150,119 @@ pub mod raw {
         crate::privileged::userptr::validate_user_buf(ptr, len)
     }
 
-    // ============= 用户态读写助手（unsafe 集中点） =============
+    // ============= 用户态读写助手（I4 安全代理，自带完整判据） =============
+    //
+    // 下列助手是该模块内用户内存访问的**单一入口**: 每个函数自行执行
+    // `userptr::validate_user_buf` / `validate_user_aligned` 判据并以
+    // `smap_begin` / `smap_end` 包裹访问, 调用方无需 (也不应) 重复校验.
+    // 判据缺失时返回 `None` / `false`, 不产生任何用户内存访问.
 
-    /// 写一个 u64 到用户指针。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_buf(ptr as u64, 8)` 验证。
-    pub unsafe fn write_u64(ptr: *mut u64, val: u64) {
-        // SAFETY: 调用方已验证 ptr 对齐到 8 字节且指向 8 字节可写用户空间。
-        unsafe { core::ptr::write_volatile(ptr, val) }
-    }
-
-    /// 写两个 u64 到用户指针 (用于 rlimit cur/max)。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_buf(ptr as u64, 16)` 验证。
-    pub unsafe fn write_u64_pair(ptr: *mut u64, cur: u64, max: u64) {
-        // SAFETY: 调用方已验证 ptr 对齐到 8 字节且指向 16 字节可写用户空间。
+    /// 读一个 u64 用户值; 判据不满足 (NULL/越界/回绕/未映射/未对齐) 返回 `None`.
+    ///
+    /// 入参是用户地址数值 (非裸指针): 判据通过前不做任何用户内存访问.
+    #[must_use]
+    pub fn read_u64(ptr: u64) -> Option<u64> {
+        if !crate::privileged::userptr::validate_user_aligned::<u64>(ptr) {
+            return None;
+        }
+        // SAFETY: 上方已校验该地址的 8 字节区间合法且已映射, 且对齐到 8;
+        // smap_begin/end 临时取消/恢复 CR4.SMAP 对用户页的拦截.
+        // read_volatile 只读按值取, 不构造引用.
         unsafe {
-            core::ptr::write_volatile(ptr, cur);
-            core::ptr::write_volatile(ptr.add(1), max);
+            crate::privileged::mm::copy_user::smap_begin();
+            let v = core::ptr::read_volatile(ptr as *const u64);
+            crate::privileged::mm::copy_user::smap_end();
+            Some(v)
         }
     }
 
-    /// 读一个 u64。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_buf(ptr as u64, 8)` 验证。
+    /// 写一个 u64 到用户地址; 判据不满足返回 `false` 且不写入.
     #[must_use]
-    pub unsafe fn read_u64(ptr: *const u64) -> u64 {
-        // SAFETY: 调用方已验证 ptr 对齐到 8 字节且指向 8 字节可读用户空间。
-        unsafe { core::ptr::read_volatile(ptr) }
+    pub fn write_u64(ptr: u64, val: u64) -> bool {
+        if !crate::privileged::userptr::validate_user_aligned::<u64>(ptr) {
+            return false;
+        }
+        // SAFETY: 同 `read_u64` 的判据; write_volatile 只写按值, 不构造引用.
+        unsafe {
+            crate::privileged::mm::copy_user::smap_begin();
+            core::ptr::write_volatile(ptr as *mut u64, val);
+            crate::privileged::mm::copy_user::smap_end();
+        }
+        true
     }
 
-    /// 复制结构体到用户指针（repr(C) 类型）。
-    /// # Safety
-    /// 调用方必须先调用 `check_user_buf(ptr as u64, size_of::<T>())` 验证。
-    pub unsafe fn write_struct<T: Copy>(dst: *mut T, src: &T) {
-        // SAFETY: 调用方已验证 dst 对齐到 align_of::<T>() 且 size_of::<T>()
-        // 字节可写；src 是有效 T 引用。write_volatile 保留顺序语义。
-        unsafe { core::ptr::write_volatile(dst, *src) }
+    /// 写两个 u64 到用户地址 (用于 rlimit cur/max); 判据不满足返回 `false`.
+    #[must_use]
+    pub fn write_u64_pair(ptr: u64, cur: u64, max: u64) -> bool {
+        if !ptr.is_multiple_of(core::mem::align_of::<u64>() as u64)
+            || !crate::privileged::userptr::validate_user_buf(ptr, 16)
+        {
+            return false;
+        }
+        // SAFETY: 上方已校验 16 字节区间合法且已映射; 两次 write_volatile 均只写按值.
+        unsafe {
+            let p = ptr as *mut u64;
+            crate::privileged::mm::copy_user::smap_begin();
+            core::ptr::write_volatile(p, cur);
+            core::ptr::write_volatile(p.add(1), max);
+            crate::privileged::mm::copy_user::smap_end();
+        }
+        true
+    }
+
+    /// 复制结构体到用户地址（repr(C) 类型）; 判据不满足返回 `false`.
+    pub fn write_struct<T: Copy>(dst: u64, src: &T) -> bool {
+        if !crate::privileged::userptr::validate_user_aligned::<T>(dst) {
+            return false;
+        }
+        // SAFETY: 上方已校验 size_of::<T>() 字节区间合法且已映射, 且 dst 对齐到
+        // align_of::<T>(); write_volatile 只写按值.
+        unsafe {
+            crate::privileged::mm::copy_user::smap_begin();
+            core::ptr::write_volatile(dst as *mut T, *src);
+            crate::privileged::mm::copy_user::smap_end();
+        }
+        true
     }
 
     /// Safe 包装: 在 functions 层用, 写一个 repr(C) 结构体到 user 指针.
     ///
-    /// 调用方无需 unsafe 块. 内部先 `check_user_buf` 验证后写.
+    /// 调用方无需 unsafe 块. 判据由 `write_struct` 自带.
     pub fn write_struct_to_user<T: Copy>(dst_ptr: u64, src: &T) -> bool {
-        if dst_ptr == 0 {
-            return false;
-        }
-        let size = core::mem::size_of::<T>() as u64;
-        if !check_user_buf(dst_ptr, size) {
-            return false;
-        }
-        // SAFETY: 上方 check_user_buf 已验证 dst_ptr 指向的 user 缓冲
-        // 至少有 size_of::<T>() 字节可写, 且 src 持有有效 T 值.
-        unsafe { write_struct(dst_ptr as *mut T, src) }
-        true
+        write_struct(dst_ptr, src)
     }
 
     /// Safe 包装: 写两个 u64 到 user 指针 (`rlim_cur`, `rlim_max`).
+    ///
+    /// 调用方无需 unsafe 块. 判据由 `write_u64_pair` 自带.
     #[must_use]
     pub fn write_rlimit_to_user(ptr: u64, cur: u64, max: u64) -> bool {
-        if ptr == 0 {
-            return false;
-        }
-        if !check_user_buf(ptr, 16) {
-            return false;
-        }
-        // SAFETY: check_user_buf 已验证 16 字节可写
-        unsafe { write_u64_pair(ptr as *mut u64, cur, max) }
-        true
+        write_u64_pair(ptr, cur, max)
     }
 
     /// Safe 包装: 在 functions 层用, 写一个 u64 到 user 指针.
     ///
-    /// 调用方无需 unsafe 块. 内部先 `check_user_buf(dst, 8)` 验证.
+    /// 调用方无需 unsafe 块. 判据由 `write_u64` 自带.
     #[must_use]
     pub fn write_u64_to_user(dst_ptr: u64, val: u64) -> bool {
-        if dst_ptr == 0 {
-            return false;
-        }
-        if !check_user_buf(dst_ptr, 8) {
-            return false;
-        }
-        // SAFETY: check_user_buf 已验证 8 字节可写
-        unsafe { core::ptr::write_unaligned(dst_ptr as *mut u64, val) };
-        true
+        write_u64(dst_ptr, val)
     }
 
     /// Safe 包装: 从 user 指针读一个 repr(C) 结构体.
-    /// 调用方无需 unsafe 块. 内部先 `check_user_buf` 验证后读.
+    ///
+    /// 内部先做完整区间判据后读; 结构体按 `read_unaligned` 读取, 故不要求对齐.
     pub fn read_struct_from_user<T: Copy>(src_ptr: u64, dst: &mut T) -> bool {
-        if src_ptr == 0 {
-            return false;
-        }
         let size = core::mem::size_of::<T>() as u64;
-        if !check_user_buf(src_ptr, size) {
+        if src_ptr == 0 || !check_user_buf(src_ptr, size) {
             return false;
         }
-        // SAFETY: check_user_buf 已验证 src_ptr 指向的 user 缓冲
-        // 至少有 size_of::<T>() 字节可读.
-        *dst = unsafe { core::ptr::read_unaligned(src_ptr as *const T) };
+        // SAFETY: check_user_buf 已校验 size_of::<T>() 字节区间合法且已映射;
+        // read_unaligned 不要求对齐, 结果按值写入内核侧 dst.
+        unsafe {
+            crate::privileged::mm::copy_user::smap_begin();
+            *dst = core::ptr::read_unaligned(src_ptr as *const T);
+            crate::privileged::mm::copy_user::smap_end();
+        }
         true
     }
 
@@ -294,17 +308,22 @@ pub mod raw {
     // ============= 时间 =============
 
     /// 从用户指针读一个 u64. None 表示失败.
-    /// 调用方无需 unsafe 块. 内部校验 + 读.
+    ///
+    /// 内部执行完整区间判据 (含已映射) 后以 `read_unaligned` 读取 (不要求对齐),
+    /// 并以 `smap_begin` / `smap_end` 包裹访问.
     #[must_use]
     pub fn read_u64_from_user(src_ptr: u64) -> Option<u64> {
-        if src_ptr == 0 {
+        if src_ptr == 0 || !check_user_buf(src_ptr, 8) {
             return None;
         }
-        if !check_user_buf(src_ptr, 8) {
-            return None;
+        // SAFETY: check_user_buf 已校验 8 字节区间合法且已映射; read_unaligned
+        // 不要求对齐; smap_begin/end 取消/恢复 CR4.SMAP 对用户页的拦截.
+        unsafe {
+            crate::privileged::mm::copy_user::smap_begin();
+            let v = core::ptr::read_unaligned(src_ptr as *const u64);
+            crate::privileged::mm::copy_user::smap_end();
+            Some(v)
         }
-        // SAFETY: check_user_buf 已验证 src_ptr 8 字节可读.
-        Some(unsafe { core::ptr::read_unaligned(src_ptr as *const u64) })
     }
 
     /// 读取 tick 计数（1ms 粒度）。

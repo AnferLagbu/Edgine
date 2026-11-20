@@ -47,11 +47,11 @@ use super::PAGE_SIZE;
 // 该位为 0 时 AC 标志对访问控制毫无作用, 两条指令退化为 no-op 语义等价.
 // CR4 是 per-CPU 寄存器, 逐核即时读取天然正确, 不引入额外全局状态.
 /// CR4.SMAP 位号 (与 `cpu::init_msr` 置位处同源).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
 const CR4_SMAP_BIT: u64 = 1 << 21;
 
 /// 查询当前 CPU 是否已启用 SMAP (CR4.SMAP=1).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "host-test")))]
 #[inline]
 fn smap_is_enabled() -> bool {
     let cr4: u64;
@@ -60,6 +60,14 @@ fn smap_is_enabled() -> bool {
         core::arch::asm!("mov {0}, cr4", out(reg) cr4, options(nomem, nostack, preserves_flags));
     }
     cr4 & CR4_SMAP_BIT != 0
+}
+
+/// host-test 构建运行在宿主用户态: 读 CR4 是特权指令 (SIGSEGV),
+/// 且宿主进程没有内核 SMAP 语义, 故恒报未启用 (`smap_begin` / `smap_end` 退化为 no-op).
+#[cfg(all(target_arch = "x86_64", feature = "host-test"))]
+#[inline]
+fn smap_is_enabled() -> bool {
+    false
 }
 
 /// SAFETY: 调用方保证在 user 内存访问区间内调用, 配对 `smap_end`.
