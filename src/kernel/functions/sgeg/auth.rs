@@ -26,9 +26,14 @@
 
 use crate::privileged::syscall::Errno;
 
-/// `auth_login(password`, note) 策略
+/// `auth_login(note`, password) 策略
+///
+/// ABI 序为 **note 在前, password 在后**: 用户态 `userlib::sys::auth_login(n, p)`
+/// 以 a0=note / a1=password 发起, 内核 `pwm_login(note, password)` 亦为此序.
+/// 修复前本函数把形参命名为 `(password, note)` 再对调转发, 导致内核拿密码串查
+/// 用户、拿 note 串验密码 ⇒ `login` 恒失败 (缺陷 ⑥).
 #[must_use]
-pub fn auth_login_syscall(password_ptr: u64, note_ptr: u64) -> i64 {
+pub fn auth_login_syscall(note_ptr: u64, password_ptr: u64) -> i64 {
     crate::privileged::sgeg::pwm_login(note_ptr as *const u8, password_ptr as *const u8)
 }
 

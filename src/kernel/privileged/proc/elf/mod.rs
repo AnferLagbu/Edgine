@@ -415,10 +415,15 @@ pub fn needs_interp_rewrite(elf_data: &[u8]) -> bool {
         // 读取 interp 路径字符串
         let interp_offset = crate::privileged::glue::usize_from_u64(phdr.offset);
         let interp_len = crate::privileged::glue::usize_from_u64(phdr.filesz);
-        if interp_offset + interp_len > crate::privileged::glue::usize_from_u64(elf_size) {
+        // 范围判据必须防加法回绕: `offset`/`filesz` 都来自用户态可控的 ELF 头,
+        // usize 直接相加溢出会回绕成小值从而绕过上界检查 (随后 from_raw_parts 越界读).
+        let Some(interp_end) = interp_offset.checked_add(interp_len) else {
+            continue;
+        };
+        if interp_end > crate::privileged::glue::usize_from_u64(elf_size) {
             continue;
         }
-        // SAFETY: 指针操作在有效范围内 (interp_offset + interp_len 已按 elf_size 校验)
+        // SAFETY: 指针操作在有效范围内 (interp_offset + interp_len 经 checked_add 且未越 elf_size)
         let interp_path = unsafe {
             core::slice::from_raw_parts(elf_data.as_ptr().add(interp_offset), interp_len)
         };
@@ -445,9 +450,9 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
     // 逐条按值读出 (不构造对齐引用), 条数与表范围已由 `verify_elf` 校验; 写入只落在
     // `interp_offset .. interp_offset+interp_len` 内, 长度取
     // `EDGINE_INTERP.len().min(interp_len)` 并以 0 补齐剩余 ⇒ 不越出原 PT_INTERP 段。
-    // 已登记缺口 (批6 待裁, 本批不改): 范围判据 `interp_offset + interp_len > elf_size`
-    // 是**未检查加法**, 两个来自 ELF 的值转 usize 后相加可回绕, 回绕即绕过该判据 ⇒
-    // 后续 `copy_nonoverlapping` / `write_bytes` 可写到缓冲区外 (ELF 由用户态提供)。
+    // 范围判据用 `checked_add` 计算 `interp_offset + interp_len` 的终点, 加法回绕
+    // (两个字段均来自用户态可控的 ELF 头) 时判为越界而跳过, 故不会以回绕后的小值
+    // 骗过 `> elf_size` 检查而写出缓冲区外。
     unsafe {
         let Some(header) = elf_validate(core::slice::from_raw_parts(
             elf_data.cast_const(),
@@ -474,7 +479,11 @@ pub unsafe fn rewrite_interp_path(elf_data: *mut u8, elf_size: u64) {
 
             let interp_offset = crate::privileged::glue::usize_from_u64(phdr.offset);
             let interp_len = crate::privileged::glue::usize_from_u64(phdr.filesz);
-            if interp_offset + interp_len > crate::privileged::glue::usize_from_u64(elf_size) {
+            // 同 `needs_interp_rewrite`: 必须防加法回绕, 否则越界写可绕过本判据.
+            let Some(interp_end) = interp_offset.checked_add(interp_len) else {
+                continue;
+            };
+            if interp_end > crate::privileged::glue::usize_from_u64(elf_size) {
                 continue;
             }
 
@@ -542,5 +551,53 @@ mod tests {
     fn test_elf64_header_sizes() {
         assert_eq!(core::mem::size_of::<Elf64Header>(), 64);
         assert_eq!(core::mem::size_of::<Elf64Phdr>(), 56);
+    }
+
+    /// 8 字节对齐的 ELF 缓冲区: `elf_validate` 会把它按 `Elf64Header` 对齐引用解析.
+    #[repr(align(8))]
+    struct AlignedElf([u8; 120]);
+
+    /// 构造「合法头 + 单条 PT_INTERP」的最小 ELF (头 64B + 程序头 56B = 120B).
+    fn elf_with_interp(offset: u64, filesz: u64) -> AlignedElf {
+        let mut buf = AlignedElf([0u8; 120]);
+        // SAFETY: 缓冲区 8 字节对齐且长 120B >= Elf64Header(64B); 头尾与 PHDR 均
+        // 落在缓冲区内, 只做按值字段写入 (不对整个缓冲构造共享引用).
+        unsafe {
+            let hdr = buf.0.as_mut_ptr().cast::<Elf64Header>();
+            let mut ident = [0u8; 16];
+            ident[0..4].copy_from_slice(b"\x7FELF");
+            ident[4] = 2; // ELFCLASS64
+            (*hdr).ident = ident;
+            (*hdr).machine = 0x3E; // x86_64 (host 构建接受两架构)
+            (*hdr).phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+            (*hdr).phoff = core::mem::size_of::<Elf64Header>() as u64;
+            (*hdr).phnum = 1;
+
+            let phdr = buf.0.as_mut_ptr().add(64).cast::<Elf64Phdr>();
+            (*phdr).ty = PT_INTERP;
+            (*phdr).offset = offset;
+            (*phdr).filesz = filesz;
+        }
+        buf
+    }
+
+    /// ㊽ 回归: `offset + filesz` 回绕 usize 时必须被拒, 不得构造越界切片或改写越界.
+    #[test]
+    fn interp_range_add_overflow_is_rejected() {
+        // u64::MAX-8 + 16 回绕成 7; 旧判据 `offset + len > elf_size` 会误判为在界内.
+        let mut elf = elf_with_interp(u64::MAX - 8, 16);
+        assert!(
+            !needs_interp_rewrite(&elf.0),
+            "回绕区间不得被判定为需要改写"
+        );
+        assert!(!prepare_elf_image(&mut elf.0), "回绕区间不得被改写");
+    }
+
+    /// 边界对照: 恰好等于文件长度的 interp 区间是合法的, 说明判据未过严.
+    #[test]
+    fn interp_range_exact_fit_is_accepted() {
+        // 区间 [119, 120) 在界内; 内容非 Linux 链接器前缀 ⇒ 无需改写.
+        let elf = elf_with_interp(119, 1);
+        assert!(!needs_interp_rewrite(&elf.0));
     }
 }

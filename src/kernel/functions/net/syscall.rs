@@ -669,6 +669,31 @@ pub fn shutdown_syscall(fd: i32, how: i32) -> Result<usize, Errno> {
     ret_to_result(fw::shutdown_syscall(obj.inet_slot()?, how))
 }
 
+/// 逐条校验 iovec 的 `base`/`len` 都落在用户地址空间内 (㉛).
+///
+/// `sendmsg`/`recvmsg` 的 `msg_iov` 由用户提供, 其 `iov_base` / `iov_len` 是任意
+/// 64 位值. 若不在本层校验, privileged 侧 `sm_sendmsg`/`sm_recvmsg` 会直接
+/// `copy_nonoverlapping` 读写该地址 —— `iov_base` 指向内核地址即可读写内核内存
+/// (违反 I4). 本函数与其它用户指针判据同源, 统一走 `validate_user_buf` 的区间判据.
+///
+/// `iovlen` 的上界由调用方先行限制 (≤ `UIO_MAXIOV`), 本函数按 16 字节 iovec 布局读取.
+///
+/// # Errors
+/// iov 数组本身不可读, 或任一段落在用户地址空间之外时返回 `Err(Errno::Efault)`。
+fn validate_iov_list(iov_ptr: u64, iovlen: u64) -> Result<(), Errno> {
+    for j in 0..iovlen {
+        let base = api::read_u64_from_user(iov_ptr + j * 16).ok_or(Errno::Efault)?;
+        let seg_len = api::read_u64_from_user(iov_ptr + j * 16 + 8).ok_or(Errno::Efault)?;
+        if seg_len == 0 {
+            continue;
+        }
+        if base == 0 || !api::validate_user_buf(base, seg_len) {
+            return Err(Errno::Efault);
+        }
+    }
+    Ok(())
+}
+
 /// sendmsg(fd, msg, flags) — 真实实现
 ///
 /// v2: UDS 协议 sendmsg 路径 — 在 fw 之前处理 `msg_control` 注入 `SCM_CREDENTIALS`
@@ -701,6 +726,9 @@ pub fn sendmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
+    // 逐条 iov 的 base/len 同样必须落在用户地址空间内 (㉛): privileged 侧直接以
+    // `copy_nonoverlapping` 读写这些地址, 不校验即可触内核内存.
+    validate_iov_list(iov_ptr, iovlen)?;
     // v2: UDS cmsg 处理 — 在发送前注入凭据 (如果对端 passcred)
     // cmsg 头格式: cmsghdr { cmsg_len: usize (8B), cmsg_level: i32 (4B), cmsg_type: i32 (4B) }
     // 总 16 字节头, 然后是 data (cmsg_len - 16 字节)
@@ -803,6 +831,9 @@ pub fn recvmsg_syscall(fd: i32, msg_ptr: u64, flags: i32) -> Result<usize, Errno
     if !api::validate_user_buf(iov_ptr, iov_bytes) {
         return Err(Errno::Efault);
     }
+    // 逐条 iov 的 base/len 同样必须落在用户地址空间内 (㉛): privileged 侧会把
+    // 接收数据 `copy_nonoverlapping` 写回这些地址, 不校验即可写内核内存.
+    validate_iov_list(iov_ptr, iovlen)?;
     // v2: UDS cmsg 回传 — 写回对端注入的 SCM_CREDENTIALS (对端 passcred 启用时)
     // 框架 fw_recvmsg 把数据搬入 iov, 凭据在 stream/dgram 缓冲里已添加 12 字节.
     // 这里仅在 msg_control 区域写回标准 SCM_CREDENTIALS cmsghdr, 让用户能解析凭据.
@@ -1238,4 +1269,44 @@ fn copy_out_to_entry_iov(iov_ptr: u64, data: &[u8]) -> Result<(), Errno> {
         j += 1;
     }
     Ok(())
+}
+
+#[cfg(all(test, not(feature = "kernel_test")))]
+mod iov_validation_tests {
+    use super::validate_iov_list;
+    use crate::privileged::syscall::Errno;
+
+    /// ㉛ 回归: `iov_base` 指向内核地址时必须被拒, 不得进入 privileged 的裸搬运.
+    #[test]
+    fn rejects_kernel_iov_base() {
+        // 内核高半区地址 (≥ USER_ADDR_MAX) 段; len 非零.
+        let iov: [[u64; 2]; 1] = [[0xFFFF_8000_0000_0000, 8]];
+        let ret = validate_iov_list(iov.as_ptr() as u64, 1);
+        assert!(matches!(ret, Err(Errno::Efault)));
+    }
+
+    /// 合法用户段 (真实宿主栈缓冲) 必须通过, 说明判据未误伤.
+    #[test]
+    fn accepts_user_iov_base() {
+        let data = [0u8; 32];
+        let iov: [[u64; 2]; 1] = [[data.as_ptr() as u64, 32]];
+        assert!(validate_iov_list(iov.as_ptr() as u64, 1).is_ok());
+    }
+
+    /// 长度为 0 的段被跳过 (与 rw_copy 语义一致), 不因 base 非法而报错.
+    #[test]
+    fn skips_zero_length_segment() {
+        let only_zero: [[u64; 2]; 1] = [[0xFFFF_8000_0000_0000, 0]];
+        assert!(validate_iov_list(only_zero.as_ptr() as u64, 1).is_ok());
+    }
+
+    /// 零长度段被跳过后, 不得掩盖后续非法段.
+    #[test]
+    fn zero_length_skip_does_not_mask_later_bad_segment() {
+        let iov: [[u64; 2]; 2] = [[0xFFFF_8000_0000_0000, 0], [0xFFFF_8000_0000_1000, 8]];
+        assert!(matches!(
+            validate_iov_list(iov.as_ptr() as u64, 2),
+            Err(Errno::Efault)
+        ));
+    }
 }

@@ -119,7 +119,7 @@ FUNCTIONS_WHITELIST_GATES = {
     ('src/kernel/functions/net/syscall.rs',
      '#[cfg(not(feature = "kernel_test"))]'): 6,
     ('src/kernel/functions/net/syscall.rs',
-     '#[cfg(all(test, not(feature = "kernel_test")))]'): 1,
+     '#[cfg(all(test, not(feature = "kernel_test")))]'): 2,
     ('src/kernel/functions/syscall/dispatch.rs',
      '#[cfg(not(feature = "kernel_test"))]'): 4,
 }

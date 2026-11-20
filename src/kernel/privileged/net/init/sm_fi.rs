@@ -229,13 +229,14 @@ pub(crate) fn endpoint_from_smol(
 //   的 addr/addrlen 是用户指针直传.
 // 类别 D「用户 msghdr/iov 直读」: sm_sendmsg / sm_recvmsg. functions 层
 //   (functions::net::syscall 的 sendmsg_syscall / recvmsg_syscall) 已校验 msg 56 字节
-//   可读、iov 数组 iovlen*16 字节范围, 并限 iovlen 属于 [1,1024]; 本层复用同一上界,
-//   故 lens/bases 两个 [_; 1024] 栈数组不越界.
+//   可读、iov 数组 iovlen*16 字节范围, 并限 iovlen 属于 [1,1024]; 且逐条 iov 的
+//   base/len 都经 `validate_user_buf` 校验落在用户地址空间内 (validate_iov_list).
+//   本层复用同一上界, 故 lens/bases 两个 [_; 1024] 栈数组不越界.
 //
 // 已知局限 (登记不改, 见门禁健康度收敛工程 批 5f):
 // - userptr::validate_user_buf 只做地址区间校验 (ptr > 0 且 ptr+len <= USER_ADDR_MAX),
-//   不验证已映射/可写; accept/getsockname/getpeername/recvfrom 的 addr/addrlen 与
-//   sendmsg/recvmsg 的逐条 iov_base/iov_len 在 syscall 层未做区间校验即直传本层.
+//   不验证已映射/可写; accept/getsockname/getpeername/recvfrom 的 addr/addrlen
+//   在 syscall 层未做区间校验即直传本层.
 // - 本层直读直写用户内存不经 mm::copy_user 的 stac/clac 包裹, CR4.SMAP 置位时
 //   (cpu 按 CPUID 启用) ring0 访问用户页会触发 #PF.
 
@@ -1521,7 +1522,9 @@ pub unsafe extern "C" fn sm_sendmsg(
     // iovlen 属于 [1,1024] 上界故 lens/bases 不越界; total 用 checked_add 防溢出,
     // IobRegion::alloc(total) 成功后 off+lens[i] <= total 恒成立, 故 copy_nonoverlapping
     // 的目标区间在 region 内且与源 iov 不重叠 (region 是新分配内核缓冲).
-    // 源 iov_base/iov_len 未经区间校验 (见单源已知局限). 末尾委托 sm_send (类别 A).
+    // 源 iov_base/iov_len 已由 functions 层 `sendmsg_syscall` 逐条
+    // `validate_user_buf` 校验落在用户地址空间内 (见该函数 validate_iov_list).
+    // 末尾委托 sm_send (类别 A).
     unsafe {
         if msg.is_null() {
             return -E_FAULT;
@@ -1610,7 +1613,8 @@ pub unsafe extern "C" fn sm_recvmsg(
     // SAFETY: 类别 D. 同 sm_sendmsg 的 msghdr/iov 读取依据与 iovlen 上界; cap 用
     // checked_add 防溢出, region 容量 = cap. 委托 sm_recv 读入 region (内核缓冲),
     // 再按 cp = min(lens[i], left) 拆分回 iov, off+cp <= n <= cap 故源区间在 region 内;
-    // 目标 iov_base 为用户指针, 未经区间校验 (见单源已知局限).
+    // 目标 iov_base 为用户指针, 已由 functions 层 `recvmsg_syscall` 逐条
+    // `validate_user_buf` 校验落在用户地址空间内 (见该函数 validate_iov_list).
     unsafe {
         if msg.is_null() {
             return -E_FAULT;

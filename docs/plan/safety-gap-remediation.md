@@ -121,7 +121,14 @@ gate-health 册的发现清单是**补写 SAFETY 当时**的快照，批 6 立�
 `userptr::validate_user_buf`（与 ㊾ 同源），补长度/目的址无界的负控制；
 ③ ⑥ 先裁定**哪一侧是权威**（ABI 单源在 `edgine-abi`，note/password 序须两侧一致），
 再改内核或 userlib 之一 + `eash identity` 端到端回归；④ 三处就地登记的缺口段改写为真实依据。
-状态：[]
+详情：㊽ `needs_interp_rewrite` / `rewrite_interp_path` 两处范围判据改 `checked_add`（回绕即跳过），
+补内联单测 `interp_range_add_overflow_is_rejected` / `interp_range_exact_fit_is_accepted`；
+㉛ 新增 functions 侧 `validate_iov_list`，`sendmsg_syscall`/`recvmsg_syscall` 逐条走
+`validate_user_buf`，补 `host-tests/tests/sendmsg_iov_validation_test.rs`（内核地址 iov 入口即 EFAULT）
+与内联边界单测；⑥ 裁定 ABI 权威序为 **note 在前**（`pwm_login(note, password)` + userlib `auth_login(n, p)` 一致），
+修正 `auth_login_syscall` 形参与转发序，补 `host-tests/tests/sgeg_login_arg_order_test.rs`（正确序登录成功、对调序被拒）。
+三项负控制均注入后转红（RC=101）并复原；七门槛全绿。
+状态：[X]
 
 ### 批 R2・I4 用户指针校验面收口（㉚ ㉜ ㊾）
 
