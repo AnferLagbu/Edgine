@@ -19,14 +19,13 @@
 //!
 //! 被探针对象 = `privileged/glue/string.rs` 的 `strlen`. 其契约是「`s` 为 null 或
 //! 指向以 `\0` 结尾的可读 C 串」, 而**实际读取范围**由实装循环决定:
-//! `while *ptr != 0 && len < MAX_CSTR_LEN` —— `&&` 左侧先求值, 故 `len` 已达
-//! `MAX_CSTR_LEN` 时**仍会解引用一次**才由右侧退出. 即读取下标闭区间为
-//! `[0, min(MAX_CSTR_LEN, 首个 NUL 下标)]`, 缓冲须在该区间内可读 (无 NUL 且缓冲
-//! 恰为 `MAX_CSTR_LEN` 字节时会多读 1 字节, 本文件各用例的缓冲均不落在该形态).
+//! `while len < MAX_CSTR_LEN && *ptr != 0` —— **先判上限再解引用**, 故读取下标
+//! 闭区间恒为 `[0, min(最大扫描长度, 首个 NUL 下标)]`, 其中最大扫描长度 =
+//! `MAX_CSTR_LEN - 1` (无 NUL 的缓冲读到第 `MAX_CSTR_LEN` 个字节即停).
 //! null 指针走实装首行 `s.is_null()` 早返回, 不解引用.
 //!
-//! 本文件所有指针均来自**测试自有的本地 `Vec<i8>`** (`to_cstr` 末尾追加 `\0`,
-//! 或 `vec!` 定长填充), 借用在调用期间存活、无并发写, 故只需逐处核对
+//! 本文件除守护页用例外, 指针均来自**测试自有的本地 `Vec<i8>`** (`to_cstr` 末尾
+//! 追加 `\0`, 或 `vec!` 定长填充), 借用在调用期间存活、无并发写, 故只需逐处核对
 //! 「缓冲长度 > 上述读取下标上界」. 各调用点注释只引本段 + 写该处的长度与 NUL 位置.
 
 use edgine::kernel::privileged::glue::cstr::MAX_CSTR_LEN;
@@ -98,8 +97,8 @@ fn test_strlen_under_max_returns_full_length() {
 fn test_strlen_at_max_returns_max() {
     // 长度 == MAX_CSTR_LEN: 应当返回 MAX_CSTR_LEN (合法路径, 因遇到 \0 之前已到上限)
     let s = to_cstr(&"y".repeat(MAX_CSTR_LEN));
-    // SAFETY: 见模块头单源 —— 缓冲 MAX+1 字节, NUL 恰在下标 MAX ⇒ 读 0..=MAX 仍在界内
-    // (本用例正是「上限处多读 1 字节」的临界形态, 靠 to_cstr 追加的 NUL 兜住)
+    // SAFETY: 见模块头单源 —— 缓冲 MAX+1 字节, NUL 在下标 MAX; 实装先判上限,
+    // 故读到下标 MAX-1 即停, 不会触及 NUL 与尾随字节
     let len = unsafe { strlen(s.as_ptr()) };
     assert_eq!(len, MAX_CSTR_LEN, "strlen at MAX boundary returns MAX");
 }
@@ -111,13 +110,83 @@ fn test_strlen_over_max_truncated_to_max() {
     // 测试场景: buf 长度 > MAX_CSTR_LEN 且全为非 \0 字符
     let buf: Vec<i8> = vec![b'a'.cast_signed(); MAX_CSTR_LEN + 100];
     // 不放 \0, strlen 必须在 MAX_CSTR_LEN 处停止
-    // SAFETY: 见模块头单源 —— 缓冲 MAX+100 字节且无 NUL ⇒ 读 0..=MAX (含上限那次多读),
-    // 余 99 字节不被读, 故「截断到 MAX」的断言不依赖越界读
+    // SAFETY: 见模块头单源 —— 缓冲 MAX+100 字节且无 NUL; 实装先判上限, 只读
+    // [0, MAX) 即返回 MAX, 余下字节不被读
     let len = unsafe { strlen(buf.as_ptr()) };
     assert_eq!(
         len, MAX_CSTR_LEN,
         "strlen must truncate at MAX_CSTR_LEN (no unbounded read)"
     );
+}
+
+/// 临界形态: 缓冲**恰为** `MAX_CSTR_LEN` 字节且全程无 NUL, 末尾紧邻 `PROT_NONE`
+/// 守护页 —— 任何多读 1 字节都会立即 SIGSEGV, 而不是靠相邻堆字节「碰巧可读」。
+#[cfg(target_os = "linux")]
+#[test]
+fn test_strlen_exact_max_without_nul_does_not_overread_guard_page() {
+    use core::ffi::c_void;
+
+    // SAFETY: 本声明只取 glibc 的 mmap/mprotect/munmap 符号, 参数与 Linux x86_64 /
+    // aarch64 的 64 位 ABI 一致; 调用点各自带 SAFETY 说明。
+    unsafe extern "C" {
+        fn mmap(
+            addr: *mut c_void,
+            len: usize,
+            prot: i32,
+            flags: i32,
+            fd: i32,
+            off: i64,
+        ) -> *mut c_void;
+        fn mprotect(addr: *mut c_void, len: usize, prot: i32) -> i32;
+        fn munmap(addr: *mut c_void, len: usize) -> i32;
+    }
+
+    const PROT_NONE: i32 = 0;
+    const PROT_READ: i32 = 1;
+    const PROT_WRITE: i32 = 2;
+    const MAP_PRIVATE: i32 = 0x02;
+    const MAP_ANONYMOUS: i32 = 0x20;
+    const MAP_FAILED: isize = -1;
+
+    // MAX_CSTR_LEN 恰等于一页: 第一页放满无 NUL 字节, 第二页作守护页.
+    assert_eq!(MAX_CSTR_LEN, 4096, "本用例依赖扫描上限等于页大小");
+
+    // SAFETY: 参数为合法的匿名私有映射常量; 失败时返回值比较后再解引用。
+    let region = unsafe {
+        mmap(
+            core::ptr::null_mut(),
+            2 * MAX_CSTR_LEN,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(region as isize, MAP_FAILED, "mmap 两页失败");
+
+    // SAFETY: region 是上一步成功映射的两页起点, 第二页整页在映射范围内。
+    let guard = unsafe {
+        mprotect(
+            region.cast::<u8>().add(MAX_CSTR_LEN).cast(),
+            MAX_CSTR_LEN,
+            PROT_NONE,
+        )
+    };
+    assert_eq!(guard, 0, "mprotect 守护页失败");
+
+    let buf = region.cast::<i8>();
+    // SAFETY: region 第一页可写且长度恰为 MAX_CSTR_LEN; 写入范围不越页。
+    unsafe {
+        core::ptr::write_bytes(buf.cast::<u8>(), b'a', MAX_CSTR_LEN);
+    }
+    // SAFETY: 见模块头单源 + 本用例构造 —— 第一页 MAX 字节全为 'a' 且无 NUL,
+    // 第二页 PROT_NONE; 实装只应读 [0, MAX) 并返回 MAX.
+    let len = unsafe { strlen(buf) };
+    assert_eq!(len, MAX_CSTR_LEN, "无 NUL 的 MAX 字节缓冲必须停在上限");
+
+    // SAFETY: region 由上面的 mmap 建立、尚未释放, 长度与映射时一致。
+    let unmapped = unsafe { munmap(region, 2 * MAX_CSTR_LEN) };
+    assert_eq!(unmapped, 0, "munmap 失败");
 }
 
 #[test]

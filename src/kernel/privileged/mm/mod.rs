@@ -90,6 +90,8 @@ pub use vmm::VirtualMemoryManager as Vmm;
 #[cfg(target_arch = "aarch64")]
 pub use vmm::Aarch64Vmm as Vmm;
 
+/// 全局分配器尾随元数据布局算式 (对齐偏移 / 页数, host 可单测)
+pub mod alloc_meta;
 /// T-02: 物理页帧分配决策 trait
 pub mod alloc_trait;
 pub mod api;

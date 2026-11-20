@@ -240,7 +240,24 @@ RC=1（请求行仅 1 次）；`reboot_via_psci` 注入停机自旋 ⇒ aarch64 
 MAX_CSTR_LEN 字节且无 NUL」的临界单测（批 5c 的 `at_max` 用例正是该形态，靠 `to_cstr`
 追加的 NUL 兜住，须改成直接暴露越界）；② ㊺ 先按 §11.3 问路径（简约＝把 tag 放在
 对齐间隙内 / 相对完整＝重设计小对象头布局），再改并补 `layout.align() > 8` 的分配器单测。
-状态：[]
+详情：**㊺ 用户裁定「相对完整」**——标签与对齐偏移改为**尾随载荷**（`[数据指针 + size,
++16)` = 来源标签 u64 + 偏移 u64），数据指针 = 基础块指针 + `align_offset`，对任意合法
+`Layout::align()` 成立；布局算式单源到新模块 `privileged/mm/alloc_meta.rs`
+（`align_offset` / `pages_for`，纯函数便于 host 单测），分配器按「小对象 kmalloc /
+大对象且对齐 ≤ 页沿用无元数据路径 / 其余 PMM + 元数据」三路路由——最后一支刻意保留
+无元数据路径，避免整页大小（4096）的分配因 16 字节元数据多占一页。dealloc 以同一
+`Layout` 复原路由、基础块指针与页数。**⑩** 改为 `while len < MAX_CSTR_LEN && *ptr != 0`
+并将 `# Safety` 补为真实调用方义务；host 临界用例改用 `mmap` + `mprotect(PROT_NONE)`
+守护页（缓冲恰 `MAX_CSTR_LEN` 字节且无 NUL，多读 1 字节即 SIGSEGV），不再依赖
+`to_cstr` 追加的 NUL 兜住。两项负控制：⑩ 还原旧求值次序 ⇒ 守护页用例 **SIGSEGV
+（RC=101）**；㊺ 令 `align_offset` 恒返 0 ⇒ `align_offset_rounds_up_within_one_step`
+**FAILED（RC=101）**；均复原后转绿。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `bash ci/audit.sh full`
+RC=0（未执行腿数 0，含 QEMU 与 reboot 双架构真重启腿）· `make test-host` **208 套 /
+1617 passed / 0 failed**（+1 守护页用例）· `make test-kernel-host`
+**12 + 811 + 567 = 1390 / 0 failed**（+5 `alloc_meta` 单测）· `ci-rustdoc` 双架构
+exit 0。
+状态：[X]
 
 ### 批 R5・定时回调与锁序（㊹ ⑭）
 

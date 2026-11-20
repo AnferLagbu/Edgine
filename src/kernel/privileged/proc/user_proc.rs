@@ -527,7 +527,7 @@ pub(crate) mod raw {
     ///
     /// 必须走**全局分配器**: 进程表的权威销毁路径 (`ProcessTable::remove_and_free` /
     /// `dec_ref_and_maybe_free`) 以 `Box::from_raw` 归还, 而全局分配器
-    /// (`KernelAllocator`) 的块带 8 字节归还路由标签, 裸 `kmalloc` 块没有。
+    /// (`KernelAllocator`) 的块带尾随归还路由元数据 (载荷后 16 字节), 裸 `kmalloc` 块没有。
     /// 混用会让归还侧把堆上相邻字节当标签; `size > PAGE_THRESHOLD` 时更会按 PMM
     /// 帧归还 —— 把 kmalloc 堆页还给 PMM 后该页可被二次分配并清零, 活堆数据
     /// (如本进程的 `Arc<FsContext>`) 静默消失。K-07b 批2 首次运行时 exec 即踩中。

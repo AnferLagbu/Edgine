@@ -69,14 +69,14 @@ use super::cstr::MAX_CSTR_LEN;
 /// 字符串长度（不包括终止符 '\0'）
 ///
 /// # Safety
-/// 此函数通过 FFI 暴露给 C 代码使用
+///
+/// `s` 必须为 null, 或指向一段可读缓冲: 内核至多读取其前 [`MAX_CSTR_LEN`] 字节,
+/// 且读取期间该缓冲不被并发修改。缓冲无 NUL 终止符时返回 [`MAX_CSTR_LEN`]。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
-    // SAFETY: 类别 A。`s` 为 null 时提前返回 0 不解引用; 循环内 `*ptr` / `ptr.add(1)`
-    // 只在 C 侧契约的 NUL 终止缓冲内推进, 扫描上限 MAX_CSTR_LEN。
-    // 已登记缺口 (批6 待裁, 本批不改): 判据次序是「先解引用再判长度」
-    // (`while *ptr != 0 && len < MAX_CSTR_LEN`), 故无 NUL 的缓冲最坏读到索引
-    // MAX_CSTR_LEN (第 4097 字节) 才退出, 比声明上限多读 1 字节。
+    // SAFETY: 类别 A。`s` 为 null 时提前返回 0 不解引用; 循环先判上限 `len <
+    // MAX_CSTR_LEN` 再解引用 `*ptr`, 故最多读取下标 [0, MAX_CSTR_LEN) 共
+    // MAX_CSTR_LEN 字节, 不会多读上限之外的 1 字节 (与 `glue/cstr.rs` 同形态)。
     unsafe {
         if s.is_null() {
             return 0;
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn strlen(s: *const core::ffi::c_char) -> usize {
         let mut ptr = s;
 
         // B04-07: 加 MAX_CSTR_LEN 上限 (DECISION-060), 防御恶意指针无上界读取。
-        while *ptr != 0 && len < MAX_CSTR_LEN {
+        while len < MAX_CSTR_LEN && *ptr != 0 {
             len += 1;
             ptr = ptr.add(1);
         }
