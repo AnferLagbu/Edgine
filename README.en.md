@@ -1,6 +1,8 @@
 # Edgine Kernel
 
-Edgine is a from-scratch kernel implemented in Rust, designed and developed based on the Asterinas Framekernel architecture and paradigm. It is currently experimental, and includes some unique features designed specifically for it.
+Edgine is a from-scratch kernel implemented in Rust, designed and developed based on the Asterinas Framekernel architecture and paradigm, with some unique features designed specifically for it.
+
+Edgine is first and foremost a hobby and experimental kernel. It does not aim to be production-ready and is not recommended for any production use; that identity holds even if it grows stable and reliable over time. Being experimental is not an exemption from quality.
 
 > **中文版本**: [README.md](README.md)
 

@@ -1,6 +1,8 @@
 # Edgine Kernel
 
-Edgine 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas 框内核（Framekernel）架构与范式进行设计与开发。它目前是实验性的，并在此基础上设计了一些独特的功能与特性。
+Edgine 是一个从零实现的内核，使用 Rust 编写，基于 Asterinas 框内核（Framekernel）架构与范式进行设计与开发，并在此基础上设计了一些独特的功能与特性。
+
+Edgine 的首要身份是个人爱好与实验性内核，不以生产可用为目标，也不建议用于任何生产环境；即便日后逐渐变得稳定可靠，这一定位也不改变。定位上的实验性不构成质量上的豁免。
 
 > **English version**: [README.en.md](README.en.md)
 
