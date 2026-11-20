@@ -244,31 +244,55 @@ pub(crate) fn endpoint_from_smol(
 //   均以 `smap_begin` / `smap_end` 包裹, CR4.SMAP 置位时 ring0 不会触发 #PF.
 //   `parse_endpoint_trait` / `sm_setsockopt` 收到的是 syscall 层重编码后的内核
 //   栈缓冲, 不涉及用户页.
+// - 回写容量: sockaddr 回写以用户 `*addrlen` 为容量上限 (min 于实际结构长度),
+//   超出容量的部分不写; `*addrlen` 始终回填实际长度 (Linux `move_addr_to_user` 语义).
+
+/// 读取用户 `*addrlen` 作为 sockaddr 回写容量 (上限 = `sockaddr_in6` 长度).
+///
+/// - `addr` 为 NULL → 0 (不回写);
+/// - `addrlen` 为 NULL → `sockaddr_in6` 长度 (无容量信息, 按 Linux 语义写满);
+/// - 否则读 `*addrlen` 并截到 `sockaddr_in6` 长度.
+///
+/// # Safety
+/// 非 NULL 的 `addrlen` 必须指向已校验、已映射的 4 字节用户可读区间.
+pub(crate) unsafe fn user_addr_capacity(addr: *mut u8, addrlen: *mut u32) -> usize {
+    let max = core::mem::size_of::<SockaddrIn6>();
+    if addr.is_null() {
+        return 0;
+    }
+    if addrlen.is_null() {
+        return max;
+    }
+    // SAFETY: 调用方已校验 addrlen 的 4 字节区间与映射; smap 包裹用户读.
+    unsafe {
+        smap_begin();
+        let cap = core::ptr::read_unaligned(addrlen);
+        smap_end();
+        core::cmp::min(cap as usize, max)
+    }
+}
 
 /// 将 `NetEndpoint` 写入 sockaddr C 结构体 (供 recvfrom/getsockname/getpeername 返回地址).
 ///
 /// 双栈 (DECISION-032): V4 写 `SockaddrIn` (16 字节), V6 写 `SockaddrIn6` (28 字节).
-/// 调用方提供 `addr` 指针与 `addrlen` 指针:
-/// - `addr` 为 NULL: 跳过写入 (调用方不关心对端地址)
-/// - `addrlen` 为 NULL: 仅写 addr, 不回写长度
-/// - 正常情况: 写入 sockaddr 并将 addrlen 更新为实际结构体大小 (16 / 28)
-///
-/// # Safety
-/// `addr` 非空时必须指向至少 28 字节可写内存 (V6 路径); `addrlen` 非空时必须指向有效 u32.
+/// `cap` 为用户缓冲容量: 只写 `min(cap, 实际长度)` 字节 (Linux `move_addr_to_user`
+/// 截断语义); `addrlen` 非 NULL 时**总是**回写实际结构长度 (16 / 28), 即使发生截断.
 pub(crate) unsafe fn write_sockaddr(
     addr: *mut u8,
     addrlen: *mut u32,
     ep: &crate::privileged::net::iface_trait::NetEndpoint,
+    cap: usize,
 ) {
-    // SAFETY: 类别 C. 按 ep.addr 族写 SockaddrIn (16B) 或 SockaddrIn6 (28B), 均
-    // write_unaligned 故不要求 addr 对齐; addr 为 NULL 已早退, addrlen 为 NULL 时
-    // 跳过长度回写. 非空指针的区间与映射由 syscall 层完整校验 (见上方用户内存依据).
+    // SAFETY: 类别 C. 先在栈上按 ep.addr 族构造 SockaddrIn (16B) / SockaddrIn6 (28B),
+    // 再按 min(cap, 实际长度) 拷回用户地址 (copy_nonoverlapping + smap 包裹);
+    // addr 为 NULL 已早退, addrlen 为 NULL 时跳过长度回写. 非空指针的区间与映射
+    // 由 syscall 层完整校验 (见上方用户内存依据).
     unsafe {
         if addr.is_null() {
             return;
         }
-        smap_begin();
-        match ep.addr {
+        let mut buf = [0u8; core::mem::size_of::<SockaddrIn6>()];
+        let (size, src) = match ep.addr {
             crate::privileged::net::iface_trait::IpAddr::V4(v4) => {
                 let sin = SockaddrIn {
                     family: 2, // AF_INET
@@ -276,15 +300,8 @@ pub(crate) unsafe fn write_sockaddr(
                     addr: v4.octets(),
                     zero: [0; 8],
                 };
-                core::ptr::write_unaligned(addr.cast::<SockaddrIn>(), sin);
-                if !addrlen.is_null() {
-                    core::ptr::write_unaligned(
-                        addrlen,
-                        crate::privileged::glue::low_u32_from_usize(
-                            core::mem::size_of::<SockaddrIn>(),
-                        ),
-                    );
-                }
+                core::ptr::write_unaligned(buf.as_mut_ptr().cast::<SockaddrIn>(), sin);
+                (core::mem::size_of::<SockaddrIn>(), buf.as_ptr())
             }
             crate::privileged::net::iface_trait::IpAddr::V6(v6) => {
                 let sin6 = SockaddrIn6 {
@@ -294,15 +311,17 @@ pub(crate) unsafe fn write_sockaddr(
                     addr: v6.octets(),
                     scope_id: 0,
                 };
-                core::ptr::write_unaligned(addr.cast::<SockaddrIn6>(), sin6);
-                if !addrlen.is_null() {
-                    let size = core::mem::size_of::<SockaddrIn6>();
-                    core::ptr::write_unaligned(
-                        addrlen,
-                        crate::privileged::glue::low_u32_from_usize(size),
-                    );
-                }
+                core::ptr::write_unaligned(buf.as_mut_ptr().cast::<SockaddrIn6>(), sin6);
+                (core::mem::size_of::<SockaddrIn6>(), buf.as_ptr())
             }
+        };
+        let n = core::cmp::min(cap, size);
+        smap_begin();
+        if n > 0 {
+            core::ptr::copy_nonoverlapping(src, addr, n);
+        }
+        if !addrlen.is_null() {
+            core::ptr::write_unaligned(addrlen, crate::privileged::glue::low_u32_from_usize(size));
         }
         smap_end();
     }
@@ -709,8 +728,10 @@ unsafe fn sm_listen_locked(slot_id: i32, _backlog: i32) -> i32 {
 /// 进程 fd 由 functions 侧包装为新的 `SocketFile` 后分配.
 ///
 /// # Safety
-/// - `addr`/`addrlen` 可为 NULL; 非 NULL 时 `addr` 须指向至少 16 字节 (V4) /
-///   28 字节 (V6) 可写内存, `addrlen` 须指向有效 u32。
+/// - `addr`/`addrlen` 可为 NULL; 非 NULL 时 `addr` 须指向至少 28 字节可写内存,
+///   `addrlen` 须指向有效 u32。
+/// - `*addrlen` 作为用户缓冲容量: 只回写 `min(容量, 实际长度)` 字节, 并始终把
+///   实际长度 (16 / 28) 回填到 `*addrlen`。
 /// - `NET_LOCK` 持有; 由 `sys_accept` 分发, 调用方验证权限。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_accept(
@@ -876,7 +897,7 @@ unsafe fn sm_accept_locked(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i3
         // 步骤 6: 从已连接会话回写对端地址 (沿用 getsockname/getpeername 直写约定).
         if let Some(remote) = sockets.get::<tcp::Socket>(conn_handle).remote_endpoint() {
             let ep = endpoint_from_smol(remote);
-            write_sockaddr(addr, addrlen, &ep);
+            write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));
         }
 
         // 步骤 7: 返回承载已连接会话的新槽位号; 监听槽 L 持续可用.
@@ -1408,7 +1429,8 @@ pub unsafe extern "C" fn sm_sendto(
 /// POSIX `recvfrom(fd, buf, len, flags, addr, addrlen)` 内核实现。
 ///
 /// # Safety
-/// `buf` 必须是有效可写指针, 至少 `len` 字节; `addr`/`addrlen` 可选地写入对端地址。
+/// `buf` 必须是有效可写指针, 至少 `len` 字节; `addr`/`addrlen` 可选地写入对端地址
+/// (按 `*addrlen` 容量截断, 见 `write_sockaddr`)。
 /// `NET_LOCK` 持有; 由 `sys_recvfrom` 分发。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_recvfrom(
@@ -1460,7 +1482,7 @@ pub unsafe extern "C" fn sm_recvfrom(
                             // 通过 endpoint_from_smol 将 smoltcp IpEndpoint 翻译为 NetEndpoint,
                             // 再写入 sockaddr_in 供用户态读取对端地址.
                             let ep = endpoint_from_smol(meta.endpoint);
-                            write_sockaddr(addr, addrlen, &ep);
+                            write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));
                             crate::privileged::glue::low_i32_from_usize(n)
                         }))
                     } else if blocking && can_block {
@@ -2283,8 +2305,8 @@ pub unsafe extern "C" fn sm_getsockopt(
 /// TCP 用 `local_endpoint()`, UDP 用 `endpoint()` (`IpListenEndpoint`).
 ///
 /// # Safety
-/// - `addr` 必须是可写 sockaddr 指针, 至少 `_addrlen` 字节.
-/// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
+/// - `addr` 必须是可写 sockaddr 指针, 至少 `*addrlen` 字节.
+/// - `_addrlen` 必须是可写 u32 指针, 既提供容量也回写实际长度.
 /// - `NET_LOCK` 持有; 由 `sys_getsockname` 分发.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
@@ -2353,7 +2375,7 @@ pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *m
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
         let ep = endpoint_from_smol(endpoint);
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
-        write_sockaddr(addr, addrlen, &ep);
+        write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));
         0
     }
 }
@@ -2363,8 +2385,8 @@ pub unsafe extern "C" fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *m
 /// 真实实现: 写回 socket 的 remote endpoint 到 `*addr` (TCP 需已 connect).
 ///
 /// # Safety
-/// - `addr` 必须是可写 sockaddr 指针, 至少 `_addrlen` 字节.
-/// - `_addrlen` 必须是可写 u32 指针 (写回实际长度).
+/// - `addr` 必须是可写 sockaddr 指针, 至少 `*addrlen` 字节.
+/// - `_addrlen` 必须是可写 u32 指针, 既提供容量也回写实际长度.
 /// - `NET_LOCK` 持有; 由 `sys_getpeername` 分发.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
@@ -2399,7 +2421,7 @@ pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *m
                 return match raw::socket_remote_endpoint(slot) {
                     Some(ep) => {
                         // SAFETY: write_sockaddr 按 ep.addr 分支写 sockaddr, addr 已校验非空.
-                        write_sockaddr(addr, addrlen, &ep);
+                        write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));
                         0
                     }
                     None => -E_NOTCONN,
@@ -2414,7 +2436,7 @@ pub unsafe extern "C" fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *m
         // 双栈 (DECISION-032): 翻译为 NetEndpoint 后按 V4/V6 分支写 sockaddr_in / sockaddr_in6
         let ep = endpoint_from_smol(endpoint);
         // SAFETY: write_sockaddr 按 ep.addr 分支写对应 sockaddr 结构, addr 已校验非空且 ≥ 28 字节
-        write_sockaddr(addr, addrlen, &ep);
+        write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));
         0
     }
 }
@@ -2453,8 +2475,38 @@ pub unsafe extern "C" fn sm_poll_sockets() -> i32 {
 mod tests {
     use super::*;
     use crate::privileged::net::iface_trait::{
-        Ipv4Addr as TraitIpv4Addr, NetEndpoint as TraitEndpoint,
+        Ipv4Addr as TraitIpv4Addr, Ipv6Addr as TraitIpv6Addr, NetEndpoint as TraitEndpoint,
     };
+
+    /// R2.1: sockaddr 回写按用户容量截断, `*addrlen` 始终回填实际长度.
+    #[test]
+    fn test_write_sockaddr_truncates_to_capacity() {
+        let ep = TraitEndpoint::new_v6(TraitIpv6Addr([0x20; 16]), 0x1234);
+        let mut buf = [0xAAu8; 28];
+        let mut len: u32 = 0;
+        // 容量 16 < V6 实际 28 字节: 只写前 16 字节, 其余保持哨兵值.
+        // SAFETY: buf/len 为栈上有效可写内存, 长度 28/4 字节.
+        unsafe { write_sockaddr(buf.as_mut_ptr(), &mut len, &ep, 16) };
+        assert_eq!(len, 28, "addrlen 应回填实际长度");
+        assert!(buf[16..].iter().all(|b| *b == 0xAA), "超出容量部分不得写入");
+
+        // 容量 0: 不写 addr, 但仍回填实际长度.
+        let mut untouched = [0xBBu8; 28];
+        let mut len0: u32 = 0;
+        // SAFETY: untouched/len0 为栈上有效可写内存.
+        unsafe { write_sockaddr(untouched.as_mut_ptr(), &mut len0, &ep, 0) };
+        assert_eq!(len0, 28);
+        assert!(untouched.iter().all(|b| *b == 0xBB), "容量 0 不得写入");
+
+        // V4 实际 16 字节: addrlen 回填 16.
+        let ep4 = TraitEndpoint::new_v4(TraitIpv4Addr::new(127, 0, 0, 1), 80);
+        let mut buf4 = [0u8; 28];
+        let mut len4: u32 = 0;
+        // SAFETY: buf4/len4 为栈上有效可写内存.
+        unsafe { write_sockaddr(buf4.as_mut_ptr(), &mut len4, &ep4, 28) };
+        assert_eq!(len4, 16);
+        assert_eq!(u16::from_ne_bytes([buf4[0], buf4[1]]), 2, "AF_INET");
+    }
 
     /// D1: local 端点表写入/读取/清空 往返一致.
     #[test]

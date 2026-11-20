@@ -334,13 +334,14 @@ pub fn accept_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64, blocking: b
         return Errno::Ebadf.as_ret();
     }
     // addr/addrlen 可为 0 (表示不关心); 非 0 时须为完整合法的用户可写区间
-    // (区间上界 + 加法回绕 + 已映射), sm 层按 sockaddr 布局直接回写.
+    // (区间上界 + 加法回绕 + 已映射); sm 层按用户 `*addrlen` 容量截断回写
+    // (最多 28 字节, 并把实际长度回填 `*addrlen`).
     if (addr_ptr != 0 && !userptr::validate_user_buf(addr_ptr, USER_SOCKADDR_MAX))
         || (addrlen_ptr != 0 && !userptr::validate_user_buf(addrlen_ptr, 4))
     {
         return Errno::Efault.as_ret();
     }
-    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 `*addrlen` 容量截断回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_accept(
             slot_id,
@@ -668,7 +669,7 @@ pub fn getsockname_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64
     {
         return Errno::Efault.as_ret();
     }
-    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 `*addrlen` 容量截断回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_getsockname(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
     };
@@ -687,7 +688,7 @@ pub fn getpeername_syscall(slot_id: i32, addr_ptr: u64, addrlen_ptr: u64) -> i64
     {
         return Errno::Efault.as_ret();
     }
-    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 sockaddr 布局回写 (可为 0).
+    // SAFETY: 上方已校验非零指针的区间与映射; sm 层按 `*addrlen` 容量截断回写 (可为 0).
     let rc = unsafe {
         net_socket::sm_getpeername(slot_id, addr_ptr as *mut u8, addrlen_ptr as *mut u32)
     };

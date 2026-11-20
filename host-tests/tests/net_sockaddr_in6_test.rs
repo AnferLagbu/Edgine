@@ -105,8 +105,11 @@ fn test_endpoint_translation_supports_v6() {
 #[test]
 fn test_getsockname_uses_write_sockaddr() {
     let src = read(SM_FI_RS);
-    // sm_getsockname / sm_getpeername 通过 write_sockaddr 支持 V4/V6
-    let getsockname_count = src.matches("write_sockaddr(addr, addrlen, &ep);").count();
+    // sm_getsockname / sm_getpeername 通过 write_sockaddr 支持 V4/V6,
+    // 容量取自用户 `*addrlen` (R2.1 截断语义).
+    let getsockname_count = src
+        .matches("write_sockaddr(addr, addrlen, &ep, user_addr_capacity(addr, addrlen));")
+        .count();
     assert!(
         getsockname_count >= 2,
         "sm_getsockname / sm_getpeername 未复用 write_sockaddr (当前 {getsockname_count} 处)"

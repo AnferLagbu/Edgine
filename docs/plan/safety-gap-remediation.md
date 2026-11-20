@@ -170,6 +170,31 @@ Lockbud 4/4、QEMU 2/2 + P-62 feature 4/4）· `make test-host` **207 套 / 1612
 （含 TCP SOCKNAME/PEERNAME/RECVFROM 路径实跑）· `ci-rustdoc` 双架构 exit 0。
 状态：[X]
 
+### 批 R2.1・sockaddr 回传截断语义（R2 施工新发现）
+
+描述：R2 收口 ㉚ 时复核实装发现 `sm_accept` / `sm_recvfrom` / `sm_getsockname` /
+`sm_getpeername` 的 sockaddr 回写**不消费用户传入的 `*addrlen`**：V6 对端恒写 28 字节，
+V4 调用方按 16 字节分配时会被写穿用户自己的缓冲区。内核内存安全面已由 ㉚ 的
+28 字节映射校验兜住，属用户缓冲越界与 Linux 语义缺口。用户 2026-11-20 指示
+**按根治处理**，故在本工程内闭合。
+方案：以 Linux `move_addr_to_user` 语义为准 —— `*addrlen` 作为用户缓冲容量，只回写
+`min(容量, 实际长度)` 字节；`*addrlen` 始终回填实际长度（16 / 28），即使发生截断。
+容量读取集中在 `user_addr_capacity`（smap 包裹、上限 28 字节），`write_sockaddr`
+先在内核栈构造完整结构再按容量 `copy_nonoverlapping` 拷回；syscall 层的 28 字节
+校验保留为写量上界（校验是实际写量的超集，不放松安全判据）。
+详情：`write_sockaddr` 新增 `cap` 参数并改为截断拷贝；五个调用点（accept、
+recvfrom、getsockname，以及 getpeername 的两条分支）统一经 `user_addr_capacity`
+取容量；`sm_accept` / `sm_recvfrom` / `sm_getsockname` / `sm_getpeername` 的
+`# Safety` 文档同步改写。新增内联单测 `test_write_sockaddr_truncates_to_capacity`
+（V6 容量 16：只写 16 字节且回填 28；容量 0：不写且回填 28；V4：回填 16）；
+负控制把 `min(cap, size)` 注入为 `size` 后转红（RC=101）并复原。
+收口读数：`build.sh all` RC=0（Passed 6 / Failed 0）· `audit.sh full` RC=0
+（未执行腿数 0、Lockbud 4/4、QEMU 2/2 + feature 4/4）· `make test-host`
+**207 套 / 1612 passed / 0 failed** · `make test-kernel-host`
+**12 + 811 + 561 = 1384 / 0 failed** · `qemu_boot_test.sh x86_64` 1/1
+（UDP PEERNAME / SOCKNAME / RECVFROM 实跑通过）· `ci-rustdoc` 双架构 exit 0。
+状态：[X]
+
 ### 批 R3・reboot 双路径（㊿ 51）
 
 描述：x86_64 `reboot_via_idt` 的 IDTR 10 字节 vs 8 字节实参 + `int 0` 与 `options(nostack)`
