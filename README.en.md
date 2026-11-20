@@ -11,7 +11,7 @@ Edgine is a from-scratch kernel implemented in Rust, designed and developed base
 
 ## A Note on Development Mode
 
-This project is built in a **human-on-the-loop, human-AI collaborative model**: the human sits above the loop, owning direction, architecture decisions, boundary constraints, and final review, while AI / agents autonomously carry out planning and implementation within the constraints and oversight the human sets. The model yields high development throughput, and the code may therefore carry the traces and flaws common to AI-generated code. If you find any questionable or erroneous code, your reports and contributions are welcome. To keep AI implementation in check, this project enforces an executable engineering gate: the core static audits run in CI as fail-closed checks (full list in [`AGENTS.md`](AGENTS.md) §2.2).
+This project is built in a **human-on-the-loop, human-AI collaborative model**: the human sits above the loop, owning direction, architecture decisions, boundary constraints, and final review, while AI / agents autonomously carry out planning and implementation within the constraints and oversight the human sets. The model yields high development throughput, and the code may therefore carry the traces and flaws common to AI-generated code. If you find any questionable or erroneous code, your reports and contributions are welcome. To keep AI implementation in check, this project enforces an executable engineering gate: the core static audits are wired as fail-closed checks into the local `ci/audit.sh` (full tier) and `Makefile.ci` (full list in [`AGENTS.md`](AGENTS.md) §2.2).
 
 ## External Dependency Notice
 
@@ -35,3 +35,11 @@ Bug reports and contributions are welcome:
 - **Mirror repository**: [GitHub](https://github.com/AnferLagbu/Edgine)
 
 Both bug reports and contributions are appreciated — thank you for your interest and contributions to this project.
+
+### On Criticism and Discussion
+
+Criticism, skepticism, analysis and suggestions aimed at the project itself are welcome — including challenges to its architecture, its code quality, and whether these gates really do constrain the quality of AI-produced code. Outside perspectives surface blind spots; pointing out a problem is itself a contribution.
+
+This project does not sell itself as "hand-written from scratch", nor does it hide AI involvement: the human owns direction, architecture, boundaries, acceptance criteria and final review; the AI implements; and no implementation counts as done until it passes the same executable gates. Those criteria — static audits, dual-architecture builds, host and kernel unit tests, QEMU integration, rustdoc — are all public in this repository, and anyone can re-run them to judge quality for themselves: `bash ci/audit.sh full`, `make test-host`, `make test-kernel-host`, `make -f Makefile.ci ci-rustdoc`.
+
+So please argue with specific locations (file / function / line) or reproducible readings; such feedback is accepted in full. What we do not respond to is personal attacks, speculation about motives, and dismissive labels: judge the code by the code and the readings — opinions about the author say nothing about the project's quality.
