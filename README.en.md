@@ -15,6 +15,10 @@ Edgine is first and foremost a hobby and experimental kernel. It does not aim to
 
 This project is built in a **human-on-the-loop, human-AI collaborative model**: the human sits above the loop, owning direction, architecture decisions, boundary constraints, and final review, while AI / agents autonomously carry out planning and implementation within the constraints and oversight the human sets. The model yields high development throughput, and the code may therefore carry the traces and flaws common to AI-generated code. If you find any questionable or erroneous code, your reports and contributions are welcome. To keep AI implementation in check, this project enforces an executable engineering gate: the core static audits are wired as fail-closed checks into the local `ci/audit.sh` (full tier) and `Makefile.ci` (full list in [`AGENTS.md`](AGENTS.md) §2.2).
 
+## License
+
+Edgine itself is released under the Mozilla Public License 2.0; see [LICENSE](LICENSE).
+
 ## External Dependency Notice
 
 This project relies on the following external project code in its design and implementation. All copyright and license terms remain with their respective authors:
