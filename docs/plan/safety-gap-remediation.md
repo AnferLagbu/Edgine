@@ -128,6 +128,11 @@ gate-health 册的发现清单是**补写 SAFETY 当时**的快照，批 6 立�
 与内联边界单测；⑥ 裁定 ABI 权威序为 **note 在前**（`pwm_login(note, password)` + userlib `auth_login(n, p)` 一致），
 修正 `auth_login_syscall` 形参与转发序，补 `host-tests/tests/sgeg_login_arg_order_test.rs`（正确序登录成功、对调序被拒）。
 三项负控制均注入后转红（RC=101）并复原；七门槛全绿。
+收口读数：`build.sh all` RC=0（Passed 6 / Failed 0）· `audit.sh full` RC=0（未执行腿数 0、
+Lockbud 4/4、QEMU 2/2）· `make test-host` **206 套 / 1606 passed / 0 failed** ·
+`make test-kernel-host` **12 + 811 + 558 = 1381 / 0 failed** · `qemu_boot_test.sh x86_64` 1/1 ·
+`ci-rustdoc` 双架构 exit 0。（注：lockbud 腿在本环境 TTY 下因 cargo ANSI 色彩码使
+「实编 crate 数」统计为 0，需 `CARGO_TERM_COLOR=never` 运行；非代码问题。）
 状态：[X]
 
 ### 批 R2・I4 用户指针校验面收口（㉚ ㉜ ㊾）
