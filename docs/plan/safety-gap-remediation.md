@@ -406,7 +406,16 @@ memory 更新、按路径提交推送。
 ② 新文件先 `git add` 再跑 `scan_obsolete_naming` 与 `check_doc_paths`；③ 七门槛复跑取读数
 （判据 = 日志内 `*-RC=` 回显，非后台通知退出码）；④ `git commit --only --pathspec-from-file`，
 不夹带其余暂存态。
-状态：[]
+详情：① `grep -rn '已登记缺口|批6 待裁'` 在 `src/` 面仅余 `proc/user_proc.rs`（项 53，属姊妹册
+`safety-comment-fidelity.md` 的 C 组射程，非本册 27 项）⇒ 本册 27 项源码登记段 **0 处**；
+② 新文件 `host-tests/tests/r8_frozen_face_and_asm_test.rs` 已先 `git add` 再跑两条文档腿：
+`scan_obsolete_naming` 受检 **1737 文件 / 违规 0**（KEEP 316）、`check_doc_paths`
+**19 份 / 0 漂移 / 免报 3**；③ 七门槛取 R8 终态读数（`./ci/build.sh all` **Passed 6 / Failed 0**、
+`bash ci/audit.sh full` **RC=0 / 未执行腿数 0**、`make test-host` **212 套 / 1651 passed / 0 failed**、
+`make test-kernel-host` **12+811+608=1431 / 0 failed**、`make -f Makefile.ci ci-rustdoc`
+**双架构两腿 exit 0**），源码自门槛跑完后未再改动，文档回填后两条便宜文档腿复跑仍 RC=0；
+④ 提交按 pathspec 逐项落地（R8 `12f55bfd` + 本批收口提交），不夹带 `other/` 与未跟踪 `.trae/`。
+状态：[X]
 
 ---
 
