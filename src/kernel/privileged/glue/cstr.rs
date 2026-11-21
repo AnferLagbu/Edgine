@@ -137,6 +137,35 @@ impl CStrExt for *mut u8 {
     }
 }
 
+/// 把 `*const u8` 指向的 C 字符串读取到调用方提供的缓冲区。
+///
+/// 与 [`CStrExt`] 的区别: 返回值**不伪造** `'static` —— `Some` 的切片借自
+/// `out`, 生命周期随缓冲区结束而结束; `None` 表示空指针、`out` 为空, 或扫描
+/// 上限内未遇到 NUL (即超长/未终止缓冲)。本函数不校验 UTF-8, 由调用方按需转换。
+///
+/// # Safety
+///
+/// `ptr` 必须指向以 NUL 结尾且整段可读的缓冲; 扫描最多读取 `out.len()` 字节,
+/// 因此 `out.len()` 同时充当越界读的硬上限。
+pub unsafe fn cstr_into(ptr: *const u8, out: &mut [u8]) -> Option<&[u8]> {
+    if ptr.is_null() || out.is_empty() {
+        return None;
+    }
+    let mut len = 0usize;
+    while len < out.len() {
+        // SAFETY: 调用方契约保证 [ptr, NUL) 区间可读; len 严格小于 out.len(),
+        // 即读取次数不超过调用方给定的扫描上限. 若缓冲未在上限内终止, 循环
+        // 在 len == out.len() 时退出并返回 None, 不越界读.
+        let b = unsafe { *ptr.add(len) };
+        if b == 0 {
+            return Some(&out[..len]);
+        }
+        out[len] = b;
+        len += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +200,32 @@ mod tests {
         let p = s.as_ptr() as *const u8;
         assert_eq!(p.as_kstr(), "");
         assert_eq!(p.as_kstr_opt(), Some(""));
+    }
+
+    #[test]
+    fn cstr_into_copies_within_caller_buffer() {
+        let src = b"hello\0";
+        let mut out = [0u8; 8];
+        // SAFETY: src 是 NUL 结尾的本地字节数组, 生命周期覆盖本次调用.
+        let got = unsafe { cstr_into(src.as_ptr(), &mut out) };
+        assert_eq!(got, Some(&b"hello"[..]));
+    }
+
+    #[test]
+    fn cstr_into_rejects_null_and_empty_buffer() {
+        let mut out = [0u8; 8];
+        // SAFETY: 空指针由函数提前返回, 不解引用.
+        assert_eq!(unsafe { cstr_into(core::ptr::null(), &mut out) }, None);
+        // SAFETY: 空切片使扫描上限为 0, 函数提前返回不解引用.
+        assert_eq!(unsafe { cstr_into(b"x\0".as_ptr(), &mut []) }, None);
+    }
+
+    #[test]
+    fn cstr_into_rejects_unterminated_buffer_at_cap() {
+        // 4 字节全非 NUL + 上限 4 ⇒ 扫描到上限仍未终止, 必须返回 None 而非越界读.
+        let src = [b'a'; 4];
+        let mut out = [0u8; 4];
+        // SAFETY: src 是本地数组; 扫描上限 4 恰好覆盖该数组, 不会读到数组之外.
+        assert_eq!(unsafe { cstr_into(src.as_ptr(), &mut out) }, None);
     }
 }

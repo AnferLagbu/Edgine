@@ -373,15 +373,10 @@ fn panic_dump_gfx(msg: &str, regs: &[u64; 16], cr2: u64, cr3_val: u64) {
 #[cfg(not(feature = "host-test"))]
 fn panic_halt() -> ! {
     #[cfg(target_arch = "x86_64")]
-    // SAFETY: `int 0x82` 是本内核自建的 FREG 恢复向量, 接线已核实: `boot/isr.asm`
-    // 的 `isr0x82` 存根 (cli → push 0 → push 0x82 → KPTI 分支 → 压全 GPR →
-    // `call exception_handler`) 由 `idt/mod.rs` 的 `stub_addr!(isr0x82)` 装入 IDT
-    // 0x82 门, 该门配 IST=3 (`idt/table.rs`) ⇒ 异常帧落在 TSS 独立恢复栈上,
-    // 不依赖可能已损坏的当前栈。
-    // 已登记缺口 (批6 待裁, 本批不改): `options(noreturn)` 与实装不符 —— 存根末尾
-    // 是 `iretq`, 而 `idt/table.rs` 的 `RecoveryAction::Recovered` 分支正常返回,
-    // 故恢复成功时控制流回到本 asm 之后, 而 x86_64 分支此后无停机循环即函数尾,
-    // `-> !` 落空属 UB 面。
+    // SAFETY: `int 0x82` 是 FREG 恢复向量, `options(noreturn)` 成立的前提是:
+    // IDT 的 0x82 处理器 (`idt/table.rs` 的 `handle_recovery_vector`) 在 `iretq`
+    // 之前把异常帧 RIP 重定向到 `freg::freg_halt_loop`, 故控制流不会回到本 asm
+    // 之后 —— panic 上下文不可恢复执行, 恢复成功也只代表一致性已回到快照.
     unsafe {
         core::arch::asm!("int 0x82", options(noreturn));
     }

@@ -202,6 +202,31 @@ pub extern "C" fn recovery_trigger_panic() -> ! {
     panic!("[RECOVERY-TEST] Deliberate panic for freg-stack E2E test");
 }
 
+/// FREG 恢复完成后的停机点: IDT 0x82 处理器把返回帧 RIP 重定向到本函数。
+///
+/// panic 上下文无法恢复执行, 恢复成功也只说明恢复域已回到一致快照。本停机点与
+/// aarch64 分支的 `wfi` 循环同语义: 关中断后停机, 等待 NMI/SMI/复位。
+/// 这也使 `panic_halt` 中 `asm!(..., options(noreturn))` 的断言成立 —— `iretq`
+/// 不会回到 `int 0x82` 的下一条指令。
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn freg_halt_loop() -> ! {
+    loop {
+        // SAFETY: `cli` 只清本核 IF; `hlt` 使本核进入停机态, 不访存、不改通用
+        // 寄存器。外层 loop 保证被 NMI/SMI 唤醒后仍停在停机态。
+        unsafe {
+            core::arch::asm!("cli", "hlt", options(nomem, nostack));
+        }
+    }
+}
+
+/// 返回 [`freg_halt_loop`] 的入口地址, 供 IDT 0x82 处理器写入异常帧 RIP。
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn freg_halt_loop_addr() -> u64 {
+    freg_halt_loop as *const () as usize as u64
+}
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 /// 查询是否已尝试过恢复 (1 = 已尝试, 0 = 未尝试)。
 #[unsafe(no_mangle)]

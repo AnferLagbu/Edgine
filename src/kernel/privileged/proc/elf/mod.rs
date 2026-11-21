@@ -132,24 +132,21 @@ impl ElfLoadResult {
 }
 
 // P1-I-33: 委托给 `verify::verify_elf` 单一来源
-/// 校验 ELF 数据有效性并返回指向其文件头的引用; 校验失败返回 `None`。
+/// 校验 ELF 数据有效性并按值返回文件头 (`Elf64Header`); 校验失败返回 `None`。
+///
+/// 返回**值**而非引用: ELF 缓冲由调用方持有, 可能是任意对齐的用户/内核拷贝,
+/// 引用会要求 8 字节对齐并伪造调用方无法保证的生命周期。调用方按需复制字段。
 #[must_use]
-pub fn elf_validate(elf_data: &[u8]) -> Option<&'static Elf64Header> {
+pub fn elf_validate(elf_data: &[u8]) -> Option<Elf64Header> {
     let elf_size = elf_data.len() as u64;
     // SAFETY: elf_data 是有效切片; verify_elf 仅只读访问其 [0, len) 范围.
     let _ = unsafe { verify::verify_elf(elf_data.as_ptr(), elf_size) }.ok()?;
 
-    // SAFETY: 已通过 verify_elf 校验; 切片首地址按 ELF 文件头布局只读解析
-    // (经 `usize` 地址值中转, 避免裸指针直接提升对齐断言).
-    let addr = elf_data.as_ptr() as usize;
-    // SAFETY: 上一行已把 `elf_data.as_ptr()` 转成地址值, 本块转回
-    // `*const Elf64Header` 并构造共享引用。依据: `verify_elf` 已校验魔数/类别/
-    // 机器码/程序头表范围, 且 `Elf64Header` 是 `#[repr(C)]` + `Clone, Copy`, 首字段
-    // `ident: [u8; 16]` ⇒ 布局与 ELF64 文件头逐字节对应, 不依赖 Rust 默认布局。
-    // 已登记缺口 (批6 待裁, 本批不改): ① `verify_elf` 用 `read_unaligned` 读头,
-    // 从未确立 8 字节对齐, 而 `&*(… as *const Elf64Header)` 要求对齐 (经 `usize`
-    // 中转不消除该要求); ② 返回 `&'static` 把入参切片的生命周期谎称为 static。
-    Some(unsafe { &*(addr as *const Elf64Header) })
+    // SAFETY: verify_elf 已确认 `elf_size >= size_of::<Elf64Header>()`, 故头区间在
+    // 切片内; `Elf64Header` 是 `#[repr(C)]` 且全字段为整数/字节数组, 任意位模式
+    // 均合法; `read_unaligned` 不要求缓冲对齐, 故可安全按值读出文件头 ——
+    // 不对缓冲区构造对齐引用, 也不把返回值伪装成 `'static`。
+    Some(unsafe { elf_data.as_ptr().cast::<Elf64Header>().read_unaligned() })
 }
 
 /// 加载 ELF 文件到当前进程地址空间 (`ET_EXEC`, 固定地址加载, 等价于 `load_bias = 0`).
@@ -553,7 +550,7 @@ mod tests {
         assert_eq!(core::mem::size_of::<Elf64Phdr>(), 56);
     }
 
-    /// 8 字节对齐的 ELF 缓冲区: `elf_validate` 会把它按 `Elf64Header` 对齐引用解析.
+    /// 8 字节对齐的 ELF 缓冲区 (测试用构造器; `elf_validate` 本身按值读取, 不要求对齐).
     #[repr(align(8))]
     struct AlignedElf([u8; 120]);
 
@@ -599,5 +596,25 @@ mod tests {
         // 区间 [119, 120) 在界内; 内容非 Linux 链接器前缀 ⇒ 无需改写.
         let elf = elf_with_interp(119, 1);
         assert!(!needs_interp_rewrite(&elf.0));
+    }
+
+    /// ㊼ 回归: `elf_validate` 全程按值 `read_unaligned`, 非 8 字节对齐的缓冲同样合法.
+    #[test]
+    fn elf_validate_accepts_unaligned_buffer() {
+        let elf = elf_with_interp(119, 1);
+        #[repr(align(8))]
+        struct Padded([u8; 128]);
+        let mut padded = Padded([0u8; 128]);
+        // 8 字节对齐起点 + 1 字节偏移 ⇒ 视图起始地址必然非 `align_of::<Elf64Header>()`.
+        padded.0[1..121].copy_from_slice(&elf.0);
+        let view = &padded.0[1..121];
+        assert_ne!(
+            view.as_ptr() as usize % core::mem::align_of::<Elf64Header>(),
+            0,
+            "用例必须先构造出非对齐视图"
+        );
+
+        let header = elf_validate(view).expect("非对齐缓冲也应校验通过");
+        assert_eq!(header.phnum, 1);
     }
 }

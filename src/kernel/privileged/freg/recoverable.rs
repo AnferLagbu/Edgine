@@ -46,15 +46,14 @@ pub struct RecoverableMutex<T: Snapshot + 'static> {
 }
 
 // SAFETY: RecoverableMutex 包装 IrqSpinLock<T>, 提供互斥且关中断.
-// T: Send 是跨线程转移所需; T: Sync 是因为锁获取后 &T 可共享.
-// domain_id 为普通 u64 (Copy). 除 IrqSpinLock 提供的保证外, 不引入额外不安全.
+// 跨线程转移只需 T: Send (值随锁一起移动); T: Sync 不是 Send 的前提,
+// 故本 impl 的约束与内层 `IrqSpinLock<T>: Send iff T: Send` 一致.
 unsafe impl<T: Snapshot + Send> Send for RecoverableMutex<T> {}
 // SAFETY: `RecoverableMutex<T>` 的可变面全在 `inner: IrqSpinLock<T>` 内 (该锁自带
 // 互斥 + 关中断), `domain_id` 是普通 u64 (Copy, 构造后只读) ⇒ &Self 跨核共享安全。
-// 已登记缺口 (批6 待裁, 本批不改): 本 impl 约束为 `T: Snapshot + Sync`, 而内层
-// `IrqSpinLock<T>` 的 Sync impl 要求 `T: Send` (sync/irq_spinlock.rs) —— Sync 不蕴含
-// Send, 故 T: Sync 但 !Send 时外层声称 Sync 而内层依据不成立, 属约束错配。
-unsafe impl<T: Snapshot + Sync> Sync for RecoverableMutex<T> {}
+// 约束取 `T: Send` 而非 `T: Sync`: 与内层 `IrqSpinLock<T>` 的 Sync impl 同口径
+// (sync/irq_spinlock.rs), 且 Mutex 语义下经锁取得的是 `&mut T`, 不要求 `T: Sync`.
+unsafe impl<T: Snapshot + Send> Sync for RecoverableMutex<T> {}
 
 impl<T: Snapshot + 'static> RecoverableMutex<T> {
     /// 构造带撤销日志的互斥锁
@@ -84,5 +83,29 @@ impl<T: Snapshot + 'static> RecoverableMutex<T> {
     /// 快速加锁 (不记录撤销日志)
     pub fn lock_fast(&self) -> IrqSpinLockGuard<'_, T> {
         self.inner.lock()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_sync<T: Sync>() {}
+    fn assert_send<T: Send>() {}
+
+    /// `Copy + Send + !Sync` 的探针载荷: `PhantomData` 继承 `Cell<u32>` 的 `!Sync`,
+    /// 同时保持 `Send` 与 `Copy` (满足 `Snapshot: Copy` 的前置).
+    #[derive(Clone, Copy)]
+    struct SendNotSync(core::marker::PhantomData<core::cell::Cell<u32>>);
+
+    impl Snapshot for SendNotSync {}
+
+    /// ㊻ 约束面: 外层 `Sync` 只要求 `T: Send` (与内层 `IrqSpinLock<T>` 同口径)。
+    ///
+    /// 修复前外层写 `T: Sync`, 本条对 `SendNotSync` 不成立 ⇒ 编译失败; 修复后通过。
+    #[test]
+    fn sync_bound_follows_inner_spinlock_send_requirement() {
+        assert_sync::<RecoverableMutex<SendNotSync>>();
+        assert_send::<RecoverableMutex<SendNotSync>>();
     }
 }

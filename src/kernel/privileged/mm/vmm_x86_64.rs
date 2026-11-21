@@ -1828,13 +1828,14 @@ impl VirtualMemoryManager {
         }
 
         let pml4_virt = PhysAddr(pml4_base).to_virt();
+        // 页表项读-改-写必须串行化: `KERNEL_PML4` 是全局共享根表, 同索引并发
+        // 进入本函数若无锁即产生两个 `&mut PageTableEntry` 别名.
+        let guard = Self::acquire_lock();
         // SAFETY: pml4_base 非空 (上方提前返回) 且是已初始化的 KERNEL_PML4 物理地址,
         // to_virt 的 KERNEL_BASE 直射映射使该页可访问; v.pml4_idx() < 256 由上方 KPTI
-        // 安全门保证, 故 add(idx) 落在该页 512 项内. 写后 flush_tlb_remote 失效远端
-        // 缓存的无 U 位旧条目 (S-9).
-        // 并发面缺口 (登记待裁定, 本批不改锁面): 本函数不取 VMM_LOCK 却对共享根表槽位
-        // 取 &mut 做读-改-写, 同索引并发调用即构成两个 &mut 别名. 当前唯一入口是
-        // FFI 导出 vmm_ensure_pml4_user, 全仓无调用方, 故缺口尚未被触发 (latent).
+        // 安全门保证, 故 add(idx) 落在该页 512 项内. VMM_LOCK 已持有, 所有页表修改
+        // 串行化. 写后 flush_tlb_remote 失效远端缓存的无 U 位旧条目 (S-9; 本临界区的
+        // 远程失效需求由 `release_lock` 统一执行).
         unsafe {
             let pml4 = pml4_virt.0 as *mut PageTableEntry;
             let entry = &mut *pml4.add(v.pml4_idx());
@@ -1844,6 +1845,7 @@ impl VirtualMemoryManager {
                 Self::flush_tlb_remote(virt);
             }
         }
+        Self::release_lock(guard);
     }
 
     /// 确保 `virt` 的 PML4 → PDPT → PD 各级均置 USER 位 (内核高半区跳过).
@@ -1865,40 +1867,48 @@ impl VirtualMemoryManager {
 
         let pml4_virt = PhysAddr(pml4_base).to_virt();
 
-        // SAFETY: 遍历 PML4 → PDPT → PD, 各级设 USER 位.
-        // 各级都有存在位保护. 索引由 VA 位计算.
-        unsafe {
-            let pml4 = pml4_virt.0 as *mut PageTableEntry;
+        // 与 `ensure_pml4_user` 同理: 各级页表槽位的读-改-写必须在 VMM_LOCK 内,
+        // 否则同索引并发即两个 `&mut PageTableEntry` 别名. 用闭包包住早退路径,
+        // 保证所有分支都在 `release_lock` 之前退出临界区.
+        let guard = Self::acquire_lock();
+        let apply = || {
+            // SAFETY: 遍历 PML4 → PDPT → PD, 各级设 USER 位.
+            // 各级都有存在位保护. 索引由 VA 位计算; VMM_LOCK 已持有, 页表修改串行化.
+            unsafe {
+                let pml4 = pml4_virt.0 as *mut PageTableEntry;
 
-            let pml4e = &mut *pml4.add(v.pml4_idx());
-            if !pml4e.is_present() {
-                return;
+                let pml4e = &mut *pml4.add(v.pml4_idx());
+                if !pml4e.is_present() {
+                    return;
+                }
+                pml4e.set_user(true);
+
+                let pdpt = pml4e.frame().to_virt().0 as *mut PageTableEntry;
+                let pdpte = &mut *pdpt.add(v.pdpt_idx());
+                if !pdpte.is_present() {
+                    return;
+                }
+                pdpte.set_user(true);
+
+                if pdpte.is_huge() {
+                    // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
+                    Self::flush_tlb_remote(virt);
+                    return;
+                }
+
+                let pd = pdpte.frame().to_virt().0 as *mut PageTableEntry;
+                let pde = &mut *pd.add(v.pd_idx());
+                if !pde.is_present() {
+                    return;
+                }
+                pde.set_user(true);
             }
-            pml4e.set_user(true);
 
-            let pdpt = pml4e.frame().to_virt().0 as *mut PageTableEntry;
-            let pdpte = &mut *pdpt.add(v.pdpt_idx());
-            if !pdpte.is_present() {
-                return;
-            }
-            pdpte.set_user(true);
-
-            if pdpte.is_huge() {
-                // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
-                Self::flush_tlb_remote(virt);
-                return;
-            }
-
-            let pd = pdpte.frame().to_virt().0 as *mut PageTableEntry;
-            let pde = &mut *pd.add(v.pd_idx());
-            if !pde.is_present() {
-                return;
-            }
-            pde.set_user(true);
-        }
-
-        // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
-        Self::flush_tlb_remote(virt);
+            // 权限变更 (设 USER 位): 远程核可能缓存无 U 位的旧条目, 必须远程失效 (S-9)
+            Self::flush_tlb_remote(virt);
+        };
+        apply();
+        Self::release_lock(guard);
     }
 
     /// 以 `parent_pml4` 为模板克隆用户页表 (COW 前置), 返回子页表物理地址.

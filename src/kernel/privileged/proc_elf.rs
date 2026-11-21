@@ -23,8 +23,9 @@ use crate::privileged::proc;
 /// 校验 ELF 头部
 ///
 /// `data` 为完整 ELF 镜像字节切片; 长度不足或字段非法时返回 `None`。
+/// 返回值为按值拷贝的文件头, 不借用 `data`, 调用方无需保证缓冲对齐。
 #[must_use]
-pub fn elf_validate(data: &[u8]) -> Option<&'static proc::Elf64Header> {
+pub fn elf_validate(data: &[u8]) -> Option<proc::Elf64Header> {
     proc::elf_validate(data)
 }
 

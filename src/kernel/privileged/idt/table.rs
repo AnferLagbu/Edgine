@@ -676,6 +676,17 @@ impl IdtManager {
             self.detailed_stats.record_exception(vector, &*frame);
             self.detailed_stats.record_nested(nesting + 1);
 
+            // FREG 恢复向量先行处理 (仅 x86_64 有 int 0x82); 随后的
+            // `vector < 32` 分发链对 0x82 走"其他向量"分支, 不会重复处理.
+            #[cfg(target_arch = "x86_64")]
+            if vector == 0x82 {
+                // 回滚恢复域并把返回帧 RIP 重定向到停机点. panic 上下文不可恢复
+                // 执行, 故恢复成功/失败都只停机 (与 aarch64 的 `wfi` 分支同语义),
+                // 这也使 `panic_halt` 的 `options(noreturn)` 成立.
+                // SAFETY: frame 由 handle_exception 的契约保证有效.
+                Self::handle_recovery_vector(frame);
+            }
+
             if vector < 32 {
                 let exception_handler = create_handler(vector);
 
@@ -721,13 +732,36 @@ impl IdtManager {
                 // IRQ 处理
                 self.handle_irq(frame, vector);
             } else {
-                // 其他向量 (syscall 0x80 / recovery 0x82 等) 由各自处理器处理, 此处忽略
+                // 其他向量 (syscall 0x80 等) 由各自处理器处理, 此处忽略
             }
 
             // 恢复嵌套计数
             self.nested_count.fetch_sub(1, Ordering::SeqCst);
             self.current_vector
                 .store(0xFFFF_FFFF_FFFF_FFFF, Ordering::SeqCst);
+        }
+    }
+
+    /// FREG 恢复向量 (`int 0x82`): 尝试域回滚, 并把返回帧 RIP 重定向到停机点.
+    ///
+    /// # Safety
+    /// `frame` 必须指向异常入口构建的、结构完整且对齐的 `InterruptFrame`.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn handle_recovery_vector(frame: *mut InterruptFrame) {
+        // SAFETY: C ABI 与同仓 `freg/api.rs` 的定义逐字一致 (无参, 返回 i32);
+        // 该函数内部用 `try_lock` 不阻塞, 可在中断上下文调用.
+        unsafe extern "C" {
+            fn recovery_try_recover_from_idt() -> i32;
+        }
+
+        // SAFETY: frame 由调用方契约保证有效; 只写帧字段, 不改其他内存.
+        unsafe {
+            // 恢复结果 (0 成功 / 负值失败或已尝试) 不改变落点: panic 上下文无法
+            // 恢复执行, 无论回滚是否成功都必须停机; 若 iretq 回到 `int 0x82` 的
+            // 下一条指令, `panic_halt` 的 `options(noreturn)` 断言即落空.
+            let _ = recovery_try_recover_from_idt();
+            // iretq 的返回地址指向停机循环, 而不是 `int 0x82` 的下一条指令.
+            (*frame).rip = crate::privileged::freg::freg_halt_loop_addr();
         }
     }
 

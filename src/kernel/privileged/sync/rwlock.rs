@@ -42,15 +42,12 @@ pub struct RwLock<T: ?Sized> {
 // SAFETY: RwLock 通过内部自旋锁保护的状态机提供独占写访问与共享读访问.
 // UnsafeCell 提供内部可变性, 访问受锁获取门控.
 unsafe impl<T: ?Sized + Send> Send for RwLock<T> {}
-// SAFETY: 写者侧独占由 inner.lock + writer 标志保证, 该面只需 T: Send.
-// 但读者侧不成立: read() / try_read() 把 `&T` 交给 RwLockReadGuard (types.rs 的
-// `pub data: &'a T` + Deref), readers 计数允许多个读者同时持有 ⇒ 跨线程共享
-// &RwLock<T> 的健全性要求 T: Sync, 本 impl 却只约束 T: Send. 同仓 vendored
-// spin 的对应 impl 写的是 `T: Send + Sync` (src/user/vendor/spin/src/rwlock.rs).
-// 现状: 内核侧唯一泛型消费面是 functions/sync/scoped.rs 的 `impl<T> RwLockExt<T>
-// for RwLock<T>`, 未以 !Sync 的 T 跨线程实例化, 故缺口尚未被触发 (latent).
-// 本批只补注释、不改约束面; 该缺口已登记为工程外发现, 处置待用户裁定.
-unsafe impl<T: ?Sized + Send> Sync for RwLock<T> {}
+// SAFETY: 写者侧独占由 inner.lock + writer 标志保证, 该面只需 T: Send;
+// 读者侧 `read()` / `try_read()` 把 `&T` 同时交给多个 `RwLockReadGuard`
+// (types.rs 的 `pub data: &'a T` + Deref), 故跨线程共享 `&RwLock<T>` 的健全性
+// 还要求 `T: Sync` —— 与同仓 vendored spin 的 `T: Send + Sync` 同口径.
+// `T: Sync` 不可省: Sync 不蕴含 Send, 仅约束 Send 会让 !Sync 的 T 被并发读.
+unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 
 impl<T> RwLock<T> {
     /// 创建新的 `RwLock`
@@ -371,6 +368,21 @@ mod tests {
     use super::*;
     use alloc::string::String;
     use alloc::vec;
+
+    fn assert_sync<T: Sync>() {}
+    fn assert_send<T: Send>() {}
+
+    /// ⑪ 约束面: `T: Send + Sync` 时可跨线程共享, 且写者侧仍只需 `T: Send`.
+    ///
+    /// 反例 (不构成编译期负向断言): `core::cell::Cell<u32>` 是 `Send + !Sync`,
+    /// 修复后 `RwLock<Cell<u32>>` **不再**满足 `Sync`; 若本 impl 的约束回退为
+    /// 仅 `T: Send`, `host-tests/tests/r6_latent_constraints_shape_test.rs` 的
+    /// 源码形状锁会转红.
+    #[test]
+    fn sync_bound_requires_send_and_sync() {
+        assert_sync::<RwLock<u32>>();
+        assert_send::<RwLock<u32>>();
+    }
 
     #[test]
     fn test_rwlock_basic_read() {

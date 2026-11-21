@@ -313,7 +313,26 @@ RC=0（未执行腿数 0，含 Lockbud 与 QEMU 2/2）· `make test-host` **209 
 与 Recovered 正常返回的矛盾（改 `-> !` 落空面或补停机循环）；⑦ ㊼ `elf_validate` 全程
 `read_unaligned` 按值返回头（不构造对齐引用），并去掉伪造的 `&'static`。
 **本批触及同步原语，施工前按 §11.3 问路径。**
-状态：[]
+详情：用户裁定 ⑪/㊻、⑫/㊸/㊼ 与 ㊶ 均走**相对完整**路径，⑬ 走「同型一并取锁」。落地内容：
+① ⑪ `RwLock<T>: Sync` 收紧为 `T: Send + Sync`（`functions/sync/scoped.rs` 唯一泛型消费面未断编译），
+在 rwlock 内联测试补正向编译断言；② ㊻ 外层 `Sync` 改 `T: Snapshot + Send`（与内层
+`IrqSpinLock<T>` 同口径；`Send` 那条本已正确），内联测试用 `Copy + Send + !Sync` 的
+`PhantomData<Cell<u32>>` 探针载荷钉住约束；③ ⑫ `slab_dump_cache` 改走新增的
+`privileged/glue/cstr.rs::cstr_into`（调用方缓冲承载生命周期、扫描上限 128 字节）+
+`core::str::from_utf8` 显式校验；④ ⑬ `ensure_pml4_user` 与同型发现的 `ensure_path_user`
+（清单外，§11.5 经用户裁定一并修）都在 `VMM_LOCK` 临界区内做页表读-改-写，早退路径用闭包包住；
+⑤ ㊸ `cstr_slice` 改为调用方提供 `[u8; CSTR_MAX]` 缓冲、返回借自该缓冲的切片（十处调用点同步改），
+不再伪造 `'static`；⑥ ㊶ 保留 `options(noreturn)`，在 IDT 侧新增 0x82 分支
+`handle_recovery_vector`：调用 `recovery_try_recover_from_idt()` 后把异常帧 RIP 重定向到
+`freg::freg_halt_loop`（`cli; hlt` 停机循环，与 aarch64 `wfi` 同语义），使 `iretq` 不再回到
+asm 之后；⑦ ㊼ `elf_validate` 全程 `read_unaligned` 并按值返回 `Elf64Header`，转发壳同步改签名。
+新增 `host-tests/tests/r6_latent_constraints_shape_test.rs`（8 条源码形状锁）与各文件内联单测
+（cstr 读取器 3 / rwlock 1 / recoverable 1 / slab 2 / klog 3 / elf 1）。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0，0 warning）· `bash ci/audit.sh full` RC=0
+（本轮未执行腿数 0、Lockbud 4/4、QEMU 2/2）· `make test-host` **210 套 / 1629 passed / 0 failed** ·
+`make test-kernel-host` **12 + 811 + 585 = 1408 / 0 failed** · `make -f Makefile.ci ci-rustdoc`
+双架构 exit 0 · 负控制：七项缺陷批量注入后形状锁 **7/7 转红（RC=101）**，复原后 8/8 绿。
+状态：[X]
 
 ### 批 R7・latent 不可达与引导面（⑰ ⑳ ㉓ ㉕ ㊱ ㊲）
 

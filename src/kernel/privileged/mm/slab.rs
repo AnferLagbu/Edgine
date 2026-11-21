@@ -56,6 +56,12 @@ pub use crate::privileged::config::{
 pub const GENERAL_CACHE_SIZES: [usize; SLAB_GENERAL_CACHE_NUM] =
     [16, 32, 64, 128, 256, 512, 1024, 2048];
 
+/// FFI 调试入口 (`slab_dump_cache`) 接受的最大缓存名长度 (字节).
+///
+/// 内建缓存名均为短字符串; 该上限只用于防止未终止的 C 缓冲触发无界扫描,
+/// 超过上限的名字按"查无此缓存"处理.
+const MAX_CACHE_NAME_LEN: usize = 128;
+
 // ============================================================================
 // 数据结构定义
 // ============================================================================
@@ -1027,27 +1033,34 @@ pub extern "C" fn slab_dump_all_caches() {
 ///
 /// # Safety
 /// `name` 必须为有效的 NUL 结尾 C 字符串指针, 或 NULL; 调用期间该字符串不被释放。
+/// 扫描上限为 `MAX_CACHE_NAME_LEN` 字节; 非 UTF-8 或超长名字被显式拒绝。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn slab_dump_cache(name: *const u8) {
-    // SAFETY: 调用方保证 name 为合法 C 字符串
-    let name_str = if name.is_null() {
+    if name.is_null() {
         klog_slab!("[SLAB] Cache name is null");
         return;
-    } else {
-        // SAFETY: name 非空由上方分支保证; 「NUL 结尾且调用期间不被释放」由 fn 的 `# Safety`
-        // 契约保证, 故 add(len) 的逐字节扫描在遇到终止符前始终落在该字符串内.
-        // 契约缺口 (登记待裁定, 本批不改代码与文档): `# Safety` 只要求 NUL 结尾 C 字符串,
-        // 未要求合法 UTF-8, 而下方用 from_utf8_unchecked —— 非 UTF-8 字节即构成 UB; 扫描
-        // 亦无长度上限, 传入未终止的缓冲区会越界读. 本函数是 FFI 导出的调试入口, 全仓无
-        // 调用方, 故缺口尚未被触发 (latent).
-        unsafe {
-            let mut len = 0;
-            while *name.add(len) != 0 {
-                len += 1;
-            }
-            core::str::from_utf8_unchecked(core::slice::from_raw_parts(name, len))
-        }
+    }
+
+    // 契约: 「NUL 结尾且调用期间不被释放」由 fn 的 `# Safety` 保证; 即便 C 侧
+    // 违约给了未终止缓冲, `MAX_CACHE_NAME_LEN` 也把扫描限制在硬上限内.
+    let mut name_buf = [0u8; MAX_CACHE_NAME_LEN];
+    // SAFETY: name 非空由上方分支保证; NUL 前字节可读由 fn 的 `# Safety` 契约传递;
+    // 扫描上限为 `MAX_CACHE_NAME_LEN` 字节 (name_buf.len()), 上限内未终止即返回 None.
+    let Some(name_bytes) = (unsafe { crate::privileged::glue::cstr_into(name, &mut name_buf) })
+    else {
+        klog_slab!(
+            "[SLAB] Cache name invalid (not NUL-terminated within {} bytes)",
+            MAX_CACHE_NAME_LEN
+        );
+        return;
+    };
+    // 历史实现用 `from_utf8_unchecked`: `# Safety` 只要求 NUL 结尾, 非 UTF-8 字节
+    // 会构成 UB. 改为显式校验并拒绝 —— 名字只用于与内建 `&'static str` 比较,
+    // 非法 UTF-8 必然不匹配, 拒绝不损失功能.
+    let Ok(name_str) = core::str::from_utf8(name_bytes) else {
+        klog_slab!("[SLAB] Cache name is not valid UTF-8");
+        return;
     };
 
     let caches = GENERAL_CACHES.lock();
@@ -1139,5 +1152,29 @@ mod tests {
         assert_eq!(find_general_cache_index(64), Some(2));
         assert_eq!(find_general_cache_index(2048), Some(7));
         assert_eq!(find_general_cache_index(3000), None); // 超出范围
+    }
+
+    /// ⑫ 扫描上限: 未终止的 C 缓冲必须在 `MAX_CACHE_NAME_LEN` 处返回 `None`.
+    #[test]
+    fn cache_name_scan_is_bounded() {
+        let unterminated = [b'a'; MAX_CACHE_NAME_LEN];
+        let mut buf = [0u8; MAX_CACHE_NAME_LEN];
+        // SAFETY: unterminated 是本地数组, 扫描上限与数组长度相等 ⇒ 不越界读.
+        assert!(
+            unsafe { crate::privileged::glue::cstr_into(unterminated.as_ptr(), &mut buf) }
+                .is_none(),
+            "未终止缓冲必须在上限处返回 None"
+        );
+    }
+
+    /// ⑫ UTF-8 面: 非法字节不再走 `from_utf8_unchecked`, 由显式校验拒绝.
+    #[test]
+    fn cache_name_rejects_non_utf8() {
+        let src = b"\xFF\xFE\0";
+        let mut buf = [0u8; MAX_CACHE_NAME_LEN];
+        // SAFETY: src 是 NUL 结尾的本地数组, 生命周期覆盖本次调用.
+        let bytes = unsafe { crate::privileged::glue::cstr_into(src.as_ptr(), &mut buf) }
+            .expect("NUL 结尾缓冲应被读取");
+        assert!(core::str::from_utf8(bytes).is_err());
     }
 }

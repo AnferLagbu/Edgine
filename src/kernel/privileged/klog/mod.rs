@@ -677,27 +677,26 @@ impl LogCategory {
 // 辅助
 // ============================================================================
 
-// SAFETY: `const` 由调用方保证为有效指针; 只读访问
-unsafe fn cstr_slice(ptr: *const u8) -> &'static [u8] {
-    // SAFETY: 本 fn 的契约 (`ptr` 指向 NUL 终止的可读缓冲) 由九个 `klog_*` 入口与
-    // `klog_write` 的 C 侧契约传递而来 (见下方单源段)。null 提前返回 `b"(null)"`;
-    // 扫描有硬上限: `len > 1024` 即返回 `b"(truncated)"`, 故无 NUL 的缓冲最坏读到
-    // 索引 1024 (第 1025 字节) 即止。`from_raw_parts(ptr, len)` 的 ptr 非空, len 是
-    // 已逐字节读过且均非零的字节数 ⇒ 切片范围落在已验证可读区内。
-    // 已登记缺口 (批6 待裁, 本批不改): 返回类型 `&'static [u8]` 把 C 侧缓冲的生命周期
-    // 谎称为 static, 实际依据只是「调用内同步消费」; 若将来有调用点留存该切片即 UAF。
-    unsafe {
-        if ptr.is_null() {
-            return b"(null)";
-        }
-        let mut len = 0usize;
-        while *ptr.add(len) != 0 {
-            len += 1;
-            if len > 1024 {
-                return b"(truncated)";
-            }
-        }
-        core::slice::from_raw_parts(ptr, len)
+/// C 字符串扫描上限 (字节): 与历史行为一致, 上限内无 NUL 即视为截断.
+const CSTR_MAX: usize = 1024;
+
+/// 读取 C 字符串到调用方提供的缓冲 (零分配, 生命周期绑定 `out`).
+///
+/// # Safety
+///
+/// `ptr` 必须指向以 NUL 结尾且整段可读的缓冲 —— 该契约由九个 `klog_*` 入口与
+/// `klog_write` 的 C 侧契约传递而来 (见下方单源段)。`out` 的长度即 `CSTR_MAX`
+/// 扫描上限。
+unsafe fn cstr_slice(ptr: *const u8, out: &mut [u8; CSTR_MAX]) -> &[u8] {
+    if ptr.is_null() {
+        return b"(null)";
+    }
+    // SAFETY: ptr 非空由上方分支保证; 「NUL 结尾且可读」由本 fn 的 `# Safety`
+    // 契约传递; out 的容量 `CSTR_MAX` 同时是扫描硬上限, 上限内无 NUL 即返回
+    // None (调用方已按历史语义映射为 "(truncated)")。
+    match unsafe { crate::privileged::glue::cstr_into(ptr, out) } {
+        Some(bytes) => bytes,
+        None => b"(truncated)",
     }
 }
 
@@ -952,7 +951,8 @@ pub unsafe extern "C" fn klog_write(
             return 0;
         }
 
-        let msg = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let msg = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(lvl, category, msg);
         0
     }
@@ -985,7 +985,8 @@ pub unsafe extern "C" fn klog_ffi_info(msg: *const u8) {
         if msg.is_null() {
             return;
         }
-        let s = cstr_slice(msg);
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(msg, &mut buf);
         klog_output(LogLevel::Info, LogCategory::Kernel, s);
     }
 }
@@ -1004,7 +1005,8 @@ pub unsafe extern "C" fn klog_ffi_warn(msg: *const u8) {
         if msg.is_null() {
             return;
         }
-        let s = cstr_slice(msg);
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(msg, &mut buf);
         klog_output(LogLevel::Warn, LogCategory::Kernel, s);
     }
 }
@@ -1023,7 +1025,8 @@ pub unsafe extern "C" fn klog_ffi_error(msg: *const u8) {
         if msg.is_null() {
             return;
         }
-        let s = cstr_slice(msg);
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(msg, &mut buf);
         klog_output(LogLevel::Error, LogCategory::Kernel, s);
     }
 }
@@ -1042,7 +1045,8 @@ pub unsafe extern "C" fn klog_net(fmt: *const u8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Info, LogCategory::Net, s);
     }
 }
@@ -1061,7 +1065,8 @@ pub unsafe extern "C" fn klog_net_err(fmt: *const u8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Error, LogCategory::Net, s);
     }
 }
@@ -1080,7 +1085,8 @@ pub unsafe extern "C" fn klog_init_msg(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Info, LogCategory::Boot, s);
     }
 }
@@ -1099,7 +1105,8 @@ pub unsafe extern "C" fn klog_kern(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Info, LogCategory::Kernel, s);
     }
 }
@@ -1118,7 +1125,8 @@ pub unsafe extern "C" fn klog_syscall(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Info, LogCategory::Syscall, s);
     }
 }
@@ -1137,7 +1145,41 @@ pub unsafe extern "C" fn klog_info(fmt: *const i8) {
         if fmt.is_null() {
             return;
         }
-        let s = cstr_slice(fmt.cast::<u8>());
+        let mut buf = [0u8; CSTR_MAX];
+        let s = cstr_slice(fmt.cast::<u8>(), &mut buf);
         klog_output(LogLevel::Info, LogCategory::Kernel, s);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ㊸ 空指针路径仍返回静态哨兵, 不解引用.
+    #[test]
+    fn cstr_slice_null_returns_sentinel() {
+        let mut buf = [0u8; CSTR_MAX];
+        // SAFETY: 空指针由 cstr_slice 提前返回, 不解引用.
+        let s = unsafe { cstr_slice(core::ptr::null(), &mut buf) };
+        assert_eq!(s, &b"(null)"[..]);
+    }
+
+    /// ㊸ 正常路径: 内容拷进调用方缓冲, 返回值借自该缓冲而非伪造 `'static`.
+    #[test]
+    fn cstr_slice_copies_into_caller_buffer() {
+        let mut buf = [0u8; CSTR_MAX];
+        // SAFETY: 字面量是 NUL 结尾的本地数组, 生命周期覆盖本次调用.
+        let s = unsafe { cstr_slice(b"hello\0".as_ptr(), &mut buf) };
+        assert_eq!(s, &b"hello"[..]);
+    }
+
+    /// ㊸ 上限路径: 无 NUL 的超长缓冲在 CSTR_MAX 处截断, 不越界读.
+    #[test]
+    fn cstr_slice_reports_truncation_at_cap() {
+        let unterminated = [b'a'; CSTR_MAX + 1];
+        let mut buf = [0u8; CSTR_MAX];
+        // SAFETY: 扫描上限 CSTR_MAX 不超过数组长度, 不越界读.
+        let s = unsafe { cstr_slice(unterminated.as_ptr(), &mut buf) };
+        assert_eq!(s, &b"(truncated)"[..]);
     }
 }

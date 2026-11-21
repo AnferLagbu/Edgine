@@ -98,6 +98,9 @@ pub use api::{
     recovery_undo_record, recovery_was_attempted,
 };
 
+#[cfg(target_arch = "x86_64")]
+pub use api::{freg_halt_loop, freg_halt_loop_addr};
+
 #[cfg(feature = "kernel_test")]
 pub use api::recovery_test_rollback;
 
