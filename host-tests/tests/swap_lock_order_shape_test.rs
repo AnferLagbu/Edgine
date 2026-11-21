@@ -100,3 +100,21 @@ fn swap_in_rechecks_slot_inside_lock() {
         .unwrap_or_else(|| panic!("swap_in 未在锁内复查 slot 状态: {body}"));
     assert!(lock < check, "slot 复查必须在 SWAP.lock 临界区内: {body}");
 }
+
+#[test]
+fn swap_deinit_unreserves_only_after_dropping_swap_guard() {
+    // 同族锁序: `swap_deinit` 持 SWAP.lock (6) 调 `unreserve_range` (PMM 锁, 层级 1)
+    // 同样是 6→1 降序嵌套. 修复形态 = 锁内只摘状态, 守卫释放后再归还 PMM.
+    let src = code_only(&read_src(SWAP));
+    let body = function_body(&src, "pub fn swap_deinit(");
+    let drop_guard = body
+        .rfind("drop(guard)")
+        .unwrap_or_else(|| panic!("swap_deinit 未显式释放 SWAP.lock 守卫: {body}"));
+    let unreserve = body
+        .find("unreserve_range(")
+        .unwrap_or_else(|| panic!("swap_deinit 未归还存储区: {body}"));
+    assert!(
+        drop_guard < unreserve,
+        "unreserve_range 必须在释放 SWAP.lock 守卫之后 —— 否则仍是 6→1 嵌套: {body}"
+    );
+}

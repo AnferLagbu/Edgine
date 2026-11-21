@@ -281,17 +281,23 @@ host 用例（`test_cancel_removes_timer_from_queue` / `test_cancel_then_drop_le
 （不用 `std::sync::Mutex`，避免仅测试使用的锁对象污染锁类表）；`poll_timer` 因 `init(&self)`
 去掉多余 `mut`。⑭ `SwapArea::is_slot_used` 抽出并与 `free_slot` 共用；`swap_in` 锁外
 `alloc_page`，锁内复查后 `read_slot` + `free_slot`，失败路径 `drop(guard)` 后 `free_page`；
-新增内联 `slot_used_predicate_tracks_alloc_and_free` 与 host 形状锁 3 条
-（alloc 前于取锁 / free_page 后于守卫释放 / slot 复查在锁内）。负控制：㊹ 移除 cancel 的
-`retain` ⇒ `test_cancel_*` **2 failed（RC=101）**；⑭ `free_page` 前移到 `drop(guard)` 前 ⇒
-`swap_in_frees_page_only_after_dropping_swap_guard` **FAILED（RC=101）**；`alloc_page` 移回锁内 ⇒
-`swap_in_allocates_page_before_taking_swap_lock` **FAILED（RC=101）**；三项均复原后转绿。
+新增内联 `slot_used_predicate_tracks_alloc_and_free` / `take_storage_without_init_is_noop` 与
+host 形状锁 3 条（alloc 前于取锁 / free_page 后于守卫释放 / slot 复查在锁内）。同族补修
+（施工新发现，按 §11.5 询问后选定「规划并修复」）：`swap_deinit` 持 SWAP 锁调
+`SwapArea::deinit` → `unreserve_range` 同为 6→1；改为 `take_storage()` 锁内摘状态、
+守卫释放后 `unreserve_range`，并补第 4 条形状锁
+（`swap_deinit_unreserves_only_after_dropping_swap_guard`，用 `rfind` 保证最后一次守卫
+释放早于归还）。负控制：㊹ 移除 cancel 的 `retain` ⇒ `test_cancel_*` **2 failed（RC=101）**；
+⑭ `free_page` 前移到 `drop(guard)` 前 ⇒ `swap_in_frees_page_only_after_dropping_swap_guard`
+**FAILED（RC=101）**；`alloc_page` 移回锁内 ⇒ `swap_in_allocates_page_before_taking_swap_lock`
+**FAILED（RC=101）**；`drop(guard)` 移到 `unreserve_range` 之后 ⇒
+`swap_deinit_unreserves_only_after_dropping_swap_guard` **FAILED（RC=101）**；四项均复原后转绿。
 锁序棘轮：`hrtimer.rs::HRTIMER_QUEUE` 未分类取锁点 5→7（cancel 1 处 + 测试 helper 1 处），
 按工具许可路径 `--update-lock-order-baseline` 显式登记（快照仅该键 +2，其余不变）。
 收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `bash ci/audit.sh full`
-RC=0（未执行腿数 0，含 Lockbud 与 QEMU）· `make test-host` **209 套 / 1620 passed /
-0 failed**（+1 形状锁套件、+3 用例）· `make test-kernel-host` **12 + 811 + 573 = 1396 /
-0 failed**（+5 hrtimer、+1 swap 单测）· `check_kernel_test_release_dim.sh` RC=0 ·
+RC=0（未执行腿数 0，含 Lockbud 与 QEMU 2/2）· `make test-host` **209 套 / 1621 passed /
+0 failed**（+1 形状锁套件、+4 用例）· `make test-kernel-host` **12 + 811 + 574 = 1397 /
+0 failed**（+5 hrtimer、+2 swap 单测）· `check_kernel_test_release_dim.sh` RC=0 ·
 `ci-rustdoc` 双架构 exit 0。
 状态：[X]
 

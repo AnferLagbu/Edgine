@@ -199,24 +199,22 @@ impl SwapArea {
         true
     }
 
-    /// B03-03 回滚路径: unreserve 存储区, 恢复 PMM 簿记 (供测试与将来热卸载).
-    /// 当前未在生产路径调用 (swap 无卸载场景), 但保证函数可用于 host-tests。
-    fn deinit(&mut self) -> bool {
+    /// B03-03 回滚路径的锁内阶段: 摘除存储区状态并返回 (物理基址, 字节数).
+    ///
+    /// PMM 归还 (`unreserve_range`) 必须由调用方在 `SWAP.lock` **之外**执行 ——
+    /// 持层级 6 取层级 1 会构成降序嵌套. 未初始化时返回 `None`.
+    fn take_storage(&mut self) -> Option<(PhysAddr, usize)> {
         if !self.initialized {
-            return true;
+            return None;
         }
+        let phys = self.storage_phys;
+        let size = self.storage_size;
         // 清零自身状态
         self.storage_virt = 0;
-        self.initialized = false;
-        // unreserve: 重置 PMM 簿记 (注意 reserve_range 已 set_bit, 需反向 clear_bit)
-        let pmm_inst = pmm::get_pmm();
-        if let Err(e) = pmm_inst.unreserve_range(self.storage_phys, self.storage_size) {
-            crate::klog_warn!(Swap, "[SWAP] deinit: unreserve_range failed: {}", e);
-            return false;
-        }
         self.storage_phys = PhysAddr(0);
         self.storage_size = 0;
-        true
+        self.initialized = false;
+        Some((phys, size))
     }
 
     /// 分配一个空闲 slot, 返回 slot 索引
@@ -572,10 +570,25 @@ pub fn swap_init() -> bool {
 /// - host-tests 的 init/deinit 配对测试
 /// - 将来 swap 模块热卸载
 pub fn swap_deinit() -> bool {
-    let _guard = SWAP.lock.lock();
+    let guard = SWAP.lock.lock();
     // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
     let area = unsafe { &mut *SWAP.area.get() };
-    area.deinit()
+    // 锁内只摘除状态; 未初始化时 taken 为 None.
+    let taken = area.take_storage();
+    drop(guard);
+
+    let Some((storage_phys, storage_size)) = taken else {
+        return true;
+    };
+
+    // unreserve_range 取 PMM 锁 (层级 1), 必须在释放 SWAP.lock (层级 6) 之后执行,
+    // 否则构成 6→1 降序嵌套 (同 `swap_in` 的锁序约束).
+    let pmm_inst = pmm::get_pmm();
+    if let Err(e) = pmm_inst.unreserve_range(storage_phys, storage_size) {
+        crate::klog_warn!(Swap, "[SWAP] deinit: unreserve_range failed: {}", e);
+        return false;
+    }
+    true
 }
 
 /// 换出页面: 将物理页写入 swap, 返回 swap entry
@@ -1031,5 +1044,13 @@ mod tests {
         area.free_slot(slot);
         assert!(!area.is_slot_used(slot));
         assert!(!area.is_slot_used(u64::MAX), "越界 slot 不得命中位图");
+    }
+
+    #[test]
+    fn take_storage_without_init_is_noop() {
+        // 未初始化时摘除阶段不触碰状态, 调用方无需归还任何物理范围.
+        let mut area = SwapArea::new();
+        assert!(area.take_storage().is_none());
+        assert!(!area.initialized);
     }
 }
