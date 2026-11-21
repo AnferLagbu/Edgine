@@ -453,6 +453,11 @@ fn full_leg_specs(sh: &str) -> Vec<&str> {
          `missing_docs` 作准, 本腿是该口径唯一的执法点; 摘掉它, 存量债册与「新增未文档\
          公共项」一起退回无人执法"
     );
+    assert!(
+        specs.iter().any(|s| s.starts_with("safety_content:")),
+        "清单里没有 safety_content 腿 —— safety-comment-fidelity 册 C1 的 SAFETY 理由\
+         内容面失去唯一执法点; 摘掉它, 「调用方保证指针/类型有效」式占位理由重新无人拦"
+    );
 
     let quick_legs: Vec<&str> = sh
         .lines()

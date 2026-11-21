@@ -226,7 +226,7 @@ fn test_vacuous_needle_selftest_and_white_stock_are_locked() {
         "本腿的负控制没进 main() 的结果清单 —— 只有人手工跑的自测与零调用者脚本同病灶 (P-49 甲)"
     );
     assert!(
-        selftest.contains("[Test 12/13]"),
+        selftest.contains("[Test 12/14]"),
         "自测项数标注仍停在旧档位 —— 接线自测腿的到位读数与清单不一致"
     );
     assert!(

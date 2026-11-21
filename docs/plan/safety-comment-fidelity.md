@@ -47,15 +47,19 @@ gate-health 册的发现清单是**补写 SAFETY 当时**的快照。批 6 立�
 
 ---
 
-## 二、终态读数（C1 的射程基线，2026-11-19 实测）
+## 二、终态读数（C1 实装时实测）
 
-扫描面 = `src/kernel`（排除 vendored `smoltcp`）：
+扫描面 = `src/kernel`（排除 vendored `smoltcp`，含 `#[cfg(test)]`）：
 
 | 口径 | 读数 | 含义 |
 |---|---|---|
-| SAFETY 标签行总量 | **2786 条 / 230 文件** | 全树所有 `// SAFETY:` 行 |
-| **窄口径**（禁占位短语清单命中） | **251 处 / 57 文件** | C1 侧车的初始存量 |
-| **宽口径**（含空泛/无实质依据形态） | **463 处 / 92 文件** | 改写工程的总工作面 |
+| SAFETY 注释块总量 | **2248 块 / 631 扫描文件** | 全树所有 `// SAFETY:` 标签（含连续 `//` 续行合并） |
+| **窄口径**（禁占位短语清单命中） | **245 处 / 58 文件** | C1 侧车的初始存量 |
+| **宽口径**（含空泛/无实质依据形态） | **469 处 / 99 文件** | 改写工程的总工作面 |
+
+> 判据 = 标签行 + 紧随的连续 `//` 续行合并成块后做短语匹配；SAFETY 标签行总量用块计数，
+> 与早先按单行粗测的读数（2786 / 251 / 463）差异来自「续行合并」与仓库演化，权威读数
+> 以 `scripts/audit_safety_content.baseline.json` 的 `totals` 为准。
 
 **两条不可违反的读数纪律**：
 
@@ -72,22 +76,36 @@ gate-health 册的发现清单是**补写 SAFETY 当时**的快照。批 6 立�
 
 描述：新增 `scripts/audit_safety_content.py` + 机器派生侧车
 `scripts/audit_safety_content.baseline.json`，与 `audit_safety_debt.py` **同构**：
-禁占位短语清单（窄口径）+ 空泛形态清单（宽口径）→ 七腿位点并集取数 → 双向对账（只拦新增）
-→ 存量清零后转硬零。接入 `ci/audit.sh` `full` 档步骤 2e 的 `AUDIT_REQUIRED_LEGS_FULL`。
+禁占位短语清单（窄口径）+ 空泛形态清单（宽口径）→ SAFETY 注释位点收集（纯文本扫描
+`src/kernel`，不跑 cargo）→ 双向对账（只拦新增）→ 存量清零后转硬零。接入 `ci/audit.sh`
+`full` 档步骤 2e 的 `AUDIT_REQUIRED_LEGS_FULL`。
 方案：① 判据清单先按 §二 的窄/宽两口径实测钉下，侧车由 `--update-baseline` 生成，
 **不手改**；② 复用 `audit_safety_debt.py` 的**塌缩守卫**形态（total==0 且 baseline>0 且
-七腿无一真编译 ⇒ RC=2 拦 `--update-baseline`），防「编译失败被读成清零」；
+扫描面不可读（0 文件 / 0 条 SAFETY 标签）⇒ RC=2 拦 `--update-baseline`）——内容判据是
+注释文本、不依赖编译，故以「扫描面非空」作活性信号，防「取数失败被读成清零」；
 ③ **接线形状锁**：`host-tests/tests/ci_entrypoint_unified_test.rs` 补臂，钉新腿在
 `AUDIT_REQUIRED_LEGS_FULL` 内、且 quick 档不含它；④ `audit_selftest` 补自测用例，
 **项数标签有针**（`host-tests/tests/vacuous_needle_gate_test.rs:229`）⇒ 增删自测用例
 必须同批改钉，否则 `./ci/build.sh all` 红；⑤ 两项负控制（注入占位理由 → 红；
 摘旗标 → 形状锁红），RC=101 取证；⑥ 逐批改写放在 C2–C5，**C1 本身不改任何既有注释**。
-**前置（开放，未授权）**：新增一条 full 档阻断腿会改变 `AGENTS.md` §2.2 的两处计数
-（「共 10 条腿」→ 11、「仓库共 26 个 `audit_*.py`」→ 27），以及完整清单的腿名枚举。
-**批 4 那一次 AGENTS 预授权已用掉；批 6 为 ④+58 取得的新授权亦已用掉** ⇒
-**C1 施工前必须再次向用户取得 AGENTS.md 改动授权**，不得静默改根文档，
-也不得为了绕开授权而不接腿（不接腿即本裁定落空）。
-状态：[]
+**前置（已授权并已用掉）**：新增一条 full 档阻断腿改变 `AGENTS.md` §2.2 的两处计数
+（「共 10 条腿」→ 11、「仓库共 26 个 `audit_*.py`」→ 27）及完整清单的腿名枚举；
+本轮已取得用户授权并同批更新。批 4 与批 6 的两次授权此前已用掉。
+**结果**：`scripts/audit_safety_content.py` 已实装（判据清单冻进侧车 `_meta.criteria`，
+判据与侧车不一致即 fail-closed），初始存量窄口径 **245 处 / 58 文件**、宽口径
+**469 处 / 99 文件**（侧车 totals **714 处 / 157 键**）；已接入 full 档
+`AUDIT_REQUIRED_LEGS_FULL`（11 条腿），形状锁补臂、`audit_selftest` 第 14 项、
+项数针改 `[Test 12/14]`。C1 未改任何既有 SAFETY 注释（逐批改写属 C2–C5）。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `bash ci/audit.sh full`
+RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2，含 `safety_content` 第 11 条腿通过）·
+`make test-host` **212 套 / 1651 passed / 0 failed** · `make test-kernel-host`
+**12 + 811 + 608 = 1431 / 0 failed** · `ci-rustdoc` 双架构 exit 0。两项负控制：
+注入占位理由 ⇒ `audit_safety_content` **RC=1**（narrow / wide 各新增 1 键）；
+从 `AUDIT_REQUIRED_LEGS_FULL` 摘掉该腿 ⇒ 形状锁 **RC=101**；均 `cp`+`sha256` 复原。
+注：本环境 `CARGO_TERM_COLOR=always` 会让 Lockbud 的 `^   Compiling` 计数被 ANSI
+前缀打断（首轮误判「实编 0/4」），full 档须以 `CARGO_TERM_COLOR=never bash ci/audit.sh
+full` 取数；该环境敏感点是预存问题，不属 C1 改动面。
+状态：[X]
 
 ### 批 C2・arch + cpu + idt + boot 占位改写与注释失真（⑧ ⑯ ⑱ ⑲ ㉑ ㉒ ㉔ ㉖）
 

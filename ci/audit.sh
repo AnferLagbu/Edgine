@@ -91,7 +91,11 @@ AUDIT_REQUIRED_LEGS="tcb_ratio unsafe block_registration c_naming comment_langua
 # 3 处命中全在注释里); 其两个 §7.3 分类器已迁入 audit_implicit_deps.py, 执法面无损失.
 # 空出的名额接 safety_debt (批3 实装, D-5 乙): clippy `undocumented_unsafe_blocks`
 # 检测器读数与存量侧车双向对账, 只拦新增; 存量清零后转硬执法 (批5a-5g).
-AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py safety_debt:audit_safety_debt.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py vacuous_needle:audit_vacuous_needle.py"
+# 第 11 条 safety_content (safety-comment-fidelity 册 C1 / ⑮ 甲): SAFETY 理由的
+# **内容面** —— 债册只判「有没有、在不在正确位置」, 占位短语 (「调用方保证指针/类型
+# 有效」等) 照样通过且不计入债册. 本腿纯文本扫描 `src/kernel` (排除 vendored smoltcp,
+# 含 #[cfg(test)]), 按窄/宽两口径与机器派生侧车双向对账, 只拦新增.
+AUDIT_REQUIRED_LEGS_FULL="implicit_deps:audit_implicit_deps.py implicit_deps_selftest:tests/audit_implicit_deps_selftest.py audit_selftest:tests/audit_selftest.py feature_semantics:audit_feature_semantics.py safety_debt:audit_safety_debt.py safety_content:audit_safety_content.py public_api_docs:audit_public_api_docs.py missing_docs_debt:audit_missing_docs_debt.py smoltcp_purity:audit_smoltcp_purity.py obsolete_naming:scan_obsolete_naming.py vacuous_needle:audit_vacuous_needle.py"
 AUDIT_RUN_LEGS_FULL=""
 mark_leg_full() { AUDIT_RUN_LEGS_FULL="${AUDIT_RUN_LEGS_FULL} $1"; }
 AUDIT_RUN_LEGS=""
@@ -732,7 +736,8 @@ fi
 # ── 2e. 存量审计腿接入 (P-49) ─────────────────────────────────
 # 用户裁定「丙・六脚本全接入 full」. P-49 时六条腿分两种形态; P-58 收口后八条腿全部阻断,
 # P-59 追加第 9 条 (missing_docs_debt)、P-79 追加第 10 条 (vacuous_needle) 亦阻断, 批4 以
-# safety_debt 置换退役的 reverse_deps 后仍十条 —— 现十条腿无一有豁免分支:
+# safety_debt 置换退役的 reverse_deps 后仍十条, C1 追加第 11 条 (safety_content) —— 现
+# 十一条腿无一有豁免分支:
 #   P-49 的报告腿 obsolete_naming 当时用的是旧扫描脚本 (P-58 后更名为 `scan_obsolete_naming.py`) —— 默认无条件
 #   退 0, 只有 --actionable-only 才判退出码, 而那口径 53 处里 46 处是扫描器自身源文本、
 #   另有大量 plan/report 历史正文, 读数不收敛 ⇒ 只能作报告腿. P-58 裁定「校正 + 升阻断」:
@@ -746,7 +751,8 @@ fi
 # other/target/audit/), 而本文件在 2e 前后有 pushd/popd (步骤 1/2 与 Lockbud) —— 一旦
 # 有人在别处补一对 pushd 而忘记 popd, 借 cwd 的腿会读错根 (实测 cwd=/ 时该腿 RC=2).
 # 置于 quick 早退分支之后 = 仅 full 执行. 耗时逐腿实测 (门禁健康度收敛 批4 名额置换后十腿
-# 连跑合计 43.3s, 热跑 / 起始 load avg 0.66: implicit_deps 1.5 / implicit_deps_selftest 6.1 /
+# 连跑合计 43.3s; C1 追加的 safety_content 是纯文本扫描, 实测 0.2s, 十一腿总耗时量级不变.
+# 批4 热跑 / 起始 load avg 0.66: implicit_deps 1.5 / implicit_deps_selftest 6.1 /
 # audit_selftest 2.3 / feature_semantics 0.1 / safety_debt 1.4 / public_api_docs 5.8 /
 # missing_docs_debt 11.8 / smoltcp_purity 10.1 / obsolete_naming 1.4 / vacuous_needle 2.8;
 # 绝对值随负载与缓存浮动, 只有量级可比 —— P-49 当年空闲机八腿合计 ~14.5s, 上一轮九腿在
@@ -760,8 +766,8 @@ fi
 # public_api_docs 在 P-59 裁定 ② 后每次裸调都要逐 pub fn 判 impl 归属 (默认面硬零 + impl 面
 # 对账同源于一次扫描): 两面若靠 --strict 分流, 2e 的无参调起永远只判得到默认面, 533 处存量
 # 便没有执法点.
-# 十腿里**两条真编译**: missing_docs_debt 与 safety_debt (其余各腿都是纯文本扫描, 无改动时
-# 不会更贵), 故也只有这两条受前序改动影响. missing_docs_debt: 刚动过 src/kernel 时实测 15.8s,
+# 十一条腿里**两条真编译**: missing_docs_debt 与 safety_debt (其余九条都是纯文本扫描,
+# 无改动时不会更贵), 故也只有这两条受前序改动影响. missing_docs_debt: 刚动过 src/kernel 时实测 15.8s,
 # 无改动热跑 7.7s, 首跑冷启 30.2s (批4 十腿连跑里热跑 11.8s). 它跑
 # `cargo clippy … -- -Dmissing_docs` 取编译器读数, 需工具链在位 (缺 cargo ⇒ RC=2
 # 转红, 与本文件步骤 2d 同语义), 并用独立 target 目录 other/target/audit-missing-docs

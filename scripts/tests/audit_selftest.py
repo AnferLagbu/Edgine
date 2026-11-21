@@ -17,7 +17,7 @@ B01-24 返工: audit 脚本统一自测.
   它们绑定仓库路径, 而 fixture 在临时目录.
 - exit code: 0 (全部通过) / 1 (有失败)
 
-十三项真调入口:
+十四项真调入口:
 1. audit_functions_boundary.py: check_forbidden_imports(filepath)
 2. audit_deadlock_matrix.py: scan_file(filepath)
 3. audit_block_registration.py: main() (注入临时扫描根)
@@ -42,6 +42,10 @@ B01-24 返工: audit 脚本统一自测.
    内置夹具验形态分辨 / 跨腿位点去重 / (文件,形态) 计数键对行移不变 / 双向对账 /
    塌缩守卫 / 快照自洽; 端到端注入验三档退出码 (侧车缺失 RC=2、新增 RC=1、
    读数塌缩 RC=2 且 --update-baseline 同样拦), 全程不跑 cargo
+14. audit_safety_content.py: _self_test() + main(注入取数) —— C1 SAFETY 理由内容面棘轮:
+   内置夹具验窄/宽两口径分辨 / 续行合并 / 空行终止 / 连续两条各记一块 / cfg(test) 在面内 /
+   vendored 排除 / (文件,口径) 计数键对行移不变 / 判据清单冻结校验 / 塌缩守卫; 端到端注入
+   验三档退出码 (侧车缺失 RC=2、新增 RC=1、扫描面不可读 RC=2 且 --update-baseline 同样拦)
 """
 from __future__ import annotations
 
@@ -84,7 +88,7 @@ def _check(label: str, cond: bool, detail: str = "") -> bool:
 
 def test_functions_boundary() -> bool:
     """B01-24 fixture 测试 1: 真调 check_forbidden_imports 识别禁止导入."""
-    print("\n[Test 1/13] audit_functions_boundary.py")
+    print("\n[Test 1/14] audit_functions_boundary.py")
     detector = _load(
         "audit_functions_boundary", SCRIPTS_DIR / "audit_functions_boundary.py"
     )
@@ -109,7 +113,7 @@ def test_functions_boundary() -> bool:
 
 def test_deadlock_matrix() -> bool:
     """B01-24 fixture 测试 2: 真调 scan_file 识别带路径 spin 别名类型."""
-    print("\n[Test 2/13] audit_deadlock_matrix.py")
+    print("\n[Test 2/14] audit_deadlock_matrix.py")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         fixture = Path(tmpdir) / "privileged" / "audit_test" / "mod.rs"
@@ -208,7 +212,7 @@ def _order_violations(detector, tmpdir: str, tag: str, *, classes=None, levels=N
 
 def test_lock_order_self_reconcile() -> bool:
     """A-3 丙 + A-127c 正向自检: 真序表与真代码 / 真文档对账零违规, 容量读数在位."""
-    print("\n[Test 8/13] audit_deadlock_matrix.py 锁类序表 (真单源)")
+    print("\n[Test 8/14] audit_deadlock_matrix.py 锁类序表 (真单源)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     issues, summary = detector.check_lock_order(
         [PROJECT_ROOT / "src" / "kernel" / "privileged",
@@ -242,7 +246,7 @@ def test_lock_order_self_reconcile() -> bool:
 def test_lock_order_negative_controls() -> bool:
     """A-3 丙 + A-127c 负控制: 九条失同步各判对应红 (含跨行注册与两条容量判据),
     另含基准形态、括号豁免与注释豁免三例不判."""
-    print("\n[Test 9/13] audit_deadlock_matrix.py 锁类序表 (负控制)")
+    print("\n[Test 9/14] audit_deadlock_matrix.py 锁类序表 (负控制)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     # 局部列表的变量名要避开 main() 里那个结果列表: 契约锁 ci_entrypoint_unified_test
     # 按文件中**首个**「results 紧跟方括号赋值」的位置定位 main() 的结果列表, 局部同名
@@ -383,7 +387,7 @@ def _static_violations(detector, tmpdir: str, tag: str, code: str, *,
 
 def test_static_lock_order_detection() -> bool:
     """A-3b fixture 测试 11: 词法 / 一跳跨函数 / 回调包装三条派生形态的正反控制."""
-    print("\n[Test 11/13] audit_deadlock_matrix.py (A-3b 静态倒序)")
+    print("\n[Test 11/14] audit_deadlock_matrix.py (A-3b 静态倒序)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     inversion = {"LOCK_ORDER_STATIC_INVERSION"}
     cases = [
@@ -480,7 +484,7 @@ def test_static_lock_order_detection() -> bool:
 
 def test_static_lock_order_ratchet() -> bool:
     """A-3b fixture 测试 12: 未分类取锁点的覆盖率棘轮 (新增即红, 重录后放行, 缺失 fail-closed)."""
-    print("\n[Test 12/13] audit_deadlock_matrix.py (A-3b 覆盖率棘轮)")
+    print("\n[Test 12/14] audit_deadlock_matrix.py (A-3b 覆盖率棘轮)")
     detector = _load("audit_deadlock_matrix", SCRIPTS_DIR / "audit_deadlock_matrix.py")
     growth_code = _STATIC_PROLOGUE + (
         "fn unknown_lock() {\n"
@@ -519,7 +523,7 @@ def test_static_lock_order_ratchet() -> bool:
 
 def test_block_registration() -> bool:
     """B01-24 fixture 测试 3: 真调 main() 识别 egdf_register_block_dev 直调."""
-    print("\n[Test 3/13] audit_block_registration.py")
+    print("\n[Test 3/14] audit_block_registration.py")
     detector = _load(
         "audit_block_registration", SCRIPTS_DIR / "audit_block_registration.py"
     )
@@ -557,7 +561,7 @@ def test_audit_unsafe() -> bool:
     第四项钉两腿同面 (批4 NC-1 归因): safety_coverage 腿原只归集模块**目录**,
     顶层单文件模块 (dma_buf.rs 等 25 个) 全在射程外 ⇒ 注入 extern 缺口它判绿.
     """
-    print("\n[Test 4/13] tools/audit_unsafe.py")
+    print("\n[Test 4/14] tools/audit_unsafe.py")
     detector = _load("audit_unsafe", PROJECT_ROOT / "tools" / "audit_unsafe.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -631,7 +635,7 @@ def test_coupling_edges() -> bool:
     检测的读数系统性偏低 (实测 privileged 371 → 411 处). 本用例同时钉住反面: 被
     `//` 与 `/* */` 注释掉的 use **不得**成边 (否则注释里的历史代码会造出幽灵环).
     """
-    print("\n[Test 5/13] audit_coupling.py")
+    print("\n[Test 5/14] audit_coupling.py")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -675,7 +679,7 @@ def test_coupling_reference_edges() -> bool:
     计数会把注释、字符串字面量与 use 语句里的路径算成引用级边. 本用例同时钉住两面:
     D 类矩阵认出两条真调用与一条反向调用, 而声明级矩阵只看到那一条 use 边.
     """
-    print("\n[Test 6/13] audit_coupling.py (P-73 丙 D 类引用级边)")
+    print("\n[Test 6/14] audit_coupling.py (P-73 丙 D 类引用级边)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "privileged"
@@ -729,7 +733,7 @@ def test_coupling_cross_layer_access() -> bool:
     导入被拦); (b) 具名豁免路径 (`functions/mm/numa.rs`) 放行; (c) `syscall::raw`
     穿透被拦, 而公开出口 `syscall::api` 不匹配内部清单.
     """
-    print("\n[Test 7/13] audit_coupling.py (P-74 甲 跨层内部访问)")
+    print("\n[Test 7/14] audit_coupling.py (P-74 甲 跨层内部访问)")
     detector = _load("audit_coupling", SCRIPTS_DIR / "audit_coupling.py")
     with tempfile.TemporaryDirectory() as tmpdir:
         base = Path(tmpdir) / "functions"
@@ -893,7 +897,7 @@ def test_vacuous_needle() -> bool:
     `!=` 合取都不得判红), ③判白必须有**理由**而非"没命中" —— 两种绿在日志里同形,
     只有理由串能区分「按口径放行」与「检测器没看到」.
     """
-    print("\n[Test 10/13] audit_vacuous_needle.py")
+    print("\n[Test 10/14] audit_vacuous_needle.py")
     detector = _load("audit_vacuous_needle", SCRIPTS_DIR / "audit_vacuous_needle.py")
     needle_checks: list[bool] = []
     for label, src, want_rows, want_bad, want_exempt in _NEEDLE_CASES:
@@ -923,7 +927,7 @@ def test_vacuous_needle() -> bool:
 
 def test_safety_debt() -> bool:
     """门禁健康度收敛批 3: SAFETY 棘轮腿 (真调检测器自身的夹具与 main 决策面)."""
-    print("\n[Test 13/13] audit_safety_debt.py (D-5 乙 SAFETY 存量棘轮)")
+    print("\n[Test 13/14] audit_safety_debt.py (D-5 乙 SAFETY 存量棘轮)")
     mod = _load("audit_safety_debt", SCRIPTS_DIR / "audit_safety_debt.py")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -965,6 +969,48 @@ def test_safety_debt() -> bool:
     return all(checks)
 
 
+def test_safety_content() -> bool:
+    """C1 / ⑮ 甲: SAFETY 理由内容面棘轮腿 (真调检测器自身的夹具与 main 决策面)."""
+    print("\n[Test 14/14] audit_safety_content.py (C1 SAFETY 理由内容面)")
+    mod = _load("audit_safety_content", SCRIPTS_DIR / "audit_safety_content.py")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        fixture_rc = mod._self_test()
+    tail = buf.getvalue().strip().splitlines()
+    checks = [_check("内置夹具全通过 (两口径/续行/聚合并账/判据冻结/塌缩守卫/快照自洽)",
+                     fixture_rc == 0, tail[-1] if tail else "无输出")]
+
+    # 端到端负控制: 注入取数结果 (不扫真仓库), 验 main 的三档退出码与 fail-closed.
+    site = ("src/kernel/privileged/mm/cow.rs", 10, "narrow")
+    stats = {"files": 1, "tags": 1, "narrow": 1, "wide": 1}
+    with tempfile.TemporaryDirectory() as td:
+        orig_base, orig_scan = mod.BASELINE_FILE, mod.run_scan
+        mod.BASELINE_FILE = str(Path(td) / "b.json")
+        mod.run_scan = lambda: ({site}, dict(stats), True)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_missing = mod.main([])
+                rc_gen = mod.main(["--update-baseline"])
+                rc_ok = mod.main([])
+                mod.run_scan = lambda: ({site, (site[0], 11, "narrow")}, dict(stats), True)
+                rc_over = mod.main([])
+                dead = {"files": 0, "tags": 0, "narrow": 0, "wide": 0}
+                mod.run_scan = lambda: (set(), dict(dead), False)
+                rc_collapse = mod.main([])
+                rc_collapse_gen = mod.main(["--update-baseline"])
+        finally:
+            mod.BASELINE_FILE, mod.run_scan = orig_base, orig_scan
+    checks += [
+        _check("侧车缺失 ⇒ fail-closed RC=2", rc_missing == 2, f"实测 {rc_missing}"),
+        _check("生成快照后对账 RC=0", rc_gen == 0 and rc_ok == 0, f"实测 {rc_gen}/{rc_ok}"),
+        _check("新增占位理由 ⇒ RC=1", rc_over == 1, f"实测 {rc_over}"),
+        _check("扫描面不可读 ⇒ RC=2, --update-baseline 同样拦",
+               rc_collapse == 2 and rc_collapse_gen == 2,
+               f"实测 {rc_collapse}/{rc_collapse_gen}"),
+    ]
+    return all(checks)
+
+
 def main() -> int:
     print("=" * 60)
     print("B01-24 audit 脚本自测 (按 docs/plan/archive/audit-fix-01-audit-scripts.md §B01-24)")
@@ -984,6 +1030,7 @@ def main() -> int:
         test_static_lock_order_ratchet(),
         test_vacuous_needle(),
         test_safety_debt(),
+        test_safety_content(),
     ]
     passed = sum(results)
     total = len(results)
