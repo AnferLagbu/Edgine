@@ -48,7 +48,9 @@
 /// 或由 `bytes_mut` 接口触发 domain 故障.
 #[inline]
 pub fn freg_trigger_recovery() {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 S. `msr icc_sgi1r_el1` 只写当前核的中断生成寄存器, 操作数为
+    // `in(reg)` 标量; 后随 `isb` 使投递对后续指令可见. SGI 编号与 TargetList
+    // 位布局见下方说明, 无指针/内存访问面.
     unsafe {
         // SGI 7 定向发往**当前 CPU** (IRM=0, 不广播)。ICC_SGI1R_EL1 的字段布局为
         // INTID[27:24] / Aff1[23:16] / TargetList[15:0]: 目标的 Aff0 必须编码为

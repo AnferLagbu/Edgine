@@ -28,44 +28,14 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/aarch64/exception.rs",
-      "narrow",
-      8
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/exception.rs",
-      "wide",
-      8
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/freg/mod.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/freg/mod.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/gic.rs",
-      "narrow",
-      5
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/gic.rs",
       "wide",
-      13
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/mmu.rs",
-      "narrow",
-      13
+      9
     ],
     [
       "src/kernel/privileged/arch/aarch64/mmu.rs",
       "wide",
-      14
+      1
     ],
     [
       "src/kernel/privileged/arch/aarch64/mod.rs",
@@ -73,129 +43,34 @@
       1
     ],
     [
-      "src/kernel/privileged/arch/aarch64/psci.rs",
-      "narrow",
-      2
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/psci.rs",
-      "wide",
-      2
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/smp_init.rs",
       "wide",
       1
     ],
     [
-      "src/kernel/privileged/arch/aarch64/timer.rs",
-      "narrow",
-      8
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/timer.rs",
-      "wide",
-      8
-    ],
-    [
-      "src/kernel/privileged/arch/aarch64/uart.rs",
-      "narrow",
-      5
-    ],
-    [
       "src/kernel/privileged/arch/aarch64/uart.rs",
       "wide",
-      6
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "narrow",
-      10
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/acpi.rs",
-      "wide",
-      10
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/apic.rs",
-      "narrow",
-      3
+      1
     ],
     [
       "src/kernel/privileged/arch/x86_64/apic.rs",
       "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/gdt.rs",
-      "narrow",
-      5
+      1
     ],
     [
       "src/kernel/privileged/arch/x86_64/gdt.rs",
       "wide",
-      8
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/ioapic.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "narrow",
-      11
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/mod.rs",
-      "wide",
-      12
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/smp_init.rs",
-      "narrow",
-      10
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/smp_init.rs",
-      "wide",
-      11
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/tss.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/arch/x86_64/tss.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/boot/mod.rs",
-      "narrow",
       2
     ],
     [
-      "src/kernel/privileged/boot/mod.rs",
+      "src/kernel/privileged/arch/x86_64/mod.rs",
       "wide",
-      7
-    ],
-    [
-      "src/kernel/privileged/boot/multiboot2_fb.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/cpu/mod.rs",
-      "narrow",
       4
     ],
     [
-      "src/kernel/privileged/cpu/mod.rs",
+      "src/kernel/privileged/arch/x86_64/smp_init.rs",
       "wide",
-      5
+      1
     ],
     [
       "src/kernel/privileged/dma/engine.rs",
@@ -355,7 +230,7 @@
     [
       "src/kernel/privileged/idt/handlers.rs",
       "wide",
-      20
+      6
     ],
     [
       "src/kernel/privileged/idt/mod.rs",
@@ -363,24 +238,9 @@
       2
     ],
     [
-      "src/kernel/privileged/idt/safety.rs",
-      "narrow",
-      3
-    ],
-    [
-      "src/kernel/privileged/idt/safety.rs",
-      "wide",
-      3
-    ],
-    [
-      "src/kernel/privileged/idt/table.rs",
-      "narrow",
-      19
-    ],
-    [
       "src/kernel/privileged/idt/table.rs",
       "wide",
-      20
+      1
     ],
     [
       "src/kernel/privileged/ioport.rs",
@@ -809,8 +669,8 @@
     ]
   ],
   "totals": {
-    "files": 99,
-    "keys": 157,
-    "sites": 714
+    "files": 88,
+    "keys": 129,
+    "sites": 475
   }
 }

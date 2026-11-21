@@ -8,8 +8,8 @@
 ; │  内存布局 (0x8000):                                                   │
 ; │    0x8000:        jmp trampoline_entry                                │
 ; │    0x8002-0x8007: padding (6 bytes)                                   │
-; │    0x8008-0x8039: ApStartupInfo (BSP 写入，AP 读取，50 bytes packed)  │
-; │    0x803A+:       Trampoline 代码                                    │
+; │    0x8008-0x803D: ApStartupInfo (BSP 写入，AP 读取，54 bytes packed)  │
+; │    0x803E+:       Trampoline 代码                                     │
 ; │                                                                      │
 ; │  ApStartupInfo 与 Rust struct 保证字节级兼容 (repr(C, packed)):        │
 ; │    +0x00: cr3       (u64, 8B)                                        │
@@ -20,7 +20,8 @@
 ; │    +0x22: lapic_id  (u32, 4B)                                        │
 ; │    +0x26: ready     (u32, 4B)                                        │
 ; │    +0x2A: cpu_index (u32, 4B)                                        │
-; │    +0x2E: _pad      (u32, 4B)                                        │
+; │    +0x2E: done      (u32, 4B)                                        │
+; │    +0x32: _pad      (u32, 4B)                                        │
 ; └──────────────────────────────────────────────────────────────────────┘
 
 section .trampoline progbits alloc exec

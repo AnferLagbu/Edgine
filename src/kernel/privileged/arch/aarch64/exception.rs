@@ -311,7 +311,7 @@ handle_el0_sync:
     b    el0_return
 
 handle_svc:
-    // SVC #0: x0 = 系统调用号, x1-x5 = 参数
+    // SVC #0: x0 = 系统调用号, x1-x6 = 参数 (6 个实参, 与下方 `svc_handler` 的读取一致)
     mov  x0, sp             // x0 = ExceptionFrame*
     bl   svc_handler
 
@@ -591,7 +591,7 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 ///
 /// EL0 SVC 系统调用处理器。
 /// 从 EL0 通过 `svc #0` 进入。
-/// Edgine aarch64 系统调用约定: `x0=syscall_num`, x1-x4=args, 返回 x0。
+/// Edgine aarch64 系统调用约定: `x0=syscall_num`, x1-x6=args (6 个参数), 返回 x0。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
@@ -633,7 +633,10 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
 
     // 调用通用 syscall 分发器 (syscall 模块已全局化)
     let result =
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `syscall_dispatch` 的契约 (见 `syscall/dispatch.rs` 的 `# Safety`) 是
+        // 「从中断上下文调用, 全部寄存器值来自被打断的用户上下文」. 本处在 EL1 异常入口
+        // (EL0 `svc #0`) 内调用, 六个实参逐字取自 `ExceptionFrame` 的 x0..x6 —— 即硬件在
+        // 陷入瞬间保存的 EL0 现场; 函数只收标量, 没有裸指针形参.
         unsafe { crate::privileged::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
 
     // 返回值写入 x0 后再做返回用户态前的信号投递: 投递会快照当前帧
@@ -774,7 +777,10 @@ fn handle_irq_inner(from_el0: bool) -> bool {
 
         // smoltcp: 始终轮询（DHCP 需要在 poll 中完成握手）
         #[cfg(not(feature = "kernel_test"))]
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `poll_network` 的 `# Safety` 只要求内部对 smoltcp 单例的访问经
+        // `NET_STATE` 互斥保护, 且不得在持有该锁时进入. 本处位于 IRQ 分发路径、
+        // 不持 `NET_STATE`, 函数内部以 `try_lock` 取锁并在失败时立即返回, 故 ISR
+        // 上下文不会阻塞 (锁序与互斥事实见 `net/init.rs` 同名函数).
         unsafe {
             crate::privileged::net::poll_network();
         }
@@ -785,7 +791,10 @@ fn handle_irq_inner(from_el0: bool) -> bool {
             unsafe extern "C" {
                 fn scheduler_tick();
             }
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `scheduler_tick` 由 `proc/sched_ops.rs` 以 C ABI 导出, 无指针形参、
+            // 无返回值, 内部只对当前 CPU 的调度器状态做 per-CPU 记账 (`Scheduler::tick`
+            // 取 `get_current_cpu()`). 本处已在 IRQ 上下文且 `SCHEDULER_READY` 为真,
+            // 正是该函数声明的唯一调用时机.
             unsafe {
                 scheduler_tick();
             }
@@ -844,7 +853,9 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     let esr: u64;
     let far: u64;
     let elr: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 三条 `mrs` 只把 EL1 只读系统寄存器 (ESR_EL1 / FAR_EL1 / ELR_EL1) 读入
+    // 普通寄存器, 每个操作数都是 `out(reg)`; 不写任何系统寄存器、不访问内存,
+    // 未声明 `options(...)` 只是让编译器保守假设可能影响内存, 不构成 UB.
     unsafe {
         core::arch::asm!("mrs {}, esr_el1", out(reg) esr);
         core::arch::asm!("mrs {}, far_el1", out(reg) far);
@@ -896,7 +907,9 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     }
 
     // 直接 UART 输出以确保能观察同步异常
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 X (见本文件「unsafe 依据单源」): 此处处于 EL1 同步异常兜底路径,
+    // `uart::putc` 的前提「UART 已 init 且基址在当前翻译体制下可达」由启动流程保证
+    // (PL011 基址在首次进入 EL0 前已改为高半区别名, EL1 异常入口已切回完整内核表).
     unsafe {
         super::uart::putc(b'S');
         super::uart::putc(b'Y');
@@ -961,7 +974,8 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
     }
 
     loop {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `wfi` 只让当前核进入低功耗等待, 不访存; `nomem` / `nostack`
+        // 与该指令语义一致. 此循环是内核故障终止段的停机点, 不再返回用户态.
         unsafe {
             core::arch::asm!("wfi", options(nomem, nostack));
         }
@@ -984,7 +998,8 @@ pub extern "C" fn sync_exception_handler(frame: &ExceptionFrame) {
 // 的异常同样能输出.
 
 /// 辅助函数: 通过 UART 以十六进制输出 u64
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: 唯一的调用方是本文件 `sync_exception_handler` 的内核故障兜底段, 已处于
+// 异常上下文且 UART 就绪 (类别 X); 函数体自身的 UART 访问依据见体内 SAFETY.
 unsafe fn exc_puthex(val: u64) {
     // SAFETY: 类别 X. 块内只有位运算与 `uart::putc` (pub unsafe fn) 调用, 自身无指针
     // 解引用也无 asm. 循环 shift 取 15..0 共 16 轮, 每轮 4 bit ⇒ 恰好覆盖 u64 全宽,
@@ -1035,7 +1050,8 @@ pub extern "C" fn fiq_handler(_frame: &ExceptionFrame) {}
 #[unsafe(no_mangle)]
 pub extern "C" fn serror_handler(_frame: &ExceptionFrame) {
     loop {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `wfi` 只让当前核进入低功耗等待, 不访存; `nomem` / `nostack`
+        // 与该指令语义一致. SError 兜底路径无其他可做之事.
         unsafe {
             core::arch::asm!("wfi", options(nomem, nostack));
         }

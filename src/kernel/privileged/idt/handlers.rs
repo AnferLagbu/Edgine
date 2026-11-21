@@ -129,7 +129,8 @@ impl ExceptionHandler for DivisionByZeroHandler {
     // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
     // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         if unsafe { (*frame).is_user_mode() } {
             // User-mode #DE: 安全终止进程
             RecoveryAction::TerminateProcess(1)
@@ -201,12 +202,15 @@ impl ExceptionHandler for PageFaultHandler {
     // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
     // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         let fault_addr = unsafe { InterruptFrame::fault_address() };
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         let analysis = Self::analyze_error_code(unsafe { (*frame).err_code });
 
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         if unsafe { (*frame).is_user_mode() } {
             use crate::privileged::mm::PfResult;
             if crate::privileged::proc::try_expand_user_stack(fault_addr) {
@@ -218,7 +222,8 @@ impl ExceptionHandler for PageFaultHandler {
             // 此前 trait 路径直接 SIGKILL, 等于绕过了内核核心功能
             let pf_info = crate::privileged::mm::PageFaultInfo::from_error_code(
                 fault_addr,
-                // SAFETY: 调用方保证指针/类型有效
+                // SAFETY: `frame` 由 trait 声明契约保证指向完整对齐的 `InterruptFrame`
+                // (见本函数开头); 这里只读页故障错误码字段, 与 asm 压栈布局一致.
                 unsafe { (*frame).err_code },
             );
             let pid = crate::privileged::proc::process_get_current_pid();
@@ -259,7 +264,8 @@ impl ExceptionHandler for PageFaultHandler {
                 RecoveryAction::Panic(PanicInfo::new(
                     "Kernel Page Fault: page not present",
                     14,
-                    // SAFETY: `frame` 由调用方保证为有效指针
+                    // SAFETY: `frame` 由 trait 声明契约保证指向完整对齐的 `InterruptFrame`;
+                    // 这里只读故障 RIP 字段用于 panic 报告.
                     unsafe { (*frame).rip },
                 ))
             }
@@ -268,7 +274,8 @@ impl ExceptionHandler for PageFaultHandler {
                 RecoveryAction::Panic(PanicInfo::new(
                     "Page Fault: Protection violation or hardware error",
                     14,
-                    // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+                    // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+                    // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
                     unsafe { (*frame).rip },
                 ))
             }
@@ -309,9 +316,11 @@ impl ExceptionHandler for InvalidOpcodeHandler {
     // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
     // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         let is_user = unsafe { (*frame).is_user_mode() };
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         let rip = unsafe { (*frame).rip };
 
         if is_user {
@@ -324,7 +333,8 @@ impl ExceptionHandler for InvalidOpcodeHandler {
             }
             // 跳过该非法指令 (UD2 最短 2 字节, 未编码指令也按 2 字节步进,
             // 避免立即重新触发 #UD; 真实 handler 通过 sigreturn 即可接管控制流).
-            // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+            // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
             unsafe {
                 (*frame).rip = rip.wrapping_add(2);
             }
@@ -408,13 +418,15 @@ impl ExceptionHandler for GeneralProtectionFaultHandler {
     // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
     // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         if unsafe { (*frame).is_user_mode() } {
             // User GPF: 终止进程
             RecoveryAction::TerminateProcess(1)
         } else {
             // Kernel GPF: 打印栈回溯后尝试恢复
-            // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+            // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
             Self::print_detailed_gpf_info(unsafe { &*frame });
             RecoveryAction::DomainRecovery
         }
@@ -482,7 +494,8 @@ impl ExceptionHandler for DoubleFaultHandler {
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         let count = DOUBLE_FAULT_COUNT.fetch_add(1, Ordering::SeqCst);
 
-        // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+        // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
         Self::print_double_fault_context(unsafe { &*frame });
 
         if count <= 3 {
@@ -493,7 +506,8 @@ impl ExceptionHandler for DoubleFaultHandler {
             RecoveryAction::Panic(PanicInfo::new(
                 "Multiple Double Faults - system unstable",
                 8,
-                // SAFETY: `frame` 由调用方保证为有效指针; 只读访问
+                // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
+                // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
                 unsafe { (*frame).rip },
             ))
         }

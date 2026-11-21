@@ -129,7 +129,27 @@ bit0=D / bit1=A / bit2=I / bit3=F，真实是 **bit3=D / bit2=A / bit1=I / bit0=
 注意 `MultibootPtr(*const u8)` 的裸指针本身 `!Sync`，故「auto trait 已自动成立」的原登记**不确**，
 删之前须先核实真实派生面（§9.1 须问）。
 ③ **禁写占位理由**（C1 的腿会拦）；④ 纯注释批须验**零删除行**（`git diff --numstat`）。
-状态：[]
+**结果**：C2 面（`privileged/{arch,cpu,idt,boot}`）**窄口径 129 处 → 0**、**宽口径 269 处 → 30**
+（全树侧车 714 处 / 157 键 → **475 处 / 129 键**），逐处改写为具体实装依据（锁名 / 寄存器 /
+页表前提 / FFI 契约），并按 `arch!(interrupt_disable())`、`sched_ops::scheduler_tick`、
+`net::poll_network`、`mmu::write_page_table_base`、`get_tss_mut` 等**实际符号名**回 grep 核实。
+8 项失真：⑧ 两处 `x1-x4`/`x1-x5` 均改为 `x1-x6`（实装读 x1..x6）；⑯ `trampoline.asm` 布局框
+50 → **54 字节**、补齐 `done` 字段并把代码起点改为 `0x803E`；⑱ `IdtPtr` 的 base 由 +8 改为 **+2**；
+⑲ `idt/types.rs` 链接改 `../boot/isr.asm`（真文件在 `privileged/boot/isr.asm`）；㉑ 诊断位域标签
+改为实际位移 `bits[9:5]` / `bits[10:8]`（只作日志近似，见下「遗留登记」）；㉒ DAIF 位序改为
+**bit3=D / bit2=A / bit1=I / bit0=F** 并删除那条已失效的「预存文档缺陷」订正注；㉔ `.align 3`
+= **8 字节**；㉖ `MultibootPtr` 的 `Sync` impl **保留**——裸指针 `*const u8` 本身 `!Sync`，该 impl
+非空操作，且现树 SAFETY 已显式披露「非类型必需项」，只订正措辞不改去留。
+**纯注释面判据**：`git diff --numstat` 删除列 308 行，逐行核验后**全部为注释/文档行**；
+唯一非注释删除是 `gic.rs` 两行代码的尾注释改写（代码字节不变）。
+**遗留登记（C2 读出、本批不改）**：`gic::init_distributor` 的 `GICD_TYPER` 取位为 `>>5 & 0x1F`
+与 `>>8 & 0x07`，与 ARM 定义（ITLinesNumber=bits[4:0]、CPUNumber=bits[7:5]）不符 ⇒ 诊断日志
+数值失真、无安全后果；按 §11.5 待用户裁定（登记姊妹册 / 单开修复 / 跳过）。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never bash
+ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_content` 腿通过）·
+`make test-host` **212 套 / 1651 passed / 0 failed** · `make test-kernel-host` **1431 / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` 双架构 exit 0。侧车已 `--update-baseline` 重导（**475 处 / 129 键**）。
+状态：[X]
 
 ### 批 C3・mm + sync 占位改写
 

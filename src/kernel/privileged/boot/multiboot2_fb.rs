@@ -107,7 +107,9 @@ pub fn get_framebuffer_info() -> Option<&'static FramebufferInfo> {
 /// `tag_data` 必须指向多引导信息中有效的 framebuffer 标签载荷, 且至少覆盖
 /// 偏移 0..=29 的字节 (type==1 时读取到偏移 29)。
 pub unsafe fn parse_framebuffer_tag(tag_data: *const u8, _tag_size: u32) {
-    // SAFETY: 调用方保证指针/类型有效 (详见 `# Safety`)。
+    // SAFETY: 本函数 `# Safety` 要求 `tag_data` 指向有效 framebuffer 标签载荷且覆盖
+    // 偏移 0..=29 字节. 下列读取 (u64@0 / u32@8,12,16 / u8@20,21, type==1 时
+    // u8@24..=29) 全部落在该范围内; 多字节值用 `read_unaligned` 取值, 不构造引用.
     unsafe {
         let addr = tag_data.cast::<u64>().read_unaligned();
         let pitch = tag_data.add(8).cast::<u32>().read_unaligned();

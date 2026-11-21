@@ -39,14 +39,16 @@ use crate::privileged::sync::OnceLock;
 // 内联硬件操作函数 (避免跨模块导入问题)
 /// 从端口读字节
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须保证 `port` 对应实际存在的设备且处于 Ring 0; 本函数只经
+// `arch!(inb)` 发 IN 指令, 入参出参均为 u8/u16, 无指针面 (类别 P).
 unsafe fn port_inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }
 
 /// 向端口写字节
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 同 `port_inb` 的 Ring 0 与设备存在前提; 副作用是设备 I/O
+// (legacy PIC 会改变中断屏蔽/命令状态), 次序由各调用点的 8259A 序列保证.
 unsafe fn port_outb(port: u16, value: u8) {
     crate::arch!(outb(port, value));
 }
@@ -75,7 +77,8 @@ fn detect_spurious_8259_irq(irq: u8) -> Option<bool> {
     if irq != 7 && irq != 15 {
         return None;
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `read_8259_isr` 要求 Ring 0 且端口 0x20/0xA0 属 legacy PIC; 本调用点
+    // 只在 irq 7/15 的假性中断判定中读 ISR, 平台具备 8259A (x86_64 兼容芯片组).
     let isr = unsafe { read_8259_isr(irq >= 8) };
     let bit = 1u8 << 7; // IRQ7 / IRQ15 都是 bit 7
     Some(isr & bit == 0)
@@ -98,12 +101,15 @@ fn legacy_irq_via_ioapic() -> bool {
 
 /// 读取 8259A 主/从 ISR (In-Service Register).
 /// 通过 OCW3 = 0x0B 触发读 ISR (vs IRR); 返回 8-bit 当前在服务中断位图.
-// SAFETY: 调用方保证指针/类型有效 (详见上下文) — 仅 I/O 端口读写, 不涉及指针解引用
+// SAFETY(契约): 调用方须保证 Ring 0 且 `slave` 选择的 0x20/0xA0 端口存在; 本函数
+// 只做端口读 (类别 P), 无指针面.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn read_8259_isr(slave: bool) -> u8 {
     let cmd_port: u16 = if slave { 0xA0 } else { 0x20 };
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 P. 先写 OCW3=0x0B (选择读 ISR), 再读同一命令口; 端口地址由
+    // `slave` 二选一, 均为 8259A 固定 I/O 地址, 值是 u8, 无指针面. 写后立即读的
+    // 次序是 8259A 寄存器选择语义要求.
     unsafe {
         port_outb(cmd_port, 0x0B);
         port_inb(cmd_port)
@@ -121,7 +127,8 @@ unsafe fn read_8259_isr(slave: bool) -> u8 {
 
 /// I/O 等待
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须保证 Ring 0 (OUT 是特权指令); 本函数只写诊断端口 0x80,
+// 该端口在 x86_64 兼容芯片组上恒存在且写被硬件丢弃 (类别 P).
 unsafe fn io_wait() {
     // SAFETY: 类别 P. 写 POST 诊断端口 0x80 (硬件丢弃该写), 唯一目的是产生一次
     // I/O 周期延时, 供 8259A 初始化序列在两条命令之间满足芯片要求的间隔;
@@ -132,7 +139,8 @@ unsafe fn io_wait() {
 }
 
 /// 重映射 8259A PIC: IRQ0-7→vec32-39, IRQ8-15→vec40-47
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用点 `IdtManager::init` 须在启动期单线程、门编程与 `load_idt`
+// 之前调用, 且平台具备 8259A; 端口与命令次序依据见体内类别 P.
 unsafe fn remap_pic() {
     // SAFETY: 类别 P. 按 ICW1(0x11)→ICW2(偏移)→ICW3(级联)→ICW4(0x01) 顺序初始化
     // 主从两片, 每条命令后插 `io_wait` 满足芯片间隔; 主偏移 0x20 / 从 0x28 与
@@ -166,7 +174,8 @@ unsafe fn remap_pic() {
 
 /// 禁用中断
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须处于 Ring 0; `cli` 经 `crate::arch!(interrupt_disable())`
+// 清 IF, 只改 RFLAGS 的中断位, 不访存.
 unsafe fn cli() {
     let _ = crate::arch!(interrupt_disable());
 }
@@ -280,7 +289,8 @@ impl IdtManager {
         // I-24 启动顺序契约的校验见 x86_64 专属的 `validate_boot_order`
         // (TSS init (set_ist[0..4]) 必须在 IDT init 之前完成).
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `remap_pic` 须在启动期单线程、门编程与 `load_idt` 之前调用, 且平台
+        // 具备 8259A; 本处正是 `IdtManager::init` 的启动期块 (后续步骤 1-6 才编程并加载门).
         unsafe {
             remap_pic();
         }
@@ -361,7 +371,8 @@ impl IdtManager {
 
         // 6. 加载 IDT 到 CPU
         #[cfg(target_arch = "x86_64")]
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `load_idt` 要求门描述符已全部写入且 IDT 静态存储生命周期覆盖运行期;
+        // 本处步骤 1-5 已完成 entries/handlers 填充与 TSS 校验, 是唯一加载点.
         unsafe {
             self.load_idt();
         }
@@ -380,7 +391,8 @@ impl IdtManager {
     /// 关键 IST (0-3) 未填充非零栈顶时返回 `Err` 的描述文本。
     #[cfg(target_arch = "x86_64")]
     pub fn validate_boot_order() -> Result<(), &'static str> {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `get_tss_mut` 的契约是「初始化后调用, 调用方保证并发安全」; 本函数
+        // 只在启动期 IDT init 的串行路径做 I-24 顺序校验, 期间无其他核访问该 TSS.
         let tss = unsafe { crate::privileged::arch::gdt::get_tss_mut() };
         if !tss.ist_validated() {
             return Err("IDT init: TSS IST[0..3] not initialized (call set_ist first)");
@@ -612,7 +624,8 @@ impl IdtManager {
         if irq >= 16 {
             return;
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 类别 P. `irq < 16` 已判, 掩码端口 (主 0x21 / 从 0xA1) 存在且 Ring 0;
+        // 读-改-写只清单个 IRQ 位, 从片额外放开主片级联位 IRQ2; 值是 u8, 无指针面.
         unsafe {
             if irq < 8 {
                 let mask = port_inb(0x21) & !(1 << irq);
@@ -641,7 +654,8 @@ impl IdtManager {
         if irq >= 16 {
             return;
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 类别 P. `irq < 16` 已判, 掩码端口存在且 Ring 0; 读-改-写只置单个
+        // IRQ 位; 值是 u8, 无指针面.
         unsafe {
             if irq < 8 {
                 let mask = port_inb(0x21) | (1 << irq);
@@ -662,7 +676,9 @@ impl IdtManager {
             return;
         }
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 本函数 `# Safety` 要求 `frame` 指向中断入口构建的完整对齐
+        // `InterruptFrame`; 首行已判非空. 块内所有 `*frame` / `&*frame` 访问都是对该
+        // 帧的只读检查 (int_no 与各寄存器), 与 asm 入口压栈布局一致.
         unsafe {
             let vector = crate::privileged::glue::low_u8_from_u64((*frame).int_no);
 
@@ -752,7 +768,8 @@ impl IdtManager {
             fn recovery_try_recover_from_idt() -> i32;
         }
 
-        // SAFETY: frame 由调用方契约保证有效; 只写帧字段, 不改其他内存.
+        // SAFETY: `frame` 由 `handle_recovery_vector` 的调用方契约保证指向完整对齐的
+        // `InterruptFrame`; 本块只写该帧内字段 (重定向 RIP 到停机点), 不触碰其他内存.
         unsafe {
             // 恢复结果 (0 成功 / 负值失败或已尝试) 不改变落点: panic 上下文无法
             // 恢复执行, 无论回滚是否成功都必须停机; 若 iretq 回到 `int 0x82` 的
@@ -781,7 +798,9 @@ impl IdtManager {
                     fn scheduler_yield();
                 }
 
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: 两个 C ABI 符号都无指针形参; `process_exit(code)` 终止当前
+                // 进程, `scheduler_yield()` 切换本核 —— 前提是当前处于中断/内核上下文
+                // 且有有效当前任务, 由本异常分发路径保证.
                 unsafe {
                     process_exit(*exit_code);
                     scheduler_yield();
@@ -799,7 +818,9 @@ impl IdtManager {
                     fn recovery_try_recover_from_idt() -> i32;
                 }
 
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: `recovery_try_recover_from_idt` 是无参 C ABI 函数, 返回 i32
+                // 状态码; 前提是当前 0x82 恢复向量上下文可回滚 (由 `handle_recovery_vector`
+                // 在调用前建立), 本块只按返回值分支, 不触碰未校验内存.
                 unsafe {
                     let result = recovery_try_recover_from_idt();
                     match result {
@@ -827,7 +848,8 @@ impl IdtManager {
     fn kernel_panic(message: &str) {
         let _ = message;
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 终止序列先 `cli` 关中断, 再进 `halt_loop` 的 hlt 循环 —— 满足 `halt`
+        // 「调用前已关中断」的契约; 两者都是 Ring 0 特权指令, 只改 CPU 状态不访存.
         unsafe {
             cli();
             halt_loop();
@@ -925,7 +947,8 @@ impl IdtManager {
                     if irq >= 8 {
                         // slave 假性: 仅 EOI master, 避免误清 slave 上未决的
                         // 真实 IRQ
-                        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                        // SAFETY: 类别 P. 只向主片命令口 0x20 写 OCW2=0x20 (非特异 EOI),
+                        // 用于清除从片假性中断在主片上的在服务位; 端口存在且 Ring 0.
                         unsafe {
                             port_outb(0x20, 0x20);
                         }
@@ -998,7 +1021,8 @@ impl IdtManager {
             }
         }
         // 兜底: 对老式系统回退到传统 PIC EOI
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 类别 P. 按 irq 是否 ≥ 8 先向从片 (0xA0) 再向主片 (0x20) 写
+        // OCW2=0x20 非特异 EOI; 两端口均为 8259A 固定地址且 Ring 0, 无指针面.
         unsafe {
             if irq >= 8 {
                 port_outb(0xA0, 0x20);

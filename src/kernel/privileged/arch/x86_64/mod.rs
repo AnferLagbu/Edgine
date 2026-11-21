@@ -356,7 +356,8 @@ impl MmuArch for X8664 {
     #[inline]
     fn read_page_table_base() -> u64 {
         let cr3: u64;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `mov {}, cr3` 只把控制寄存器 CR3 读入通用寄存器 (`out(reg)`);
+        // `nostack`/`preserves_flags` 与该指令不改栈、不改标志的语义一致.
         unsafe {
             core::arch::asm!(
                 "mov {}, cr3",
@@ -370,7 +371,9 @@ impl MmuArch for X8664 {
     /// 切换页表 (mov to cr3)。
     #[inline]
     fn write_page_table_base(paddr: u64) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `mov cr3, paddr` 切换当前核页表根; 唯一操作数是 `in(reg)`. 调用方
+        // 须保证 paddr 为物理 PML4 地址 (低 12 位按 PCID 语义编码), 且新页表已映射
+        // 后续取指/栈 —— 该时序义务由调用点承担, 本处只发单条指令.
         unsafe {
             core::arch::asm!(
                 "mov cr3, {}",
@@ -384,7 +387,8 @@ impl MmuArch for X8664 {
     #[inline]
     fn read_fault_address() -> usize {
         let cr2: u64;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `mov {}, cr2` 只把页故障线性地址寄存器读入通用寄存器 (`out(reg)`);
+        // `nostack`/`preserves_flags` 与该指令语义一致.
         unsafe {
             core::arch::asm!(
                 "mov {}, cr2",
@@ -438,7 +442,9 @@ impl MmuArch for X8664 {
             unsafe extern "C" {
                 fn process_switch_asm(prev: *mut u8, next: *const u8, user_tls_base: u64);
             }
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `process_switch_asm` 是 C ABI 汇编上下文切换入口, 三参含义见
+            // 上方 `# Safety` 段; `from`/`to` 由调度器保证指向互不重叠的有效上下文块,
+            // 本块只转交指针, 不自行解引用.
             unsafe {
                 process_switch_asm(from, to, user_tls_base);
             }
@@ -467,8 +473,11 @@ impl MmuArch for X8664 {
         kstack: u64,
         user_tls_base: u64,
     ) -> ! {
-        // SAFETY: 调用方保证 entry/stack/user_cr3/kstack 有效。
-        // 通过 FFI 调用汇编实现的 enter_user_asm。
+        // SAFETY: 调用方须保证: `entry` 落在用户页表已映射的可执行页内, `stack` 为
+        // 用户栈顶 (System V ABI 16 字节对齐), `user_cr3` 为用户 PML4 物理地址 (低 12
+        // 位按 PCID 语义), `kstack` 指向当前任务内核栈. `enter_user_asm` 由
+        // `global_asm!` 定义于 `.kpti_trampoline` section, 按寄存器约定接收六参并
+        // 切页表后 `iretq` 进入用户态, 不返回.
         unsafe {
             // SAFETY: enter_user_asm 由 global_asm! 定义于 .kpti_trampoline section,
             // 参数 (entry/stack/user_cr3/kstack/user_tls_base) 有效性由上方 SAFETY 保证.
@@ -489,7 +498,8 @@ impl MmuArch for X8664 {
     /// 返回用户态 (iretq)。
     #[inline]
     fn return_to_user() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `iretq` 从当前栈弹出 SS/RSP/RFLAGS/CS/RIP 返回; `noreturn` 声明
+        // 与指令语义一致. 调用前栈顶必须已按该顺序布置好五元组 (调用约定见本 trait 文档).
         unsafe {
             core::arch::asm!("iretq", options(noreturn));
         }
@@ -671,7 +681,9 @@ impl SystemArch for X8664 {
     /// 向 I/O 端口写入字节 (out dx, al)。
     #[inline]
     fn outb(port: u16, value: u8) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `out dx, al` 把 al 写到 dx 指定的 I/O 端口, 两个操作数都是 `in`;
+        // 副作用是设备 I/O, 端口有效性由调用方 (IoPort safe 代理) 保证;
+        // `nostack`/`preserves_flags` 与该指令语义一致.
         unsafe {
             core::arch::asm!(
                 "out dx, al",
@@ -686,7 +698,8 @@ impl SystemArch for X8664 {
     #[inline]
     fn inb(port: u16) -> u8 {
         let value: u8;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `in al, dx` 从 dx 端口读一字节到 al (`out("al")`); 端口有效性由
+        // 调用方保证; 指令不改栈、不隐式改标志.
         unsafe {
             core::arch::asm!(
                 "in al, dx",
@@ -701,7 +714,8 @@ impl SystemArch for X8664 {
     /// 向 I/O 端口写入双字 (out dx, eax)。
     #[inline]
     fn outl(port: u16, value: u32) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `out dx, eax` 把 eax 写到 dx 端口, 两个操作数都是 `in`; 副作用是
+        // 设备 I/O, 端口与位宽有效性由调用方 (IoPort safe 代理) 保证.
         unsafe {
             core::arch::asm!(
                 "out dx, eax",
@@ -716,7 +730,8 @@ impl SystemArch for X8664 {
     #[inline]
     fn inl(port: u16) -> u32 {
         let value: u32;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `in eax, dx` 从 dx 端口读双字到 eax (`out("eax")`); 端口与位宽
+        // 有效性由调用方保证; 指令不改栈、不隐式改标志.
         unsafe {
             core::arch::asm!(
                 "in eax, dx",
@@ -730,11 +745,13 @@ impl SystemArch for X8664 {
 
     /// 关机 (8042 + triple fault 回退)。
     fn shutdown() -> ! {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 向 8042 键盘控制器命令口 0x64 写 0xFE (pulse reset line) 请求关机;
+        // 操作数为立即数/寄存器, 不访常规内存, `nomem`/`nostack` 与指令语义一致.
         unsafe {
             core::arch::asm!("mov al, 0xFE", "out 0x64, al", options(nomem, nostack));
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 兜底路径: `lidt [0]` 装入零地址处的伪 IDT 描述符, 随后 `int 3`
+        // 触发 triple fault 迫使复位; 这是**故意**的故障, 不依赖有效内存.
         unsafe {
             core::arch::asm!("lidt [0]", "int 3", options(nomem, nostack));
         }

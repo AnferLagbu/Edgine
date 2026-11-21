@@ -383,7 +383,9 @@ pub extern "C" fn boot_set_multiboot_info(magic: u32, ptr: *const u8) {
 
 #[cfg(target_arch = "x86_64")]
 fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions) {
-    // SAFETY: `ptr` 由调用方保证指向有效 Multiboot1Info; 只读借用
+    // SAFETY: `ptr` 是 `boot_set_multiboot_info` 保存的引导器 multiboot info 指针
+    // (GRUB 置于 4 GiB 以下), 启动期低端物理内存经恒等映射可直读; 此处用
+    // `read_unaligned` 按值拷出头部结构, 不构造引用.
     let mbi = unsafe { ptr.cast::<Multiboot1Info>().read_unaligned() };
     let mut mem_size: u64 = 128 * 1024 * 1024;
     let mut mmap_entries: usize = 0;
@@ -415,7 +417,9 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
 
         let mut current = mmap_start;
         while current < mmap_end {
-            // SAFETY: `current` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `current` 由循环条件约束在 `[mmap_start, mmap_end)` 内, 指向
+            // 引导器写入的 MB1 内存图条目起点 (`MemoryMapEntry` 为 `repr(C)` 4 字节
+            // 对齐); 启动期只读该条目, 不写.
             let entry = unsafe { &*current };
             let end = entry.base_addr() + entry.length();
             if end > max_addr && entry.is_available() {
@@ -425,7 +429,9 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
                 firmware.push(entry.base_addr(), entry.length());
             }
             mmap_entries += 1;
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: 纯指针算术前进到下一 MB1 条目: `entry.size` 是「不含 size 字段
+            // 自身 4 字节」的条目长度, 故加 `size + 4`; 输入 `current` 在 mmap 缓冲内,
+            // 引导器保证条目毗邻排列; 本行只做地址计算, 不解引用.
             current = unsafe {
                 current.cast::<u8>().add(entry.size as usize + 4) as usize as *const MemoryMapEntry
             };
@@ -441,7 +447,8 @@ fn parse_multiboot1(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
 
 #[cfg(target_arch = "x86_64")]
 fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions) {
-    // SAFETY: `ptr` 由调用方保证指向有效 u32; 只读借用
+    // SAFETY: `ptr` 指向 MB2 信息块起始 (引导器置于 4 GiB 以下), 启动期恒等映射
+    // 可直读; 此处只读首个 u32 (total_size), 用 `read_unaligned` 不假设对齐.
     let total_size = unsafe { ptr.cast::<u32>().read_unaligned() };
     // D4-g: 内存图 (tag 6) 权威, 基本内存信息 (tag 4) 仅在无图时兜底.
     // 两者必须**与标签出现次序无关**: GRUB 在 SeaBIOS 与 OVMF 下都把 tag 4 排在
@@ -459,11 +466,13 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
     let end = total_size as usize;
 
     while offset + 8 <= end {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `offset` 由循环条件 `offset + 8 <= end` 约束, `end = total_size`
+        // 为 MB2 信息块长度; `ptr` 指向该块起始, 故 `ptr.add(offset)` 落在块内.
         let tag_ptr = unsafe { ptr.add(offset) };
-        // SAFETY: `tag_ptr` 由调用方保证指向有效 u32; 只读借用
+        // SAFETY: `tag_ptr` 在信息块内且循环条件保证了 ≥8 字节余量; 以 `read_unaligned`
+        // 读标签头 type 字段, 不构造引用、不假设对齐.
         let tag_type = unsafe { tag_ptr.cast::<u32>().read_unaligned() };
-        // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
+        // SAFETY: 同上一行: 标签头第二字 (size) 位于 +4, 仍在上方保证的 ≥8 字节余量内.
         let tag_size = unsafe { tag_ptr.add(4).cast::<u32>().read_unaligned() };
 
         if tag_type == 0 || tag_size == 0 {

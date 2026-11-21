@@ -208,7 +208,8 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     };
 
     let slot = boot_slot();
-    // SAFETY: slot 指向 `.bootbss` 中 80 字节对齐的启动槽, 布局与 ApBootInfo 一致;
+    // SAFETY: slot 指向 `.bootbss` 中按 `.align 3` 8 字节对齐的启动槽 (`start.S`),
+    //   满足 `ApBootInfo` 全 u64 字段的自然对齐, 布局与 `ApBootInfo` 一致;
     //   整体写入后必须清至 PoC, 以确保 MMU 关闭的次核读取到主存而非陈旧 cache.
     unsafe {
         core::ptr::write_volatile(slot, info);

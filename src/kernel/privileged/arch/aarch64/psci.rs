@@ -163,7 +163,8 @@ pub fn system_off() -> ! {
     }
 
     // PSCI 不可用时，触发异常 (通过写入零地址)
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 这是**故意**的故障注入: `str x0, [x0]` 以 x0=0 向零地址写入, 必然触发
+    // Data Abort 而不会返回; 不依赖任何有效映射. `nostack` 声明本 asm 不碰栈.
     unsafe {
         core::arch::asm!("mov x0, #0; str x0, [x0]", options(nostack));
     }
@@ -180,7 +181,8 @@ pub fn system_reset() -> ! {
     }
 
     // PSCI 不可用时，fallback
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 同 `system_off` 的故障注入: `str x0, [x0]` 以 x0=0 写零地址, 必然
+    // 触发 Data Abort 使本 `-> !` 函数不返回; 不依赖有效映射. `nostack` 声明不碰栈.
     unsafe {
         core::arch::asm!("mov x0, #0; str x0, [x0]", options(nostack));
     }

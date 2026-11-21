@@ -83,7 +83,8 @@ const UARTLCR_8N1: u32 = 0b11 << 5;
 // ============================================================================
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): `offset` 须取自本模块 UART* 常量 (落在 PL011 帧内), 且 UART 已
+// `init`、基址在当前翻译体制下可达; 具体访问形态见体内类别 U.
 unsafe fn read(offset: u64) -> u32 {
     // SAFETY: 类别 U. offset 由本模块常量给出 (UARTFR / UARTDR), 落在 PL011 帧内;
     // 本函数只被 `init` / `putc` / `getc` 调用, 三者都在基址已映射的前提下执行.
@@ -92,7 +93,8 @@ unsafe fn read(offset: u64) -> u32 {
 }
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 同 `read` 的基址已映射前提; 额外要求 `offset` 取自本模块常量且
+// 调用点保证写入次序 (整字写、无需读-改-写, 具体见体内类别 U).
 unsafe fn write(offset: u64, val: u32) {
     // SAFETY: 类别 U. offset 由本模块常量给出 (UARTCR / UARTIBRD / UARTFBRD /
     // UARTLCR_H / UARTIMSC / UARTDR), 均为整字写, 无需读-改-写; 写有设备副作用
@@ -189,16 +191,17 @@ pub unsafe fn getc() -> u8 {
 /// 发送字符串
 pub fn puts(s: &str) {
     for c in s.bytes() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `putc` 的 `# Safety` 要求 UART 已 init 且基址在当前翻译体制下可达;
+        // `puts` 只在控制台已初始化的路径调用, 逐字节发送不改变该前提.
         unsafe {
             putc(c);
         }
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 同循环体内的 `putc` 前提 (UART 已 init 且基址可达).
     unsafe {
         putc(b'\r');
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 同循环体内的 `putc` 前提 (UART 已 init 且基址可达).
     unsafe {
         putc(b'\n');
     }

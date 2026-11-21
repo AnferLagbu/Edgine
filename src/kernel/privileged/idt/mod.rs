@@ -527,7 +527,8 @@ pub extern "C" fn idt_register_irq(
         ""
     } else {
         // 简单处理：假设 name 指向静态字符串
-        // SAFETY: `const` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `name` 由调用方契约保证为 NUL 结尾的静态 C 串 (见本函数入口的
+        // 判空与文档); `CStr::from_ptr` 只读扫描到首个 NUL, 不越出该串.
         unsafe {
             core::ffi::CStr::from_ptr(name.cast::<core::ffi::c_char>())
                 .to_str()

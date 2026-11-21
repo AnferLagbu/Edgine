@@ -440,7 +440,9 @@ pub extern "C" fn cpu_init() -> i32 {
         msg_buf[..len].copy_from_slice(&e_bytes[..len]);
         msg_buf[len] = 0;
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `klog_write` 要求 `fmt` 为 NUL 结尾有效 C 串; `msg_buf` 是函数内
+        // 128 字节数组, 拷入的错误信息至多 100 字节且已在 `len` 处置 0; `_file`/`_func`
+        // 传空指针 (该函数对空指针不解引用). 仅在 MSR 初始化失败时调用.
         unsafe {
             klog_write(
                 LogLevel::Warn as u8,
@@ -476,7 +478,9 @@ pub extern "C" fn cpu_init() -> i32 {
         return -1;
     }
 
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+    // SAFETY: `klog_write` 要求 `fmt` 为 NUL 结尾有效 C 串; `OK_MSG` 是静态
+    // NUL 结尾字节串, 地址在 .rodata 有效; `_file`/`_func` 传空指针, 函数对空指针
+    // 不解引用.
     unsafe {
         klog_write(
             LogLevel::Info as u8,
@@ -689,7 +693,9 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
     }
 
     // 启用 SSE/SSE2 + SMEP/SMAP (设置 CR4.OSFXSR + OSXMMEXCPT + 可选 SMEP/SMAP)
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 本块读-改-写 CR4: `mov {0}, cr4` 读出, 置 OSFXSR(bit9)/OSXMMEXCPT(bit10)
+    // 与 CPUID 支持的 SMEP(bit20)/SMAP(bit21) 后写回, 全是寄存器与立即数操作, 不访存.
+    // 前提: 当前为 Ring 0 且处于内核初始化路径 (cpu_init), 对应 CPUID 位已在 features 中判定.
     unsafe {
         let cr4: u64;
         core::arch::asm!("mov {0}, cr4", out(reg) cr4, options(nostack, nomem));
@@ -714,7 +720,8 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
     }
 
     // 启用 FPU (清除 CR0.TS + CR0.EM, 设置 CR0.MP)
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 本块读-改-写 CR0 (清 TS(bit3)/EM(bit2)、置 MP(bit1)) 并执行 `fninit`
+    // 复位 x87 状态; 全是寄存器与立即数操作, 不访存. 前提: Ring 0 的 cpu_init 路径.
     unsafe {
         let cr0: u64;
         core::arch::asm!("mov {0}, cr0", out(reg) cr0, options(nostack, nomem));
@@ -728,7 +735,9 @@ pub(crate) fn init_msr(features: &CpuFeatures) -> Result<(), &'static str> {
 
     // 配置 SYSCALL/SYSRET 指令
     if features.contains(CpuFeatures::SYSCALL) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 本块经 `msr::write_msr` 依次写 IA32_EFER (置 SCE)、IA32_STAR、IA32_LSTAR
+        // 等 MSR; `wrmsr` 只操作 ECX/EAX/EDX 寄存器, 不访存. 前提是 CPUID 已报告
+        // SYSCALL 支持且处于 Ring 0; 写入值由下方常量按 STAR/LSTAR 位域组合.
         unsafe {
             const SFMASK_IF: u64 = 1 << 9;
             // 启用 SYSCALL 指令 (设置 EFER.SCE)

@@ -70,7 +70,8 @@ static APIC_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 fn rdmsr(msr: u32) -> u64 {
     let (high, low): (u32, u32);
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `rdmsr` 把 MSR 值读入 eax/edx (`out`), ecx 为 MSR 号 (`in`); 只读
+    // 模型特定寄存器, 不访存; `nomem`/`nostack` 与指令语义一致.
     unsafe {
         core::arch::asm!("rdmsr", out("eax") low, out("edx") high, in("ecx") msr, options(nomem, nostack));
     }
@@ -78,7 +79,9 @@ fn rdmsr(msr: u32) -> u64 {
 }
 
 fn wrmsr(msr: u32, value: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `wrmsr` 写模型特定寄存器: ecx 为 MSR 号, eax/edx 为值的低/高 32 位,
+    // 全部是 `in` 操作数; 不访存. 调用方保证 MSR 号对当前 CPU 有效 (本文件只用
+    // APIC_BASE_MSR).
     unsafe {
         core::arch::asm!("wrmsr", in("ecx") msr, in("eax") crate::privileged::glue::low_u32_from_u64(value), in("edx") (value >> 32) as u32, options(nomem, nostack));
     }
@@ -87,14 +90,18 @@ fn wrmsr(msr: u32, value: u64) {
 /// 读取 APIC 寄存器 (`reg` 为相对 MMIO 基址的偏移)。
 pub fn apic_read(reg: u32) -> u32 {
     let base = APIC_BASE.load(Ordering::Acquire);
-    // SAFETY: `const` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `APIC_BASE` 在 `init()` 中由 `rdmsr(APIC_BASE_MSR)` 取出并 store, 指向
+    // 已由恒等映射覆盖的 LAPIC MMIO 帧; `reg` 为 4 的倍数 (APIC 寄存器偏移), u32
+    // 访问自然对齐; `read_volatile` 只读且不被优化消除.
     unsafe { core::ptr::read_volatile((base + u64::from(reg)) as *const u32) }
 }
 
 /// 写入 APIC 寄存器 (`reg` 为相对 MMIO 基址的偏移)。
 pub fn apic_write(reg: u32, value: u32) {
     let base = APIC_BASE.load(Ordering::Acquire);
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 与 `apic_read` 同一已映射 LAPIC MMIO 帧与 4 字节对齐前提; 差别是
+    // `write_volatile` 写设备状态 (会改变中断配置), 写入次序由各调用点的 APIC
+    // 时序要求保证, 本函数只负责发出单次 MMIO 写.
     unsafe {
         core::ptr::write_volatile((base + u64::from(reg)) as *mut u32, value);
     }

@@ -133,7 +133,8 @@ pub fn init() {
 
     let ap_count = super::acpi::get_ap_count();
     if ap_count <= 1 {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `klog_info` 要求 NUL 结尾有效 C 串; 实参为静态字面量, 位于 .rodata,
+        // 函数同步消费.
         unsafe {
             crate::privileged::klog::klog_info(
                 c"[KERN] [SMP] Single-core system, skipping AP startup".as_ptr(),
@@ -145,7 +146,8 @@ pub fn init() {
 
     let bsp_lapic_id = super::apic::get_id();
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 只能在 BSP 启动路径、低半区恒等映射已建立且 0x8000 页未被 PMM 分配时
+    // 调用; 源/目的区间与拷贝方式的依据见 `copy_trampoline` 体内 SAFETY.
     unsafe {
         copy_trampoline();
     }
@@ -157,7 +159,8 @@ pub fn init() {
         if ap.lapic_id == bsp_lapic_id || !ap.enabled {
             continue;
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `start_ap` 须由 BSP 在 `copy_trampoline` 完成后的串行启动循环中调用,
+        // 且 cpu_index 为已分配槽位; 各 unsafe 面前提见该函数体内的三段说明.
         unsafe {
             start_ap(ap.lapic_id, cpu_index);
         }
@@ -182,7 +185,8 @@ pub fn init() {
     }
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 由 BSP 在启动期单线程调用, 且此时低半区恒等映射已建立、0x8000 页
+// 已由 PMM 预留; 函数内逐字节拷贝的依据见体内 SAFETY.
 unsafe fn copy_trampoline() {
     // SAFETY: 源区间由链接符号 `ap_trampoline_start` / `ap_trampoline_end` 界定
     // (trampoline.asm `section .trampoline` 的首尾), size = end - start 覆盖「2 字节 jmp
@@ -211,7 +215,8 @@ unsafe fn copy_trampoline() {
 }
 
 #[inline(never)]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 只能由 BSP 在 `copy_trampoline` 之后串行调用, 且 `cpu_index` 须小于
+// `MAX_CPUS`; 三类 unsafe 面 (static mut 槽 / info 槽 / APIC 与端口 I/O) 的依据见体内.
 unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
     // SAFETY: 本块含三类 unsafe 面, 前提各不同.
     // ① 分配与 static mut 槽: `alloc_zeroed(Layout::new::<ApPerCpu>())` 的 size/align 由
@@ -347,7 +352,8 @@ unsafe fn start_ap(lapic_id: u32, cpu_index: u32) {
     }
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须保证 `APIC_BASE` 已由 `apic::init` 初始化 (MMIO 帧已映射),
+// 且本函数只在 BSP 的串行 AP 启动序列中调用, 不与其它核并发操作同一 ICR.
 unsafe fn send_init_ipi(lapic_id: u32, assert: bool) {
     while super::apic::apic_read(0x300) & (1 << 12) != 0 {}
     super::apic::apic_write(0x310, (lapic_id & 0xFF) << 24);
@@ -356,7 +362,8 @@ unsafe fn send_init_ipi(lapic_id: u32, assert: bool) {
     while super::apic::apic_read(0x300) & (1 << 12) != 0 {}
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 同 `send_init_ipi` —— LAPIC 已初始化, 且只在 BSP 串行启动序列内调用;
+// `vector` 须与 `copy_trampoline` 使用的 SIPI vector 一致 (本文件同源常量).
 unsafe fn send_sipi(lapic_id: u32, vector: u8) {
     while super::apic::apic_read(0x300) & (1 << 12) != 0 {}
     super::apic::apic_write(0x310, (lapic_id & 0xFF) << 24);
@@ -364,7 +371,8 @@ unsafe fn send_sipi(lapic_id: u32, vector: u8) {
     while super::apic::apic_read(0x300) & (1 << 12) != 0 {}
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须在 Ring 0 且平台具备 PC/AT 兼容的 0x80 诊断端口; 只在
+// AP 启动等待路径调用, 延时精度口径见体内说明.
 unsafe fn timer_udelay(us: u32) {
     // SAFETY: `out dx, al` 写 POST 诊断端口 0x80 (PC/AT 沿用的 io_delay 手法): Ring-0 下
     // 的端口写, 无内存操作数 ⇒ options(nomem, nostack) 与指令语义一致 (未声明
@@ -382,12 +390,16 @@ unsafe fn timer_udelay(us: u32) {
 }
 
 extern "C" fn ap_entry(lapic_id: u32) -> ! {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `cli` 清当前核 IF 位关闭可屏蔽中断; 无内存操作数, `nomem`/`nostack`
+    // 与指令语义一致. AP 此时刚上线, 中断尚未配置, 关中断是入口的固定第一步.
     unsafe {
         core::arch::asm!("cli", options(nomem, nostack));
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `TRAMPOLINE_BASE + AP_INFO_OFFSET` (0x8008) 指向 `copy_trampoline` 已拷入
+    // 的 `ApStartupInfo`: 该结构 `repr(C, packed)` 54 字节, 编译期 size 断言与 asm
+    // SINFO_* 偏移互校; 该页在低半区恒等映射内 (AP 当前 MMU 关闭, 以物理地址访问),
+    // `read_volatile` 整体读取避免撕裂, 且只读.
     let cpu_index = unsafe {
         ((TRAMPOLINE_BASE + AP_INFO_OFFSET) as *const ApStartupInfo)
             .read_volatile()

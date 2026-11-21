@@ -162,9 +162,6 @@ impl InterruptArch for Aarch64 {
     // 投递, 调用点须保证向量表与 GIC 已就绪; `interrupt_restore` 必须逐位还原
     // `interrupt_disable` 保存的完整 DAIF, 只还原 I 位会丢掉 D/A/F 的屏蔽状态
     // (P3.C + F-14).
-    // 注: 下方 `interrupt_restore` 文档段把立即数位序写成 bit0=D…bit3=F (反了),
-    // 且 F/D 两个分支的标签互换; 分支实际测试的 DAIF 位与所写立即数配对是正确的,
-    // 勿按该文档段改代码 (已登记为预存文档缺陷).
     //
     // 类别 W「WFI 兜底循环」: `wfi` 是 hint 指令, 只让本核进入低功耗等待, 不访问
     // 内存也不动栈 (故声明 `options(nomem, nostack)`); 它**可能被伪唤醒立即返回**,
@@ -181,14 +178,14 @@ impl InterruptArch for Aarch64 {
     /// (QEMU 上 `msr daif, Xt` 会挂起, 拆分避免该问题).
     ///
     /// DAIF 位布局 (msr daifclr/daifset 立即数):
-    ///   bit 0 = D (Debug mask),  bit 1 = A (`SError` mask),
-    ///   bit 2 = I (IRQ mask),    bit 3 = F (FIQ mask).
+    ///   bit 3 = D (Debug mask),  bit 2 = A (`SError` mask),
+    ///   bit 1 = I (IRQ mask),    bit 0 = F (FIQ mask).
     #[inline]
     fn interrupt_restore(flags: usize) {
         // SAFETY: msr daifset/daifclr 是立即数指令, 无内存副作用.
         // flags 由 interrupt_disable 保存的完整 DAIF (低 8 位有效).
         let daif = flags as u64;
-        // F (FIQ) — bit 3 in immediate
+        // D (Debug) — bit 3 in immediate
         if (daif & (1 << 9)) == 0 {
             // SAFETY: 类别 I. 立即数 #8 = bit3=D, 清 DAIF.D 解除Debug 异常屏蔽; 判据取
             // saved DAIF 的 bit9 (D 位), 与立即数一一对应. 只改 PSTATE, 无内存面.
@@ -230,7 +227,7 @@ impl InterruptArch for Aarch64 {
                 asm!("msr daifset, #2");
             }
         }
-        // D (Debug) — bit 0 in immediate
+        // F (FIQ) — bit 0 in immediate
         if (daif & (1 << 6)) == 0 {
             // SAFETY: 类别 I. 立即数 #1 = bit0=F, 清 DAIF.F 解除FIQ屏蔽; 判据取
             // saved DAIF 的 bit6 (F 位), 与立即数一一对应. 只改 PSTATE, 无内存面.

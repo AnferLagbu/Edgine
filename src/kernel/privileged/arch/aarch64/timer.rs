@@ -13,7 +13,8 @@ const TIMER_FREQ_HZ: u64 = 62_500_000;
 #[must_use]
 pub fn read_frequency() -> u64 {
     let freq: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs` 只读 CNTFRQ_EL0 (计数器频率) 到普通寄存器 (`out(reg)`),
+    // 不写系统寄存器、不访问内存. EL0 访问该寄存器会陷入, 本函数只在 EL1 调用.
     unsafe {
         asm!("mrs {}, cntfrq_el0", out(reg) freq);
     }
@@ -25,7 +26,8 @@ pub fn read_frequency() -> u64 {
 /// 向 `CNTP_TVAL_EL0` 写入 ticks 后触发定时器中断。
 #[inline]
 pub fn set_timer(ticks: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `msr` 把 ticks 写入 CNTP_TVAL_EL0 (倒计时值), 唯一操作数是 `in(reg)`;
+    // 不访存, 副作用仅是本核物理定时器的到期设定.
     unsafe {
         asm!("msr cntp_tval_el0, {}", in(reg) ticks);
     }
@@ -36,7 +38,8 @@ pub fn set_timer(ticks: u64) {
 /// 向 `CNTP_CVAL_EL0` 写入绝对计数值, 达到时触发中断。
 #[inline]
 pub fn set_compare(value: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `msr` 把绝对计数值写入 CNTP_CVAL_EL0, 唯一操作数是 `in(reg)`;
+    // 不访存, 副作用仅是本核物理定时器的比较值.
     unsafe {
         asm!("msr cntp_cval_el0, {}", in(reg) value);
     }
@@ -47,7 +50,8 @@ pub fn set_compare(value: u64) {
 #[must_use]
 pub fn read_count() -> u64 {
     let cnt: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs` 只读 CNTPCT_EL0 (物理计数) 到普通寄存器; `nomem`/`nostack`
+    // 显式声明该读取不影响内存与栈, 与指令语义一致.
     unsafe {
         asm!("mrs {}, cntpct_el0", out(reg) cnt, options(nomem, nostack));
     }
@@ -58,7 +62,8 @@ pub fn read_count() -> u64 {
 #[inline]
 pub fn enable() {
     // bit 0: ENABLE, bit 1: IMASK (0=enabled, 1=masked)
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `msr` 把常量 1 (ENABLE=1, IMASK=0) 写入 CNTP_CTL_EL0, 唯一操作数是
+    // `in(reg)`; 不访存, 副作用仅是本核物理定时器使能.
     unsafe {
         asm!("msr cntp_ctl_el0, {}", in(reg) 1u64);
     }
@@ -67,7 +72,8 @@ pub fn enable() {
 /// 禁用定时器
 #[inline]
 pub fn disable() {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `msr` 把常量 0 (ENABLE=0) 写入 CNTP_CTL_EL0, 唯一操作数是 `in(reg)`;
+    // 不访存, 副作用仅是本核物理定时器禁用.
     unsafe {
         asm!("msr cntp_ctl_el0, {}", in(reg) 0u64);
     }
@@ -78,7 +84,8 @@ pub fn disable() {
 #[must_use]
 pub fn read_control() -> u64 {
     let ctl: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs` 只读 CNTP_CTL_EL0 (控制寄存器) 到普通寄存器 (`out(reg)`),
+    // 不写系统寄存器、不访问内存.
     unsafe {
         asm!("mrs {}, cntp_ctl_el0", out(reg) ctl);
     }
@@ -101,7 +108,8 @@ pub fn init_deferred() -> (u64, u64) {
     let freq = read_frequency();
     let freq = if freq == 0 {
         // QEMU 某些版本可能未设置 CNTFRQ, 使用默认值 62.5MHz
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `msr` 把常量 TIMER_FREQ_HZ 写入 CNTFRQ_EL0 (固件本应已设值,
+        // 此处仅在该核读到 0 时补默认值), 唯一操作数是 `in(reg)`; 不访存.
         unsafe {
             core::arch::asm!("msr cntfrq_el0, {}", in(reg) TIMER_FREQ_HZ);
         }

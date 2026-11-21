@@ -603,7 +603,9 @@ fn current_per_cpu_gdt_mut() -> &'static mut PerCpuGdt {
 }
 
 /// 初始化 per-CPU GDT 的段描述符 (所有 CPU 共享相同段描述符)
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): `entries` 必须是本核 GDT 槽内独占的 `&mut` (由 `per_cpu_gdt_mut`
+// 在启动期单线程 / 运行期本核上下文给出); 函数只按索引写普通内存, 越界由定长数组
+// 类型 `[GdtEntry; GDT_MAX_ENTRIES]` 在编译期排除.
 unsafe fn init_gdt_entries(entries: &mut [GdtEntry; GDT_MAX_ENTRIES]) {
     entries[0] = GdtEntry::null();
 
@@ -701,7 +703,9 @@ pub fn gdt_init() -> i32 {
     use crate::privileged::klog::{LogCategory, LogLevel, klog_write};
 
     static INIT_MSG: &[u8] = b"Initializing GDT and TSS (BSP)...\0";
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `klog_write` 的 `# Safety` 要求 `fmt` 为 NUL 结尾的有效 C 串;
+    // `INIT_MSG` 是显式以 `\0` 结尾的静态字节串, 地址在 .rodata 有效; `_file`/`_func`
+    // 传空指针 — 该函数对空指针提前返回/跳过, 不解引用.
     unsafe {
         klog_write(
             LogLevel::Info as u8,
@@ -713,7 +717,9 @@ pub fn gdt_init() -> i32 {
         );
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 启动期 BSP 单线程, `per_cpu_gdt_mut(0)` 返回槽 0 的独占 `&mut`
+    // (契约见该函数 `# 不变量`). 块内先填 `ptr.limit/base` 与段描述符, 再填 TSS
+    // 描述符, 最后 `gdt_flush`/`tss_flush` 才 `lgdt`/`ltr` —— 加载时被指向的结构已完整.
     unsafe {
         const IA32_GS_BASE: u32 = 0xC000_0101;
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
@@ -806,7 +812,9 @@ pub fn gdt_init() -> i32 {
         );
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `klog_write` 的 `# Safety` 要求 `fmt` 为 NUL 结尾的有效 C 串;
+    // `OK_MSG` 是显式以 `\0` 结尾的静态字节串, 地址在 .rodata 有效; 其余指针参数
+    // 传空指针, 该函数对空指针不解引用.
     unsafe {
         klog_write(
             LogLevel::Info as u8,
@@ -865,7 +873,9 @@ pub fn alloc_ap_gdt(cpu_index: u32) -> bool {
 /// Trampoline 已通过 `lgdt [gdt_ptr]` 加载了 BSP 的 GDT 作为过渡，
 /// 本函数在 AP 进入长模式后调用，为目标 CPU 初始化独立的 GDT + TSS。
 pub fn gdt_init_ap(cpu_index: u32) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 本函数在 AP 进入长模式后由**该 AP 自身**执行, 且 `per_cpu_gdt_mut`
+    // 的契约要求目标槽位独占访问 —— AP 的槽位在 SIPI 前由 `alloc_ap_gdt` 发布,
+    // 上线前无其他核写它. 块内填完段/TSS 描述符后才 `gdt_flush`/`tss_flush`.
     unsafe {
         const IA32_GS_BASE: u32 = 0xC000_0101;
         const IA32_KERNEL_GS_BASE: u32 = 0xC000_0102;
@@ -1184,7 +1194,8 @@ mod tests {
     #[test]
     fn test_gdt_entry_null() {
         let null_desc = GdtEntry::null();
-        // SAFETY: `const` 由调用方保证为有效指针; 只读访问
+        // SAFETY: 读栈上本地 `GdtEntry` 的 8 字节 (`repr(C, packed)` 值类型, 总宽 8);
+        // 指针来自本函数局部变量, 有效且起始对齐, `read_volatile` 只读.
         let bytes = unsafe { core::ptr::read_volatile(&null_desc as *const _ as *const u64) };
         assert_eq!(bytes, 0, "Null descriptor should be all zeros");
     }

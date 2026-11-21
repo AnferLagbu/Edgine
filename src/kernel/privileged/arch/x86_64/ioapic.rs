@@ -60,7 +60,9 @@ static IOAPIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// 在指定基地址上读取 IOAPIC 寄存器
 fn ioapic_read_on(base: u64, reg: u32) -> u32 {
-    // SAFETY: base 来自 ACPI MADT 枚举的 MMIO 地址, 调用方保证有效
+    // SAFETY: `base` 是 `init_from_acpi` 从 MADT 枚举取得的 IOAPIC MMIO 基址, 该帧由
+    // 启动恒等映射覆盖; IOREGSEL/IOWIN 是 4 字节对齐寄存器偏移, u32 访问自然对齐;
+    // 先写选择寄存器再读窗口寄存器的次序是 IOAPIC 协议要求; 两次 volatile 访问.
     unsafe {
         core::ptr::write_volatile((base + u64::from(IOREGSEL)) as *mut u32, reg);
         core::ptr::read_volatile((base + u64::from(IOWIN)) as *const u32)

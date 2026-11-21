@@ -164,7 +164,8 @@ pub fn rdtsc() -> u64 {
 #[must_use]
 pub fn rdtsc_fence() -> u64 {
     let tsc: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `lfence` + `rdtsc` 把时间戳计数器读入 rax (`out("rax")`); `lfence`
+    // 阻止后续指令越过读点, `nomem`/`nostack` 与该序列不访存、不碰栈的语义一致.
     unsafe {
         core::arch::asm!(
             "lfence",
@@ -200,7 +201,8 @@ pub unsafe fn outb(port: u16, value: u8) {
 /// I/O 延时 (用于 PIC 初始化序列)
 #[inline]
 pub fn io_wait() {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `outb(0x80, 0)` 写 PC/AT 只写诊断端口 0x80, 唯一目的是消耗一个 I/O
+    // 总线周期 (与 `smp_init::timer_udelay` 同手法); 不访常规内存, 前提是 Ring 0.
     unsafe {
         outb(0x80, 0);
     }
@@ -221,7 +223,8 @@ pub unsafe fn halt() {
 #[inline(never)]
 pub fn halt_loop() -> ! {
     loop {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `halt` 的 `# Safety` 要求调用前已关中断; `halt_loop` 只在内核停机
+        // 终止路径 (关中断之后) 调用, 且外层 `loop` 保证伪唤醒后继续 `hlt`, 不返回.
         unsafe {
             halt();
         }

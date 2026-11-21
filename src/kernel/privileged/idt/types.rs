@@ -57,7 +57,7 @@ pub const IRQ_FLAG_LEVEL: u32 = 0x04;
 /// 中断帧结构 (与 isr.asm 的 push 序列完全匹配)
 ///
 /// # Safety
-/// 此结构的字段顺序 **必须** 与 [isr.asm](../../kernel/isr.asm) 中的 push 序列保持一致：
+/// 此结构的字段顺序 **必须** 与 [isr.asm](../boot/isr.asm) 中的 push 序列保持一致：
 /// ```asm
 /// push rax, rbx, rcx, rdx, rbp, rsi, rdi, r8..r15
 /// ```
@@ -317,9 +317,10 @@ impl IdtEntry {
 ///
 /// 布局匹配 Intel SDM:
 /// ```text
-/// +0  Limit (size - 1)
-/// +8  Base address
+/// +0  Limit (size - 1, u16)
+/// +2  Base address (u64)
 /// ```
+/// `repr(C, packed)` 下 `limit` 占 2 字节, 故 `base` 从偏移 +2 开始 (而非 8).
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct IdtPtr {

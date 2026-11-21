@@ -242,7 +242,8 @@ fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
     // SAFETY: 同上; total_size 由引导器写入并描述整块长度, 只读借用且无别名写.
     let blob = unsafe { core::slice::from_raw_parts(ptr, total_size) };
     let offset = rsdp_offset_in_mb2(blob)?;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `klog_info` 要求入参为 NUL 结尾的有效 C 串; 实参是 `c"[ACPI] RSDP found
+    // via Multiboot2"` 静态字面量, 地址在 .rodata 内、进程生命周期有效, 函数同步消费.
     unsafe {
         crate::privileged::klog::klog_info(c"[ACPI] RSDP found via Multiboot2".as_ptr());
     }
@@ -252,7 +253,9 @@ fn find_rsdp_from_mb2(mb2_ptr: u64) -> Option<u64> {
 fn scan_ebda() -> Option<u64> {
     // EBDA 基址存于 BDA (BIOS Data Area) 偏移 0x40E
     let bda_ptr = 0x400 as *const u16;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 读 BIOS 数据区 (BDA) 偏移 0x40E 的 u16 (EBDA 段基址): 0x400..0x4FF
+    // 属启动恒等映射覆盖的低 1MB 固件区, `0x40E` 是 2 的倍数故 u16 访问自然对齐;
+    // `read_volatile` 只读, 不构造引用.
     unsafe {
         let ebda_seg = bda_ptr.add(0x40E / 2).read_volatile();
         if ebda_seg == 0 {
@@ -272,7 +275,8 @@ fn scan_memory_range(start: u64, len: u64) -> Option<u64> {
     let mut addr = start;
     while addr + 36 <= end {
         if is_valid_rsdp(addr) {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `klog_info` 要求 NUL 结尾有效 C 串; 实参为静态字面量
+            // `c"[ACPI] RSDP found via BIOS scan"`, 位于 .rodata, 同步消费.
             unsafe {
                 crate::privileged::klog::klog_info(c"[ACPI] RSDP found via BIOS scan".as_ptr());
             }
@@ -289,7 +293,9 @@ fn scan_memory_range(start: u64, len: u64) -> Option<u64> {
 /// MB2 内联副本面另按 [`rsdp_bytes_valid`] 校验 (含 v2 扩展面).
 fn is_valid_rsdp(addr: u64) -> bool {
     let ptr = addr as *const u8;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `addr` 只来自 `scan_memory_range` (EBDA 与 BIOS ROM 两个扫描窗都走它),
+    // 其循环以 `addr + 36 <= end` 保证窗内余量; 该区在启动恒等映射内.
+    // `[u8; 8]` 对齐为 1, 随后 20 次单字节 `read_volatile` 均不越界; 全程只读.
     unsafe {
         // "RSD PTR " 签名字符串
         let sig: &[u8; 8] = &*ptr.cast::<[u8; 8]>();
@@ -312,7 +318,10 @@ fn is_valid_rsdp(addr: u64) -> bool {
 
 fn get_rsdt(rsdp: u64) -> Option<&'static SdtHeader> {
     let ptr = rsdp as *const u8;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `rsdp` 是 `find_rsdp` 返回且经 `is_valid_rsdp` 校验签名与 v1 校验和的
+    // 候选地址; 此处只读 +15 (revision) 与 +24/+16 (XSDT/RSDT 表地址), 表地址字段用
+    // `read_unaligned` 避开 packed 布局的对齐要求. 表地址指向固件 ACPI 表, 位于启动
+    // 恒等映射的低区窗口; 后续只读表头 `SdtHeader` (36 字节).
     unsafe {
         let revision = ptr.add(15).read_volatile();
         if revision >= 2 {
@@ -404,7 +413,8 @@ struct MadtIso {
 /// 独立 MADT 入口与 C ABI [`acpi_parse_madt`] 的转发目标。
 pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     let Some(rsdp) = find_rsdp(multiboot2_info_ptr) else {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `klog_info` 要求 NUL 结尾有效 C 串; 实参为静态字面量
+        // `c"[ACPI] RSDP not found"`, 位于 .rodata, 同步消费.
         unsafe {
             crate::privileged::klog::klog_info(c"[ACPI] RSDP not found".as_ptr());
         }
@@ -412,7 +422,8 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
     };
 
     let Some(rsdt_or_xsdt) = get_rsdt(rsdp) else {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `klog_info` 要求 NUL 结尾有效 C 串; 实参为静态字面量
+        // `c"[ACPI] RSDT/XSDT not found"`, 位于 .rodata, 同步消费.
         unsafe {
             crate::privileged::klog::klog_info(c"[ACPI] RSDT/XSDT not found".as_ptr());
         }
@@ -432,7 +443,10 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
         (rsdt_or_xsdt.length - 12) / 4
     } as usize;
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 本块从 `entries_ptr` (RSDT/XSDT 表头之后) 按 `table_count` 逐项读取
+    // 4/8 字节表项, 读取宽度与 `uses_xsdt` 一致, 表项用 `read_unaligned` 取; 表项指向
+    // 固件 ACPI 表, 只读表头 `signature` 后转交 `parse_madt_entries`. 表项数与边界
+    // 取自固件 Length 字段 (公式见上方 `table_count`).
     unsafe {
         let entries_ptr = core::ptr::from_ref::<SdtHeader>(rsdt_or_xsdt)
             .add(1)
@@ -459,7 +473,8 @@ pub fn parse_madt(multiboot2_info_ptr: u64) -> bool {
         }
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `klog_info` 要求 NUL 结尾有效 C 串; 实参为静态字面量
+    // `c"[ACPI] MADT not found in RSDT/XSDT"`, 位于 .rodata, 同步消费.
     unsafe {
         crate::privileged::klog::klog_info(c"[ACPI] MADT not found in RSDT/XSDT".as_ptr());
     }
@@ -1249,7 +1264,9 @@ pub fn parse_all_tables(multiboot2_info_ptr: u64) -> bool {
     };
 
     for i in 0..table_count {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 表项位于 `entries_ptr` 起的 RSDT/XSDT 表体内, 以 `table_count`
+        // (由固件 Length 计算) 为界; 4/8 字节读取按 `uses_xsdt` 选择宽度, 且用
+        // `read_unaligned` 避开 packed 表体的对齐要求; 只读.
         let table_ptr: u64 = unsafe {
             if uses_xsdt {
                 entries_ptr.add(i * 8).cast::<u64>().read_unaligned()

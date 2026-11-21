@@ -132,7 +132,8 @@ pub const FREG_RECOVERY_SGI: u32 = 7;
 // ============================================================================
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 调用方须保证 GICD 帧已由 MMU 映射, `offset` 为 4 的倍数且落在
+// GICD 帧内 (只读); 具体访问形态与对齐/可见性依据见本文件类别 D.
 unsafe fn gicd_read(offset: u64) -> u32 {
     // SAFETY: 类别 D. 本块只把 `GICD_BASE + offset` 转裸指针后 `read_volatile`
     // 读一个 u32, 不构造引用; 前后 `dsb sy` 夹住该访问, 保证读到的是屏障之后的
@@ -147,7 +148,8 @@ unsafe fn gicd_read(offset: u64) -> u32 {
 }
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 同 `gicd_read` 的映射/对齐/射程义务; 额外要求调用方保证写入
+// 次序正确 (写 CTLR/IGROUPR/IPRIORITYR/ISENABLER 会改变中断投递语义).
 unsafe fn gicd_write(offset: u64, val: u32) {
     // SAFETY: 类别 D. 与 `gicd_read` 同址同对齐, 差别是 `write_volatile` **写设备
     // 状态**: 写 CTLR/IGROUPR/IPRIORITYR/ISENABLER 会改变中断分组、优先级与投递,
@@ -286,8 +288,9 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
         // 0. 读取 GIC 诊断信息
         let typer = gicd_read(GICD_TYPER);
         let iidr = gicd_read(GICD_IIDR);
-        let num_spi = ((typer >> 5) & 0x1F) + 1; // ITLinesNumber: bits [5:0]
-        let num_cpus = ((typer >> 8) & 0x07) + 1; // CPUNumber: bits [10:8]
+        // 诊断日志只打印按下列位移取出的原值, 不作架构字段语义使用.
+        let num_spi = ((typer >> 5) & 0x1F) + 1; // GICD_TYPER bits[9:5] + 1
+        let num_cpus = ((typer >> 8) & 0x07) + 1; // GICD_TYPER bits[10:8] + 1
         crate::klog_ffi!(
             klog_ffi_info,
             "[GIC] typer=0x{:08x} iidr=0x{:08x} spi={} cpus={}",
@@ -511,7 +514,8 @@ pub unsafe fn enable_sgi(sgi: u64, intid: u32) {
 #[must_use]
 pub fn acknowledge() -> u32 {
     let iar: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 S. `mrs` 只读当前核的 ICC_IAR1_EL1 (中断应答寄存器) 到普通
+    // 寄存器, 单 `out(reg)` 操作数; 不访存、无写副作用.
     unsafe {
         core::arch::asm!("mrs {}, icc_iar1_el1", out(reg) iar);
     }
@@ -520,7 +524,8 @@ pub fn acknowledge() -> u32 {
 
 /// 中断完成 (EOI)
 pub fn end_of_interrupt(intid: u32) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 S. `msr` 把 EOI 值写入 ICC_EOIR1_EL1 (当前核); 唯一操作数是
+    // `in(reg)`, INTID 由调用方取自 `acknowledge()` 的应答值 (≤ 1023), 零扩展无损.
     unsafe {
         core::arch::asm!("msr icc_eoir1_el1, {}", in(reg) u64::from(intid));
     }
@@ -528,7 +533,8 @@ pub fn end_of_interrupt(intid: u32) {
 
 /// 发送 EOI 并解除优先级 (drop priority)
 pub fn deactivate(intid: u32) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 S. `msr` 把 INTID 写入 ICC_DIR_EL1 (deactivate), 唯一操作数是
+    // `in(reg)`, 不访存. INTID 为 EOI 阶段同一值, 零扩展无损.
     unsafe {
         core::arch::asm!("msr icc_dir_el1, {}", in(reg) u64::from(intid));
     }
@@ -765,7 +771,9 @@ pub fn is_spi_pending(irq: u32) -> bool {
     }
     let reg_offset = GICD_ISPENDR + (u64::from(irq / 32) * 4);
     let bit = 1u32 << (irq % 32);
-    // SAFETY: 读取 GICD 寄存器, 调用方保证 MMIO 已映射
+    // SAFETY: 类别 C + D. `reg_offset` 为 `GICD_ISPENDR + (irq/32)*4`, `is_spi` 已判
+    // `irq >= 32`; 上界由调用方传入的合法 INTID 保证. `gicd_read` 只读已映射的
+    // GICD 帧, 返回值与单 bit 掩码按位与只作判定.
     unsafe { gicd_read(reg_offset) & bit != 0 }
 }
 

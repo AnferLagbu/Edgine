@@ -227,7 +227,8 @@ pub unsafe fn init() {
 /// `VBAR_EL1` 指向的异常向量表不可取指 —— 内核从未进入过任何异常/中断处理
 /// (串口日志中 `TIMER IRQ` 恒为 0 次)。归因与验证见
 /// docs/plan/archive/kpti-complete-project.md。
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 只能在 `init()` 的单线程启动路径、MMU 已启用且 L0/L1/L2 三张表
+// 填好并经 dsb/tlbi 之后调用; 函数体各写系统寄存器与刷 TLB 步骤的依据见体内 SAFETY.
 unsafe fn init_kernel_ttbr1() {
     // SAFETY: 类别 T (只读 `&raw const`) + R + B. 与 TTBR0 共用同一张 4 级根: 高半区
     // 别名 VA = KERNEL_BASE + PA 把 PA 放在 VA[38:0], VA[47:39] 恒 0 ⇒ L0 索引恒为 0,
@@ -258,7 +259,9 @@ pub fn alloc_user_page_table() -> u64 {
     // 返回当前 identity mapping 的 TTBR0
     // Phase 6+: 实现每进程独立页表分配
     // 返回值写入 TTBR0_EL1, 必须是表物理地址 (表链接于高半区, 故经 virt_to_phys 转换)。
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 B. `virt_to_phys` 是 `virt - KERNEL_BASE` 的纯常量算术, 入参取
+    // `&raw const L0_TABLE.0` 的链接期地址 (不构造引用、不解引用); 结果要写入
+    // TTBR0_EL1, 其 4KB 对齐由 `AlignedPageTable` 的 `#[repr(align(4096))]` 保证.
     unsafe { virt_to_phys((&raw const L0_TABLE.0).cast::<u64>() as u64) }
 }
 
@@ -267,7 +270,8 @@ pub fn alloc_user_page_table() -> u64 {
 // ============================================================================
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用方 `init()` 须传入 4KB 对齐、已填充并经 dsb/tlbi 的
+// L0 表物理地址; 写入值与 ASID 前提见体内类别 R.
 unsafe fn set_ttbr0(val: u64) {
     // SAFETY: 类别 R. 写低半区根表基址; 唯一调用方 `init()` 传入
     // `virt_to_phys(&raw const L0_TABLE.0)` —— 4KB 对齐的 4 级表物理地址, 且该表在本块
@@ -281,7 +285,8 @@ unsafe fn set_ttbr0(val: u64) {
 }
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用方 `init_kernel_ttbr1()` 须传入 4KB 对齐的 4 级根表物理地址;
+// T1SZ=16 决定硬件从 level 0 起遍历, 位宽/表层级依据见体内类别 R.
 unsafe fn set_ttbr1(val: u64) {
     // SAFETY: 类别 R. 写高半区根表基址; 唯一调用方 `init_kernel_ttbr1()` 传入与 TTBR0
     // 相同的 `L0_TABLE` 物理地址 (共用依据见该函数). T1SZ=16 ⇒ 硬件从 level 0 起遍历,
@@ -293,7 +298,8 @@ unsafe fn set_ttbr1(val: u64) {
 }
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用方 `init()` 须传入与本文件页表形状一致的 tcr 值
+// (T0SZ/T1SZ=16 + TG1=4KB + Inner Shareable + Normal WBWA); 详见体内类别 R.
 unsafe fn set_tcr(val: u64) {
     // SAFETY: 类别 R. 写翻译控制寄存器; 唯一调用方 `init()` 传入的 tcr 与本文件页表形状
     // 绑定: T0SZ/T1SZ=16 (48-bit VA, 4 级) + TG1=4KB + SH0/SH1=Inner Shareable +
@@ -306,7 +312,8 @@ unsafe fn set_tcr(val: u64) {
 }
 
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用方 `init()` 须传入覆盖页表全部 AttrIndx 槽的 mair 值
+// (槽 0=Device / 槽 1 与 4=Normal WBWA); 详见体内类别 R.
 unsafe fn set_mair(val: u64) {
     // SAFETY: 类别 R. 写内存属性间接寄存器; 唯一调用方 `init()` 传入的 mair 定义了页表
     // 条目 AttrIndx 所索引的属性槽 (0=Device 0x44, 1=Normal 0xFF 供 KPTI trampoline,
@@ -323,7 +330,8 @@ unsafe fn set_mair(val: u64) {
 /// 同时启用 C/I cache 以避免 speculative 访问绕过 MMU (CVE 防御).
 /// 历史版本注释 "暂不启用缓存, 后续单独处理" — 本次落地一并启用.
 #[inline(never)]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY(契约): 唯一调用方 `init()`, 且必须在页表条目、TCR/MAIR/TTBR 全部就位并经
+// dsb 之后调用; 读-改-写 SCTLR_EL1 三位的依据见体内类别 R + B.
 unsafe fn enable_mmu() {
     // SAFETY: 类别 R + B. 读-改-写 SCTLR_EL1 的 M(bit0) / C(bit2) / I(bit12) 三位:
     // 前置 dsb 保证页表与 TCR/MAIR/TTBR 写入对 walker 可见, 后置 isb 使新翻译体制对后续
@@ -359,7 +367,8 @@ unsafe fn enable_mmu() {
 #[must_use]
 pub fn read_ttbr0() -> u64 {
     let val: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs` 只读 TTBR0_EL1 到普通寄存器 (`out(reg)`), 不写系统寄存器、
+    // 不访问内存; 未声明 `options` 只是保守假设.
     unsafe {
         core::arch::asm!("mrs {}, ttbr0_el1", out(reg) val);
     }
@@ -381,11 +390,14 @@ pub fn read_ttbr1() -> u64 {
 /// 写入 `TTBR0_EL1` 并执行 ISB 使改动生效。
 #[inline]
 pub fn write_ttbr0(val: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 类别 R. `msr ttbr0_el1` 只有 `in(reg)` 操作数, 不访存; 调用方须按本文件
+    // 约定传入 4KB 对齐的根表物理地址 (运行期每进程切换另经
+    // `MmuArch::write_page_table_base` 的 asm, 前提相同).
     unsafe {
         core::arch::asm!("msr ttbr0_el1, {}", in(reg) val);
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `isb` 只做取指流水同步, 无常规内存/架构副作用; `nomem`/`nostack`
+    // 与该指令语义一致, 作用是让上一条 TTBR0 写对后续指令生效.
     unsafe {
         core::arch::asm!("isb", options(nomem, nostack));
     }
@@ -394,7 +406,9 @@ pub fn write_ttbr0(val: u64) {
 /// 按虚拟地址刷新 EL1 的 TLB 条目 (tlbi vaae1)。
 #[inline]
 pub fn tlbi_vaae1(vaddr: u64) {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 纯 TLB 维护序列: `dsb ishst` 保证先前页表写对 Inner Shareable 域可见,
+    // `tlbi vaae1` 的操作数是 `vaddr >> 12` 的标量 VA 页号, `dsb ish` + `isb` 保证
+    // 失效完成并对后续取指生效; 全程无指针解引用.
     unsafe {
         core::arch::asm!("dsb ishst", options(nomem, nostack));
         core::arch::asm!("tlbi vaae1, {}", in(reg) (vaddr >> 12));
@@ -406,7 +420,8 @@ pub fn tlbi_vaae1(vaddr: u64) {
 /// 刷新 EL1 的整个 TLB (tlbi vmalle1)。
 #[inline]
 pub fn tlbi_vmalle1() {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `dsb ishst` → `tlbi vmalle1` → `dsb ish` → `isb` 的固定维护序列,
+    // 全部指令只操作 TLB 与流水, 无操作数、无内存访问.
     unsafe {
         core::arch::asm!("dsb ishst", options(nomem, nostack));
         core::arch::asm!("tlbi vmalle1", options(nomem, nostack));
@@ -420,7 +435,8 @@ pub fn tlbi_vmalle1() {
 #[must_use]
 pub fn read_far() -> u64 {
     let val: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs` 只读 FAR_EL1 (故障地址寄存器) 到普通寄存器 (`out(reg)`),
+    // 不写系统寄存器、不访问内存.
     unsafe {
         core::arch::asm!("mrs {}, far_el1", out(reg) val);
     }
