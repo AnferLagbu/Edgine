@@ -1,6 +1,12 @@
 //! SGEG 审计日志 — 固定容量环形缓冲, 记录身份与能力相关安全事件。
 //!
-//! 写入经 `IrqSpinLock` 保护 (多核安全), 支持按序全量转储到串口。
+//! 并发契约: 唯一生产实例 `GLOBAL_AUDIT` 经 `IrqSpinLock` 包装, 其 `raw::log` /
+//! `raw::dump` 在持锁后调用本类型的 `log` / `dump`; `AuditLog` 自身**不加锁**,
+//! 直接对共享实例调用其 `&self` 方法须由调用方自持互斥。支持按序全量转储到串口。
+//!
+//! 现版冻结 (用户 2026-11-17 裁定待重设计): 计数回绕后多核可能取到同一槽位, 该槽位
+//! 的无同步并发写属调用方违约面; 正确形态 (原子槽 + 回绕判据, 或全字段入锁) 记于
+//! `docs/plan/safety-gap-remediation.md` 批 R8, 由 SGEG 重设计工程一并处理。
 
 #![deny(missing_docs)]
 
@@ -42,19 +48,16 @@ impl AuditLog {
     pub fn log(&self, pwm: u64, action: AuditAction, target_pwm: u64, domain: u64, caps: u64) {
         let now = super::bootstrap::pwm_now();
         let idx = self.count.fetch_add(1, Ordering::AcqRel) % AUDIT_CAPACITY;
-        // SAFETY: count 已 fetch_add, 后续写不会改变 idx; AuditEntry 不含
-        // 重入锁, 多核并发写不同 idx 不会数据竞争; 若 idx 相同 (环形覆盖) 也是
-        // 单字节字段级别的无锁覆盖, 接受最后写入语义。
+        // SAFETY: count 已 fetch_add 且 idx 在其后不变, 故 idx 恒在数组界内; 生产
+        // 路径经 `GLOBAL_AUDIT` 的 `IrqSpinLock` 串行化, 本方法自身不保证并发安全
+        // (契约见模块文档)。
         let entry = (&raw const self.entries[idx]).cast_mut();
         // SAFETY: `idx` 由 `count.fetch_add(1, AcqRel) % AUDIT_CAPACITY` 得出, 恒在数组
         // 界内; `entry` 经 `&raw const … .cast_mut()` 取得, 本块只写不读, 六个字段全是
         // Copy 值 (无 Drop、无内部可变性), 写入不越出该条目。
-        // 已登记缺口 (批6 待裁, 本批不改; SGEG 现版冻结, 禁为其它工程适配现版):
-        // ① 本文件模块文档声称「写入经 IrqSpinLock 保护」, 而 `AuditLog` 只有
-        // `[AuditEntry; 256]` + `AtomicUsize`, **无任何锁**, `log(&self)` 经裸指针写共享
-        // 数组 ⇒ 与 `dump(&self)` 的读构成 &/&mut 别名冲突 (UB);
-        // ② 计数回绕后多核可取到同一 idx, 上方注释承认「最后写入语义」, 但那仍是无同步
-        // 的并发写 = 数据竞争, 不是可接受的语义。
+        // 并发前提 (现版冻结): 本方法自身不加锁, 唯一生产路径经 `GLOBAL_AUDIT` 的
+        // `IrqSpinLock` 串行化; 直接对共享实例裸调属调用方违约。计数回绕后的同槽位
+        // 并发写同属该违约面, 正确形态见模块文档所引 R8 裁定, 不在现版修补。
         unsafe {
             (*entry).timestamp = now;
             (*entry).pwm = PwmId(pwm);

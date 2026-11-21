@@ -635,8 +635,8 @@ pub unsafe extern "C" fn memset(
     // 再以 `stp` 每轮写 16 字节 (轮数 = remaining/16), 尾部 `remaining &= 0xF` 字节
     // 逐字节补齐 ⇒ 总写入恰为 n 字节; 非 aarch64 分支直接 `for i in 0..n` 逐字节写。
     // 两分支都只写 s[0..n], 容量由 C 侧契约兜住。`u8_from_i32(c & 0xFF)` 是纯截断。
-    // 已登记缺口 (批6 待裁, 本批不改): 内层 `stp` asm 标了 `options(nostack, readonly)`,
-    // 而 stp 确实写内存 ⇒ `readonly` 是错误声明, LLVM 可据此重排/消除对该缓冲的后续读。
+    // 内层 `stp` 确实写内存, 故 asm 只声明 `nostack` (不带 `readonly`/`nomem`):
+    // 编译器按「可能读写任意内存」处理, 不得重排或消除后续对该缓冲的读。
     unsafe {
         if s.is_null() || n == 0 {
             return s;
@@ -668,7 +668,7 @@ pub unsafe extern "C" fn memset(
                     val = in(reg) val64,
                     dst = inout(reg) dst,
                     blocks = inout(reg) blocks,
-                    options(nostack, readonly),
+                    options(nostack),
                 );
                 // blocks 在汇编中被递减至 0, 明确丢弃
                 let _ = blocks;
@@ -716,10 +716,10 @@ pub unsafe extern "C" fn memset(
 pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     // SAFETY: 类别 B (x86_64 专属, 函数带 `#[cfg(target_arch = "x86_64")]`)。
     // 空指针或 n=0 提前返回; `rep stosb` 从 rdi 起写 rcx 个 al 字节 ⇒ 写入范围恰为
-    // s[0..n], 容量由 C 侧契约兜住。依赖 DF=0 (内核异常存根 `boot/isr.asm` 入口 `cld`),
-    // `nostack` 成立 (不压栈)。返回入参 s。
-    // 已登记缺口 (批6 待裁, 本批不改): `rep stosb` 会递增 rdi、递减 rcx 至 0, 但两者
-    // 都声明为 `in(...)` (未标 inout/out) ⇒ 编译器按「值未变」处理, 属未声明的寄存器破坏。
+    // s[0..n], 容量由 C 侧契约兜住。依赖 DF=0 (内核异常存根 `boot/isr.asm` 入口 `cld`)。
+    // `rep stosb` 会递增 rdi、递减 rcx 至 0, 故二者以 `inout(... => _)` 声明为被改写;
+    // 不声明 `readonly`/`nomem`, 编译器按「可能改写内存」处理; `nostack` 成立 (不压栈)。
+    // 返回入参 s。
     unsafe {
         if s.is_null() || n == 0 {
             return s;
@@ -731,9 +731,9 @@ pub unsafe extern "C" fn memset_optimized(s: *mut u8, c: i32, n: usize) -> *mut 
         // 使用内联汇编调用 REP STOSB
         core::arch::asm!(
             "rep stosb",
-            in("rdi") dest,
+            inout("rdi") dest => _,
             in("rax") val,
-            in("rcx") n,
+            inout("rcx") n => _,
             options(nostack)
         );
 

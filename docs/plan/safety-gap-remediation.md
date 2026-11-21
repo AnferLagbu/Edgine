@@ -379,7 +379,24 @@ PMM 管理范围 / 内核映像 `[0, kernel_end)` 排除 / 可判定源区间不
 ② 56 摘掉 `stp` 的错误 `readonly`、为 `rep stosb` 补 rdi/rcx 的 clobber 声明（或改
 `inlateout`），比较族零调用方按 F9 的消除方式处置（实现使用路径 / 移入测试模块），
 **不得加 `allow(dead_code)`**；③ 补 asm 契约的 host 侧形状锁（钉 options 与 clobber 清单）。
-状态：[]
+详情：① 52 裁定**正确形态 = 写入路径自持锁**（`AuditLog` 全字段入 `IrqSpinLock`，或把
+`entries` 改为原子槽并把回绕判据并入 `fetch_add` 的同一临界区），由 SGEG 重设计工程落地；
+本批仅把模块文档改为「`GLOBAL_AUDIT` 有锁、`AuditLog` 自身不加锁、现版冻结」，并把就地
+缺口登记改写为该契约说明，数据结构（`[AuditEntry; 256]` + `AtomicUsize`）零改动。
+② 56 `memset` 的 aarch64 `stp` asm 改为 `options(nostack)`（写内存不得声明 `readonly`/
+`nomem`）；`memset_optimized` 的 `rep stosb` 把 rdi/rcx 从 `in(...)` 改为
+`inout(... => _)`（声明寄存器被改写）。比较族（`strcmp`/`strncmp`/`memcmp`/`memchr`/
+`strchr`/`strrchr`/`strstr`）按用户裁定走**相对完整**路径：新增 host-tests 语义矩阵构成
+真实使用路径（含 null / 零长 / n 截断 / 空 needle / 守卫字节等错误与边界形态），不删符号、
+不加任何死代码抑制。③ 新增 `host-tests/tests/r8_frozen_face_and_asm_test.rs` 15 例：
+4 条形状锁（stp options / rep stosb clobber / 52 文档一致 / 缺口登记清零）+ 11 条行为。
+负控制 4/4：逐项注入（`readonly` 回填、`in(...)` 回填、模块文档回填假称、缺口登记回填）
+各自转红（RC=101），`cp` 复原后 sha256 与注入前一致（`aaec7be0…` / `269dbc2b…`）。
+收口读数：`./ci/build.sh all` **Passed 6 / Failed 0**（RC=0）· `bash ci/audit.sh full`
+**AUDIT-RC=0**（未执行腿数 **0**）· `make test-host` **212 个测试二进制 / 1651 passed /
+0 failed**（RC=0）· `make test-kernel-host` **12 + 811 + 608 = 1431 / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` **RUSTDOC-RC=0**（双架构两腿 exit 0）.
+状态：[X]
 
 ### 批 R9・收口
 
