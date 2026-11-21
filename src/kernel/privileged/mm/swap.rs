@@ -234,10 +234,16 @@ impl SwapArea {
     /// 释放 slot
     fn free_slot(&mut self, slot: u64) {
         let idx = crate::privileged::glue::usize_from_u64(slot);
-        if idx < SWAP_MAX_SLOTS && self.bitmap[idx] == SlotState::Used as u8 {
+        if self.is_slot_used(slot) {
             self.bitmap[idx] = SlotState::Free as u8;
             self.used_count -= 1;
         }
+    }
+
+    /// 该 slot 当前是否处于 Used 状态 (越界恒 false)
+    fn is_slot_used(&self, slot: u64) -> bool {
+        let idx = crate::privileged::glue::usize_from_u64(slot);
+        idx < SWAP_MAX_SLOTS && self.bitmap[idx] == SlotState::Used as u8
     }
 
     /// 获取 slot 对应的虚拟地址
@@ -662,28 +668,30 @@ pub fn swap_out_to_pte(pml4: u64, virt_addr: u64) -> Option<SwapEntry> {
 pub fn swap_in(entry: SwapEntry) -> Option<PhysAddr> {
     let slot = entry.slot();
 
-    let _guard = SWAP.lock.lock();
-    // SAFETY: 判据同 `swap_out` —— SWAP 为 'static 全局, 上一行已取 SWAP.lock 且守卫存活
-    // 到函数结束, 故本核独占 SwapArea, 此处 &mut 无别名; slot 释放与 storage 读均在锁内.
-    // 锁序缺口 (登记待裁定, 本批不改锁面): 本函数在持 SWAP.lock (层级 6) 期间调用
-    // `pmm::get_pmm().alloc_page()`, 后者内部 `acquire_lock()` 取 PMM 锁 (层级 1), 构成
-    // 6→1 降序嵌套, 与 ref-lock-order.md 声明的升序相反.
-    let area = unsafe { &mut *SWAP.area.get() };
-
-    if !area.initialized {
-        return None;
-    }
-
-    // 分配新物理页
+    // 锁序 (ref-lock-order.md): SWAP.lock 是层级 6, PMM 锁是层级 1. 持层级 6 再取
+    // 层级 1 是降序嵌套 (AB-BA 风险), 故页分配在取 SWAP.lock **之前**完成, PMM 只在
+    // 锁外被触达. 失败路径同样先释放守卫再归还页.
     let pmm_inst = pmm::get_pmm();
     let new_phys = pmm_inst.alloc_page()?;
 
-    // 从 swap slot 读取数据
+    let guard = SWAP.lock.lock();
+    // SAFETY: 判据同 `swap_out` —— SWAP 为 'static 全局, 上一行已取 SWAP.lock 且守卫
+    // 存活到本块末, 故本核独占 SwapArea, 此处 &mut 无别名.
+    let area = unsafe { &mut *SWAP.area.get() };
+
+    // 分配期间 swap 区可能已被卸载, 或该 slot 已被并发 `swap_free` 释放: 两种情形都
+    // 不得把残留数据映射给调用方, 归还新页并报失败.
+    if !area.initialized || !area.is_slot_used(slot) {
+        drop(guard);
+        pmm_inst.free_page(new_phys);
+        return None;
+    }
+
+    // 从 swap slot 读取数据并释放 slot (slot 状态与数据搬运同处一个临界区)
     let dst_virt = new_phys.to_virt().0;
     area.read_slot(slot, dst_virt);
-
-    // 释放 swap slot
     area.free_slot(slot);
+    drop(guard);
 
     crate::klog_debug!(
         Swap,
@@ -1004,4 +1012,24 @@ pub fn register_swap_tests() {
     let r = runner();
     r.register("swap", "entry_encoding", test_swap_entry_encoding);
     r.register("swap", "entry_large_slot", test_swap_entry_large_slot);
+}
+
+// ============================================================================
+// 单元测试 (host-side)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_used_predicate_tracks_alloc_and_free() {
+        let mut area = SwapArea::new();
+        assert!(!area.is_slot_used(0));
+        let slot = area.alloc_slot().expect("分配 slot");
+        assert!(area.is_slot_used(slot));
+        area.free_slot(slot);
+        assert!(!area.is_slot_used(slot));
+        assert!(!area.is_slot_used(u64::MAX), "越界 slot 不得命中位图");
+    }
 }

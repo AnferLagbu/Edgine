@@ -34,16 +34,19 @@
 //!
 //! // 初始化并启动 (10ms 后触发)
 //! device.timer.init(my_timer_callback);
-//! hrtimer_start(&mut device.timer, 10_000_000);  // 10ms = 10_000_000 ns
+//! hrtimer_start(&device.timer, 10_000_000);  // 10ms = 10_000_000 ns
 //! ```
 //!
 //! # Safety
 //!
-//! - HrTimer 必须在有效内存中 (通常嵌入其他结构体), 生命周期覆盖定时器触发前
+//! - HrTimer 必须在有效内存中 (通常嵌入其他结构体), 生命周期覆盖 `Pending` /
+//!   `Running` 两个状态. `hrtimer_cancel` 在队列锁内真出队, 取消后队列不再持有该
+//!   timer; 但取消时已开始执行的回调仍会跑完 (它持有 `&HrTimer`), 调用方须等其
+//!   退出后再释放内存. 仓内生产定时器一律嵌在静态槽位, 该窗口不可达.
 //! - 回调在中断上下文执行, 不可睡眠
-//! - 取消操作需确保回调未在另一 CPU 执行 (当前单队列 spinlock 保证)
+//! - 回调内不得再取消自身并等待其退出 (框架不提供等待语义, 也不依赖回调的锁域)
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use crate::privileged::error::KernelError;
 use crate::privileged::sync::IrqSpinLock as Mutex;
@@ -97,17 +100,18 @@ pub enum HrTimerState {
 ///
 /// # 线程安全
 ///
-/// - `expiry_ns` 和 `state` 使用原子操作, 支持跨 CPU 读取
-/// - 入队/出队/回调执行由全局 spinlock 保护
-/// - 取消操作是异步的: `hrtimer_cancel()` 设置 Inactive 标志,
-///   实际从队列移除可能在下次 `hrtimer_run_queues()` 时完成
+/// - `expiry_ns` / `interval_ns` / `callback` / `state` / `queue_seq` 均为原子量,
+///   支持跨 CPU 读写; `init` 只接收 `&self`, 不再要求调用方独占引用
+/// - 入队/出队/收集由全局 spinlock 保护; 回调在锁释放后执行 (允许回调内重挂)
+/// - 取消在队列锁内真出队; 若回调已开始执行 (`Running`), 它仍会跑完 —— 调用方
+///   须在该窗口内保持 `HrTimer` 所在内存有效
 pub struct HrTimer {
     /// 绝对到期时间 (纳秒)
     expiry_ns: AtomicU64,
     /// 周期间隔 (纳秒), 0 = 单次
     interval_ns: AtomicU64,
-    /// 回调函数
-    callback: HrTimerCallback,
+    /// 回调函数 (fn 指针按 usize 存; 0 = 未设置 ⇒ `noop_callback`)
+    callback: AtomicUsize,
     /// 当前状态
     state: AtomicU64, // 编码为 HrTimerState 的 u64
     /// 队列内序号 (用于快速定位, 0 = 未入队)
@@ -123,7 +127,7 @@ impl HrTimer {
         Self {
             expiry_ns: AtomicU64::new(0),
             interval_ns: AtomicU64::new(0),
-            callback: noop_callback,
+            callback: AtomicUsize::new(0),
             state: AtomicU64::new(HrTimerState::Inactive as u64),
             queue_seq: AtomicU64::new(0),
         }
@@ -133,13 +137,27 @@ impl HrTimer {
     ///
     /// 设置回调函数, 状态置为 Inactive。
     /// 可重复调用以更换回调。
-    pub fn init(&mut self, callback: HrTimerCallback) {
-        self.callback = callback;
+    ///
+    /// 只接收 `&self`: 回调指针经原子量写入, 与队列侧跨核读取构成 Release/Acquire
+    /// 同步, 不再要求调用方持有独占引用 (`&mut`)。
+    pub fn init(&self, callback: HrTimerCallback) {
+        self.callback.store(callback as usize, Ordering::Release);
         self.expiry_ns.store(0, Ordering::Relaxed);
         self.interval_ns.store(0, Ordering::Relaxed);
         self.state
             .store(HrTimerState::Inactive as u64, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
+    }
+
+    /// 读取当前回调 (0 = 未设置 ⇒ `noop_callback`)
+    fn callback_fn(&self) -> HrTimerCallback {
+        let raw = self.callback.load(Ordering::Acquire);
+        if raw == 0 {
+            return noop_callback;
+        }
+        // SAFETY: `callback` 只由 `init` 以 `HrTimerCallback as usize` 写入非零值,
+        // 该整数值就是同类型的函数指针; 本处按原类型还原位模式, 不构造新地址.
+        unsafe { core::mem::transmute::<usize, HrTimerCallback>(raw) }
     }
 
     /// 获取到期时间 (纳秒)
@@ -346,13 +364,20 @@ pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) 
 
 /// 取消定时器
 ///
-/// 将定时器标记为 Inactive。如果定时器在队列中, 会在下次
-/// `hrtimer_run_queues()` 时移除。如果回调正在执行, 等待回调完成。
+/// 在队列锁内真出队: 摘除该定时器的全部队列条目, 并把状态置 Inactive、激活序号
+/// 清零. 返回 true 表示调用时定时器处于 Pending 状态.
 ///
-/// 返回 true 表示成功取消 (定时器处于 Pending 状态),
-/// 返回 false 表示定时器未在 Pending 状态。
+/// # 在途回调
+///
+/// 若取消时回调已被 `hrtimer_run_queues` 收集并开始执行 (`Running`), 该回调仍会
+/// 跑完 —— 它持有 `&HrTimer`, 且框架无法在不引入调用方锁域依赖的前提下等待其
+/// 退出. 调用方在状态为 Pending/Running 期间不得释放 `HrTimer` 所在内存.
 pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
+    let mut queue = HRTIMER_QUEUE.lock();
     let was_pending = timer.state() == HrTimerState::Pending;
+    // 与 `hrtimer_run_queues` 的收集互斥: 取消成功后队列不再持有该 timer 的
+    // `NonNull`, 调用方不会在下次 run_queues 时被踩到悬垂指针.
+    queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
     timer.set_state(HrTimerState::Inactive);
     timer.queue_seq.store(0, Ordering::Release);
     was_pending
@@ -384,22 +409,16 @@ pub fn hrtimer_run_queues() {
             let timer_ptr = entry.timer.as_ptr();
             // SAFETY: 入队时保证指针有效, 出队前不会释放
             let expiry = unsafe { (*timer_ptr).expiry_ns.load(Ordering::Acquire) };
-            // SAFETY: `timer_ptr` 取自队列条目, 有效性由 `hrtimer_start` 的 `# Safety` 契约
-            // 承担; `state()` 只读 HrTimer 的原子 state 字段 (AtomicU64), 不写内存, 与并发
-            // `set_state` 无数据竞争。
-            // 已登记缺口 (批6 待裁, 本批不改): `hrtimer_cancel` 只置 Inactive + queue_seq=0,
-            // **不出队**, 故调用方释放 timer 后队列仍可能持有悬垂 NonNull, 本处解引用即 UAF
-            // 面 —— 现契约只覆盖「回调触发前有效」, 未覆盖「取消后到下次 run_queues」这段窗口。
+            // SAFETY: `timer_ptr` 取自队列条目, 有效性由 `hrtimer_start` / 队列契约
+            // 承担: 取消已在队列锁内真出队, 故本次收集期间队列条目指向的 timer 仍有效
+            // (调用方只在 Pending/Running 窗口外才可释放). `state()` 只读原子字段.
             let state = unsafe { (*timer_ptr).state() };
 
             if expiry <= now_ns && state == HrTimerState::Pending {
-                // SAFETY: 指针有效性同上, 由 `hrtimer_start` 的 `# Safety` 契约承担; 本处把回调
-                // 函数指针按值读出 (Copy) 存入 `expired`, 供锁释放后执行。
-                // 已登记缺口 (批6 待裁, 本批不改): `callback` 是**普通非原子字段** (HrTimer 只有
-                // expiry_ns / state / queue_seq 是原子), 本处经 `&*timer_ptr` 读它, 而另一核的
-                // `init(&mut self, callback)` 可普通写它 ⇒ 数据竞争与 &/&mut 别名冲突; 队列锁只
-                // 保护 Vec, 不保护 HrTimer 本体。
-                let cb = unsafe { (*timer_ptr).callback };
+                // SAFETY: 指针有效性同上; 回调指针经原子量以 Acquire 读出, 与 `init`
+                // 的 Release 写入构成同步 —— 跨核并发 `init` 不再产生数据竞争或
+                // &/&mut 别名 (init 只接收 &self).
+                let cb = unsafe { (*timer_ptr).callback_fn() };
                 let seq = entry.seq;
                 // SAFETY: `set_state` 只对 HrTimer 的原子 state 字段做 store, 指针有效性同由
                 // `hrtimer_start` 契约承担。本处在队列锁内把状态置 Running, 随后的 `queue.retain`
@@ -445,6 +464,11 @@ pub fn hrtimer_run_queues() {
 /// 重挂时, 保留回调写入的 Pending 状态, 不被 `OneShot` 收敛覆盖.
 fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns: u64) {
     if timer.activation_seq() != seq {
+        // 迟到激活. 若因取消而失效 (序号为 0), 把收集阶段置上的 Running 收敛回
+        // Inactive; 若已重新入队 (序号非 0), 新激活的状态归其所有, 本处不得覆盖.
+        if timer.activation_seq() == 0 && timer.state() == HrTimerState::Running {
+            timer.set_state(HrTimerState::Inactive);
+        }
         return;
     }
 
@@ -459,6 +483,11 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
             }
         }
         HrTimerRestart::Periodic => {
+            // 取消可能恰在回调执行期间发生 (置 Inactive): 此时不得重挂, 否则已取消
+            // 的定时器会被回调复活. 回调自行重挂后状态为 Pending, 同样不得覆盖.
+            if timer.state() != HrTimerState::Running {
+                return;
+            }
             let interval = timer.interval_ns.load(Ordering::Acquire);
             if interval > 0 {
                 let old_expiry = timer.expiry_ns.load(Ordering::Acquire);
@@ -563,7 +592,7 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
     // 闭包用 static 状态在 ISR (hrtimer 回调) 与调用方 (本函数) 之间传递完成信号.
     // SAFETY: SLEEP_FLAG 仅为本函数独占, 不会跨调用并发 (单线程执行模型).
 
-    let mut timer = HrTimer::uninit();
+    let timer = HrTimer::uninit();
     timer.init(|_t, _seq| {
         // SLEEP_FLAG 为原子量, 回调仅 store true.
         SLEEP_FLAG.store(true, Ordering::Release);
@@ -584,6 +613,9 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
         }
     }
     SLEEP_FLAG.store(false, Ordering::Release);
+    // 契约 (见模块 Safety): timer 内存必须在 Pending/Running 期间有效. 本函数的
+    // timer 在栈上, 返回前必须确保它不再留在队列中 —— 超时退路下它仍是 Pending.
+    let _ = hrtimer_cancel(&timer);
     Ok(())
 }
 
@@ -594,7 +626,43 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::boxed::Box;
     use core::sync::atomic::AtomicU32;
+
+    /// 全局定时器队列是进程级单例: 队列相关用例串行执行, 避免并行测试互相清空/入队.
+    ///
+    /// 用 AtomicBool 自旋而非 `std::sync::Mutex`: 本文件属生产模块, 引入一把仅测试
+    /// 使用的锁会污染 `audit_deadlock_matrix` 的锁类表 (该腿不区分 `cfg(test)`).
+    static QUEUE_TEST_BUSY: AtomicBool = AtomicBool::new(false);
+
+    struct QueueTestGuard;
+
+    impl QueueTestGuard {
+        fn acquire() -> Self {
+            while QUEUE_TEST_BUSY.swap(true, Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            Self
+        }
+    }
+
+    impl Drop for QueueTestGuard {
+        fn drop(&mut self) {
+            QUEUE_TEST_BUSY.store(false, Ordering::Release);
+        }
+    }
+
+    fn serialize_queue_tests() -> QueueTestGuard {
+        QueueTestGuard::acquire()
+    }
+
+    /// 队列是否仍持有该 timer (只比较指针, 不解引用).
+    fn queue_contains(timer: &HrTimer) -> bool {
+        let queue = HRTIMER_QUEUE.lock();
+        queue
+            .iter()
+            .any(|entry| core::ptr::eq(entry.timer.as_ptr(), timer))
+    }
 
     #[test]
     fn test_hrtimer_state_encoding() {
@@ -614,14 +682,14 @@ mod tests {
 
     #[test]
     fn test_hrtimer_init() {
-        let mut timer = HrTimer::uninit();
+        let timer = HrTimer::uninit();
         timer.init(noop_callback);
         assert_eq!(timer.state(), HrTimerState::Inactive);
     }
 
     #[test]
     fn test_hrtimer_forward() {
-        let mut timer = HrTimer::uninit();
+        let timer = HrTimer::uninit();
         timer.init(noop_callback);
         timer.interval_ns.store(1_000_000, Ordering::Release); // 1ms
         timer.expiry_ns.store(5_000_000, Ordering::Release); // 5ms
@@ -639,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_hrtimer_forward_zero_interval() {
-        let mut timer = HrTimer::uninit();
+        let timer = HrTimer::uninit();
         timer.init(noop_callback);
         timer.expiry_ns.store(5_000_000, Ordering::Release);
         let skipped = timer.forward(10_000_000);
@@ -656,7 +724,8 @@ mod tests {
 
     #[test]
     fn test_cancel_while_inactive() {
-        let mut timer = HrTimer::uninit();
+        let _serial = serialize_queue_tests();
+        let timer = HrTimer::uninit();
         timer.init(noop_callback);
         let cancelled = hrtimer_cancel(&timer);
         assert!(!cancelled); // 未入队, 取消返回 false
@@ -664,9 +733,9 @@ mod tests {
 
     #[test]
     fn test_next_expiry_empty() {
-        // UT-06 (2026-09-24): 先 hrtimer_init() 清空队列使断言与环境无关.
-        // 原断言依赖 "框架未初始化", 但同文件 test_hrtimer_sleep_init 会入队一个
-        // 栈上定时器, host 侧无 tick 消费, 队列残留导致顺序耦合失败.
+        // UT-06 (2026-09-24): 先 hrtimer_init() 清空队列使断言与环境无关;
+        // 队列是进程级单例, 本用例与其它队列用例经 QUEUE_TEST_LOCK 串行.
+        let _serial = serialize_queue_tests();
         hrtimer_init();
         assert!(hrtimer_next_expiry().is_none());
     }
@@ -674,8 +743,64 @@ mod tests {
     #[test]
     fn test_pending_count_empty() {
         // UT-06 (2026-09-24): 同上, 清空队列后待触发数必为 0.
+        let _serial = serialize_queue_tests();
         hrtimer_init();
         assert_eq!(hrtimer_pending_count(), 0);
+    }
+
+    #[test]
+    fn test_cancel_removes_timer_from_queue() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        assert!(queue_contains(&timer), "启动后队列必须持有该 timer");
+
+        assert!(hrtimer_cancel(&timer));
+        assert!(
+            !queue_contains(&timer),
+            "取消必须在队列锁内真出队 —— 否则调用方释放 timer 后队列持悬垂 NonNull"
+        );
+    }
+
+    #[test]
+    fn test_cancel_then_drop_leaves_nothing_to_dispatch() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = Box::new(HrTimer::uninit());
+        timer.init(cancelled_timer_callback);
+        // 已到期: 若取消未出队, 下一次 run_queues 会踩释放后的内存.
+        hrtimer_start(&timer, 0);
+        assert!(hrtimer_cancel(&timer));
+        assert!(!queue_contains(&timer), "取消后队列不得再持有该 timer");
+        drop(timer);
+
+        hrtimer_run_queues();
+        assert_eq!(
+            CANCELLED_CALLS.load(Ordering::Relaxed),
+            0,
+            "已取消并释放的 timer 不得再被调度"
+        );
+    }
+
+    #[test]
+    fn test_init_through_shared_ref_replaces_callback() {
+        // init 只接收 &self: 回调指针经原子量替换, 跨核读取不会撕裂/无需 &mut 别名.
+        let timer = HrTimer::uninit();
+        let shared: &HrTimer = &timer;
+        assert!(core::ptr::fn_addr_eq(
+            shared.callback_fn(),
+            noop_callback as HrTimerCallback
+        ));
+        shared.init(stale_guard_callback);
+        assert!(
+            core::ptr::fn_addr_eq(
+                shared.callback_fn(),
+                stale_guard_callback as HrTimerCallback
+            ),
+            "共享引用上 init 必须替换回调"
+        );
     }
 
     // I-50: hrtimer_sleep 公共 API host-test
@@ -687,15 +812,23 @@ mod tests {
 
     #[test]
     fn test_hrtimer_sleep_init() {
+        let _serial = serialize_queue_tests();
         // 初始化后, 短延时 sleep 应成功 (实际精度由硬件 tick 决定, 此处只验 API 通路)
         hrtimer_init();
         // 1ms = 1_000_000 ns, 在 host 环境下无 tick 中断, 走 SLEEP_WAIT_BOUND 退路,
-        // 仍返回 Ok (不卡死, 不 panic)
+        // 仍返回 Ok (不卡死, 不 panic); 返回前 cancel 保证栈上 timer 不留在队列.
         assert!(hrtimer_sleep(1_000_000).is_ok());
+        assert_eq!(hrtimer_pending_count(), 0, "sleep 返回后队列必须为空");
     }
 
     static STALE_CALLS: AtomicU32 = AtomicU32::new(0);
     static REARM_CALLS: AtomicU32 = AtomicU32::new(0);
+    static CANCELLED_CALLS: AtomicU32 = AtomicU32::new(0);
+
+    fn cancelled_timer_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+        CANCELLED_CALLS.fetch_add(1, Ordering::Relaxed);
+        HrTimerRestart::OneShot
+    }
 
     fn stale_guard_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
         STALE_CALLS.fetch_add(1, Ordering::Relaxed);
@@ -712,7 +845,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_skips_stale_activation() {
-        let mut timer = HrTimer::uninit();
+        let timer = HrTimer::uninit();
         timer.init(stale_guard_callback);
         timer.set_state(HrTimerState::Running);
         timer.queue_seq.store(5, Ordering::Release);
@@ -733,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_dispatch_preserves_callback_rearm() {
-        let mut timer = HrTimer::uninit();
+        let timer = HrTimer::uninit();
         timer.init(self_rearm_callback);
         timer.set_state(HrTimerState::Running);
         timer.queue_seq.store(7, Ordering::Release);
@@ -748,6 +881,56 @@ mod tests {
             "回调内重挂的 Pending 不得被覆盖"
         );
         assert_eq!(timer.activation_seq(), 99);
+    }
+
+    #[test]
+    fn test_dispatch_stale_after_cancel_converges_running() {
+        let timer = HrTimer::uninit();
+        timer.init(stale_guard_callback);
+        timer.set_state(HrTimerState::Running);
+        // 取消已把激活序号清零, 但回调在取消前已被收集.
+        timer.queue_seq.store(0, Ordering::Release);
+        STALE_CALLS.store(0, Ordering::Relaxed);
+
+        dispatch_expired(&timer, stale_guard_callback, 9, 0);
+
+        assert_eq!(
+            STALE_CALLS.load(Ordering::Relaxed),
+            0,
+            "已取消的激活不得执行回调"
+        );
+        assert_eq!(
+            timer.state(),
+            HrTimerState::Inactive,
+            "取消后迟到的收集结果必须把 Running 收敛回 Inactive"
+        );
+    }
+
+    /// 模拟取消恰在回调执行期间发生 (由取消方置 Inactive + 序号清零).
+    fn cancel_during_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+        HrTimerRestart::Periodic
+    }
+
+    #[test]
+    fn test_periodic_dispatch_does_not_rearm_after_cancel() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(cancel_during_callback);
+        timer.interval_ns.store(1_000_000, Ordering::Release);
+        timer.set_state(HrTimerState::Running);
+        timer.queue_seq.store(7, Ordering::Release);
+
+        dispatch_expired(&timer, cancel_during_callback, 7, 0);
+
+        assert_eq!(
+            timer.state(),
+            HrTimerState::Inactive,
+            "取消后 Periodic 回调不得把定时器复活"
+        );
+        assert!(!queue_contains(&timer), "已取消的定时器不得被重新入队");
     }
 }
 
@@ -792,7 +975,7 @@ fn test_init_and_cancel() -> crate::privileged::tests::TestResult {
 #[cfg(feature = "kernel_test")]
 fn test_forward_periodic() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, assert_eq_test};
-    let mut timer = HrTimer::uninit();
+    let timer = HrTimer::uninit();
     timer.init(noop_callback);
     timer.interval_ns.store(1_000_000, Ordering::Release);
     timer.expiry_ns.store(5_000_000, Ordering::Release);
@@ -837,9 +1020,9 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
 
     // SAFETY: 经 &raw mut 取裸指针避免对 static mut 取引用
     hrtimer_cancel(unsafe { &*core::ptr::addr_of!(T1) });
-    // 取消后队列在下一次 run_queues 时清理
+    // 取消在队列锁内立即出队, 无需等下一次 run_queues 清理
     hrtimer_run_queues();
-    assert_eq_test!(hrtimer_pending_count(), 0, "empty after cancel+run");
+    assert_eq_test!(hrtimer_pending_count(), 0, "empty after cancel");
     TestResult::Pass
 }
 

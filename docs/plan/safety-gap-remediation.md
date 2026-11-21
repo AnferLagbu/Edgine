@@ -262,13 +262,38 @@ exit 0。
 ### 批 R5・定时回调与锁序（㊹ ⑭）
 
 描述：`hrtimer_cancel` 不出队 ⇒ 悬垂 `NonNull`，`callback` 非原子 ⇒ 跨核数据竞争（㊹）；
-`swap_in`/`swap_out` 持 SWAP 锁（6）期间取 PMM 锁（1）⇒ 降序嵌套（⑭）。
-方案：① ㊹ 先按 §11.3 问路径；cancel 必须在队列锁内真出队，`callback` 的写入须纳入
-同一锁域或改原子（`HrTimer` 现只有 expiry_ns/state/queue_seq 原子）；补「cancel 后释放
-timer 再到期」的 UAF 回归与「另一核 init 同时 cancel」的竞争回归；② ⑭ 按
-`ref-lock-order.md` 的升序约束改造（先取 PMM 页再取 SWAP 锁，或把分配移出临界区），
-并跑 `audit_deadlock_matrix` + 静态锁序棘轮（新增取锁点须登记锁类）。
-状态：[]
+`swap_in` 持 SWAP 锁（6）期间取 PMM 锁（1）⇒ 降序嵌套（⑭）。
+方案：① ㊹ 按 §11.3 先问路径：原拟「相对完整＝cancel 等待在途回调」经现树核查会与 timerfd
+构成 AB-BA（`set_time` 持 `TFD_TABLE` 调 cancel，而 `timerfd_callback` 首行取同表锁）；二轮
+询问后用户裁定按 **A+** 收口 —— 队列锁内真出队 + 回调原子化 + 取消后收敛，把「Pending /
+Running 期间调用方须保活」写成硬契约；同步等待的长期解单独立项
+[hrtimer-cancel-protocol.md](./hrtimer-cancel-protocol.md)（两档取消 + timerfd 回调叶子化）。
+② ⑭ 按相对完整路径：页分配移出 SWAP 临界区（锁外取页），锁内复查 `initialized` 与
+slot 仍为 Used，失败路径先释放守卫再归还页。
+详情：㊹ `hrtimer_cancel` 在 `HRTIMER_QUEUE` 锁内 `retain` 摘除该 timer 的全部条目；
+`callback` 由普通字段改 `AtomicUsize`（0 = 未设置 ⇒ `noop_callback`，保持 `uninit()` 为
+const），`init` 由 `&mut self` 改 `&self`；`dispatch_expired` 迟到分支在序号为 0（已取消）时
+把 Running 收敛回 Inactive，Periodic 分支仅在 `state == Running` 时重挂（防取消后被回调
+复活）；`hrtimer_sleep` 返回前补 `hrtimer_cancel`，兑现「栈上 timer 不得留在队列」。新增 5 条
+host 用例（`test_cancel_removes_timer_from_queue` / `test_cancel_then_drop_leaves_nothing_to_dispatch` /
+`test_init_through_shared_ref_replaces_callback` / `test_dispatch_stale_after_cancel_converges_running` /
+`test_periodic_dispatch_does_not_rearm_after_cancel`），队列相关用例经 AtomicBool 串行
+（不用 `std::sync::Mutex`，避免仅测试使用的锁对象污染锁类表）；`poll_timer` 因 `init(&self)`
+去掉多余 `mut`。⑭ `SwapArea::is_slot_used` 抽出并与 `free_slot` 共用；`swap_in` 锁外
+`alloc_page`，锁内复查后 `read_slot` + `free_slot`，失败路径 `drop(guard)` 后 `free_page`；
+新增内联 `slot_used_predicate_tracks_alloc_and_free` 与 host 形状锁 3 条
+（alloc 前于取锁 / free_page 后于守卫释放 / slot 复查在锁内）。负控制：㊹ 移除 cancel 的
+`retain` ⇒ `test_cancel_*` **2 failed（RC=101）**；⑭ `free_page` 前移到 `drop(guard)` 前 ⇒
+`swap_in_frees_page_only_after_dropping_swap_guard` **FAILED（RC=101）**；`alloc_page` 移回锁内 ⇒
+`swap_in_allocates_page_before_taking_swap_lock` **FAILED（RC=101）**；三项均复原后转绿。
+锁序棘轮：`hrtimer.rs::HRTIMER_QUEUE` 未分类取锁点 5→7（cancel 1 处 + 测试 helper 1 处），
+按工具许可路径 `--update-lock-order-baseline` 显式登记（快照仅该键 +2，其余不变）。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `bash ci/audit.sh full`
+RC=0（未执行腿数 0，含 Lockbud 与 QEMU）· `make test-host` **209 套 / 1620 passed /
+0 failed**（+1 形状锁套件、+3 用例）· `make test-kernel-host` **12 + 811 + 573 = 1396 /
+0 failed**（+5 hrtimer、+1 swap 单测）· `check_kernel_test_release_dim.sh` RC=0 ·
+`ci-rustdoc` 双架构 exit 0。
+状态：[X]
 
 ### 批 R6・latent 约束与别名（⑪ ⑫ ⑬ ㊻ ㊸ ㊶ ㊼）
 

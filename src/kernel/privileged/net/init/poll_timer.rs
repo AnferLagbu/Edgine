@@ -117,8 +117,8 @@ pub(crate) fn net_poll_deadline_update(next_ns: Option<u64>) {
     let now_ns = hrtimer_clock_read();
     let deadline = effective_poll_deadline(next_ns, now_ns, NET_POLL_RX_FLOOR_NS);
 
-    let mut timer = NET_POLL_TIMER.lock();
-    // `init` 需要 `&mut`，故每次登记时复位 expiry/interval/state 后再入队;
+    let timer = NET_POLL_TIMER.lock();
+    // `init` 只接收 `&self` (回调指针原子替换), 复位 expiry/interval/state 后入队;
     // `hrtimer_start` 自身按 `queue_seq` 摘除同一 timer 的旧条目，重复登记幂等.
     timer.init(net_poll_deadline_callback);
     NET_POLL_DEADLINE_NS.store(deadline, Ordering::Release);
