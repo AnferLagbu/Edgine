@@ -97,6 +97,70 @@ pub enum KexecState {
 }
 
 // ============================================================================
+// 段目标校验
+// ============================================================================
+
+/// 把内核切片指针换算为物理区间.
+///
+/// 仅在能证明指针落在**内核高半区直射区**或**低半区恒等面**时返回 `Some`;
+/// 高半区的内核文本/rodata 别名 (非直射) 无法由地址反推物理页, 返回 `None`.
+fn kernel_slice_phys(ptr: u64, len: usize) -> Option<(u64, usize)> {
+    let len_u64 = u64::try_from(len).ok()?;
+    let end = ptr.checked_add(len_u64)?;
+    let kernel_base = crate::privileged::mm::KERNEL_BASE;
+    let direct_end = kernel_base.checked_add(crate::privileged::mm::DIRECT_MAP_LIMIT)?;
+    if ptr >= kernel_base && end <= direct_end {
+        return Some((ptr - kernel_base, len));
+    }
+    if ptr < crate::privileged::mm::DIRECT_MAP_LIMIT
+        && end <= crate::privileged::mm::DIRECT_MAP_LIMIT
+    {
+        return Some((ptr, len));
+    }
+    None
+}
+
+/// 校验 kexec 目标物理区间.
+///
+/// 判据: 非零长度 / 页对齐 / 完整落在直射区 / 完整落在 PMM 管理范围 /
+/// 不与运行中内核映像 `[0, kernel_end)` 重叠 / 与可判定的源物理区间不重叠.
+/// 任一不符即拒绝 (调用方不写任何字节).
+fn validate_segment_destination(
+    dst_addr: u64,
+    size: usize,
+    kernel_end: u64,
+    managed_bytes: u64,
+    src_phys: Option<(u64, usize)>,
+) -> Result<(), &'static str> {
+    if size == 0 {
+        return Err("kexec: 零长度段");
+    }
+    if !dst_addr.is_multiple_of(crate::privileged::mm::PAGE_SIZE) {
+        return Err("kexec: 目标地址未页对齐");
+    }
+    let size_u64 = u64::try_from(size).map_err(|_| "kexec: 段长度超出 u64")?;
+    let dst_end = dst_addr
+        .checked_add(size_u64)
+        .ok_or("kexec: 目标区间加法回绕")?;
+    if dst_end > crate::privileged::mm::DIRECT_MAP_LIMIT {
+        return Err("kexec: 目标区间超出直射区");
+    }
+    if dst_end > managed_bytes {
+        return Err("kexec: 目标区间超出 PMM 管理范围");
+    }
+    if crate::privileged::mm::early_reserve::ranges_overlap(dst_addr, size_u64, 0, kernel_end) {
+        return Err("kexec: 目标区间与运行中内核映像重叠");
+    }
+    if let Some((src, src_len)) = src_phys {
+        let src_len = u64::try_from(src_len).map_err(|_| "kexec: 源长度超出 u64")?;
+        if crate::privileged::mm::early_reserve::ranges_overlap(dst_addr, size_u64, src, src_len) {
+            return Err("kexec: 源/目标区间重叠");
+        }
+    }
+    Ok(())
+}
+
+// ============================================================================
 // kexec 子系统
 // ============================================================================
 
@@ -148,8 +212,12 @@ impl KexecSubsystem {
     /// 加载内核段
     ///
     /// `seg_type`: 段类型
-    /// `dst_addr`: 目标物理地址
+    /// `dst_addr`: 目标**物理地址** (页对齐); 内核经 `phys_to_virt` 直射别名写入
     /// `src_data`: 源数据
+    ///
+    /// 拒绝条件 (任一即返回 `false` 且不写任何字节): 零长度 / 目标未页对齐 /
+    /// 目标区间超出直射区或 PMM 管理范围 / 与运行中内核映像重叠 / 与可判定的
+    /// 源物理区间重叠.
     pub fn load_segment(&self, seg_type: KexecSegType, dst_addr: u64, src_data: &[u8]) -> bool {
         // 检查状态
         let current = KexecState::from_u32(self.state.load(Ordering::Acquire));
@@ -174,21 +242,37 @@ impl KexecSubsystem {
             return false;
         }
 
+        // 目标区间校验: 直射区 / PMM 管理范围 / 内核映像 / 源目标重叠.
+        let kernel_end = crate::privileged::boot::boot_get_kernel_end();
+        let managed_bytes = crate::privileged::mm::pmm::get_pmm()
+            .get_total_pages()
+            .saturating_mul(crate::privileged::mm::PAGE_SIZE);
+        let src_phys = kernel_slice_phys(src_data.as_ptr() as u64, src_data.len());
+        if let Err(reason) = validate_segment_destination(
+            dst_addr,
+            src_data.len(),
+            kernel_end,
+            managed_bytes,
+            src_phys,
+        ) {
+            crate::klog_ffi!(klog_ffi_warn, "[kexec] segment rejected: {}", reason);
+            return false;
+        }
+
         // 复制数据到目标物理地址
-        // SAFETY: dst_addr 是用户指定的物理地址, 我们信任调用者
-        // 在实际实现中, 这里应该通过 PMM 确保地址可用
-        let dst_ptr = dst_addr as *mut u8;
+        let dst_ptr = crate::privileged::mm::phys_to_virt(dst_addr) as *mut u8;
         let dst_size = src_data.len();
-        // SAFETY: 本块把 src_data 复制到 dst_ptr. 已成立的前提: 上方已拒绝 Executing
-        // 状态, 且 src_data.len() 不超过该段类型上限 (KEXEC_MAX_KERNEL_SIZE /
-        // KEXEC_MAX_INITRD_SIZE / KEXEC_MAX_CMDLINE), 故 count 不越源切片, 源指针
-        // 来自有效已初始化切片.
-        // 已知局限 (登记不改): dst_addr 未经 PMM 校验是否已映射且可写, 也未校验
-        // 源/目标区间不重叠 (copy_nonoverlapping 的前提), 且形参文档称其为物理地址
-        // 而此处直接当虚拟地址用 (未加 KERNEL_BASE 偏移). 当前 load_segment 全仓
-        // 零调用方 (sys_kexec 的 cmd 0 只记录元数据不复制), 故该路径不可达.
+        // SAFETY: 本块把 src_data 复制到直射区目标. 已成立的前提:
+        // ① Executing 状态已拒绝, 且 src_data.len() 不超过该段类型上限, 故 count
+        //    不越源切片; 源指针来自有效已初始化切片.
+        // ② `validate_segment_destination` 已证明 dst 页对齐、[dst, dst+size) 在
+        //    直射区 [0, DIRECT_MAP_LIMIT) 与 PMM 管理范围内、不与运行中内核映像
+        //    [0, kernel_end) 重叠, 且与可判定的源物理区间不重叠.
+        // ③ src_phys 不可判定时 (高半区非直射别名), 源必属内核映像映射面, 已由
+        //    ② 的内核映像排除保证物理不重叠.
+        // ④ phys_to_virt 对 [0, DIRECT_MAP_LIMIT) 内的物理地址给出唯一内核别名,
+        //    故 dst_ptr 可写且不触用户映射.
         unsafe {
-            // 检查目标地址可写 (简化: 直接写入)
             core::ptr::copy_nonoverlapping(src_data.as_ptr(), dst_ptr, dst_size);
         }
 
@@ -526,5 +610,118 @@ impl From<u32> for KexecSegType {
             3 => Self::BootInfo,
             _ => Self::Kernel,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PAGE: u64 = crate::privileged::mm::PAGE_SIZE;
+    const MANAGED: u64 = 0x0800_0000;
+    const KERNEL_END: u64 = 0x0040_0000;
+
+    #[test]
+    fn kernel_slice_phys_maps_direct_map_alias() {
+        let ptr = crate::privileged::mm::KERNEL_BASE + 0x1000;
+        assert_eq!(kernel_slice_phys(ptr, 0x100), Some((0x1000, 0x100)));
+    }
+
+    #[test]
+    fn kernel_slice_phys_maps_low_identity() {
+        assert_eq!(kernel_slice_phys(0x1000, 0x100), Some((0x1000, 0x100)));
+    }
+
+    #[test]
+    fn kernel_slice_phys_rejects_non_direct_alias() {
+        let ptr = crate::privileged::mm::KERNEL_BASE + crate::privileged::mm::DIRECT_MAP_LIMIT;
+        assert_eq!(kernel_slice_phys(ptr, 0x100), None);
+    }
+
+    #[test]
+    fn destination_accepts_valid_range() {
+        assert_eq!(
+            validate_segment_destination(0x0080_0000, 0x1000, KERNEL_END, MANAGED, None),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn destination_rejects_zero_length() {
+        assert_eq!(
+            validate_segment_destination(0x0080_0000, 0, KERNEL_END, MANAGED, None),
+            Err("kexec: 零长度段")
+        );
+    }
+
+    #[test]
+    fn destination_rejects_unaligned() {
+        assert_eq!(
+            validate_segment_destination(0x0080_0001, 0x1000, KERNEL_END, MANAGED, None),
+            Err("kexec: 目标地址未页对齐")
+        );
+    }
+
+    #[test]
+    fn destination_rejects_outside_direct_map() {
+        assert_eq!(
+            validate_segment_destination(
+                crate::privileged::mm::DIRECT_MAP_LIMIT,
+                0x1000,
+                KERNEL_END,
+                u64::MAX,
+                None
+            ),
+            Err("kexec: 目标区间超出直射区")
+        );
+    }
+
+    #[test]
+    fn destination_rejects_outside_managed_range() {
+        assert_eq!(
+            validate_segment_destination(0x003F_F000, 0x2000, 0x10_0000, 0x0040_0000, None),
+            Err("kexec: 目标区间超出 PMM 管理范围")
+        );
+    }
+
+    #[test]
+    fn destination_rejects_kernel_image_overlap() {
+        assert_eq!(
+            validate_segment_destination(0x003F_F000, 0x2000, 0x0040_0000, MANAGED, None),
+            Err("kexec: 目标区间与运行中内核映像重叠")
+        );
+    }
+
+    #[test]
+    fn destination_rejects_source_overlap_and_accepts_adjacent() {
+        assert_eq!(
+            validate_segment_destination(
+                0x0080_0000,
+                0x1000,
+                KERNEL_END,
+                MANAGED,
+                Some((0x0080_0000, 0x1000))
+            ),
+            Err("kexec: 源/目标区间重叠")
+        );
+        assert_eq!(
+            validate_segment_destination(
+                0x0080_0000,
+                0x1000,
+                KERNEL_END,
+                MANAGED,
+                Some((0x0081_0000, 0x1000))
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn destination_rejects_range_addition_wrap() {
+        let dst = crate::privileged::mm::DIRECT_MAP_LIMIT - PAGE;
+        assert_eq!(
+            validate_segment_destination(dst, usize::MAX, KERNEL_END, u64::MAX, None),
+            Err("kexec: 目标区间加法回绕")
+        );
     }
 }

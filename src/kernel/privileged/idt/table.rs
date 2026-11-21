@@ -138,12 +138,11 @@ unsafe fn remap_pic() {
     // 主从两片, 每条命令后插 `io_wait` 满足芯片间隔; 主偏移 0x20 / 从 0x28 与
     // `IRQ_BASE = 32` 一致 (IRQ0-7→vec32-39, IRQ8-15→vec40-47). 末尾把两片掩码
     // 置 0xFF **屏蔽全部 legacy IRQ**, 故重映射后到 `enable_irq` 逐条放开之间
-    // 不会有 IRQ 投递到尚未编程的门上. 开头读出的旧掩码 m/s 未被恢复, 由
-    // `let _ = (m, s)` 显式丢弃. 唯一调用点是 `IdtManager::init` 的启动期块,
-    // 在门编程与 `load_idt` 之前.
+    // 不会有 IRQ 投递到尚未编程的门上. 本函数**不读旧掩码**: 末尾的 0xFF 是全量
+    // 覆盖写, 旧值没有任何消费点; `enable_irq` / `disable_irq` 各自先读当前掩码
+    // 再改单 bit, 因此基线由本函数的 0xFF 给出正是预期语义. 唯一调用点是
+    // `IdtManager::init` 的启动期块, 在门编程与 `load_idt` 之前.
     unsafe {
-        let m = port_inb(0x21);
-        let s = port_inb(0xA1);
         port_outb(0x20, 0x11);
         io_wait();
         port_outb(0xA0, 0x11);
@@ -162,7 +161,6 @@ unsafe fn remap_pic() {
         io_wait();
         port_outb(0x21, 0xFF);
         port_outb(0xA1, 0xFF);
-        let _ = (m, s);
     }
 }
 

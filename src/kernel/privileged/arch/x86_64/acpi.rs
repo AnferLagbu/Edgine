@@ -863,6 +863,89 @@ pub fn acpi_shutdown() -> ! {
     }
 }
 
+/// FADT 复位寄存器的执行目标 (由 GAS 解码得到).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResetTarget {
+    /// I/O 端口空间 (`AddressSpace == 1`), 端口号取 GAS 地址的低 16 位.
+    IoPort {
+        /// 16 位 I/O 端口号.
+        port: u16,
+        /// 写入值 (FADT `RESET_VALUE`, 单字节).
+        value: u8,
+    },
+    /// 系统内存空间 (`AddressSpace == 0`), 地址与访问宽度均取自 GAS.
+    Mmio {
+        /// 复位寄存器物理地址 (完整 64 位).
+        addr: u64,
+        /// 访问宽度 (1/2/4/8 字节).
+        width: u8,
+        /// 写入值 (FADT `RESET_VALUE`, 按目标宽度零扩展).
+        value: u8,
+    },
+    /// 该 GAS 不可安全执行; 携带显式原因供调用方记录并回退.
+    Unsupported(&'static str),
+}
+
+/// 解码 FADT 复位寄存器 GAS.
+///
+/// GAS 布局: `AddressSpace`@0, `RegisterBitWidth`@1, `RegisterBitOffset`@2,
+/// `AccessSize`@3, `Address`@4..12 (小端 64 位).
+///
+/// 系统内存分支的判据 (任一不符即 `Unsupported`, 不产生任何写):
+/// - 地址非 0 且在直射区 `[0, DIRECT_MAP_LIMIT)` 内 (窗外未映射, 写了即缺页);
+/// - `RegisterBitOffset == 0` (复位寄存器不支持位域);
+/// - `AccessSize ∈ {1,2,3,4}` (未定义值拒绝);
+/// - `RegisterBitWidth` 为 0 (未指定) 或等于 `AccessSize * 8`;
+/// - 地址按访问宽度自然对齐.
+///
+/// I/O 端口分支要求地址能完整放进 16 位端口空间 (否则截断会写到错误端口);
+/// 写宽度沿用 `outb` 的单字节语义.
+#[must_use]
+fn decode_reset_register(gas: [u8; 12], value: u8) -> ResetTarget {
+    let space = gas[0];
+    let bit_width = gas[1];
+    let bit_offset = gas[2];
+    let access_size = gas[3];
+    let addr = u64::from_le_bytes([
+        gas[4], gas[5], gas[6], gas[7], gas[8], gas[9], gas[10], gas[11],
+    ]);
+
+    match space {
+        1 => match u16::try_from(addr) {
+            Ok(port) => ResetTarget::IoPort { port, value },
+            Err(_) => ResetTarget::Unsupported("I/O 端口地址超出 16 位"),
+        },
+        0 => {
+            if addr == 0 {
+                return ResetTarget::Unsupported("复位寄存器地址为 0");
+            }
+            if addr >= crate::privileged::mm::DIRECT_MAP_LIMIT {
+                return ResetTarget::Unsupported("复位寄存器地址在直射区外");
+            }
+            if bit_offset != 0 {
+                return ResetTarget::Unsupported("复位寄存器位偏移非 0");
+            }
+            let width = match access_size {
+                1 => 1u8,
+                2 => 2,
+                3 => 4,
+                4 => 8,
+                _ => return ResetTarget::Unsupported("复位寄存器 AccessSize 未定义"),
+            };
+            if bit_width != 0 && u16::from(bit_width) != u16::from(width) * 8 {
+                return ResetTarget::Unsupported(
+                    "复位寄存器 RegisterBitWidth 与 AccessSize 不一致",
+                );
+            }
+            if !addr.is_multiple_of(u64::from(width)) {
+                return ResetTarget::Unsupported("复位寄存器地址未按访问宽度对齐");
+            }
+            ResetTarget::Mmio { addr, width, value }
+        }
+        _ => ResetTarget::Unsupported("复位寄存器地址空间非 I/O 或内存"),
+    }
+}
+
 /// ACPI 重启
 pub fn acpi_reboot() -> ! {
     if FADT_FOUND.load(Ordering::Acquire) {
@@ -874,43 +957,36 @@ pub fn acpi_reboot() -> ! {
             // SAFETY: `fadt_ptr` 指向长度 ≥ FADT_RESET_MIN_LEN 的 ACPI 表; 只读访问
             let fadt = unsafe { &*(fadt_ptr as *const Fadt) };
 
-            let reset_reg_space = fadt.reset_reg[0];
-            let reset_reg_addr = u32::from_le_bytes([
-                fadt.reset_reg[4],
-                fadt.reset_reg[5],
-                fadt.reset_reg[6],
-                fadt.reset_reg[7],
-            ]);
+            // `Fadt` 是 `repr(C, packed)`, 逐字段按值拷出 (不构造打包字段引用).
+            let reset_reg = fadt.reset_reg;
             let reset_val = fadt.reset_value;
 
-            if reset_reg_space == 1 {
-                // I/O 端口空间
-
-                crate::arch!(outb(
-                    crate::privileged::glue::low_u16_from_u32(reset_reg_addr),
-                    reset_val
-                ));
-            }
-            // 方式2: MMIO 空间 (reset_reg_space == 0)
-            else if reset_reg_space == 0 && reset_reg_addr != 0 {
-                // SAFETY: `reset_reg_addr` 取自 FADT 的 GAS (Generic Address Structure)
-                // 字节 [4..8], 即复位寄存器 64 位地址的**低 32 位**; space == 0 表示
-                // SystemMemory (MMIO), 与上方 == 1 的 I/O 端口分支互斥, != 0 排除空地址.
-                // 地址来源链: `parse_all_tables` 遍历 RSDT/XSDT → 签名 "FACP" 且长度
-                // ≥ FADT_MIN_LEN → `parse_fadt` 存表物理地址与 header.length 到
-                // FADT_ADDR / FADT_LEN; 上方 `fadt_len >= FADT_RESET_MIN_LEN` (= 129,
-                // 覆盖 reset_reg + reset_value) 才读这两个字段, 故字段读不越表界.
-                // 本内核 ACPI 面不做 ioremap: 物理地址直接当 VA 用, 依赖 boot 期低半区
-                // 恒等映射 (低 4 GiB; kview 只保留 [0, ceil(kernel_end/2MiB)), 见
-                // `mm::user_va_lower_bound` 文档). 该 MMIO 地址是否落在此窗口内**本函数
-                // 不校验**, 由固件给出的 FADT 与平台映射保证; 窗口外即缺页而非复位.
-                // 写形态: 单字节 `*mut u8` 整写, 无读-改-写, u8 对齐恒为 1; volatile 必需
-                // —— 该写是设备侧复位触发, 编译器不得优化掉或重排. 写后不判定是否真复位,
-                // 未复位则落到下方键盘控制器 (0x64 / 0xFE) 回退路径.
-                // 已知局限 (登记不处置): ①GAS 高 32 位被丢弃, 4 GiB 以上的复位寄存器会
-                // 写错地址; ②不消费 GAS 的 RegisterBitWidth / AccessSize, 恒按字节写.
-                unsafe {
-                    core::ptr::write_volatile(reset_reg_addr as *mut u8, reset_val);
+            match decode_reset_register(reset_reg, reset_val) {
+                ResetTarget::IoPort { port, value } => {
+                    crate::arch!(outb(port, value));
+                }
+                ResetTarget::Mmio { addr, width, value } => {
+                    // 直射区地址: `phys_to_virt` 给唯一内核别名, 与当前 CR3
+                    // (KERNEL_PML4 / kview) 无关, 不依赖低半区恒等窗是否被用户映射
+                    // 覆盖. `decode_reset_register` 已保证 addr 非 0、在
+                    // `[0, DIRECT_MAP_LIMIT)` 内且按 width 自然对齐.
+                    let va = crate::privileged::mm::phys_to_virt(addr);
+                    // SAFETY: 类别「MMIO 复位寄存器写」. 地址取自 FADT GAS 的完整
+                    // 64 位字段并经直射区/对齐/宽度校验 (见 decode_reset_register);
+                    // 写是设备侧复位触发, 必须 volatile 且不得重排. 无读-改-写,
+                    // 不构造引用. `RESET_VALUE` 是单字节, 按目标宽度零扩展写入
+                    // (ACPI 只定义值, 未定义高位语义).
+                    unsafe {
+                        match width {
+                            1 => core::ptr::write_volatile(va as *mut u8, value),
+                            2 => core::ptr::write_volatile(va as *mut u16, u16::from(value)),
+                            4 => core::ptr::write_volatile(va as *mut u32, u32::from(value)),
+                            _ => core::ptr::write_volatile(va as *mut u64, u64::from(value)),
+                        }
+                    }
+                }
+                ResetTarget::Unsupported(reason) => {
+                    crate::klog_kern_warn!("[ACPI] reset register unsupported: {}", reason);
                 }
             }
         }
@@ -1296,6 +1372,131 @@ mod tests {
         assert_eq!(FADT_MIN_LEN, 116);
         assert_eq!(FADT_RESET_MIN_LEN, 129);
         assert!(FADT_RESET_MIN_LEN <= core::mem::size_of::<Fadt>());
+    }
+
+    /// 拼装 12 字节 GAS.
+    fn reset_gas(space: u8, bit_width: u8, bit_offset: u8, access_size: u8, addr: u64) -> [u8; 12] {
+        let mut gas = [0u8; 12];
+        gas[0] = space;
+        gas[1] = bit_width;
+        gas[2] = bit_offset;
+        gas[3] = access_size;
+        gas[4..12].copy_from_slice(&addr.to_le_bytes());
+        gas
+    }
+
+    #[test]
+    fn reset_gas_mmio_byte_is_decoded_with_full_address() {
+        let gas = reset_gas(0, 8, 0, 1, 0xFED0_0000);
+        assert_eq!(
+            decode_reset_register(gas, 0x06),
+            ResetTarget::Mmio {
+                addr: 0xFED0_0000,
+                width: 1,
+                value: 0x06
+            }
+        );
+    }
+
+    #[test]
+    fn reset_gas_uses_full_64_bit_address_not_low_32() {
+        // 旧实现只取 GAS 地址的低 32 位, 会把 0x1_0000_1234 写成 0x1234.
+        // 现须按完整 64 位判直射区并显式拒绝.
+        let gas = reset_gas(0, 8, 0, 1, 0x1_0000_1234);
+        assert_eq!(
+            decode_reset_register(gas, 0x06),
+            ResetTarget::Unsupported("复位寄存器地址在直射区外")
+        );
+    }
+
+    #[test]
+    fn reset_gas_direct_map_boundary_is_exclusive() {
+        let at_limit = reset_gas(0, 8, 0, 1, crate::privileged::mm::DIRECT_MAP_LIMIT);
+        assert_eq!(
+            decode_reset_register(at_limit, 0x06),
+            ResetTarget::Unsupported("复位寄存器地址在直射区外")
+        );
+        let last = crate::privileged::mm::DIRECT_MAP_LIMIT - 1;
+        let inside = reset_gas(0, 8, 0, 1, last);
+        assert_eq!(
+            decode_reset_register(inside, 0x06),
+            ResetTarget::Mmio {
+                addr: last,
+                width: 1,
+                value: 0x06
+            }
+        );
+    }
+
+    #[test]
+    fn reset_gas_honours_access_size() {
+        // AccessSize=3(DWord)/4(QWord) 映射到 4/8 字节写; BitWidth=0 视为未指定.
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 0, 0, 3, 0x1000), 1),
+            ResetTarget::Mmio {
+                addr: 0x1000,
+                width: 4,
+                value: 1
+            }
+        );
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 64, 0, 4, 0x2000), 1),
+            ResetTarget::Mmio {
+                addr: 0x2000,
+                width: 8,
+                value: 1
+            }
+        );
+    }
+
+    #[test]
+    fn reset_gas_rejects_inconsistent_or_unsafe_mmio() {
+        // BitWidth 与 AccessSize 不一致
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 8, 0, 3, 0x1000), 1),
+            ResetTarget::Unsupported("复位寄存器 RegisterBitWidth 与 AccessSize 不一致")
+        );
+        // 位偏移非 0
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 8, 4, 1, 0x1000), 1),
+            ResetTarget::Unsupported("复位寄存器位偏移非 0")
+        );
+        // AccessSize 未定义
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 0, 0, 0, 0x1000), 1),
+            ResetTarget::Unsupported("复位寄存器 AccessSize 未定义")
+        );
+        // 地址 0
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 8, 0, 1, 0), 1),
+            ResetTarget::Unsupported("复位寄存器地址为 0")
+        );
+        // 未按访问宽度对齐 (Word 写到奇地址)
+        assert_eq!(
+            decode_reset_register(reset_gas(0, 16, 0, 2, 0x1001), 1),
+            ResetTarget::Unsupported("复位寄存器地址未按访问宽度对齐")
+        );
+        // 非 I/O 非内存地址空间
+        assert_eq!(
+            decode_reset_register(reset_gas(2, 8, 0, 1, 0x1000), 1),
+            ResetTarget::Unsupported("复位寄存器地址空间非 I/O 或内存")
+        );
+    }
+
+    #[test]
+    fn reset_gas_io_port_requires_16_bit_address() {
+        assert_eq!(
+            decode_reset_register(reset_gas(1, 8, 0, 1, 0xCF9), 0x06),
+            ResetTarget::IoPort {
+                port: 0xCF9,
+                value: 0x06
+            }
+        );
+        // 高 32 位非零的地址不能被截断成另一个端口.
+        assert_eq!(
+            decode_reset_register(reset_gas(1, 8, 0, 1, 0x1_0000_CF9), 0x06),
+            ResetTarget::Unsupported("I/O 端口地址超出 16 位")
+        );
     }
 
     #[test]

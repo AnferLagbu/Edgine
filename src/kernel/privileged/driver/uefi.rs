@@ -51,6 +51,8 @@ const ST_OFF_BOOT_SERVICES: u64 = 0x60;
 const ST_OFF_NUM_TABLE_ENTRIES: u64 = 0x68;
 /// `ConfigurationTable` (`EFI_CONFIGURATION_TABLE`*) 偏移 (0x70)
 const ST_OFF_CONFIG_TABLE: u64 = 0x70;
+/// 本模块只读到的系统表最小长度 (覆盖 `ConfigurationTable` 指针 8 字节).
+const SYSTEM_TABLE_MIN_LEN: u64 = ST_OFF_CONFIG_TABLE + 8;
 
 // ============================================================================
 // 常量
@@ -409,58 +411,92 @@ impl UefiSubsystem {
 
     // === unsafe 依据单源 (EFI_SYSTEM_TABLE 只读解析) ===
     //
-    // 类别「系统表定长字段」: 下列 read_volatile 只读 addr + 固定偏移处的定长字段,
+    // 类别「系统表定长字段」: 下列 read_volatile 只读 va + 固定偏移处的定长字段,
     // 不跟随任何取出的指针 (runtime/boot/config/vendor 只记录地址值). 依据:
+    // - 地址门 (`parse_system_table`): 非 0 / 8 字节对齐 / 完整区间落在直射区
+    //   `[0, DIRECT_MAP_LIMIT)` / `[addr, addr+SYSTEM_TABLE_MIN_LEN)` 落在 PMM
+    //   早期固件预留区内; 任一不符即 fail-closed (`has_uefi=false` + warn), 不读.
     // - 签名门: 先读 ST_OFF_SIGNATURE(0x00) 比对 EFI_SYSTEM_TABLE_SIGNATURE
-    //   (0x5453_5953_2049_4249), 不符即 has_uefi=false 并返回 (fail-closed),
-    //   故后续字段读取只在签名已匹配的表上进行;
-    // - 对齐: 偏移 0x00/0x18/0x58/0x60/0x68/0x70 均为 8 的倍数, 0x20 为 4 的倍数,
-    //   故 u64 读要求 addr 本身 8 字节对齐、u32 读要求 4 字节对齐 (UEFI 规范保证
-    //   系统表按其自然对齐放置);
-    // - volatile: 字段位于固件保留内存, 用 read_volatile 防止编译器合并/重排读取.
-    // 已知局限 (登记不改): addr 的映射存在性、对齐与固件保留区归属均未在本函数校验;
-    // 形参文档称物理内存而指针直接当虚拟地址用. 当前唯一调用方 (lib.rs 的
-    // boot_deferred_init) 传 0, 故 addr==0 早退, 下列读取全不可达.
+    //   (0x5453_5953_2049_4249), 不符即 has_uefi=false 并返回 (fail-closed).
+    // - 对齐: 偏移 0x00/0x18/0x58/0x60/0x68/0x70 均为 8 的倍数, 0x20 为 4 的
+    //   倍数; 地址门已要求 va 8 字节对齐.
+    // - volatile: 字段位于固件保留内存, 用 read_volatile 防止编译器合并/重排.
+    // PA/VA 口径: 对外 `system_table_addr` 是**物理地址**; 本函数先经
+    // `phys_to_virt` 转成内核直射别名再读, 不再把物理地址直接当 VA.
 
-    /// 解析 `EFI_SYSTEM_TABLE` — 验证签名 + 提取运行时/引导服务与配置表入口。
+    /// 解析 `EFI_SYSTEM_TABLE` — 校验地址 + 验证签名 + 提取运行时/引导服务与配置表入口。
     ///
     /// 仅做**只读解析与记录**, 不调用任何 UEFI 运行时服务 (调用需固件仍处
-    /// `BootServices` 生命周期且内存 1:1 映射). 签名不匹配视为非 EFI 系统表,
+    /// `BootServices` 生命周期且内存 1:1 映射). 地址校验或签名不匹配均视为不可用,
     /// fail-closed: `has_uefi` 置 false, 提取字段保持 0.
     fn parse_system_table(&self, addr: u64) {
         if addr == 0 {
             return;
         }
-        // SAFETY: `addr` 由引导加载器经 `uefi_init` 传入, 指向固件保留的
-        // EFI_SYSTEM_TABLE 物理内存 (或 0); 仅读取定长字段, 不触碰指针目标.
-        let signature =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_SIGNATURE) as *const u64) };
+        if let Err(reason) = Self::system_table_addr_problem(addr) {
+            crate::klog_ffi!(klog_ffi_warn, "[UEFI] system table rejected: {}", reason);
+            self.has_uefi.store(false, Ordering::Release);
+            return;
+        }
+        if !firmware_region_contains(addr, SYSTEM_TABLE_MIN_LEN) {
+            crate::klog_ffi!(
+                klog_ffi_warn,
+                "[UEFI] system table at {:#x} is not covered by a firmware-reserved region",
+                addr
+            );
+            self.has_uefi.store(false, Ordering::Release);
+            return;
+        }
+        self.read_system_table_fields(crate::privileged::mm::phys_to_virt(addr));
+    }
+
+    /// 系统表物理地址的纯判据 (非 0 / 8 字节对齐 / 完整落在直射区).
+    fn system_table_addr_problem(addr: u64) -> Result<(), &'static str> {
+        if addr == 0 {
+            return Err("UEFI: 系统表地址为 0");
+        }
+        if !addr.is_multiple_of(8) {
+            return Err("UEFI: 系统表地址未按 8 字节对齐");
+        }
+        if addr >= crate::privileged::mm::DIRECT_MAP_LIMIT {
+            return Err("UEFI: 系统表地址在直射区外");
+        }
+        match addr.checked_add(SYSTEM_TABLE_MIN_LEN) {
+            Some(end) if end <= crate::privileged::mm::DIRECT_MAP_LIMIT => Ok(()),
+            _ => Err("UEFI: 系统表区间超出直射区"),
+        }
+    }
+
+    /// 从已映射的内核虚拟地址 `va` 读取系统表定长字段 (调用方已完成地址门).
+    fn read_system_table_fields(&self, va: u64) {
+        // SAFETY: 调用方已证明 `[va, va+SYSTEM_TABLE_MIN_LEN)` 是直射区内的固件
+        // 预留内存; 只读定长字段, 不触碰指针目标.
+        let signature = unsafe { core::ptr::read_volatile((va + ST_OFF_SIGNATURE) as *const u64) };
         if signature != EFI_SYSTEM_TABLE_SIGNATURE {
             self.has_uefi.store(false, Ordering::Release);
             return;
         }
         // SAFETY: 同上 — 已通过签名校验, 系统表结构有效, 读取定长字段.
         let runtime =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_RUNTIME_SERVICES) as *const u64) };
+            unsafe { core::ptr::read_volatile((va + ST_OFF_RUNTIME_SERVICES) as *const u64) };
         // SAFETY: 类别「系统表定长字段」(见本节单源). 本处读 ST_OFF_BOOT_SERVICES(0x60)
         // 的 u64 引导服务表指针值, 只记录不解引用.
-        let boot = unsafe { core::ptr::read_volatile((addr + ST_OFF_BOOT_SERVICES) as *const u64) };
+        let boot = unsafe { core::ptr::read_volatile((va + ST_OFF_BOOT_SERVICES) as *const u64) };
         // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_NUM_TABLE_ENTRIES(0x68) 的 u64
         // 配置表条目数, 落原子量前按 u32::MAX 截断.
         let entries =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_NUM_TABLE_ENTRIES) as *const u64) };
+            unsafe { core::ptr::read_volatile((va + ST_OFF_NUM_TABLE_ENTRIES) as *const u64) };
         // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_CONFIG_TABLE(0x70) 的 u64
         // 配置表数组地址值, 只记录不解引用.
-        let config =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_CONFIG_TABLE) as *const u64) };
+        let config = unsafe { core::ptr::read_volatile((va + ST_OFF_CONFIG_TABLE) as *const u64) };
         // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_FIRMWARE_VENDOR(0x18) 的 u64
         // 厂商字符串指针值, 只记录不解引用.
         let vendor =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_VENDOR) as *const u64) };
+            unsafe { core::ptr::read_volatile((va + ST_OFF_FIRMWARE_VENDOR) as *const u64) };
         // SAFETY: 类别「系统表定长字段」. 本处读 ST_OFF_FIRMWARE_REVISION(0x20) 的
         // u32 版本号 (该字段宽 4 字节, 故读 u32 而非 u64).
         let fw_rev =
-            unsafe { core::ptr::read_volatile((addr + ST_OFF_FIRMWARE_REVISION) as *const u32) };
+            unsafe { core::ptr::read_volatile((va + ST_OFF_FIRMWARE_REVISION) as *const u32) };
 
         self.runtime_services_addr.store(runtime, Ordering::Release);
         self.boot_services_addr.store(boot, Ordering::Release);
@@ -714,6 +750,36 @@ pub extern "C" fn sys_uefi(cmd: u64, a1: u64, a2: u64) -> i64 {
     }
 }
 
+/// 判断 `[addr, addr+len)` 是否完整被 `[base, base+size)` 覆盖.
+fn region_covers(base: u64, size: u64, addr: u64, len: u64) -> bool {
+    let Some(region_end) = base.checked_add(size) else {
+        return false;
+    };
+    let Some(end) = addr.checked_add(len) else {
+        return false;
+    };
+    addr >= base && end <= region_end
+}
+
+/// `[addr, addr+len)` 是否落在 PMM 早期登记的某条固件预留区内.
+///
+/// 调用时机: `uefi_init` 由 `boot_deferred_init` 在 PMM 初始化之后调用; 早期预留
+/// 表在 `init_bitmap` 消费后仍保留, 故此处可读. 区归属用于证明该物理区间来自
+/// 固件 (非可用 RAM), 避免把普通内存误当系统表解析.
+fn firmware_region_contains(addr: u64, len: u64) -> bool {
+    let pmm = crate::privileged::mm::pmm::get_pmm();
+    let count = pmm.early_region_count();
+    let mut i = 0;
+    while i < count {
+        let region = pmm.early_region(i);
+        if region_covers(region.base, region.size, addr, len) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,11 +798,15 @@ mod tests {
     }
 
     /// 有效签名: 解析并提取全部字段, `has_uefi` 置 true。
+    ///
+    /// 地址门 (对齐 / 直射区 / 固件预留区) 依赖真实 PMM, host 单测不构造; 故直接
+    /// 调用字段读取层 `read_system_table_fields`, 地址门另由纯判据用例覆盖.
     #[test]
     fn parse_valid_table_sets_firmware_and_fields() {
         let table = valid_table();
         let sub = UefiSubsystem::new();
-        sub.init(table.as_ptr() as u64);
+        sub.has_uefi.store(true, Ordering::Release);
+        sub.read_system_table_fields(table.as_ptr() as u64);
         assert!(sub.has_uefi(), "有效签名应置 has_uefi");
         assert_eq!(
             sub.runtime_services_addr.load(Ordering::Acquire),
@@ -758,9 +828,42 @@ mod tests {
         let mut table = valid_table();
         table[0] ^= 0xFF; // 破坏签名
         let sub = UefiSubsystem::new();
-        sub.init(table.as_ptr() as u64);
+        sub.has_uefi.store(true, Ordering::Release);
+        sub.read_system_table_fields(table.as_ptr() as u64);
         assert!(!sub.has_uefi(), "签名不匹配应 fail-closed");
         assert_eq!(sub.runtime_services_addr.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn system_table_addr_requires_alignment_and_direct_map() {
+        assert_eq!(
+            UefiSubsystem::system_table_addr_problem(0),
+            Err("UEFI: 系统表地址为 0")
+        );
+        assert_eq!(
+            UefiSubsystem::system_table_addr_problem(0x1001),
+            Err("UEFI: 系统表地址未按 8 字节对齐")
+        );
+        assert_eq!(
+            UefiSubsystem::system_table_addr_problem(crate::privileged::mm::DIRECT_MAP_LIMIT),
+            Err("UEFI: 系统表地址在直射区外")
+        );
+        // 末 8 字节虽在直射区内, 但 +SYSTEM_TABLE_MIN_LEN 越界.
+        assert_eq!(
+            UefiSubsystem::system_table_addr_problem(crate::privileged::mm::DIRECT_MAP_LIMIT - 8),
+            Err("UEFI: 系统表区间超出直射区")
+        );
+        assert_eq!(UefiSubsystem::system_table_addr_problem(0x1000), Ok(()));
+    }
+
+    #[test]
+    fn region_covers_checks_full_containment_without_wrap() {
+        assert!(region_covers(0x1000, 0x1000, 0x1000, 0x1000));
+        assert!(region_covers(0x1000, 0x1000, 0x1800, 0x800));
+        assert!(!region_covers(0x1000, 0x1000, 0x0F00, 0x100));
+        assert!(!region_covers(0x1000, 0x1000, 0x1800, 0x801));
+        assert!(!region_covers(u64::MAX, 2, 0, 0));
+        assert!(!region_covers(0, 0x1000, u64::MAX - 1, 4));
     }
 
     /// `from_unix_ns`/`to_unix_ns` 往返恒等 (日期换算双向一致)。

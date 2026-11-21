@@ -470,94 +470,123 @@ fn parse_multiboot2(ptr: *const u8) -> (u64, usize, (u64, u64), FirmwareRegions)
             break;
         }
 
+        // 完整 tag 边界校验: MB2 标签头固定 8 字节, 故 tag_size < 8 无意义;
+        // tag_size 还必须让整个标签落在信息块 [0, end) 内. 二者任一不成立即
+        // 停止解析 (fail-closed), 不按 tag_size 去推算越界载荷.
+        if tag_size < 8 {
+            break;
+        }
+        let Some(tag_end) = offset.checked_add(tag_size as usize) else {
+            break;
+        };
+        if tag_end > end {
+            break;
+        }
+
         match tag_type {
             3 => {
                 // tag 3 = 引导模块 (每模块一条); 取首模块 (initrd) 物理区间.
-                // SAFETY: tag_ptr 指向 MB2 标签表内有效 tag; +8/+12 (mod_start/mod_end,
-                // 32 位) 为该 tag 载荷, 标签表在启动期只读.
-                let mod_start = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
-                // SAFETY: MB2 tag 3 (引导模块) 的载荷布局 = mod_start@+8 / mod_end@+12
-                // (均 32 位物理地址, mod_end 是**开区间上界**), +16 起为 NUL 结尾的
-                // 命令行字符串. 本行只读 +12 处的 u32, 经裸指针 `read_unaligned` 取值
-                // 而不构造引用 ⇒ 无别名面, 也不对载荷作对齐假设.
-                // 越界防护的真实边界: 循环条件 `offset + 8 <= end` 只证明 8 字节标签头
-                // 在信息块内, **本函数不校验 `tag_size >= 16`** —— 载荷 +12..+16 的合法性
-                // 由「引导器交付格式正确的 MB2 表」这一外部契约承担; 截断的 tag 3 会读到
-                // 下一标签的字节 (已知局限, 登记不处置).
-                // 取值语义: `mod_end.saturating_sub(mod_start)` 使倒置/空区间得 0 而被
-                // 跳过, `mod_start != 0` 排除空指针, `initrd.is_none()` 只取首模块
-                // (initrd 约定为第一个 boot module). 结果作为物理区间交给 BootInfo;
-                // D4-h 早期搬移后消费者须经 `initrd_blob()` 取当前有效区.
-                let mod_end = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
-                let sz = mod_end.saturating_sub(mod_start);
-                if initrd.is_none() && sz > 0 && mod_start != 0 {
-                    initrd = Some((u64::from(mod_start), u64::from(sz)));
+                // 载荷 mod_start@+8 / mod_end@+12 需要 tag_size >= 16.
+                if tag_size >= 16 {
+                    // SAFETY: `tag_end <= end` 与 `tag_size >= 16` 已校验, 故 +8/+12
+                    // (32 位) 落在本标签且在本信息块内; 标签表在启动期只读.
+                    let mod_start = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
+                    // SAFETY: MB2 tag 3 (引导模块) 的载荷布局 = mod_start@+8 /
+                    // mod_end@+12 (均 32 位物理地址, mod_end 是**开区间上界**), +16
+                    // 起为 NUL 结尾的命令行字符串. 本行只读 +12 处的 u32, 经裸指针
+                    // `read_unaligned` 取值而不构造引用 ⇒ 无别名面, 也不对载荷作
+                    // 对齐假设.
+                    // 越界防护: 循环头 + 上方 tag_size>=8 / tag_end<=end 与本节
+                    // tag_size>=16 联合证明 +12..+16 在本标签且在本信息块内.
+                    // 取值语义: `mod_end.saturating_sub(mod_start)` 使倒置/空区间得 0
+                    // 而被跳过, `mod_start != 0` 排除空指针, `initrd.is_none()` 只取
+                    // 首模块 (initrd 约定为第一个 boot module). 结果作为物理区间交给
+                    // BootInfo; D4-h 早期搬移后消费者须经 `initrd_blob()` 取当前有效区.
+                    let mod_end = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
+                    let sz = mod_end.saturating_sub(mod_start);
+                    if initrd.is_none() && sz > 0 && mod_start != 0 {
+                        initrd = Some((u64::from(mod_start), u64::from(sz)));
+                    }
                 }
             }
             4 => {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                let basic_ptr = unsafe { tag_ptr.add(8) };
-                // SAFETY: `basic_ptr` 由调用方保证指向有效 u32; 只读借用
-                let _mem_lower = unsafe { basic_ptr.cast::<u32>().read_unaligned() };
-                // SAFETY: 指针由调用方保证有效, 偏移 1 不越界
-                let mem_upper = unsafe { basic_ptr.add(4).cast::<u32>().read_unaligned() };
-                basic_mem_size = Some((u64::from(mem_upper) + 1024) * 1024);
+                // 基本内存信息载荷 = mem_lower@+8 / mem_upper@+12, 需要 tag_size >= 16.
+                if tag_size >= 16 {
+                    // SAFETY: tag_end <= end 与 tag_size >= 16 联合保证 +8..+16 在本标签内.
+                    let basic_ptr = unsafe { tag_ptr.add(8) };
+                    // SAFETY: `basic_ptr` 指向标签内有效 u32; 只读借用
+                    let _mem_lower = unsafe { basic_ptr.cast::<u32>().read_unaligned() };
+                    // SAFETY: 同上, 偏移 4 仍在本标签内
+                    let mem_upper = unsafe { basic_ptr.add(4).cast::<u32>().read_unaligned() };
+                    basic_mem_size = Some((u64::from(mem_upper) + 1024) * 1024);
+                }
             }
             6 => {
-                // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let entry_size = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
-                // SAFETY: `const` 由调用方保证为有效指针; 只读访问
-                let _entry_version = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                let entries_start = unsafe { tag_ptr.add(16) };
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                let entries_end = unsafe { tag_ptr.add(tag_size as usize) };
-                let mut max_addr: u64 = 0;
+                // 内存图载荷 = entry_size@+8 / entry_version@+12; 条目自 +16 起.
+                // 需要 tag_size >= 16 且 entry_size >= 24 (base 8 + len 8 + type 4 +
+                // reserved 4); entry_size < 24 无法容纳一条完整条目, 且 entry_size == 0
+                // 会让条目循环永不前进 (挂死), 故整体跳过该标签.
+                let tag_len = tag_size as usize;
+                if tag_len >= 16 {
+                    // SAFETY: tag_size >= 16 且 tag_end <= end, 故 +8/+12 在本标签内.
+                    let entry_size = unsafe { tag_ptr.add(8).cast::<u32>().read_unaligned() };
+                    // SAFETY: 同上, +12 处为 entry_version.
+                    let _entry_version = unsafe { tag_ptr.add(12).cast::<u32>().read_unaligned() };
+                    let entry_size = entry_size as usize;
+                    if entry_size >= 24 {
+                        let mut max_addr: u64 = 0;
+                        // 以标签内偏移推进, 不用裸指针比较: 条目边界只依赖 tag_len,
+                        // 每次读取前都有 `off + entry_size <= tag_len` 作界.
+                        let mut off = 16usize;
+                        while off + entry_size <= tag_len {
+                            // SAFETY: off + entry_size <= tag_len <= tag_end - offset,
+                            // 故 pos 至 pos+23 全在本标签内; 只读且不构造引用.
+                            let pos = unsafe { tag_ptr.add(off) };
+                            // SAFETY: 条目布局 base@+0..8 / len@+8..16 / type@+16..20,
+                            // 均由 entry_size >= 24 覆盖.
+                            let (base, len, mtype) = unsafe {
+                                let b_lo = pos.cast::<u32>().read_unaligned();
+                                let b_hi = pos.add(4).cast::<u32>().read_unaligned();
+                                let l_lo = pos.add(8).cast::<u32>().read_unaligned();
+                                let l_hi = pos.add(12).cast::<u32>().read_unaligned();
+                                let ty = pos.add(16).cast::<u32>().read_unaligned();
+                                (
+                                    (u64::from(b_hi) << 32) | u64::from(b_lo),
+                                    (u64::from(l_hi) << 32) | u64::from(l_lo),
+                                    ty,
+                                )
+                            };
 
-                let mut pos = entries_start;
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                while unsafe { pos.add(entry_size as usize) <= entries_end } {
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    let base = unsafe {
-                        let lo = pos.cast::<u32>().read_unaligned();
-                        let hi = pos.add(4).cast::<u32>().read_unaligned();
-                        (u64::from(hi) << 32) | u64::from(lo)
-                    };
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    let len = unsafe {
-                        let lo = pos.add(8).cast::<u32>().read_unaligned();
-                        let hi = pos.add(12).cast::<u32>().read_unaligned();
-                        (u64::from(hi) << 32) | u64::from(lo)
-                    };
-                    // SAFETY: 指针由调用方保证有效, 偏移 4 不越界
-                    let mtype = unsafe { pos.add(16).cast::<u32>().read_unaligned() };
-
-                    if mtype == 1 {
-                        let end_addr = base + len;
-                        if end_addr > max_addr {
-                            max_addr = end_addr;
+                            if mtype == 1 {
+                                let end_addr = base + len;
+                                if end_addr > max_addr {
+                                    max_addr = end_addr;
+                                }
+                            } else {
+                                // D4-i 乙: 非可用项一律登记为 firmware 保留区. PMM 把
+                                // [0, mem_size) 当平坦 RAM, 不登记就会把 ACPI 表 / EFI
+                                // runtime / MMIO 洞当空闲页分配出去 (与 Linux 按 e820/EFI
+                                // 图逐项 reserve 同构). 区位置由 firmware 钉死, 故只预留不搬移.
+                                firmware.push(base, len);
+                            }
+                            mmap_entries += 1;
+                            off += entry_size;
                         }
-                    } else {
-                        // D4-i 乙: 非可用项一律登记为 firmware 保留区. PMM 把
-                        // [0, mem_size) 当平坦 RAM, 不登记就会把 ACPI 表 / EFI
-                        // runtime / MMIO 洞当空闲页分配出去 (与 Linux 按 e820/EFI
-                        // 图逐项 reserve 同构). 区位置由 firmware 钉死, 故只预留不搬移.
-                        firmware.push(base, len);
-                    }
-                    mmap_entries += 1;
-                    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-                    pos = unsafe { pos.add(entry_size as usize) };
-                }
 
-                if max_addr > 0 {
-                    map_mem_size = Some(max_addr);
+                        if max_addr > 0 {
+                            map_mem_size = Some(max_addr);
+                        }
+                    }
                 }
             }
             8 => {
-                // SAFETY: tag_ptr 指向多引导标签表内有效的 framebuffer 标签
-                // (offset 8 起为 tag 载荷), 调用期间标签表不被释放.
-                unsafe {
-                    multiboot2_fb::parse_framebuffer_tag(tag_ptr.add(8), tag_size);
+                // framebuffer 载荷读取到自身偏移 29 (tag 内 +37), 需要 tag_size >= 38.
+                if tag_size >= 38 {
+                    // SAFETY: tag_end <= end 与 tag_size >= 38 保证载荷 0..=29 在信息块内;
+                    // 调用期间标签表不被释放.
+                    unsafe {
+                        multiboot2_fb::parse_framebuffer_tag(tag_ptr.add(8), tag_size);
+                    }
                 }
             }
             _ => {}
@@ -895,6 +924,61 @@ mod tests {
         let blob = build_mb2(&[tag6(&MAP_512MB)]);
         let (_, _, _, firmware) = parse_multiboot2(blob.as_ptr());
         assert!(firmware.as_slice().is_empty());
+    }
+
+    /// 拼装一个标签头 + 载荷, **声明长度与载荷实际长度可不同** (制造畸形标签).
+    fn raw_tag(ty: u32, declared_size: u32, payload: &[u8]) -> Vec<u8> {
+        let mut t = ty.to_le_bytes().to_vec();
+        t.extend_from_slice(&declared_size.to_le_bytes());
+        t.extend_from_slice(payload);
+        t
+    }
+
+    #[test]
+    fn mb2_short_tag3_is_skipped_without_reading_payload() {
+        // 声明 size=8 的 tag 3 没有 mod_start/mod_end 载荷; 修复前会读到下一标签
+        // 的字节当作 mod_end (把 tag 4 的 mem_lower/mem_upper 误当 initrd 区间).
+        let blob = build_mb2(&[raw_tag(3, 8, &[]), tag4(UEFI_BASIC.0, UEFI_BASIC.1)]);
+        let (mem, _, initrd, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(initrd, (0, 0), "截断的 tag 3 不得被解析为 initrd");
+        assert_eq!(mem, (7168 + 1024) * 1024, "后续 tag 4 仍应正常解析");
+    }
+
+    #[test]
+    fn mb2_tag_size_beyond_info_block_stops_parsing() {
+        // 声明长度越过 total_size: 不得按该长度去推算载荷边界, 直接停止.
+        let blob = build_mb2(&[raw_tag(3, 0x1000, &[])]);
+        let (mem, entries, initrd, firmware) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, 128 * 1024 * 1024, "越界标签后按默认内存回退");
+        assert_eq!(entries, 0);
+        assert_eq!(initrd, (0, 0));
+        assert!(firmware.as_slice().is_empty());
+    }
+
+    #[test]
+    fn mb2_tag6_zero_entry_size_is_skipped() {
+        // entry_size = 0 会让条目循环永不前进 (挂死); 必须整体跳过该标签.
+        // tag 4 放在前面: 畸形标签的声明长度与其物理占位不一致, 放在末尾可避免
+        // 后续标签被 desync 读取干扰本用例的判据.
+        let malformed = raw_tag(6, 24, &0u32.to_le_bytes());
+        let blob = build_mb2(&[tag4(UEFI_BASIC.0, UEFI_BASIC.1), malformed]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(
+            mem,
+            (7168 + 1024) * 1024,
+            "畸形内存图被跳过, 保留 tag 4 读数"
+        );
+        assert_eq!(entries, 0);
+    }
+
+    #[test]
+    fn mb2_tag6_entry_not_fitting_is_ignored() {
+        // tag_size=20 容不下一条 24 字节条目: 不得读越标签的半个条目.
+        let malformed = raw_tag(6, 20, &[24u32.to_le_bytes(), 0u32.to_le_bytes()].concat());
+        let blob = build_mb2(&[tag4(UEFI_BASIC.0, UEFI_BASIC.1), malformed]);
+        let (mem, entries, _, _) = parse_multiboot2(blob.as_ptr());
+        assert_eq!(mem, (7168 + 1024) * 1024);
+        assert_eq!(entries, 0);
     }
 
     #[test]

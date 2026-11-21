@@ -337,15 +337,38 @@ asm 之后；⑦ ㊼ `elf_validate` 全程 `read_unaligned` 并按值返回 `Elf
 ### 批 R7・latent 不可达与引导面（⑰ ⑳ ㉓ ㉕ ㊱ ㊲）
 
 描述：B 组里属**不可达 / 零调用方 / 引导与中断配置**的六项。
-方案：① ⑰ `acpi_reboot` 消费 RegisterBitWidth/AccessSize 并校验地址在恒等映射窗内，
-窗外显式失败而非缺页；② ⑳ `remap_pic`（`idt/table.rs`）先裁定「删多余的旧掩码读」还是「真恢复」——
-现树 SAFETY 已显式披露丢弃且全屏蔽是刻意设计，**不得径行改行为**（§9.1 决策灰色地带须问）；
-③ ㉓ `verify_post_conditions` 改读按亲和定位的帧（与配置路径同源）；④ ㉕
-`parse_multiboot2` 补 `tag_size >= 16` 校验；⑤ ㊱ `load_segment` 明确 PA/VA 口径
-（加 `KERNEL_BASE` 或改 doc）、`dst_addr` 经 PMM 校验映射/可写、补 src/dst 重叠检查；
-⑥ ㊲ UEFI 五处系统表读补对齐/映射/固件预留校验并统一 PA/VA 口径——**当前全不可达，
-故本批只补校验与口径，不改接线**（接线属解耦册 D4-i 的后续）。
-状态：[]
+方案：用户就实现路径逐项裁定后施工——① ⑰ `acpi_reboot` 走**相对完整**：新增纯函数
+`decode_reset_register` 消费 GAS 完整 64 位地址 / `RegisterBitWidth` / `RegisterBitOffset` /
+`AccessSize`（1/2/3/4 → u8/u16/u32/u64），校验地址落在直射区 `[0, DIRECT_MAP_LIMIT)`、按宽度
+自然对齐；窗外或不一致一律 warn 后跳过 MMIO 分支、落到键盘控制器回退；MMIO 写改经
+`phys_to_virt` 直射别名（不再依赖低半区恒等窗是否被用户映射覆盖）；② ⑳ 裁定**删多余读**：
+`remap_pic` 删去开头两次 `port_inb` 与 `let _ = (m, s)`，保留末尾 0xFF 全屏蔽（`enable_irq`
+基于当前掩码逐条放开），行为不变，SAFETY 改写为「全量覆盖写、旧值无消费点」的依据；
+③ ㉓ `verify_post_conditions` 内改调 `redist_frames()` 取本核 `(rd, sgi)` 回读
+`GICR_WAKER` / `GICR_ISENABLER0`，与配置路径同源，定位失败即 `Err`，不再读启动核静态别名；
+④ ㉕ `parse_multiboot2` 走**完整 tag 边界**：每条 tag 校验 `tag_size >= 8` 且
+`offset + tag_size <= end`，tag 3/4/6 要求 `>= 16`、tag 8 要求 `>= 38`，tag 6 另要求
+`entry_size >= 24`（堵住 `entry_size = 0` 的条目循环挂死）并把条目推进改为标签内偏移比较；
+⑤ ㊱ `load_segment` 走**相对完整**：`dst_addr` 明确为物理地址并经 `phys_to_virt` 访问，
+新增 `kernel_slice_phys` 与 `validate_segment_destination` 校验页对齐 / 直射区 /
+PMM 管理范围 / 内核映像 `[0, kernel_end)` 排除 / 可判定源区间不重叠；⑥ ㊲ UEFI 五处系统表读
+走**完整校验**：`parse_system_table` 先过纯判据 `system_table_addr_problem`（非 0 / 8 字节对齐 /
+直射区）与 `firmware_region_contains`（落 PMM 早期固件预留区），再经 `phys_to_virt` 读；
+**不改接线**（唯一调用方仍传 0，接线属解耦册 D4-i 后续）。
+详情：新增 `mm::DIRECT_MAP_LIMIT`（x86_64 4 GiB / aarch64 2 GiB，与 boot 双别名映射同源）
+作为直射区上界单源；改动限于 privileged 内部私有函数与该常量。回归面：
+`acpi::tests` +6（GAS 64 位 / 直射区边界 / AccessSize / 位偏移 / 对齐 / I/O 端口 16 位）、
+`boot::tests` +4（短 tag3 / tag_size 越界 / entry_size=0 / 条目不足）、`kexec::tests` +11
+（直射别名 / 低恒等 / 非直射别名 / 零长 / 未对齐 / 直射区 / 管理范围 / 内核映像 / 源重叠 /
+回绕）、`uefi::tests` +2（地址门 / 区间覆盖）、`host-tests/tests/r7_latent_boot_shape_test.rs`
+7 条源码形状锁 + 缺口登记清零。负控制 6/6：逐项注入缺陷后对应用例转红（RC=101）、逐字节
+复原（sha256 前后一致）。
+收口读数：`./ci/build.sh all` **Passed 6 / Failed 0**（RC=0）· `bash ci/audit.sh full`
+**AUDIT-RC=0**（未执行腿数 **0**，含 QEMU 双架构、lockdep 构建面、COW、UEFI、EGFS、reboot 真重启）·
+`make test-host` **211 个测试二进制 / 1636 passed / 0 failed**（RC=0）·
+`make test-kernel-host` **12 + 811 + 608 = 1431 / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` **RUSTDOC-RC=0**（x86_64 + aarch64 两腿 exit 0）.
+状态：[X]
 
 ### 批 R8・冻结面与 asm 契约（52 56）
 

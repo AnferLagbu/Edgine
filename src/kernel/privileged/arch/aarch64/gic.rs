@@ -611,19 +611,21 @@ pub unsafe fn init() -> Result<(), &'static str> {
 /// 仅在 [`init`] 内部、全部配置写操作完成后调用;
 /// 需确保 MMU 已启用且 GIC MMIO 区域已映射。
 unsafe fn verify_post_conditions() -> Result<(), &'static str> {
-    // SAFETY: 类别 C + D + R + S. 三个 MMIO 回读 (`gicd_read` / `gicr_read_at` /
-    // `gicr_sgi_read`) 加一条 `mrs icc_igrpen1_el1`, 全是**只读**且不构造引用;
-    // 有 ACK 侧效应的是读 IAR, 本处不读 IAR. 判定交
-    // `gic_logic::verify_post_conditions` 纯函数 (host 侧逐支路实证). 回读基址取
-    // `GICR_BASE` / `GICR_SGI_BASE` 两个 static (启动核帧别名), 与配置时
-    // `redist_frames` 定位的帧是否同一由调用时序保证 —— 本函数 private, 唯一
-    // 调用点是 `init`, 在启动核执行.
+    // SAFETY: 类别 C + D + R + S. 三个 MMIO 回读 (`gicd_read` / `gicr_read_at`)
+    // 加一条 `mrs icc_igrpen1_el1`, 全是**只读**且不构造引用; 有 ACK 侧效应的是
+    // 读 IAR, 本处不读 IAR. 判定交 `gic_logic::verify_post_conditions` 纯函数
+    // (host 侧逐支路实证). 回读用**本核指纹定位的帧** (由 `redist_frames` 按亲和
+    // 值扫描得到), 与 `init_per_cpu` 的配置路径同源: 本函数若改读
+    // `GICR_BASE` / `GICR_SGI_BASE` 两个启动核别名, 在 BSP 不是 redistributor
+    // 第 0 帧的拓扑下会校验他人帧 (多核正确性缺口). 定位失败即 `Err`, 不退回
+    // 别名.
     unsafe {
+        let (rd, sgi) = redist_frames()?;
         // 逐项回读关键寄存器实测值, 判定交由架构中立纯逻辑 [`gic_logic`] ——
         // 该判据在 host 侧被逐支路单元测试 (ISSUE-RT-002 确定性实证), 与本处同源.
         let gicd_ctlr = gicd_read(GICD_CTLR);
-        let gicr_waker = gicr_read_at(GICR_BASE.load(Ordering::Acquire), GICR_WAKER);
-        let gicr_isenabler0 = gicr_sgi_read(GICR_ISENABLER0);
+        let gicr_waker = gicr_read_at(rd, GICR_WAKER);
+        let gicr_isenabler0 = gicr_read_at(sgi, GICR_ISENABLER0);
         let igrpen1: u64;
         core::arch::asm!("mrs {}, icc_igrpen1_el1", out(reg) igrpen1);
         gic_logic::verify_post_conditions(gicd_ctlr, gicr_waker, gicr_isenabler0, igrpen1)

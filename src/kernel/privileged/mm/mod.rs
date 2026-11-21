@@ -237,6 +237,20 @@ pub const KERNEL_BASE: u64 = 0xFFFF_0000_0000_0000_u64;
 /// 物理地址空间基址 (`0`, 恒等映射起点)
 pub const PHYSICAL_BASE: u64 = 0x0000_0000_0000_0000_u64;
 
+/// 内核直射区 (`phys_to_virt(PA) = PA + KERNEL_BASE`) 覆盖的物理地址上界 (不含).
+///
+/// `x86_64`: boot 页表在 `PML4[0]` 与 `PML4[256]` 各建 4 GiB 恒等映射, 故直射区
+/// 覆盖 `[0, 4 GiB)`; 超出部分未映射, 不能用 `phys_to_virt` 访问.
+/// aarch64: `TTBR0`/`TTBR1` 复用同一 4 级根, 低 1 GiB 为 Device、次 1 GiB 为
+/// DRAM (Normal), 直射区覆盖 `[0, 2 GiB)`.
+///
+/// 本常量只描述**地址可经直射区访问**的上界, 不代表该区间全是可用 RAM (其中仍有
+/// MMIO 洞与固件保留区, 见 PMM 早期预留表).
+#[cfg(target_arch = "x86_64")]
+pub const DIRECT_MAP_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(target_arch = "aarch64")]
+pub const DIRECT_MAP_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
+
 /// 用户空间低地址保护阈值.
 /// 低于此地址的指针视为空指针/不可解引用区域, 用于 canary 校验、
 /// 地址合法性检查等场景.
