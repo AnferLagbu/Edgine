@@ -144,7 +144,8 @@ bit0=D / bit1=A / bit2=I / bit3=F，真实是 **bit3=D / bit2=A / bit1=I / bit0=
 唯一非注释删除是 `gic.rs` 两行代码的尾注释改写（代码字节不变）。
 **遗留登记（C2 读出、本批不改）**：`gic::init_distributor` 的 `GICD_TYPER` 取位为 `>>5 & 0x1F`
 与 `>>8 & 0x07`，与 ARM 定义（ITLinesNumber=bits[4:0]、CPUNumber=bits[7:5]）不符 ⇒ 诊断日志
-数值失真、无安全后果；按 §11.5 待用户裁定（登记姊妹册 / 单开修复 / 跳过）。
+数值失真、无安全后果；按用户 2026-11-22 裁定**登记到姊妹册** `safety-gap-remediation.md` 的
+批 **R10**（未开工），不在本批改代码。
 收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never bash
 ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_content` 腿通过）·
 `make test-host` **212 套 / 1651 passed / 0 failed** · `make test-kernel-host` **1431 / 0 failed** ·

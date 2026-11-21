@@ -417,6 +417,22 @@ memory 更新、按路径提交推送。
 ④ 提交按 pathspec 逐项落地（R8 `12f55bfd` + 本批收口提交），不夹带 `other/` 与未跟踪 `.trae/`。
 状态：[X]
 
+### 批 R10・C2 读出的新缺口：`GICD_TYPER` 诊断取位失真
+
+描述：姊妹册 [safety-comment-fidelity.md](./safety-comment-fidelity.md) 批 C2 改写
+`arch/aarch64/gic.rs` 的 SAFETY 时，核实 `init_distributor` 的诊断读数发现取位与
+ARM 定义不符：代码以 `(typer >> 5) & 0x1F` 取「SPI 行数」、以 `(typer >> 8) & 0x07`
+取「CPU 数」，而 `GICD_TYPER` 的 `ITLinesNumber` 在 **bits[4:0]**、`CPUNumber` 在
+**bits[7:5]**。C2 按纯注释批口径只把位域标签改为**实际位移**并注明「只作日志近似」，
+未改移位（源码只会打印失真的数值）。
+方案：把两处移位改为架构定义（`typer & 0x1F` / `(typer >> 5) & 0x07`），
+并在 `host-tests` 补一条纯算术回归锁：给定 `typer` 夹具值断言
+`ITLinesNumber = (typer & 0x1F) + 1` 与 `CPUNumber = ((typer >> 5) & 0x07) + 1`，
+锁住取位不被再次写偏（该腿不触碰 MMIO，host 侧可跑）。
+详情：C2 期间已核 `gicd_read` 的映射/对齐前提与取位无关，故本项只落在移位与断言；
+属诊断日志面，无安全后果，不与 R1–R9 的缺口合并。
+状态：[]
+
 ---
 
 ## 四、验证门槛
