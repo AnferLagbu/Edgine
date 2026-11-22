@@ -290,9 +290,9 @@ pub unsafe fn init_distributor() -> Result<(), &'static str> {
         // 0. 读取 GIC 诊断信息
         let typer = gicd_read(GICD_TYPER);
         let iidr = gicd_read(GICD_IIDR);
-        // 诊断日志只打印按下列位移取出的原值, 不作架构字段语义使用.
-        let num_spi = ((typer >> 5) & 0x1F) + 1; // GICD_TYPER bits[9:5] + 1
-        let num_cpus = ((typer >> 8) & 0x07) + 1; // GICD_TYPER bits[10:8] + 1
+        // ITLinesNumber=bits[4:0], CPUNumber=bits[7:5] (ARM IHI 0069);
+        // 取位单源在 `gic_logic::decode_gicd_typer`, 两字段均 +1 还原为实际数量.
+        let (num_spi, num_cpus) = gic_logic::decode_gicd_typer(typer);
         crate::klog_ffi!(
             klog_ffi_info,
             "[GIC] typer=0x{:08x} iidr=0x{:08x} spi={} cpus={}",

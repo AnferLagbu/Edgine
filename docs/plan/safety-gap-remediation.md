@@ -431,7 +431,17 @@ ARM 定义不符：代码以 `(typer >> 5) & 0x1F` 取「SPI 行数」、以 `(t
 锁住取位不被再次写偏（该腿不触碰 MMIO，host 侧可跑）。
 详情：C2 期间已核 `gicd_read` 的映射/对齐前提与取位无关，故本项只落在移位与断言；
 属诊断日志面，无安全后果，不与 R1–R9 的缺口合并。
-状态：[]
+**结果**：取位单源化到架构中立的 `privileged/arch/gic_logic.rs`——新增
+`GICD_TYPER_ITLINES_MASK = 0x1F` / `GICD_TYPER_CPUNUMBER_MASK = 0x07` 与
+`decode_gicd_typer(typer) -> (u32, u32)`（`ITLinesNumber` 取 bits[4:0]、`CPUNumber` 取
+bits[7:5]，两字段各 `+1` 还原），`aarch64/gic.rs::init_distributor` 改为调用该函数，
+不再内联移位。回归锁 `decode_gicd_typer_uses_arm_field_positions` 落在
+`host-tests/tests/aarch64_gic_logic_test.rs`（与生产路径同源，非平行实现），夹具
+`0x0000_0000` / `0x0000_00FF` / `0x0000_0123` / `0xFFFF_FFFF` 分别断言
+`(1,1)` / `(32,8)` / `(4,2)` / `(32,8)`。**负控制**：临时把函数改回旧取位
+`(>>5)&0x1F` / `(>>8)&0x07`，该测试 **FAILED（0 passed / 1 failed）**；`cp` 复原后
+`sha256` 一致，修复态 20 passed / 0 failed。
+状态：[X]
 
 ### 批 R11・C4 读出的结构重复：DISPI 端口原语与 `IoPort` 安全代理
 
@@ -446,7 +456,23 @@ ARM 定义不符：代码以 `(typer >> 5) & 0x1F` 取「SPI 行数」、以 `(t
 XRES→YRES→BPP 的索引/数据配对）保持不变。
 详情：属结构改造而非安全缺口，不改端口常量与寄存器序列；需回归
 `scripts/qemu_boot_test.sh all` 的显示探测路径（MMIO 失败后回退到端口探测的分支）。
-状态：[]
+**结果**：删除 `display/mod.rs` 的本地 `port_outw` / `port_inw` 两个 unsafe 原语，
+`read_bochs_disp_mode` 改经 `privileged::ioport::IoPort` 代理（`write_u16(0, idx)` /
+`read_u16(VBE_DISPI_DATA_OFFSET)`），寄存器序列与端口常量不变；新增
+`VBE_DISPI_DATA_OFFSET = VBE_DISPI_PORT_DATA - VBE_DISPI_PORT_INDEX` 使两个端口常量
+仍有使用点（F9 无未用常量）。**与计划原文的偏差（必要订正）**：句柄长度取 **3** 而非
+原文的 2 —— `IoPort::check_offset` 以 `offset + size > len` 判越界并 panic，数据口偏移
+为 1、16 位访问 `size = 2`，len=2 时 `1 + 2 > 2` 必然 panic；len=3 覆盖
+0x01CE..0x01D0（16 位 in/out 各跨两个字节端口，总线事务本身即含 0x01D0 一侧），
+且全仓无第二个 0x01CE/0x01CF 使用者，句柄不与其它 `IoPort` 重叠。文件末
+「unsafe 依据单源」段同步改写为 `IoPort` 代理依据，本地原语说明删除。
+**回归**：`./ci/build.sh all` 双架构 **Passed 6 / Failed 0**（本地 unsafe 原语删除后
+x86_64 / aarch64 均编译通过）；full 档 QEMU **2/2** 通过（含 `qemu_boot_test.sh all`）；
+`make test-host` **212 套 / 1653 passed**。
+注：默认 QEMU 以 `-display none` 启动且 GRUB 通常提供 Multiboot2 帧缓冲，端口回退分支
+未必在每次启动命中；本项强证据为「本地原语删除 + `IoPort` 路径按同一 `out/in` 语义
+编译通过 + 全档 QEMU 不回归」。专用 DISPI 端口分支的运行期用例未新增，登记为覆盖缺口。
+状态：[X]
 
 ---
 

@@ -19,8 +19,9 @@
 //! 与之互补的**源码结构**回归防护见 `aarch64_gic_contract_test.rs`。
 
 use edgine::kernel::privileged::arch::gic_logic::{
-    CTLR_RWP_SPIN_LIMIT, GICD_CTLR_ARE_MASK, GICD_CTLR_ENABLE_GRP1_MASK, GICR_TYPER_AFFINITY_SHIFT,
-    GICR_TYPER_LAST_MASK, REDIST_WAKE_SPIN_LIMIT, ctlr_rwp_timed_out, find_redist_frame,
+    CTLR_RWP_SPIN_LIMIT, GICD_CTLR_ARE_MASK, GICD_CTLR_ENABLE_GRP1_MASK, GICD_TYPER_CPUNUMBER_MASK,
+    GICD_TYPER_ITLINES_MASK, GICR_TYPER_AFFINITY_SHIFT, GICR_TYPER_LAST_MASK,
+    REDIST_WAKE_SPIN_LIMIT, ctlr_rwp_timed_out, decode_gicd_typer, find_redist_frame,
     redist_affinity, redist_is_last, uses_affinity_routing, verify_post_conditions, wake_timed_out,
 };
 
@@ -218,4 +219,19 @@ fn find_redist_frame_distinguishes_high_affinity_levels() {
     };
     assert_eq!(find_redist_frame(0x0001_0100, 1024, lookup), Some(2));
     assert_eq!(find_redist_frame(0x0000_0300, 1024, lookup), None);
+}
+
+// ── GICD_TYPER 字段解码 (R10 回归锁) ────────────────────────────────
+
+#[test]
+fn decode_gicd_typer_uses_arm_field_positions() {
+    // ITLinesNumber = bits[4:0], CPUNumber = bits[7:5] (ARM IHI 0069),
+    // 两字段均为「实际数量减一」。旧实现误取 >>5 与 >>8, 在以下夹具上读数不同。
+    assert_eq!(decode_gicd_typer(0x0000_0000), (1, 1));
+    assert_eq!(decode_gicd_typer(0x0000_00FF), (32, 8));
+    assert_eq!(decode_gicd_typer(0x0000_0123), (4, 2));
+    // 高位保留位 / 更高字段不得渗入两个字段
+    assert_eq!(decode_gicd_typer(0xFFFF_FFFF), (32, 8));
+    assert_eq!(GICD_TYPER_ITLINES_MASK, 0x1F);
+    assert_eq!(GICD_TYPER_CPUNUMBER_MASK, 0x07);
 }

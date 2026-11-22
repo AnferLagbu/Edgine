@@ -36,6 +36,8 @@ pub use framebuffer_ops::{
 use super::infra;
 use super::infra::{Driver, DriverError};
 use crate::privileged::iomem::IoMem;
+#[cfg(target_arch = "x86_64")]
+use crate::privileged::ioport::IoPort;
 use crate::privileged::mm::PhysAddr;
 use crate::privileged::sync::IrqSpinLock;
 
@@ -131,6 +133,9 @@ const VBE_DISPI_MMIO_BASE: u64 = 0x500;
 const VBE_DISPI_PORT_INDEX: u16 = 0x01CE;
 #[cfg(target_arch = "x86_64")]
 const VBE_DISPI_PORT_DATA: u16 = 0x01CF;
+/// 数据口相对 DISPI 端口句柄基址 (索引口) 的偏移
+#[cfg(target_arch = "x86_64")]
+const VBE_DISPI_DATA_OFFSET: u16 = VBE_DISPI_PORT_DATA - VBE_DISPI_PORT_INDEX;
 
 /// Bochs VBE DISPI 寄存器索引
 #[cfg(target_arch = "x86_64")]
@@ -161,32 +166,32 @@ struct VgaFbInfo {
 /// 通过 Bochs DISPI 端口读取 VGA 帧缓冲分辨率
 #[cfg(target_arch = "x86_64")]
 fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
-    // SAFETY: port_outw/port_inw 是 DISPI 索引口 (0x01CE) 与数据口 (0x01CF) 的
-    // CPL=0 端口原语; 本函数按 ID→ENABLE→XRES→YRES→BPP 的寄存器序列读写,
-    // 索引口/数据口的配对互斥依据见文件末「unsafe 依据单源」段.
-    unsafe {
-        port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_ID);
-        let id = port_inw(VBE_DISPI_PORT_DATA);
-        if id < VBE_DISPI_ID5 {
-            // Bochs DISPI 不存在或版本太老 (< 0xB0C5)
-            return None;
-        }
-        port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_ENABLE);
-        let enabled = port_inw(VBE_DISPI_PORT_DATA);
-        if enabled == 0 {
-            return None;
-        }
-        port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_XRES);
-        let xres = u32::from(port_inw(VBE_DISPI_PORT_DATA));
-        port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_YRES);
-        let yres = u32::from(port_inw(VBE_DISPI_PORT_DATA));
-        port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_BPP);
-        let bpp = crate::privileged::glue::low_u8_from_u16(port_inw(VBE_DISPI_PORT_DATA));
-        if xres == 0 || yres == 0 || bpp == 0 {
-            return None;
-        }
-        Some((xres, yres, bpp))
+    // SAFETY: 0x01CE..0x01D0 (索引口 0x01CE / 数据口 0x01CF) 是 Bochs VBE DISPI 的
+    // 专用 16 位 PIO 区间; 16 位 in/out 各跨 2 个字节端口, 故句柄长度取 3 才能同时
+    // 容纳偏移 0 (索引口) 与偏移 1 (数据口). 全仓无第二个使用者, 独占与配对依据见
+    // 文件末「unsafe 依据单源」段.
+    let port = unsafe { IoPort::new(VBE_DISPI_PORT_INDEX, 3, "vbe-dispi") }.ok()?;
+    port.write_u16(0, VBE_DISPI_INDEX_ID);
+    let id = port.read_u16(VBE_DISPI_DATA_OFFSET);
+    if id < VBE_DISPI_ID5 {
+        // Bochs DISPI 不存在或版本太老 (< 0xB0C5)
+        return None;
     }
+    port.write_u16(0, VBE_DISPI_INDEX_ENABLE);
+    let enabled = port.read_u16(VBE_DISPI_DATA_OFFSET);
+    if enabled == 0 {
+        return None;
+    }
+    port.write_u16(0, VBE_DISPI_INDEX_XRES);
+    let xres = u32::from(port.read_u16(VBE_DISPI_DATA_OFFSET));
+    port.write_u16(0, VBE_DISPI_INDEX_YRES);
+    let yres = u32::from(port.read_u16(VBE_DISPI_DATA_OFFSET));
+    port.write_u16(0, VBE_DISPI_INDEX_BPP);
+    let bpp = crate::privileged::glue::low_u8_from_u16(port.read_u16(VBE_DISPI_DATA_OFFSET));
+    if xres == 0 || yres == 0 || bpp == 0 {
+        return None;
+    }
+    Some((xres, yres, bpp))
 }
 
 /// 通过 MMIO 读取 Bochs DISPI 寄存器 (替代 port I/O)
@@ -437,53 +442,22 @@ pub fn display_probe_controllers() {
 }
 
 // ============================================================================
-// 端口 I/O 辅助函数 (x86_64 专用)
+// 端口 I/O 依据 (x86_64 专用)
 // ============================================================================
 
 // === unsafe 依据单源 (display 端口 I/O) ===
 //
-// 类别「DISPI 端口对」— port_outw / port_inw 是 Bochs VBE DISPI 索引口
-// (VBE_DISPI_PORT_INDEX = 0x01CE) 与数据口 (VBE_DISPI_PORT_DATA = 0x01CF) 的访问原语.
-// 依据:
-// - 特权级: 内核运行于 CPL=0, in/out 对任意端口均被允许, 不查 TSS 的 I/O 许可位图;
-// - asm 面: 两条指令只动 ax/dx, options(nomem, nostack) 声明不触碰内存与栈; 未声明
-//   preserves_flags, 故编译器按 flags 可能被破坏保守处理;
-// - 配对互斥: 索引→数据是两次独立 I/O, 非原子. 唯一消费者 read_bochs_disp_mode()
+// 类别「DISPI 端口句柄」— `read_bochs_disp_mode()` 以 `privileged::ioport::IoPort`
+// 安全代理访问 Bochs VBE DISPI 索引口 (VBE_DISPI_PORT_INDEX = 0x01CE) 与数据口
+// (VBE_DISPI_PORT_DATA = 0x01CF). 依据:
+// - 区间: 16 位 in/out 各跨 2 个字节端口, 故句柄长度取 3 (0x01CE..0x01D0) 才能同时
+//   容纳偏移 0 (索引口) 与偏移 1 (数据口) 的 16 位访问; 偏移均为编译期常量,
+//   `IoPort::check_offset` 的越界 panic 分支不可达;
+// - 独占性: 索引→数据是两次独立 I/O, 非原子. 唯一消费者 read_bochs_disp_mode()
 //   只被 probe_vga_fb_via_pci() 在 MMIO 路径失败后的回退分支调用 (该函数又只在
 //   display_init() 的 Multiboot2 帧缓冲不可用分支被调, 遍历 CLASS_DISPLAY 中
 //   subclass=0x00 的 VGA 设备并在首个成功探测处返回), 全仓无第二个 0x01CE/0x01CF
-//   使用者, 故配对期间不会被另一路径插入改索引. 注意 SMP 已在
+//   使用者, 故句柄不与其它 IoPort 重叠、配对期间不会被另一路径插入改索引. 注意 SMP 已在
 //   boot_interrupt_timer_init 阶段完成 secondary_cpu_bringup(), 互斥依据是
 //   「唯一消费者 + 仅 BSP 启动期探测」而非「单核」.
-// - 收敛点 (已登记姊妹册 `safety-gap-remediation.md` 的 R11, 本批不改代码): 本对原语与
-//   privileged::ioport::IoPort 安全代理重复, 后者已带端口区间独占校验; 迁移属结构改造,
-//   超出 SAFETY 补注释批范围, 且会改动端口访问路径, 需单独回归 QEMU 显示路径.
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-// SAFETY: port 为 DISPI 索引口 (0x01CE) 或数据口 (0x01CF), 由 read_bochs_disp_mode()
-// 以 VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 常量传入; 内核 CPL=0 对 in/out 不做
-// I/O 位图检查, 故只需端口常量为已知的 DISPI 端口.
-unsafe fn port_outw(port: u16, val: u16) {
-    // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 out 的目标是 dx 选定的索引口
-    // 或数据口, 写入值 val 为 16 位 DISPI 寄存器值; 端口号取自本文件
-    // VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 两个常量.
-    unsafe {
-        core::arch::asm!("out dx, ax", in("dx") port, in("ax") val, options(nomem, nostack));
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-// SAFETY: port 为 DISPI 索引口 (0x01CE) 或数据口 (0x01CF), 由 read_bochs_disp_mode()
-// 以常量传入; 内核 CPL=0 对 in/out 不做 I/O 位图检查, 且读前已先 out 索引口选定寄存器.
-unsafe fn port_inw(port: u16) -> u16 {
-    // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 in 从 dx 选定的数据口读回
-    // 16 位寄存器值到 ax; 读前调用方已先 out 索引口选定寄存器, 两次 I/O 的配对
-    // 互斥依据见单源 (唯一消费者 + 一次性调用).
-    unsafe {
-        let ret: u16;
-        core::arch::asm!("in ax, dx", out("ax") ret, in("dx") port, options(nomem, nostack));
-        ret
-    }
-}
+// (R11) 本地 port_outw/port_inw 原语已删除, 端口访问统一经 IoPort 代理.

@@ -35,6 +35,16 @@ pub const GICD_CTLR_ENABLE_GRP1_MASK: u32 = 0b10;
 /// 写, ARM IHI 0069), 两组写入之间必须等 RWP 清零。
 pub const GICD_CTLR_RWP_MASK: u32 = 1 << 31;
 
+/// `GICD_TYPER.ITLinesNumber` (`bits[4:0]`) 掩码。
+///
+/// 字段值为「SPI 行数减一」, 每行 32 个 SPI; 实际行数须 `+1`。
+pub const GICD_TYPER_ITLINES_MASK: u32 = 0x1F;
+
+/// `GICD_TYPER.CPUNumber` (`bits[7:5]`) 掩码。
+///
+/// 字段值为「CPU 数减一」, 实际 CPU 数须 `+1` (ARM IHI 0069)。
+pub const GICD_TYPER_CPUNUMBER_MASK: u32 = 0x07;
+
 /// `GICR_WAKER.ChildrenAsleep` (bit2) 掩码。
 pub const GICR_WAKER_CHILDREN_ASLEEP_MASK: u32 = 1 << 2;
 
@@ -108,6 +118,18 @@ pub fn redist_affinity(typer: u64) -> u32 {
 #[must_use]
 pub fn redist_is_last(typer: u64) -> bool {
     typer & GICR_TYPER_LAST_MASK != 0
+}
+
+/// 从 `GICD_TYPER` 解码 `(SPI 行数, CPU 数)`。
+///
+/// `ITLinesNumber` 在 `bits[4:0]`、`CPUNumber` 在 `bits[7:5]` (ARM IHI 0069),
+/// 两字段均为「实际数量减一」, 故返回值已 `+1` 还原。该解码只用于启动诊断日志,
+/// 不作 SPI/CPU 配置的依据; 单一定义点在此, 避免 `aarch64/gic.rs` 内联移位漂移。
+#[must_use]
+pub fn decode_gicd_typer(typer: u32) -> (u32, u32) {
+    let spi_lines = (typer & GICD_TYPER_ITLINES_MASK) + 1;
+    let cpus = ((typer >> 5) & GICD_TYPER_CPUNUMBER_MASK) + 1;
+    (spi_lines, cpus)
 }
 
 /// 线性扫描 GICR 区域, 返回亲和值等于 `target_affinity` 的 redistributor 帧索引。
