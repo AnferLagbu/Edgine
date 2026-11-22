@@ -51,7 +51,8 @@ impl IoPort {
     /// # Errors
     /// 端口范围长度为 0 或端口范围溢出时返回 Err。
     pub fn new_safe(base: u16, len: u16, name: &'static str) -> Result<Self, &'static str> {
-        // SAFETY: 契约由调用方保证, 同 IoPort::new
+        // SAFETY: `new_safe` 的 doc 把 `base..base+len` 不重叠的契约交给调用方
+        // (它只用于已知合法的 PIO 范围); 本处转发给 `IoPort::new` 做长度/溢出校验.
         unsafe { Self::new(base, len, name) }
     }
 

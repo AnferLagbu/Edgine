@@ -208,7 +208,9 @@ pub fn elf_load_with_bias(
     };
 
     for i in 0..phdr_count {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `elf_validate` 已先调 `verify_elf`, 后者校验了
+        // `phoff..phoff + phnum*phentsize` 落在 `elf_data` 内; 本处按 `i < phnum`
+        // 读取单个程序头, 不越出该表.
         let phdr = unsafe {
             phdr_base
                 .add(i as usize * core::mem::size_of::<Elf64Phdr>())
@@ -319,7 +321,8 @@ fn elf_load_segment(
         let phys = crate::privileged::mm::pmm_alloc_page_phys().ok_or("OOM loading ELF")?;
 
         let page_virt = phys.to_virt();
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `pmm_alloc_page_phys` 返回独占的整页帧, `to_virt` 给出内核高半区
+        // 别名; 清零长度恰为 PAGE_SIZE, 只触及本帧.
         unsafe {
             core::ptr::write_bytes(
                 page_virt.0 as *mut u8,
@@ -340,7 +343,9 @@ fn elf_load_segment(
         };
 
         if copy_len > 0 {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `copy_start..file_end` 取自本段 phdr 的 `offset..offset+filesz`,
+            // `verify_elf` 已确认该区间落在 `elf_data` 内; `copy_len` 不超过
+            // PAGE_SIZE, 目标为本轮 `pmm_alloc_page_phys` 独占的页帧.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     elf_data.add(copy_start),
@@ -397,7 +402,8 @@ pub fn needs_interp_rewrite(elf_data: &[u8]) -> bool {
     };
 
     for i in 0..header.phnum {
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+        // SAFETY: `verify_elf` 已校验程序头表落在 `elf_data` 内, `i < phnum`
+        // ⇒ `phdr_base + i*size_of::<Elf64Phdr>()` 仍在表内, 按值 `read_unaligned` 读取.
         let phdr = unsafe {
             phdr_base
                 .add(i as usize * core::mem::size_of::<Elf64Phdr>())
@@ -524,24 +530,32 @@ mod tests {
 
     #[test]
     fn test_elf_magic_validation() {
-        let mut data = [0u8; 64];
+        fn hdr_bytes(h: &Elf64Header) -> &[u8] {
+            // SAFETY: `h` 是有效 `Elf64Header` 引用; 按同起点、长度恰为结构体大小构造 u8 只读切片.
+            unsafe {
+                core::slice::from_raw_parts(
+                    core::ptr::from_ref(h).cast::<u8>(),
+                    core::mem::size_of::<Elf64Header>(),
+                )
+            }
+        }
+        // SAFETY: `Elf64Header` 全字段都是整数与定长字节数组, 全零位模式合法.
+        let mut hdr = unsafe { core::mem::zeroed::<Elf64Header>() };
         // Invalid magic
-        assert!(elf_validate(&data).is_none());
+        assert!(elf_validate(hdr_bytes(&hdr)).is_none());
 
         // Valid magic
-        data[0] = 0x7F;
-        data[1] = b'E';
-        data[2] = b'L';
-        data[3] = b'F';
-        data[4] = 2; // ELFCLASS64
-        assert!(elf_validate(&data).is_none()); // machine=0 not valid
+        hdr.ident[0] = 0x7F;
+        hdr.ident[1] = b'E';
+        hdr.ident[2] = b'L';
+        hdr.ident[3] = b'F';
+        hdr.ident[4] = 2; // ELFCLASS64
+        assert!(elf_validate(hdr_bytes(&hdr)).is_none()); // machine=0 not valid
 
         // Set valid machine
-        // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-        let hdr = unsafe { &mut *(data.as_mut_ptr() as *mut Elf64Header) };
         hdr.machine = 0x3E; // x86_64
         hdr.phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
-        assert!(elf_validate(&data).is_some());
+        assert!(elf_validate(hdr_bytes(&hdr)).is_some());
     }
 
     #[test]

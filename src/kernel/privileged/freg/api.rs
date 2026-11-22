@@ -239,9 +239,9 @@ pub extern "C" fn recovery_was_attempted() -> i32 {
 // 导出需求, 故不标 `no_mangle` (P-64 第十五批: 消除 no_mangle_with_rust_abi).
 pub fn recovery_domain_set_cbs(
     domain_id: u64,
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `capture_fn` 由域所有者提供, 其 `unsafe fn()` 契约由该所有者承担; 本处只存入域.
     capture_fn: Option<unsafe fn()>,
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `rollback_fn` 同上 (返回 `true` 表示回滚成功); 本处只存入域.
     rollback_fn: Option<unsafe fn() -> bool>,
 ) -> i32 {
     let mgr = super::RECOVERY_MANAGER.lock();

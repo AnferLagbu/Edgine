@@ -30,7 +30,9 @@ pub fn execute_layered() -> ! {
             RecoveryResult::Success => {
                 crate::klog_crit!(Kernel, "[RECOVERY] Layer 2 (BSR) succeeded");
                 #[cfg(not(feature = "kernel_test"))]
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: BSR 成功后控制权已交给恢复后的系统 (本函数文档约定
+                // `execute_layered` 不返回), 本分支不存在返回路径; 若 BSR 违反该
+                // 契约返回, 则属恢复子系统契约破坏.
                 unsafe {
                     core::hint::unreachable_unchecked();
                 }
@@ -74,7 +76,9 @@ pub fn execute_from_panic(panic_info: &core::panic::PanicInfo<'_>) -> ! {
                 crate::klog_crit!(Kernel, "[RECOVERY] Layer 1 (BBR) succeeded");
                 config::set_reset_in_progress(false);
                 #[cfg(not(feature = "kernel_test"))]
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: BBR 成功后控制权已交给恢复后的系统 (本函数返回类型为 `!`,
+                // 文档约定 panic 路径不返回), 本分支不存在返回路径; 若 BBR 违反该
+                // 契约返回, 则属恢复子系统契约破坏.
                 unsafe {
                     core::hint::unreachable_unchecked();
                 }

@@ -241,7 +241,8 @@ impl TestRunner {
         serial_print(s);
         #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
         for &b in s {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: 测试输出走 aarch64 PL011; 该 UART 由 boot 入口的 `uart::init`
+            // 初始化并保持映射, `putc` 只写 UARTDR.
             unsafe {
                 crate::privileged::arch::aarch64::uart::putc(b);
             }
@@ -263,7 +264,7 @@ impl TestRunner {
         #[cfg(all(not(feature = "host-test"), target_arch = "aarch64"))]
         {
             if n == 0 {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: 同 `serial_print`: PL011 已由 boot 入口 `uart::init` 初始化并保持映射.
                 unsafe {
                     crate::privileged::arch::aarch64::uart::putc(b'0');
                 }
@@ -278,7 +279,7 @@ impl TestRunner {
                 val /= 10;
             }
             for i in (0..pos).rev() {
-                // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+                // SAFETY: 同 `serial_print`: PL011 已初始化, `buf[i]` 是 0..9 的 ASCII 字节.
                 unsafe {
                     crate::privileged::arch::aarch64::uart::putc(buf[i]);
                 }
@@ -295,14 +296,16 @@ impl Default for TestRunner {
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+/// # Safety
+/// 端口号须为 x86 16550 兼容 UART 的 8 位寄存器; 本模块只以 `COM1` 及固定偏移调用.
 unsafe fn port_inb(port: u16) -> u8 {
     crate::arch!(inb(port))
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+/// # Safety
+/// 端口号须为 x86 16550 兼容 UART 的 8 位寄存器; 本模块只以 `COM1` 及固定偏移调用.
 unsafe fn port_outb(port: u16, value: u8) {
     crate::arch!(outb(port, value));
 }
@@ -311,7 +314,8 @@ unsafe fn port_outb(port: u16, value: u8) {
 pub fn serial_print(s: &[u8]) {
     const COM1: u16 = 0x3F8;
     for &b in s {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: COM1 = 0x3F8 是 x86 标准 16550 UART; 轮询 LSR 的 THRE 位 (0x20)
+        // 后写 THR, 操作均为 8 位端口访问.
         unsafe {
             while (port_inb(COM1 + 5) & 0x20) == 0 {
                 core::hint::spin_loop();
@@ -319,7 +323,7 @@ pub fn serial_print(s: &[u8]) {
             port_outb(COM1, b);
         }
         if b == b'\n' {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: 同上: 换行时向 COM1 的 THR 补写 '\r'.
             unsafe {
                 port_outb(COM1, b'\r');
             }
@@ -341,7 +345,7 @@ pub fn serial_print_num(mut n: u64) {
         n /= 10;
     }
     for i in (0..pos).rev() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 同 `serial_print`: COM1 是 x86 标准 16550 端口, `buf[i]` 为 ASCII 数字.
         unsafe {
             const COM1: u16 = 0x3F8;
             while (port_inb(COM1 + 5) & 0x20) == 0 {

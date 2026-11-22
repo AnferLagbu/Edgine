@@ -1873,7 +1873,9 @@ impl Scheduler {
         next: Pid,
         current_pid: Pid,
     ) -> Pid {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `prev_ptr` 来自调用方 `schedule()` 的 `PROCESS_TABLE.get(prev)`;
+        // 本函数运行在 `schedule()` 首行 `interrupt_disable()` 之后的本核临界区内,
+        // 且 prev 已摘离运行队列 ⇒ 此处只取 `context` 字段地址, 不构造引用.
         let prev_ctx_ptr = prev_ptr.map_or(core::ptr::null_mut(), |p| unsafe {
             (&raw mut (*p).context).cast::<Mutex<ProcessContext>>()
         });
@@ -1942,9 +1944,9 @@ impl Scheduler {
             current_pid,
             next
         );
-        // SAFETY: next_ptr 来自 PROCESS_TABLE.get(next) 且上面已判非 None; 单核 +
-        // 本函数开头 cli 排他, 切换期间无并发访问. scratch 为本 CPU 私有槽, 仅
-        // 承接被丢弃的 prev 寄存器 (其内容不会被读回).
+        // SAFETY: next_ptr 来自 PROCESS_TABLE.get(next) 且上面已判非 None; 调用方
+        // `schedule()` 首行 `interrupt_disable()` 已关本核中断, 切换期间无并发访问.
+        // scratch 为本 CPU 私有槽, 仅承接被丢弃的 prev 寄存器 (其内容不会被读回).
         let next_tls_base = next_ptr.map_or(0, |p| {
             // SAFETY: next_ptr 来自 PROCESS_TABLE.get(), 指向活动 Process;
             // 本函数运行在 cli 临界区, 该条目不参与并发卸载.
@@ -1961,7 +1963,6 @@ impl Scheduler {
         // `scratch_ctx` 是本 CPU 私有 `RacyCell<ProcessContext>`, 只承接被丢弃的
         // prev 寄存器, 内容不会被读回; `addr_of!` / `addr_of_mut!` 只取地址不构造
         // 引用。`context_switch` 保存旧上下文后切入 next, 不返回本块之后。
-        // (上方注释写「本函数开头 cli」, 实际 cli 在调用方 `schedule()` 首行。)
         unsafe {
             let next_ctx = core::ptr::addr_of!(*((&mut *next_ctx_ptr).get_mut_unchecked()));
             let scratch_ctx = per_cpu.scratch_ctx.map_mut(|c| core::ptr::addr_of_mut!(*c));

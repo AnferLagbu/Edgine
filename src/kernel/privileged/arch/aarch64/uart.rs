@@ -98,7 +98,8 @@ unsafe fn read(offset: u64) -> u32 {
 unsafe fn write(offset: u64, val: u32) {
     // SAFETY: 类别 U. offset 由本模块常量给出 (UARTCR / UARTIBRD / UARTFBRD /
     // UARTLCR_H / UARTIMSC / UARTDR), 均为整字写, 无需读-改-写; 写有设备副作用
-    // (UARTCR=0 关 UART, 写 UARTDR 触发发送), 故写入次序由调用方 `init` / `putc` 保证.
+    // (UARTCR=0 关 UART, 写 UARTDR 触发发送), 故写入次序由 `init` 的固定序列与
+    // `putc` 的单字节写决定.
     unsafe {
         write_volatile((base() + offset) as *mut u32, val);
     }

@@ -682,7 +682,7 @@ impl KernelHeap {
             if !next_ptr.is_null() {
                 // SAFETY: 上方 !is_null 检查保证 next_ptr 来自已分配堆块; 堆锁
                 // 持有中 (validate 方法开头 lock); HeaderRef::new_unchecked 仅
-                // 包装指针, 不访问内存, 后续 .prev() 由 HeaderRef API 保证安全.
+                // 包装指针, 不访问内存, 后续 `.prev()` 由 HeaderRef API 的 `# Safety` 契约约束.
                 let next = unsafe { HeaderRef::new_unchecked(next_ptr) };
                 let next_prev = next.prev();
                 if !next_prev.is_null() && next_prev != current {

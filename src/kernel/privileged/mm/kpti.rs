@@ -504,7 +504,8 @@ pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64) {
 /// `user_pml4_phys` 必须是已清零的有效 4 级页表根物理地址; `kernel_pml4_phys`
 /// 必须是当前内核页表物理地址; 调用方需保证无并发修改 `user_pml4_phys` 指向的页表.
 pub unsafe fn assemble_kernel_half(user_pml4_phys: u64, kernel_pml4_phys: u64) {
-    // SAFETY: 两个 PML4 物理地址均由调用方须保证有效; 本函数只改 user 页表.
+    // SAFETY: 两个 PML4 物理地址的有效性由本 fn 的 `# Safety` 段承担; 本函数只改
+    // user 页表.
     unsafe {
         // 符号桩化 (host-test): host 无链接脚本符号与页表上下文, 跳过真机分支.
         #[cfg(not(feature = "host-test"))]

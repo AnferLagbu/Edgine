@@ -304,7 +304,7 @@ unsafe fn set_tcr(val: u64) {
     // SAFETY: 类别 R. 写翻译控制寄存器; 唯一调用方 `init()` 传入的 tcr 与本文件页表形状
     // 绑定: T0SZ/T1SZ=16 (48-bit VA, 4 级) + TG1=4KB + SH0/SH1=Inner Shareable +
     // ORGN0/1 与 IRGN0/1=Normal WBWA. 改这些字段而不改表结构会让 walker 按错误层级/粒度
-    // 消费表; 本 setter 不校验 val, 一致性由调用方保证.
+    // 消费表; 本 setter 不校验 val, 一致性由唯一调用点 `init()` 与该页表形状共同约束.
     unsafe {
         core::arch::asm!("msr tcr_el1, {}", in(reg) val);
         core::arch::asm!("isb");

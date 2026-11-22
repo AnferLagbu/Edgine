@@ -312,7 +312,8 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
     queue.retain(|entry| {
         if core::ptr::eq(entry.timer.as_ptr(), timer) {
             // 同一个 timer, 检查 seq 是否匹配
-            // SAFETY: `entry` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `entry.timer` 是插入时固定的 `NonNull<HrTimer>` (回调前保持有效);
+            // 本处只读其 `queue_seq` 原子字段.
             let old_seq = unsafe { (*entry.timer.as_ptr()).queue_seq.load(Ordering::Acquire) };
             old_seq != seq
         } else {
@@ -324,13 +325,15 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
     let insert_pos = queue
         .iter()
         .position(|entry| {
-            // SAFETY: `entry` 由调用方保证为有效指针; 只读访问
+            // SAFETY: 同 `queue.retain`: `entry.timer` 在回调前保持有效, 本处只读
+            // `expiry_ns` 原子字段.
             let other_expiry = unsafe { (*entry.timer.as_ptr()).expiry_ns.load(Ordering::Acquire) };
             other_expiry > expiry_ns
         })
         .unwrap_or(queue.len());
 
-    // SAFETY: timer 由调用方保证在回调前有效, NonNull::new_unchecked 因引用非空
+    // SAFETY: `timer` 由 `&HrTimer` 引用经 `from_ref` 取得, 必然非空;
+    // `NonNull::new_unchecked` 只承诺非空, 该引用由调用点在回调前保持有效.
     let ptr = unsafe {
         core::ptr::NonNull::new_unchecked(core::ptr::from_ref::<HrTimer>(timer).cast_mut())
     };
@@ -434,13 +437,13 @@ pub fn hrtimer_run_queues() {
 
         // 移除已到期和已取消的条目
         queue.retain(|entry| {
-            // SAFETY: `entry` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `entry.timer` 在回调前保持有效 (队列持有期), 本处只读 `state`.
             let state = unsafe { (*entry.timer.as_ptr()).state() };
             state == HrTimerState::Pending
         });
 
         // 重新排序 (retain 可能打乱顺序)
-        // SAFETY: `entry` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `entry.timer` 在回调前保持有效, 本处只读 `expiry_ns` 原子字段.
         queue.sort_by_key(|entry| unsafe {
             (*entry.timer.as_ptr()).expiry_ns.load(Ordering::Acquire)
         });
@@ -1006,7 +1009,8 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
     check!(is_hrtimer_ready(), "initialized");
     assert_eq_test!(hrtimer_pending_count(), 0, "empty queue");
 
-    // SAFETY: 调用方保证指针/类型有效; 经 &raw mut 取裸指针避免对 static mut 取引用
+    // SAFETY: `T1` 是测试专用的 `static mut HrTimer`; 经 `addr_of_mut!` 取裸指针后
+    // 转 `&mut`, 避免对 `static mut` 直接建引用; 测试单线程串行执行, 无并发别名.
     unsafe {
         let timer = &mut *core::ptr::addr_of_mut!(T1);
         timer.init(noop_callback);

@@ -274,8 +274,8 @@ pub mod raw {
     #[cfg(all(target_arch = "x86_64", not(feature = "kernel_test")))]
     #[must_use]
     pub fn read_keyboard_byte() -> Option<u8> {
-        // SAFETY: keyboard_has_data 与 keyboard_get_char 是 C-ABI 函数，
-        // 调用方保证在中断上下文 (disable_interrupts 已持有)。
+        // SAFETY: `keyboard_has_data` / `keyboard_get_char` 是 driver 的 C-ABI 导出;
+        // 本函数由中断上下文调用 (`disable_interrupts` 已持有), 两者只轮询键盘控制器.
         unsafe {
             if keyboard_has_data() {
                 let c = keyboard_get_char();
@@ -372,8 +372,8 @@ pub mod raw {
         // 符号桩化 (host-test): host 无 _kernel_end 链接脚本符号, 常量中性返回 0.
         #[cfg(not(feature = "host-test"))]
         {
-            // SAFETY: _kernel_end 是链接器符号, 地址有效; hhdm_offset 由调用方保证
-            // 与启动时一致.
+            // SAFETY: `_kernel_end` 是链接脚本导出的符号, 取其地址不解引用;
+            // `hhdm_offset` 由 `kernel_end_phys` 的入口契约要求与启动时一致.
             (&raw const _kernel_end as usize).wrapping_sub(hhdm_offset)
         }
         #[cfg(feature = "host-test")]

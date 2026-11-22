@@ -25,7 +25,7 @@ use crate::privileged::syscall::api;
 /// sgeg disk 域 = 4 (PWM domain 4 = storage 域)
 const PWM_DOMAIN_STORAGE: u16 = 4;
 
-/// 块设备信息写回结构 (与 privileged 旧实现兼容, 76 字节)
+/// 块设备信息写回结构 (4 个 `u32` + `[u8; 64]`, 共 80 字节; 与用户态 `lib/sys.rs` 的同名结构一致)
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct UserDiskInfo {
@@ -41,7 +41,7 @@ pub struct UserDiskInfo {
     pub model: [u8; 64],
 }
 
-const USER_DISK_INFO_SIZE: u64 = 76;
+const USER_DISK_INFO_SIZE: u64 = 80;
 
 /// 列出已注册块设备 id. `disks` 为用户态 u64 数组, `max_count` 为容量.
 /// 返回写入的设备数 (>= 0), 失败返 Errno.
@@ -70,7 +70,7 @@ pub fn disk_list(disks_ptr: u64, max_count: u32) -> Result<usize, Errno> {
     Ok(limit)
 }
 
-/// 读单块设备信息. `info` 为 `UserDiskInfo` 用户指针 (76 字节).
+/// 读单块设备信息. `info` 为 `UserDiskInfo` 用户指针 (80 字节, 与结构体尺寸一致).
 ///
 /// # Errors
 /// 当 `info_ptr` 无效或用户缓冲区校验失败时返回 `Errno::Efault`;

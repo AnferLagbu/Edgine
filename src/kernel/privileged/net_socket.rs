@@ -190,7 +190,8 @@ pub fn eg_net_start_dhcp() -> i32 {
 pub fn eg_net_static_ip(cidr_addr: usize, gw_addr: usize) -> i32 {
     let cidr_ptr = cidr_addr as *const u8;
     let gw_ptr = gw_addr as *const u8;
-    // SAFETY: cidr_ptr/gw_ptr 由调用方保证为有效 NUL 结尾字符串
+    // SAFETY: 上方 `# Safety` 段要求两个指针为 NUL 结尾的有效 C 串; 本处只把
+    // `usize` 转回指针并同步委托.
     unsafe { init::eg_net_static_ip(cidr_ptr, gw_ptr) }
 }
 
@@ -222,7 +223,7 @@ pub fn sm_socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
 /// `addr` 必须为至少 `addrlen` 字节的有效指针, 调用期间不释放。
 #[must_use]
 pub unsafe fn sm_bind(slot_id: i32, addr: *const u8, addrlen: u32) -> i32 {
-    // SAFETY: addr 由调用方保证有效, sm_bind 同步读取
+    // SAFETY: 上方 `# Safety` 段要求 addr 指向至少 addrlen 字节; sm_bind 同步读取该区间.
     unsafe { init::sm_bind(slot_id, addr, addrlen) }
 }
 
@@ -239,7 +240,8 @@ pub fn sm_listen(slot_id: i32, backlog: i32) -> i32 {
 ///
 /// `addr` 和 `addrlen` 可为 null 表示不关心对端地址。
 pub unsafe fn sm_accept(slot_id: i32, addr: *mut u8, addrlen: *mut u32, blocking: bool) -> i32 {
-    // SAFETY: null 表示不写对端地址, 由调用方契约保证
+    // SAFETY: 上方 `# Safety` 段允许 addr/addrlen 为 null (表示不写对端地址);
+    // sm_accept 只在非 null 时写这两个输出参数.
     unsafe { init::sm_accept(slot_id, addr, addrlen, blocking) }
 }
 
@@ -393,7 +395,7 @@ pub unsafe fn sm_getsockopt(
 ///
 /// `addr` 必须为可写缓冲区, `addrlen` 为可写 u32。
 pub unsafe fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
-    // SAFETY: addr 可写, addrlen 可写, 由调用方保证有效
+    // SAFETY: 上方 `# Safety` 段要求 addr 可写、addrlen 为可写 u32; 本处同步委托.
     unsafe { init::sm_getsockname(slot_id, addr, addrlen) }
 }
 
@@ -403,7 +405,7 @@ pub unsafe fn sm_getsockname(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> 
 ///
 /// `addr` 必须为可写缓冲区, `addrlen` 为可写 u32。
 pub unsafe fn sm_getpeername(slot_id: i32, addr: *mut u8, addrlen: *mut u32) -> i32 {
-    // SAFETY: addr 可写, addrlen 可写, 由调用方保证有效
+    // SAFETY: 上方 `# Safety` 段要求 addr 可写、addrlen 为可写 u32; 本处同步委托.
     unsafe { init::sm_getpeername(slot_id, addr, addrlen) }
 }
 
@@ -429,7 +431,7 @@ pub fn sm_poll_sockets() -> i32 {
 #[must_use]
 pub fn sm_net_bind(slot_id: i32, addr_addr: usize, addrlen: u32) -> i32 {
     let addr = addr_addr as *const u8;
-    // SAFETY: addr 由调用方保证有效, sm_bind 同步读取
+    // SAFETY: 上方 `# Safety` 段要求 addr 指向至少 addrlen 字节; sm_bind 同步读取该区间.
     unsafe { init::sm_bind(slot_id, addr, addrlen) }
 }
 
@@ -450,7 +452,7 @@ pub fn sm_net_accept(slot_id: i32, addr_addr: usize, addrlen_addr: usize) -> i32
     let addr = addr_addr as *mut u8;
     let addrlen = addrlen_addr as *mut u32;
     // 抽象 NetStack 面不暴露 fcntl, 槽位恒阻塞 (与迁移前 per-slot 缺省 true 同口径).
-    // SAFETY: null 表示不写对端地址, 由调用方契约保证
+    // SAFETY: 上方 `# Safety` 段允许 null 表示不写对端地址; sm_accept 只在非 null 时写.
     unsafe { init::sm_accept(slot_id, addr, addrlen, true) }
 }
 
@@ -570,7 +572,8 @@ pub fn sm_net_setsockopt(
     optlen: u32,
 ) -> i32 {
     let val = val_addr as *const u8;
-    // SAFETY: val 由调用方保证有效, sm_setsockopt 同步读取
+    // SAFETY: 上方 `# Safety` 段要求 val 指向至少 optlen 字节只读区间;
+    // sm_setsockopt 同步读取该区间.
     unsafe { init::sm_setsockopt(slot_id, level, optname, val, optlen) }
 }
 

@@ -87,7 +87,8 @@ pub unsafe extern "C" fn syscall_dispatch_from_frame(frame: *mut InterruptFrame)
     }
     // ═══ 诊断结束 ═══
 
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+    // SAFETY: `frame` 是 syscall 入口汇编压入的 `InterruptFrame` 指针; 本处先判空,
+    // 之后仅在该 syscall 内按 `&mut` 借用 (入口 `# Safety` 段约定调用者处于内核上下文).
     unsafe {
         if frame.is_null() {
             return;
@@ -373,7 +374,8 @@ pub(crate) fn sys_nanosleep(req: u64, rem: u64) -> i64 {
     if req == 0 || !raw::check_user_ptr(req) {
         return Errno::Einval.as_ret();
     }
-    // SAFETY: `const` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `req` 已过上方 `raw::check_user_ptr` 校验, 指向用户态 `Timespec`
+    // (两个 i64 的 repr(C) 结构); `read_volatile` 只读该结构一次.
     let ts = unsafe { core::ptr::read_volatile(req as *const Timespec) };
     if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
         return Errno::Einval.as_ret();
@@ -900,7 +902,9 @@ fn boot_install_copy_kernel(disk_id: u32) -> i64 {
         }
         let n = if remaining < 512 { remaining } else { 512 };
         let mut buf = [0u8; 512];
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `kernel_ptr` 是链接符号给出的内核镜像起点 (`raw::kernel_start_ptr`),
+        // `kernel_len` 由 `raw::kernel_end_phys` 减得; `offset < kernel_len` 且 `n <= 512`,
+        // 目标 `buf` 是 512 字节栈数组.
         unsafe {
             core::ptr::copy_nonoverlapping(kernel_ptr.add(offset), buf.as_mut_ptr(), n);
         }
@@ -952,7 +956,8 @@ pub fn sys_boot_install(disk_id: u32) -> i64 {
     {
         return Errno::Eio.as_ret();
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `stage1` 是 `include_bytes!` 的 442 字节裸机引导码切片, 本处只拷前
+    // 440 字节 (MBR 分区表之前的引导码区); 目标 `mbr` 是 512 字节栈数组.
     unsafe { core::ptr::copy_nonoverlapping(stage1.as_ptr(), mbr.as_mut_ptr(), 440) };
     let total_sectors = crate::privileged::driver::hdd_total_sectors(
         crate::privileged::glue::low_u8_from_u32(disk_id),

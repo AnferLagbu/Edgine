@@ -88,9 +88,9 @@ impl UserReadPtr {
     /// 此方法是安全的，因为构造时的 `unsafe` 契约已保证了指针有效性。
     #[must_use]
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: 构造时的 unsafe 契约保证 ptr + len 是有效的用户态内存
-        // `slice::from_raw_parts` 要求: 1) ptr 对齐 (u8 = 1, ok), 2) len 字节全可读,
-        // 3) ptr 非空 (由 new() 调用方保证), 4) 期间无并发写 (与 Rust `&` 借用保证对齐)
+        // SAFETY: `new` 的校验与 `validate_user_buf` 已确认 ptr 非空且
+        // `[ptr, ptr+len)` 落在用户地址空间; `slice::from_raw_parts` 的其余前提:
+        // u8 对齐恒成立, len 字节可读由用户页表机制保证, 期间无并发写由 `&` 借用约束.
         unsafe { slice::from_raw_parts(self.ptr, self.len) }
     }
 

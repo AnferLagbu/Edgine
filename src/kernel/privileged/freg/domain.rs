@@ -56,11 +56,12 @@ pub struct RecoveryDomain {
     pub heartbeat_max_gap: u64,
     /// 本域的撤销日志
     pub undo: IrqSpinLock<UndoLog>,
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    /// 捕获回调 (FREG 快照时调用)
+    /// 捕获回调 (FREG 快照时经 `raw::invoke_capture_cb` 调用)
+    // SAFETY: `capture_cb` 存的是域所有者提供的 `unsafe fn()`, 契约由其定义; 只经
+    // `raw::invoke_capture_cb` 调用.
     pub capture_cb: IrqSpinLock<Option<unsafe fn()>>,
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
-    /// 回滚回调 (返回 `true` 表示回滚成功)
+    /// 回滚回调 (回滚完成时经 `raw::invoke_rollback_cb` 调用; 返回 `true` 表示回滚成功)
+    // SAFETY: `rollback_cb` 同 `capture_cb`, 只经 `raw::invoke_rollback_cb` 调用.
     pub rollback_cb: IrqSpinLock<Option<unsafe fn() -> bool>>,
     /// FREG 快照环形栈
     pub freg_stack: IrqSpinLock<[FREGSnapshot; MAX_FREG_SNAPSHOTS]>,
@@ -71,16 +72,14 @@ pub struct RecoveryDomain {
     addr_range_count: AtomicU32,
 }
 
-// SAFETY: RecoveryDomain 对状态使用 AtomicU32/AtomicU64,
-// 对 addr_ranges 使用 spin::Mutex. 所有可变访问要么是原子的,
-// 要么由 Mutex 保护. 不存在无同步的 UnsafeCell.
-unsafe impl Send for RecoveryDomain {}
 // SAFETY: `RecoveryDomain` 的全部可变状态要么是 AtomicU32/AtomicU64 (状态、代数、
 // 计数、配额、心跳、能力掩码、地址范围计数), 要么由 `IrqSpinLock` 保护 (depends_on /
 // depended_by / undo / capture_cb / rollback_cb / freg_stack / addr_ranges); 两个普通
 // u64 字段 `freg_interval_ticks` 与 `heartbeat_max_gap` 只在 const `new()` 中写入,
-// 此后仅经 &self 读取 ⇒ 无「无同步的可变面」。故 &RecoveryDomain 跨核共享安全。
-// (上方 Send 注释写「spin::Mutex」, 实装是 IrqSpinLock, 属措辞漂移, 判据不变。)
+// 此后仅经 &self 读取 ⇒ 无「无同步的可变面」, 故可跨线程转移.
+unsafe impl Send for RecoveryDomain {}
+// SAFETY: 同 Send 的依据: 全部可变面要么是原子, 要么在 `IrqSpinLock` 内; 两个普通
+// u64 字段在 const `new()` 之后只读 ⇒ `&RecoveryDomain` 跨核共享安全.
 unsafe impl Sync for RecoveryDomain {}
 
 impl RecoveryDomain {

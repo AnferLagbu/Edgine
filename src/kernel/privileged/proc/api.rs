@@ -122,7 +122,8 @@ pub unsafe extern "C" fn user_proc_setup_argv(
     envp: *const *const u8,
     env_count: u32,
 ) -> i32 {
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+    // SAFETY: `USER_PROC_MANAGER.get` 的句柄在进程表锁内有效 (INV-USER-PROC-2);
+    // argv/envp 由本 fn 的 `# Safety` 段约束为有效指针数组.
     unsafe {
         let Some(proc) = USER_PROC_MANAGER.get(pid) else {
             return -1;
@@ -180,7 +181,8 @@ pub extern "C" fn user_proc_enter_by_pid(pid: u32) -> i32 {
     crate::klog_boot_info!("[USER] calling USER_PROC_MANAGER.get({})", pid);
     USER_PROC_MANAGER.get(pid).map_or(-1, |proc| {
         // 诊断：打印从 Process 读取的 kernel_stack 值
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+        // SAFETY: `USER_PROC_MANAGER.get` 的句柄在进程表锁内有效 (INV-USER-PROC-2);
+        // 本处只读其 `kernel_stack` 原子字段.
         let p_kstack = unsafe {
             (*proc)
                 .process()

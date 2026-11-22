@@ -48,7 +48,8 @@ fn test_undo_log_rollback() -> TestResult {
 
     let mut v: u64 = 42;
     undo.record(&raw mut v, v);
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `v` 是栈上 `mut u64`, `&raw mut v` 得到的地址对齐且独占 (无其他借用者),
+    // 测试内只此一处写入.
     unsafe {
         core::ptr::write_volatile(&raw mut v, 99);
     }

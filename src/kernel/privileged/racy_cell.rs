@@ -30,9 +30,10 @@ pub struct RacyCell<T> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: RacyCell 的 Sync 安全性由调用方保证(外部同步或 per-CPU 访问)。
-// 这与 UnsafeCell 不同——UnsafeCell 不实现 Sync 是为了强制编译器检查,
-// 但内核中许多全局状态确实需要 Sync 特性(例如 static 变量)。
+// SAFETY: `RacyCell<T>` 只是 `UnsafeCell<T>` 的 Sync 包装, 本身不提供同步; 使用方须
+// 保证每次 `get` / `get_mut` 都在单线程或外部同步 (如 `SpinLock`) 下进行, 而 `T: Send`
+// 约束保证值本身可跨线程转移。`UnsafeCell` 不实现 Sync 是为强制编译器检查, 这里把该
+// 责任显式交给使用方, 以适应内核中需要 Sync 的全局状态。
 //
 // B03-24 根治 (2026-08-23): 加 `T: Send` 约束 — Sync 类型必须可安全跨线程
 // 引用 (Send 是必要条件), 无约束会让非 Send 数据 (如含裸指针的容器) 被强制
@@ -67,10 +68,9 @@ impl<T> RacyCell<T> {
     ///
     /// 调用方必须保证独占访问。单线程上下文或外部同步保证。
     pub fn get_mut(&self) -> RacyCellMut<'_, T> {
-        // SAFETY: RacyCell 的 Sync 实现由调用方通过外部同步保证。
-        // 在单线程或持有锁的上下文中调用是安全的。
-        // `&mut *UnsafeCell::get()` 产生独占引用, 与外部同步原语 (如 SpinLock) 配合
-        // 时, 锁的持有期间独占, drop 时释放, 借用检查器接受是因为 UnsafeCell 的特殊规则。
+        // SAFETY: `get_mut` 的独占前提由使用方通过外部同步提供 (单线程上下文, 或
+        // 持锁期间); `&mut *UnsafeCell::get()` 在该独占窗口内不与其他 `get` 别名,
+        // 守卫 drop 时结束借用.
         let value = unsafe { &mut *self.inner.get() };
         RacyCellMut { value }
     }
@@ -153,7 +153,7 @@ impl<T> RacyCell<T> {
     where
         T: StableDeref,
     {
-        // SAFETY: 调用方保证无并发写; `Option<T>` 借用稳定。
+        // SAFETY: 该路径由使用方保证无并发写 (外部同步); `Option<T>` 借用稳定.
         let opt_ref = unsafe { &*self.inner.get() };
         opt_ref.unpack()
     }

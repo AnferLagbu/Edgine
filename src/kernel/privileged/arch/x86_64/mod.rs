@@ -682,7 +682,7 @@ impl SystemArch for X8664 {
     #[inline]
     fn outb(port: u16, value: u8) {
         // SAFETY: `out dx, al` 把 al 写到 dx 指定的 I/O 端口, 两个操作数都是 `in`;
-        // 副作用是设备 I/O, 端口有效性由调用方 (IoPort safe 代理) 保证;
+        // 副作用是设备 I/O, 端口有效性由 `IoPort` 构造时的 `# Safety` 契约保证;
         // `nostack`/`preserves_flags` 与该指令语义一致.
         unsafe {
             core::arch::asm!(
@@ -699,7 +699,7 @@ impl SystemArch for X8664 {
     fn inb(port: u16) -> u8 {
         let value: u8;
         // SAFETY: `in al, dx` 从 dx 端口读一字节到 al (`out("al")`); 端口有效性由
-        // 调用方保证; 指令不改栈、不隐式改标志.
+        // `IoPort` 构造契约保证; 指令不改栈、不隐式改标志.
         unsafe {
             core::arch::asm!(
                 "in al, dx",
@@ -715,7 +715,7 @@ impl SystemArch for X8664 {
     #[inline]
     fn outl(port: u16, value: u32) {
         // SAFETY: `out dx, eax` 把 eax 写到 dx 端口, 两个操作数都是 `in`; 副作用是
-        // 设备 I/O, 端口与位宽有效性由调用方 (IoPort safe 代理) 保证.
+        // 设备 I/O, 端口与位宽有效性由 `IoPort` 构造时的 `# Safety` 契约保证.
         unsafe {
             core::arch::asm!(
                 "out dx, eax",
@@ -731,7 +731,7 @@ impl SystemArch for X8664 {
     fn inl(port: u16) -> u32 {
         let value: u32;
         // SAFETY: `in eax, dx` 从 dx 端口读双字到 eax (`out("eax")`); 端口与位宽
-        // 有效性由调用方保证; 指令不改栈、不隐式改标志.
+        // 有效性由 `IoPort` 构造契约保证; 指令不改栈、不隐式改标志.
         unsafe {
             core::arch::asm!(
                 "in eax, dx",

@@ -305,8 +305,8 @@ impl DynIpcNamespace {
 static DYN_IPC: RacyCell<Option<DynIpcNamespace>> = RacyCell::new(None);
 
 fn dyn_ipc_init_impl() {
-    // SAFETY: 单线程启动路径; 一次性初始化.
-    // RacyCell::get_mut() 在此安全, 因启动期在并发访问前, 调用方保证独占访问.
+    // SAFETY: 启动期单线程路径, 在任何并发访问之前一次性初始化; `RacyCell::get_mut`
+    // 要求独占借用, 此时 `DYN_IPC` 尚无其他借用者.
     *DYN_IPC.get_mut() = Some(DynIpcNamespace::new());
 }
 

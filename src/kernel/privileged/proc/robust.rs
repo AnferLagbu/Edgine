@@ -114,8 +114,8 @@ fn write_u32_user(uaddr: u64, val: u32) {
     if !crate::privileged::syscall::raw::check_user_ptr(uaddr) {
         return;
     }
-    // SAFETY: uaddr 已通过 check_user_ptr 验证; 调用方保证当前处于退出路径,
-    // 目标进程页表仍处于激活状态 (地址空间尚未销毁)
+    // SAFETY: 上方 `check_user_ptr(uaddr)` 已校验该地址在用户可访问范围内; 调用点
+    // 位于退出路径, 目标进程页表仍激活 (地址空间尚未销毁).
     unsafe {
         core::ptr::write_volatile(uaddr as *mut u32, val);
     }

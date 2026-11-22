@@ -253,7 +253,7 @@ fn start_ap(mpidr: u64, cpu_index: u32) -> Result<(), ()> {
     if crate::privileged::smp::get_cpu_count() == before {
         // SAFETY: 类别 H. 与超时分支读同一 `el` 字段, 但语境不同: `done` 已置 1 且上方
         // `fence(Acquire)` 已过, 而权威计数器未增加 ⇒ AP 应答但未登记 (如 stub 因异常级
-        // 不符进入 `ap_bad_el` 占位分支, 该分支只置 done 不登记). 读在 Acquire 之后, 故
+        // 不符进入 `ap_bad_el` 分支, 该分支只置 done 不登记). 读在 Acquire 之后, 故
         // 能看到 AP 在置 done 之前写入的 el 值.
         let el = unsafe { core::ptr::read_volatile(&raw const (*slot).el) };
         crate::klog_err!(

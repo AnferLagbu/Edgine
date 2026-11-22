@@ -733,8 +733,9 @@ pub extern "C" fn proc_exec_replace(
     // `replace_user_space` 之后). 写侧按 new_cr3 寻址, 与旧空间无耦合;
     // 失败保持镜像原栈指针, 与原"忽略失败"语义一致.
     if (argv_addr != 0 && arg_count > 0) || (envp_addr != 0 && env_count > 0) {
-        // SAFETY: argv_addr/arg_count 与 envp_addr/env_count 由 C ABI 调用方保证
-        // 有效, 且此刻旧地址空间仍存活; new_cr3 是刚加载完成的新用户页表.
+        // SAFETY: 入口 `# Safety` 段要求 argv/envp 指针数组与字符串位于当前仍在用的
+        // 地址空间; 本步在旧空间销毁前执行 (见上方阶段 2c), new_cr3 是刚加载完成的
+        // 新用户页表, 写侧只按 new_cr3 寻址.
         let sp = unsafe {
             UserProcManager::setup_user_stack_in_table(
                 new_cr3,

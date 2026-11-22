@@ -394,7 +394,8 @@ impl RecoveryManager {
 
 pub(crate) mod raw {
     /// 调用域的 capture 回调 (freg 快照前)
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `cb` 来自 `RecoveryDomain::capture_cb`, 其 `unsafe fn()` 契约由注册该域的
+    // 模块实现并承担; 本调用只转发.
     pub fn invoke_capture_cb(cb: Option<unsafe fn()>) {
         if let Some(f) = cb {
             // SAFETY: f 由域所有者注册, 契约由 privileged::freg::api 维护。

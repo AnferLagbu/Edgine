@@ -255,7 +255,38 @@ memory_allocator、ipc、sched、sgeg 面的占位理由改写（批 5g 补写 5
 ③ **57 的测试模块占位**：测试面不在债册射程（`--lib` 不带 `--all-targets`），
 但 C1 的内容面腿若扫测试模块则会计入 ⇒ 施工前须先裁定 C1 的扫描面是否含 `#[cfg(test)]`，
 并把裁定写进侧车口径（**不得两侧不一致**）。
-状态：[]
+**结果**：C5 面（计划列出的 glue / klog / lib.rs / freg / proc / syscall / timer /
+privileged 根 / memory_allocator / ipc / sched / sgeg）窄口径 **62 处 → 0**；施工时按
+「内核其余面」口径一并吸收计划未列、但与 C2–C4 遗留同源的命中：pci **15**、dma **6**、
+mm **2**、racy_cell **3**、net_socket **8**、smp **1**、ioport **1**、userptr **1**、
+arch 遗留 **21**、idt 遗留 **9**、kernel_tests **1**，最终全树侧车 **窄 83 / 宽 186 → 0 / 0**
+（`--update-baseline` 后 totals 0 处 / 0 键，该腿转硬零门禁）。
+6 项失真：⑨ 按用户裁定**改常量**（`USER_DISK_INFO_SIZE` 76→80；内核与用户态两份
+`UserDiskInfo` 实测均 80 字节，76 是孤立值，原判「无安全后果」不确 ——
+`write_struct_to_user` 写满 80 而校验只 76，构成 4 字节越界写）；㊷
+`klog_register_defaults` / `klog_init` doc 写明实际次序
+`serial_init → register_defaults → KLOG_INIT.store`（原 doc 称「由 kernel 主入口调用」）；
+53 `load_elf_from_memory` doc 改为「区间可读性由调用点保证，首部只判非空与最小长度」，
+并删那条「批6 待裁」冗余注；54 原句改为「调用方 `schedule()` 首行 `interrupt_disable()`
+关本核中断」并删下方就地订正注；55 **复核成立**（`domain.rs` 原句确写 `spin::Mutex`），
+改原句为 `IrqSpinLock` 并删订正注；57 删 `glue/string.rs` 的游离 SAFETY 与 12 处测试
+模块窄占位（`idt/table.rs` 的 `cli()` 占位已在 C2 改）。
+**用户裁定的三处代码修复**（本批原定纯注释，经 AskUserQuestion 单独授权）：① ⑨ 常量
+76→80；② 两处测试夹具（`proc/elf/mod.rs::test_elf_magic_validation`、
+`tests/test_new_features.rs::test_elf_valid_minimal`）改为 `mem::zeroed::<Elf64Header>()`
++ u8 只读切片，消除 `[u8; N]` 强转 `&mut Elf64Header` 的对齐/独占 UB；③
+`pci_rust_init` 的 `format!` `String` 改为 256 字节栈缓冲 + NUL 结尾，闭合
+`klog_ffi_info` 的 C 串越界读。
+**纯注释/删除核验**：`git diff` 非注释删除行仅上述 3 处授权代码修复 + `domain.rs`
+一处 impl 行因注释重排而位移（代码字节不变）。本批未新增姊妹册项（R12/R13 已在批内
+修复，未落册）。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never
+bash ci/audit.sh full` RC=0（未执行腿 0、审计腿 17/17、P-49 11/11、Lockbud 4/4、
+QEMU 2/2）· `make test-host` **212 套 / 1651 passed / 0 failed** ·
+`make test-kernel-host` **12 + 811 + 608 = 1431 / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` 双架构 exit 0。侧车已 `--update-baseline`
+重导（**0 处 / 0 键**）。
+状态：[X]
 
 ### 批 C6・配置与工具自述、文档执法归属（① ② ③ ⑤ ⑦ 59）
 

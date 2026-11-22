@@ -97,7 +97,8 @@ pub unsafe fn verify_elf(elf_data: *const u8, elf_size: u64) -> Result<VerifyRes
         return Err(VerifyError::TooSmall);
     }
 
-    // SAFETY: 调用方保证 elf_data 有效, 仅读借用
+    // SAFETY: 上方已判 `elf_data` 非空且 `elf_size >= size_of::<Elf64Header>()`;
+    // 入口 `# Safety` 段要求其余区间可读, 本处按值 `read_unaligned` 读头, 不要求对齐.
     let header = unsafe { elf_data.cast::<Elf64Header>().read_unaligned() };
 
     // magic

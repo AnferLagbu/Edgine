@@ -51,13 +51,16 @@ pub mod msi;
 #[cfg(target_arch = "x86_64")]
 mod port_io {
     #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    /// # Safety
+    /// 端口号与位宽须匹配目标 PCI 配置寄存器; 本模块只以 `PCI_CONFIG_ADDR` (0xCF8)
+    /// 与 `PCI_CONFIG_DATA` (0xCFC) 调用.
     pub unsafe fn outl(port: u16, val: u32) {
         crate::arch!(outl(port, val));
     }
 
     #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    /// # Safety
+    /// 端口号与位宽须匹配目标 PCI 配置寄存器; 本模块只以 `PCI_CONFIG_DATA` (0xCFC) 调用.
     pub unsafe fn inl(port: u16) -> u32 {
         crate::arch!(inl(port))
     }
@@ -261,7 +264,9 @@ fn read_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             let val = port_io::inl(PCI_CONFIG_DATA);
@@ -271,7 +276,9 @@ fn read_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *const u8;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe { core::ptr::read_volatile(addr) }
     }
 }
@@ -286,7 +293,9 @@ fn read_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             let val = port_io::inl(PCI_CONFIG_DATA);
@@ -296,7 +305,9 @@ fn read_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *const u16;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe { core::ptr::read_volatile(addr) }
     }
 }
@@ -311,7 +322,9 @@ fn read_config_dword_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             port_io::inl(PCI_CONFIG_DATA)
@@ -320,7 +333,9 @@ fn read_config_dword_locked(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *const u32;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe { core::ptr::read_volatile(addr) }
     }
 }
@@ -335,7 +350,9 @@ fn write_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             let old = port_io::inl(PCI_CONFIG_DATA);
@@ -349,7 +366,9 @@ fn write_config_byte_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u8) {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *mut u8;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             core::ptr::write_volatile(addr, val);
         }
@@ -366,7 +385,9 @@ fn write_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             let old = port_io::inl(PCI_CONFIG_DATA);
@@ -380,7 +401,9 @@ fn write_config_word_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u16) {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *mut u16;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             core::ptr::write_volatile(addr, val);
         }
@@ -397,7 +420,9 @@ fn write_config_dword_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u32) {
     #[cfg(target_arch = "x86_64")]
     {
         let addr = make_config_addr(bus, dev, func, offset);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             port_io::outl(PCI_CONFIG_ADDR, addr);
             port_io::outl(PCI_CONFIG_DATA, val);
@@ -406,7 +431,9 @@ fn write_config_dword_locked(bus: u8, dev: u8, func: u8, offset: u8, val: u32) {
     #[cfg(target_arch = "aarch64")]
     {
         let addr = ecam_addr(bus, dev, func, offset) as *mut u32;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 配置空间只经两条固定面访问: x86 的 0xCF8/0xCFC 端口 (地址字由
+        // `make_config_addr` 编码) 或 aarch64 的 ECAM 窗口 (`ecam_addr` 算出, 启动期
+        // 已映射); 入口已持 `PCI_CONFIG_LOCK`, 读写宽度与调用方 API 一致.
         unsafe {
             core::ptr::write_volatile(addr, val);
         }
@@ -665,9 +692,15 @@ pub extern "C" fn pci_rust_init() -> i32 {
     }
     let count = init();
     let msg = alloc::format!("PCI: Rust subsystem initialised — {count} device(s)");
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // 拷入定长栈缓冲并以 NUL 结尾: `klog_ffi_info` 按 C 串读取, 而 `String` 不保证尾部 NUL.
+    let mut buf = [0u8; 256];
+    let n = msg.len().min(buf.len() - 1);
+    buf[..n].copy_from_slice(&msg.as_bytes()[..n]);
+    buf[n] = 0;
+    // SAFETY: `buf` 是 256 字节栈数组, 前 n 字节为消息、第 n 字节为 NUL; `klog_ffi_info`
+    // 只扫描到该 NUL, 不会越出 `buf`.
     unsafe {
-        klog_ffi_info(msg.as_ptr());
+        klog_ffi_info(buf.as_ptr());
     }
     0
 }

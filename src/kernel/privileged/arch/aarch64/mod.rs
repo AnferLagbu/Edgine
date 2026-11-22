@@ -433,7 +433,7 @@ impl MmuArch for Aarch64 {
         let tramp = exception::kpti_enter_user_trampoline_high();
 
         // SAFETY: 进入 EL0 的最后一步:
-        // - sp_el0/elr_el1/spsr_el1 均为 EL1 可写系统寄存器, 取值由调用方保证合法;
+        // - sp_el0/elr_el1/spsr_el1 均为 EL1 可写系统寄存器, 取值由本 fn 的 `# Safety` 段约束合法;
         // - 内核栈经 "SPSel=1 + mov sp" 写入 SP_EL1 (见下);
         // - x0 承载用户态首个参数; `br` 目标为 .vectors 内 trampoline 的高半区别名,
         //   该地址在切换前 (完整内核 TTBR1) 与切换后 (tramp 表) 均可取指;

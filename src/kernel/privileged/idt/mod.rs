@@ -101,8 +101,8 @@ pub use table::idt_entries_base_lma;
 /// - 当前 CPU 的中断处于屏蔽状态.
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn load_idt_on_current_cpu() {
-    // SAFETY: 由调用方保证 IDT 表已由 `IdtManager::init()` 初始化完成,
-    // 且当前 CPU 中断已屏蔽 (见本函数 # Safety 契约).
+    // SAFETY: 入口 `# Safety` 段已约定 IDT 表由 `IdtManager::init()` 填充完毕、本核中断已屏蔽;
+    // 本处只把已初始化的表指针加载进 IDTR.
     unsafe {
         IdtManager::instance().load_idt();
     }
@@ -527,7 +527,7 @@ pub extern "C" fn idt_register_irq(
         ""
     } else {
         // 简单处理：假设 name 指向静态字符串
-        // SAFETY: `name` 由调用方契约保证为 NUL 结尾的静态 C 串 (见本函数入口的
+        // SAFETY: `name` 按入口 `# Safety` 段为 NUL 结尾的静态 C 串 (见本函数
         // 判空与文档); `CStr::from_ptr` 只读扫描到首个 NUL, 不越出该串.
         unsafe {
             core::ffi::CStr::from_ptr(name.cast::<core::ffi::c_char>())

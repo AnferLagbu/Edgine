@@ -166,10 +166,10 @@ unsafe fn gicd_write(offset: u64, val: u32) {
 }
 
 #[inline]
-// SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
+/// # Safety
+/// `base` 须为本核已唤醒、已映射的 GICR 帧 (RD 或 SGI) 高半区别名.
 unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
-    // SAFETY: 类别 R. base 由调用方传入 (本核 RD 或 SGI 帧高半区别名), 块内无法
-    // 证明它已映射/已唤醒/属本核 —— 该义务由外层 fn `# Safety` 传入. 本块只
+    // SAFETY: 类别 R. `base` 的映射 / 唤醒 / 归属由本 fn 的 `# Safety` 段承担; 本块只
     // `read_volatile` 一个 u32, 不构造引用; `dsb sy` 前后夹住访问.
     unsafe {
         core::arch::asm!("dsb sy");
@@ -180,7 +180,8 @@ unsafe fn gicr_read_at(base: u64, offset: u64) -> u32 {
 }
 
 #[inline]
-// SAFETY: 调用方保证 base 指向已映射的 GICR 帧 (RD/SGI), 类型有效。
+/// # Safety
+/// 同 `gicr_read_at`: `base` 须为本核已唤醒、已映射的 GICR 帧.
 unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
     // SAFETY: 类别 R. 同 `gicr_read_at` 的 base 义务; 本块 `write_volatile` 写
     // SGI/PPI 私有状态 (WAKER 唤醒、IGROUPR0 分组、IPRIORITYR 优先级、ICFGR1
@@ -194,12 +195,13 @@ unsafe fn gicr_write_at(base: u64, offset: u64, val: u32) {
 }
 
 #[inline]
-// SAFETY: 调用方保证 base 指向已映射的 GICR 帧, 且 base+offset 处为 64 位 (8 字节对齐) 寄存器。
+/// # Safety
+/// `base` 须指向已映射的 GICR 帧, 且 `base+offset` 处为 8 字节对齐的 64 位寄存器.
 unsafe fn gicr_read64_at(base: u64, offset: u64) -> u64 {
     // SAFETY: 类别 R. 唯一用途是读 `GICR_TYPER` (offset 0x0008, 8 字节对齐) 取
     // 亲和值与 Last 位; 64 位 `read_volatile` 要求 base+offset 8 字节对齐, 由
-    // GICR 帧 64 KiB 对齐 + 该 offset 保证. base 有效性与本核归属仍由调用方契约
-    // 传入, 块内不构造引用.
+    // GICR 帧 64 KiB 对齐 + 该 offset 保证. base 有效性与本核归属由本 fn 的
+    // `# Safety` 段承担, 块内不构造引用.
     unsafe {
         core::arch::asm!("dsb sy");
         let val = read_volatile((base + offset) as *const u64);
@@ -525,7 +527,7 @@ pub fn acknowledge() -> u32 {
 /// 中断完成 (EOI)
 pub fn end_of_interrupt(intid: u32) {
     // SAFETY: 类别 S. `msr` 把 EOI 值写入 ICC_EOIR1_EL1 (当前核); 唯一操作数是
-    // `in(reg)`, INTID 由调用方取自 `acknowledge()` 的应答值 (≤ 1023), 零扩展无损.
+    // `in(reg)`, INTID 取自 `acknowledge()` 的应答值 (≤ 1023), 零扩展无损.
     unsafe {
         core::arch::asm!("msr icc_eoir1_el1, {}", in(reg) u64::from(intid));
     }
@@ -668,7 +670,7 @@ pub fn is_valid_irq(irq: u32) -> bool {
 pub unsafe fn enable_spi(irq: u32) {
     // SAFETY: 类别 C + D. 块内只 `gicd_write` 一次. `is_spi` 只判下界 (>= 32),
     // **不判上界** (`is_valid_irq` 未在此调用), 故 `GICD_ISENABLER + (irq/32)*4`
-    // 落在 GICD 帧内这一前提由调用方传入合法 INTID 兜住. ISENABLER 是写 1 置位
+    // 落在 GICD 帧内这一前提由本 fn 的 `# Safety` 段要求合法 INTID. ISENABLER 是写 1 置位
     // 寄存器, 不需读改写, 不覆盖同字其他 SPI 的使能位.
     unsafe {
         if !is_spi(irq) {
@@ -772,7 +774,7 @@ pub fn is_spi_pending(irq: u32) -> bool {
     let reg_offset = GICD_ISPENDR + (u64::from(irq / 32) * 4);
     let bit = 1u32 << (irq % 32);
     // SAFETY: 类别 C + D. `reg_offset` 为 `GICD_ISPENDR + (irq/32)*4`, `is_spi` 已判
-    // `irq >= 32`; 上界由调用方传入的合法 INTID 保证. `gicd_read` 只读已映射的
+    // `irq >= 32`; 上界由本 fn 的入口契约要求合法 INTID. `gicd_read` 只读已映射的
     // GICD 帧, 返回值与单 bit 掩码按位与只作判定.
     unsafe { gicd_read(reg_offset) & bit != 0 }
 }
@@ -829,7 +831,7 @@ unsafe fn route_spi_to_cpu0(irq: u32) {
     // SAFETY: 类别 C + D. 块内只一次 `gicd_write64(GICD_IROUTER + irq*8, 0)`.
     // 写 0 = Aff3:Aff2:Aff1:Aff0 全 0 ⇒ 路由到亲和值 0 的核 (CPU0); 该形态以
     // ARE=1 为前提, 由 `init_distributor` 显式置位并经 `verify_post_conditions`
-    // fail-fast 校验. irq 上界同 `enable_spi` 口径, 由调用方传入合法 INTID.
+    // fail-fast 校验. irq 上界同 `enable_spi` 口径, 由本 fn 的入口契约要求合法 INTID.
     unsafe {
         // SIMPLIFIED: SPI 亲和路由固定为 CPU0 (硬编码); 影响: 次核上线后 SPI 仍只
         //   投递至 CPU0; 需扩展: 引入多核 SPI 亲和路由时按目标 CPU 计算 Affinity。

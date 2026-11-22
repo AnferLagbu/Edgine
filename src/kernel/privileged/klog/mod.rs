@@ -191,19 +191,23 @@ mod serial_impl {
     const COM1: u16 = 0x3F8;
 
     #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    /// # Safety
+    /// 端口号须为 x86 16550 兼容 UART 的 8 位寄存器; 本模块只以 `COM1` 及固定偏移调用.
     unsafe fn port_outb(port: u16, value: u8) {
         crate::arch!(outb(port, value));
     }
 
     #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    /// # Safety
+    /// 端口号须为 x86 16550 兼容 UART 的 8 位寄存器; 本模块只以 `COM1` 及固定偏移调用.
     unsafe fn port_inb(port: u16) -> u8 {
         crate::arch!(inb(port))
     }
 
     pub fn serial_init() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: COM1 = 0x3F8 是 x86 PC 标准 16550 UART 的端口基址; 下述写入
+        // 全部是该 UART 配置寄存器 (DLL / DLM / LCR / FCR / MCR) 的整字节写,
+        // 寄存器偏移固定为 0..4, 与 `port_outb` 的 8 位宽度一致.
         unsafe {
             port_outb(COM1 + 1, 0x00);
             port_outb(COM1 + 3, 0x80);
@@ -216,7 +220,8 @@ mod serial_impl {
     }
 
     pub fn serial_putc(c: u8) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: COM1+5 是 16550 的 LSR 寄存器, 循环轮询 THRE 位 (0x20) 等发送
+        // 保持寄存器空; COM1 是 THR, 写入 8 位字符. 两个端口都落在 COM1 的 16550 帧内.
         unsafe {
             while (port_inb(COM1 + 5) & 0x20) == 0 {
                 core::hint::spin_loop();
@@ -235,7 +240,8 @@ mod serial_impl {
     }
 
     pub fn serial_putc(c: u8) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `uart::putc` 的 `# Safety` 要求 UART 已初始化且 PL011 基址已映射;
+        // `boot/aarch64/entry.rs` 在 `mmu::init` 之后、日志启用之前调用过 `uart::init`.
         unsafe {
             uart::putc(c);
         }
@@ -394,9 +400,12 @@ const fn make_null_sinks() -> [SinkPtr; MAX_LOG_SINKS] {
         null_sink_ptr(),
     ]
 }
-// SAFETY: SinkPtr 的 raw/fat 共享存储, 注册时写入 fat 有效; 日志路径由调用方序列化.
+// SAFETY: 注册的 sink 是 `&'static dyn LogSink`, 而 trait 约束 `LogSink: Sync`,
+// 其共享引用可跨线程使用; SinkPtr 只是该宽指针的 raw/fat 存储载体, 一切读写都在
+// `LOG_SINKS` 的 IrqSpinLock 临界区内, 故整体可跨线程转移.
 unsafe impl Send for SinkPtr {}
-// SAFETY: 同上, 日志路径由调用方序列化, 跨线程访问安全.
+// SAFETY: 同 Send 的依据: 对 SinkPtr 的唯一访问面是 `LOG_SINKS` 的 IrqSpinLock
+// 临界区, 该锁保证任一时刻只有一个核读写 union 的两个视图.
 unsafe impl Sync for SinkPtr {}
 static LOG_SINKS: crate::privileged::sync::IrqSpinLock<[SinkPtr; MAX_LOG_SINKS]> =
     crate::privileged::sync::IrqSpinLock::new(make_null_sinks());
@@ -503,7 +512,10 @@ pub fn klog_broadcast_bytes(b: &[u8]) {
     }
 }
 
-/// 启动时注册默认 sink (serial). 由 kernel 主入口调用.
+/// 启动时注册默认 sink (serial).
+///
+/// 由 `klog_init` 在 `serial_impl::serial_init()` 之后、置 `KLOG_INIT` 之前调用
+/// (顺序不可互换: 首条 `klog_output` 写出前必须已有 sink).
 pub fn klog_register_defaults() {
     static SERIAL: SerialSink = SerialSink;
     // SAFETY: SERIAL 是 'static.
@@ -550,7 +562,9 @@ impl RingBuf {
 struct RingLock {
     inner: core::cell::UnsafeCell<RingBuf>,
 }
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: `RING` 是 `.bss` 静态缓冲, 唯一访问点是 `klog_output` 在 `LOG_EMIT_LOCK`
+// 临界区内经 `&mut *RING.inner.get()` 取得独占引用 (该锁不可重入, 跨核与中断都已独占),
+// 故不存在并发的 `&` / `&mut` 别名; UnsafeCell 在此只承担 static 的内部可变性.
 #[cfg(not(feature = "host-test"))]
 unsafe impl Sync for RingLock {}
 
@@ -883,7 +897,10 @@ pub fn klog_get_level() -> LogLevel {
 ///
 /// # Safety
 ///
-/// 在任何日志记录前必须且只能调用一次. 调用方保证串口硬件就绪.
+/// 在任何日志记录前必须且只能调用一次.
+///
+/// 实装次序固定为: `serial_impl::serial_init()` → `klog_register_defaults()` →
+/// `KLOG_INIT.store(true)` → 首条 "`KLog` initialized" 日志; 串口硬件须在调用前就绪.
 pub unsafe extern "C" fn klog_init() {
     serial_impl::serial_init();
     // 注册默认 serial sink, 否则 klog_broadcast_bytes 无 sink 可写
@@ -905,7 +922,6 @@ pub unsafe extern "C" fn klog_write(
     _func: *const u8,
     _line: u32,
     fmt: *const u8,
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> i32 {
     // SAFETY: 本块是 `klog_write` 的实现体。C 侧契约: `fmt` 指向 NUL 终止的可读缓冲
     // (同下方单源段的入口族契约); `_file` / `_func` / `_line` 三个形参在本实现中

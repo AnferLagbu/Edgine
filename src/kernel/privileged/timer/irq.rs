@@ -45,7 +45,8 @@ pub extern "C" fn timer_tick_handler(_frame: *mut InterruptFrame) {
         #[cfg(target_arch = "x86_64")]
         {
             // smoltcp: 始终轮询
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `net::poll_network` 的 `# Safety` 契约要求在本核中断上下文调用
+            // (此处即 timer handler); 它只轮询 smoltcp socket 并推进出站帧.
             unsafe {
                 crate::privileged::net::poll_network();
             }
@@ -59,7 +60,8 @@ pub extern "C" fn timer_tick_handler(_frame: *mut InterruptFrame) {
         unsafe extern "C" {
             fn scheduler_tick();
         }
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `scheduler_tick` 是 proc 的 C ABI 导出; 上方 `SCHEDULER_READY`
+        // 的 Acquire 检查保证调度器已初始化, 其内部再取各核 rq 锁.
         unsafe {
             scheduler_tick();
         }

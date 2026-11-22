@@ -538,7 +538,6 @@ pub unsafe extern "C" fn memcpy(
     dest: *mut core::ffi::c_void,
     src: *const core::ffi::c_void,
     n: usize,
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
 ) -> *mut core::ffi::c_void {
     // SAFETY: 类别 B。空指针或 n=0 提前返回 dest; `for i in 0..n` 逐字节
     // `*d.add(i) = *s.add(i)` ⇒ 读 src[0..n]、写 dest[0..n], 两侧容量与
@@ -930,7 +929,8 @@ mod tests {
 
     #[test]
     fn test_strlen_basic() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 三处入参都是 'static C 字面量, 自带 NUL 终止符; `strlen` 只向后
+        // 扫描到首个 NUL, 不越出字面量容量.
         unsafe {
             assert_eq!(strlen(c"Hello".as_ptr()), 5);
             assert_eq!(strlen(c"".as_ptr()), 0);
@@ -940,7 +940,8 @@ mod tests {
 
     #[test]
     fn test_strcmp_operations() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 两操作数都是 'static C 字面量, `strcmp` 逐字节比较至首个 NUL,
+        // 不越出字面量容量.
         unsafe {
             // 相等
             assert_eq!(strcmp(c"test".as_ptr(), c"test".as_ptr()), 0);
@@ -955,7 +956,8 @@ mod tests {
 
     #[test]
     fn test_strncmp_limit() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 两操作数都是 'static C 字面量 (各 6 字节含 NUL), `strncmp` 只比较
+        // 前 `n` 字节; 本测试的 n=3 / n=4 均未超过字面量容量.
         unsafe {
             // 前3个字符相等
             assert_eq!(strncmp(c"abcdef".as_ptr(), c"abcxyz".as_ptr(), 3), 0);
@@ -967,7 +969,8 @@ mod tests {
 
     #[test]
     fn test_strcpy_and_strncpy() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: buffer (20 字节) / buffer2 (10 字节) 是栈上数组, 源为 'static C
+        // 字面量; `strcpy` 写入 12 字节 (含 NUL)、`strncpy` 最多写 n=5 字节, 均不越容量.
         unsafe {
             let mut buffer = [0i8; 20];
 
@@ -988,7 +991,8 @@ mod tests {
 
     #[test]
     fn test_strcat() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: buffer 是 30 字节栈数组, 源为 'static C 字面量; `strcpy` 后
+        // `strcat` 的总长 12 字节 (含 NUL) 未超过 buffer 容量.
         unsafe {
             let mut buffer = [0i8; 30];
             strcpy(buffer.as_mut_ptr(), c"Hello ".as_ptr());
@@ -1000,7 +1004,8 @@ mod tests {
 
     #[test]
     fn test_strchr_and_strrchr() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `s` 是带 NUL 的 'static 字节串; `strchr` / `strrchr` 只在该串
+        // 范围内扫描, 返回的指针也落在同一串内.
         unsafe {
             let s = b"Hello World\0";
 
@@ -1018,7 +1023,8 @@ mod tests {
 
     #[test]
     fn test_strstr() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: haystack 与三处 needle 都是 'static NUL 结尾串, `strstr` 只在
+        // haystack 范围内查找, 不越出其容量.
         unsafe {
             let haystack = b"The quick brown fox jumps over the lazy dog\0";
 
@@ -1038,7 +1044,9 @@ mod tests {
 
     #[test]
     fn test_memcpy_and_memmove() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: dest / overlap 是 10 字节栈数组, src 是 10 元素栈数组; `memcpy`
+        // 的 n=10 与两侧容量一致, `memmove` 的源区间 overlap[2..10] 与目标区间重叠,
+        // 按字节前向搬运仍在 10 字节容量内.
         unsafe {
             let mut dest = [0u8; 10];
             let src = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -1067,7 +1075,7 @@ mod tests {
 
     #[test]
     fn test_memset_operations() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: buffer 是 20 字节栈数组, 两次 `memset` 的长度 20 / 10 均不超过容量.
         unsafe {
             let mut buffer = [0xABu8; 20];
 
@@ -1088,7 +1096,7 @@ mod tests {
 
     #[test]
     fn test_memcmp() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: a / b / c 是栈上 5 元素 u8 数组, `memcmp` 的 n=5 与三者长度一致.
         unsafe {
             // 元素类型必须显式为 u8: memcmp 按字节比较, 若推断为 [i32; 5]
             // 则 a/c 的前 5 字节相同 (小端) 而失去区分度 (2026-09-24 UT-06 实测).
@@ -1119,7 +1127,7 @@ mod tests {
 
     #[test]
     fn test_memchr() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: data 是 8 元素栈数组, `memchr` 的 n=8 与数组长度一致.
         unsafe {
             let data = [1, 2, 3, 4, 5, 3, 7, 8];
 
@@ -1137,7 +1145,7 @@ mod tests {
 
     #[test]
     fn test_secure_zero() {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: secret 是 6 元素栈数组, `secure_zero` 的 n=6 与数组长度一致.
         unsafe {
             // 元素类型必须显式为 u8: secure_zero 按字节清零 (2026-09-24 UT-06 实测).
             let mut secret = [0xDEu8, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE];

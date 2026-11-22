@@ -126,8 +126,8 @@ pub trait ExceptionHandler: Send + Sync {
 pub struct DivisionByZeroHandler;
 
 impl ExceptionHandler for DivisionByZeroHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
-    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    // SAFETY: 安全契约继承自 trait 声明 —— 入口 `# Safety` 段要求 `frame` 指向
+    // 异常入口构建的、结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
         // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
@@ -199,8 +199,8 @@ impl PageFaultHandler {
 }
 
 impl ExceptionHandler for PageFaultHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
-    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    // SAFETY: 安全契约继承自 trait 声明 —— 入口 `# Safety` 段要求 `frame` 指向
+    // 异常入口构建的、结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
         // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
@@ -313,8 +313,8 @@ impl ExceptionHandler for PageFaultHandler {
 pub struct InvalidOpcodeHandler;
 
 impl ExceptionHandler for InvalidOpcodeHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
-    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    // SAFETY: 安全契约继承自 trait 声明 —— 入口 `# Safety` 段要求 `frame` 指向
+    // 异常入口构建的、结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
         // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
@@ -415,8 +415,8 @@ pub enum FaultCause {
 pub struct GeneralProtectionFaultHandler;
 
 impl ExceptionHandler for GeneralProtectionFaultHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
-    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    // SAFETY: 安全契约继承自 trait 声明 —— 入口 `# Safety` 段要求 `frame` 指向
+    // 异常入口构建的、结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         // SAFETY: `frame` 由 trait 声明契约保证指向异常入口构建的完整对齐
         // `InterruptFrame` (见本函数开头); 此处只读该帧字段, 与 asm 压栈布局一致.
@@ -489,8 +489,8 @@ pub struct DoubleFaultHandler;
 static DOUBLE_FAULT_COUNT: AtomicU64 = AtomicU64::new(0);
 
 impl ExceptionHandler for DoubleFaultHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— `frame` 由调用方保证指向异常入口构建的、
-    // 结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
+    // SAFETY: 安全契约继承自 trait 声明 —— 入口 `# Safety` 段要求 `frame` 指向
+    // 异常入口构建的、结构完整且对齐的异常帧, 且处理期间不被其他路径并发修改.
     unsafe fn handle(&self, frame: *mut InterruptFrame) -> RecoveryAction {
         let count = DOUBLE_FAULT_COUNT.fetch_add(1, Ordering::SeqCst);
 
@@ -550,7 +550,8 @@ impl DefaultHandler {
 }
 
 impl ExceptionHandler for DefaultHandler {
-    // SAFETY: 安全契约继承自 trait 声明 —— 本实现不访问 `_frame`, 契约由调用方满足.
+    // SAFETY: 安全契约继承自 trait 声明 —— 本实现不访问 `_frame`, 契约由入口
+    // `# Safety` 段承担.
     unsafe fn handle(&self, _frame: *mut InterruptFrame) -> RecoveryAction {
         // 默认行为: 尝试域级恢复
         RecoveryAction::DomainRecovery

@@ -126,7 +126,9 @@ pub fn kernel_stack_check_canary(stack_top: u64) -> bool {
     if stack_top < 8 {
         return true;
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `stack_top` 取自 `Process::kernel_stack` (由 `allocate_kernel_stack_sized`
+    // 以 `pmm_alloc_pages` 分配后加 `KERNEL_BASE` 写入), 故 `stack_top-8` 落在该内核栈
+    // 的最后一字; 上方已排除 `< 8` 与低半区地址.
     unsafe {
         let canary_ptr = (stack_top - 8) as *const u64;
         if (canary_ptr as u64) < USER_ADDR_FLOOR {
@@ -142,7 +144,9 @@ pub fn kernel_stack_write_canary(stack_top: u64) {
     if stack_top <= 8 {
         return;
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 同 `kernel_stack_check_canary`: `stack_top-8` 落在
+    // `allocate_kernel_stack_sized` 分配的内核栈最后一字; 上方已排除 `<= 8`
+    // 与低半区地址, 写入的是该栈的 canary 槽位.
     unsafe {
         let canary_ptr = (stack_top - 8) as *mut u64;
         if (canary_ptr as u64) < USER_ADDR_FLOOR {
@@ -565,7 +569,9 @@ impl Process {
     /// 按给定字节数分配内核栈; 记录页数供 [`Drop`] 单点归还.
     fn allocate_kernel_stack_sized(&self, size: usize) -> bool {
         let pages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `pmm_alloc_pages` 是 mm 的 C ABI 分配入口 (分配 `count` 个连续
+        // 物理帧, 失败返回 null); `pages` 由 `USER_KSTACK_SIZE / PAGE_SIZE` 得到且非 0,
+        // 返回值在上方判空后才按 `KERNEL_BASE` 高半区别名使用.
         unsafe {
             let stack = pmm_alloc_pages(pages as u64);
             if stack.is_null() {
@@ -648,7 +654,9 @@ impl Process {
 
     /// 创建本进程独立的用户页表并记入 `cr3`; 创建失败返回 false.
     pub fn allocate_user_space(&self) -> bool {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `vmm_create_user_page_table` 为本进程分配并清零一张新用户页表,
+        // 返回 0 表示分配失败 (下方判); 其返回的 PML4 物理地址只写入本进程 `cr3`,
+        // 不触碰当前活动页表.
         unsafe {
             let cr3 = vmm_create_user_page_table();
             if cr3 == 0 {

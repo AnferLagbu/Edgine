@@ -57,11 +57,12 @@ pub(crate) struct RegisteredDomain {
     id: DomainId,
     name: String,
     deps: &'static [DomainId],
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `save_fn` 由域所有者提供, 其 `unsafe fn()` 契约由该所有者承担; 只经
+    // `raw::invoke_save` 的 unsafe 块调用.
     save_fn: unsafe fn(),
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `restore_fn` 同上, 只经 `raw::invoke_restore` 的 unsafe 块调用.
     restore_fn: unsafe fn(),
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `reset_fn` 同上, 只经 `raw::invoke_reset` 的 unsafe 块调用.
     reset_fn: unsafe fn(),
 }
 
@@ -107,15 +108,18 @@ pub fn recovery_registry_init() {
 }
 
 /// 注册一个恢复域并返回其域 ID; `prefer_id` 非 0 时优先复用该 ID。
+///
+/// `save_fn` / `restore_fn` / `reset_fn` 由域所有者实现, 须在其自身契约下可被
+/// `raw::invoke_save` / `invoke_restore` / `invoke_reset` 无条件调用.
 pub fn recovery_domain_register(
     name: &'static str,
     prefer_id: DomainId,
     deps: &'static [DomainId],
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `save_fn` 由域所有者实现, 其 `unsafe fn()` 契约 (见本 fn doc) 由该所有者承担.
     save_fn: unsafe fn(),
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `restore_fn` 同上.
     restore_fn: unsafe fn(),
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `reset_fn` 同上.
     reset_fn: unsafe fn(),
 ) -> DomainId {
     let mut reg = RECOVERY_REGISTRY.lock();
@@ -292,7 +296,8 @@ pub fn hard_reset_domain(domain_id: DomainId) {
 
 pub(crate) mod raw {
     /// 调用恢复注册项的 save 回调
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `f` 是 `RegisteredDomain::save_fn` 保存的 `unsafe fn()`, 其契约由注册
+    // 该域的模块实现并承担; 本调用只转发.
     pub fn invoke_save(f: unsafe fn()) {
         // SAFETY: f 由域所有者注册, 契约由 privileged::freg::recovery 维护。
         unsafe { f() };

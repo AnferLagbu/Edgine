@@ -391,7 +391,7 @@ impl IdtManager {
     /// 关键 IST (0-3) 未填充非零栈顶时返回 `Err` 的描述文本。
     #[cfg(target_arch = "x86_64")]
     pub fn validate_boot_order() -> Result<(), &'static str> {
-        // SAFETY: `get_tss_mut` 的契约是「初始化后调用, 调用方保证并发安全」; 本函数
+        // SAFETY: `get_tss_mut` 的契约是「初始化后调用, 调用点保证并发安全」; 本函数
         // 只在启动期 IDT init 的串行路径做 I-24 顺序校验, 期间无其他核访问该 TSS.
         let tss = unsafe { crate::privileged::arch::gdt::get_tss_mut() };
         if !tss.ist_validated() {

@@ -190,7 +190,7 @@ pub fn init() {
 unsafe fn copy_trampoline() {
     // SAFETY: 源区间由链接符号 `ap_trampoline_start` / `ap_trampoline_end` 界定
     // (trampoline.asm `section .trampoline` 的首尾), size = end - start 覆盖「2 字节 jmp
-    // + 6 字节填充 + 54 字节 ApStartupInfo 占位 + 全部引导代码」; 二者是同一 section 内
+    // + 6 字节填充 + 54 字节 ApStartupInfo 预留槽 + 全部引导代码」; 二者是同一 section 内
     // 按序放置的代码符号, 取址只读不解引用, 区间恒有效且 end >= start, 故 `src.add(i)` /
     // `dst.add(i)` 在 i ∈ [0, size) 内均不越界.
     // 目的址 TRAMPOLINE_BASE = 0x8000 是**物理地址直接当 VA 用**, 依赖 boot 期低半区恒等

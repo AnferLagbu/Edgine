@@ -100,7 +100,6 @@ impl CStrExt for *const u8 {
         // 这里采用显式长度扫描而不是 CStr::from_ptr 是为了:
         //   - 避免无界扫描(在错误的输入下可能触发数秒级停滞)
         //   - 兼容没有 NUL 终止符的损坏输入(常见于 buggy FFI)
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let len = unsafe {
             let mut n = 0;
             while n < MAX_CSTR_LEN && *ptr.add(n) != 0 {

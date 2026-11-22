@@ -64,8 +64,8 @@ pub mod raw {
         #[inline]
         #[must_use]
         pub fn next(&self) -> *mut Message {
-            // SAFETY: 调用方保证 self 指向有效 Message。
-            // B03-24: Message.next 为 AtomicPtr, 队列操作在持锁下执行, Relaxed 足够.
+            // SAFETY: `MessageRef` 只由队列在持锁期间构造, `self.0` 指向已插入链表的
+            // 有效 `Message` (B03-24); `next` 是 AtomicPtr, 持锁串行下 Relaxed 足够.
             unsafe {
                 (*self.0.as_ptr())
                     .next

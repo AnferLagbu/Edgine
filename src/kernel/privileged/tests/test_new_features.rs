@@ -98,9 +98,8 @@ fn test_elf_magic_rejected() -> TestResult {
 
 fn test_elf_valid_minimal() -> TestResult {
     use crate::privileged::proc::Elf64Header;
-    let data = [0u8; 80]; // 头部 + 预留空间
-    // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-    let hdr = unsafe { &mut *(data.as_ptr() as usize as *mut Elf64Header) };
+    // SAFETY: `Elf64Header` 全字段都是整数与定长字节数组, 全零位模式合法.
+    let mut hdr = unsafe { core::mem::zeroed::<Elf64Header>() };
     hdr.ident[0] = 0x7F;
     hdr.ident[1] = b'E';
     hdr.ident[2] = b'L';
@@ -108,7 +107,14 @@ fn test_elf_valid_minimal() -> TestResult {
     hdr.ident[4] = 2; // ELFCLASS64
     hdr.machine = 0x3E; // x86_64
     hdr.phentsize = 56; // sizeof(Elf64Phdr)
-    let result = crate::privileged::proc::elf_validate(&data);
+    // SAFETY: `hdr` 是本地有效 `Elf64Header`; 按同起点、长度恰为结构体大小构造 u8 只读切片.
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            core::ptr::from_ref(&hdr).cast::<u8>(),
+            core::mem::size_of::<Elf64Header>(),
+        )
+    };
+    let result = crate::privileged::proc::elf_validate(bytes);
     check!(result.is_some(), "valid elf accepted");
     TestResult::Pass
 }

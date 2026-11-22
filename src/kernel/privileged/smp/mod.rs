@@ -42,7 +42,8 @@ pub fn init() {
     CPU_ONLINE[0].store(true, Ordering::Release);
     CPU_COUNT.store(1, Ordering::Release);
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `c"[SMP] BSP initialized"` 是 NUL 结尾的 `&'static CStr`,
+    // 指针在程序生命周期内有效; `klog_info` 按 C 串读取.
     unsafe {
         crate::privileged::klog::klog_info(c"[SMP] BSP initialized".as_ptr().cast::<i8>());
     }

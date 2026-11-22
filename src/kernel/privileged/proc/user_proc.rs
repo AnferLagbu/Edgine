@@ -135,13 +135,15 @@ pub(crate) mod raw {
         /// 访问 pid 字段 (委托到 Process)
         #[inline]
         pub fn pid(&self) -> u32 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().pid.0 }
         }
 
         #[inline]
         pub fn set_pid(&self, v: u32) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             // 注意: Process::pid 是 ProcessId (newtype), 需要通过 ptr::write 更新
             unsafe {
                 let proc = (*self.0).process.as_ptr();
@@ -152,13 +154,15 @@ pub(crate) mod raw {
         /// 访问 entry 字段 (读写)
         #[inline]
         pub fn entry(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处只读该分配内的字段.
             unsafe { (*self.0).entry }
         }
 
         #[inline]
         pub fn set_entry(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写该分配内的字段.
             unsafe {
                 (*self.0).entry = v;
             }
@@ -166,7 +170,8 @@ pub(crate) mod raw {
 
         #[inline]
         pub fn set_create_time(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写该分配内的字段.
             unsafe {
                 (*self.0).create_time = v;
             }
@@ -175,13 +180,15 @@ pub(crate) mod raw {
         /// 访问 pwm (委托到 Process)
         #[inline]
         pub fn load_pwm(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().pwm.load(Ordering::SeqCst) }
         }
 
         #[inline]
         pub fn store_pwm(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().pwm.store(v, Ordering::SeqCst);
             }
@@ -190,13 +197,15 @@ pub(crate) mod raw {
         /// 访问 cr3 (委托到 Process)
         #[inline]
         pub fn load_cr3(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().cr3.load(Ordering::SeqCst) }
         }
 
         #[inline]
         pub fn store_cr3(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().cr3.store(v, Ordering::SeqCst);
             }
@@ -205,20 +214,23 @@ pub(crate) mod raw {
         /// 访问 `kernel_stack` (委托到 Process)
         #[inline]
         pub fn load_kernel_stack(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().kernel_stack.load(Ordering::SeqCst) }
         }
 
         /// 访问用户态 TLS 基址 (委托到 Process)
         #[inline]
         pub fn load_tls_base(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().tls_base.load(Ordering::Acquire) }
         }
 
         #[inline]
         pub fn store_kernel_stack(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().kernel_stack.store(v, Ordering::SeqCst);
             }
@@ -227,13 +239,15 @@ pub(crate) mod raw {
         /// 访问 `user_stack` (委托到 Process)
         #[inline]
         pub fn load_user_stack(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().user_stack.load(Ordering::SeqCst) }
         }
 
         #[inline]
         pub fn store_user_stack(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().user_stack.store(v, Ordering::SeqCst);
             }
@@ -241,13 +255,15 @@ pub(crate) mod raw {
 
         #[inline]
         pub fn load_stack_bottom(&self) -> u64 {
-            // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处只读该分配内的字段.
             unsafe { (*self.0).stack_bottom.load(Ordering::SeqCst) }
         }
 
         #[inline]
         pub fn store_stack_bottom(&self, v: u64) {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写该分配内的字段.
             unsafe {
                 (*self.0).stack_bottom.store(v, Ordering::SeqCst);
             }
@@ -256,7 +272,8 @@ pub(crate) mod raw {
         /// 访问 state (委托到 Process)
         #[inline]
         pub fn store_state(&self, v: u32) {
-            // SAFETY: 调用方保证指针/类型有效; 写入权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().state.store(v, Ordering::SeqCst);
             }
@@ -265,7 +282,8 @@ pub(crate) mod raw {
         /// 加载进程状态 (委托到 Process)
         #[inline]
         pub fn load_state(&self) -> u32 {
-            // SAFETY: `self` 由调用方保证为有效指针; 通过 process() 访问权威 Process
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 访问权威 Process 的原子字段.
             unsafe { (*self.0).process().state.load(Ordering::SeqCst) }
         }
 
@@ -396,7 +414,8 @@ pub(crate) mod raw {
     ///
     /// `src` 必须指向可读的用户内存, 且 `src + j` 落在同一映射页的可读区间内.
     pub unsafe fn read_byte_from_user_ptr(src: *const u8, j: usize) -> u8 {
-        // SAFETY: 由调用方保证 src 在 [src, src+j+1) 区间内可读。
+        // SAFETY: 入口 `# Safety` 段要求 `src` 指向可读用户内存且 `src+j` 落在同一
+        // 映射页内; 本处只做一次 `*src.add(j)`, 不越过该页.
         unsafe { *src.add(j) }
     }
 
@@ -478,7 +497,8 @@ pub(crate) mod raw {
 
     /// ELF 文件指针 + 偏移。
     pub fn elf_ptr_at(elf_data: *const u8, off: usize) -> *const u8 {
-        // SAFETY: 调用方保证 off 在 elf_size 范围内。
+        // SAFETY: 入口契约要求 `off` 落在 ELF 映像区间内 (`load_elf_segments` 的
+        // phdr 边界检查保证); 本处只做指针偏移, 不解引用.
         unsafe { elf_data.add(off) }
     }
 
@@ -514,8 +534,9 @@ pub(crate) mod raw {
         if ptr.is_null() {
             None
         } else {
-            // SAFETY: ptr 来自 alloc_zeroed, 大小为 size_of::<UserProcess>(), 区间合法.
-            //         process NonNull 句柄由调用方保证有效 (INV-USER-PROC-2).
+            // SAFETY: ptr 是 `alloc_zeroed(size_of::<UserProcess>())` 返回的已清零块,
+            // 写入范围恰为该 layout; `process` 句柄的有效性由 INV-USER-PROC-2 保证
+            // (权威 Process 在 UserProcess 存活期内不被释放).
             unsafe {
                 core::ptr::write(&raw mut (*ptr).process, process);
             }
@@ -1115,7 +1136,8 @@ impl UserProcManager {
         if proc.is_null() {
             return;
         }
-        // SAFETY: proc 由调用方保证为非空、生命周期有效 (USER_PROC_MANAGER 中已存在).
+        // SAFETY: 入口 `# Safety` 段要求 proc 非空且指向 `USER_PROC_MANAGER` 持有的
+        // 有效分配; 上方已判非空, 构造只包装指针、不解引用.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
         let cr3 = proc_ref.load_cr3();
         let rip = proc_ref.entry();
@@ -1149,7 +1171,8 @@ impl UserProcManager {
             return;
         }
 
-        // SAFETY: proc 由调用方保证为非空、生命周期有效 (BTreeMap 中已存在)。
+        // SAFETY: 入口 `# Safety` 段要求 proc 非空且指向 `USER_PROC_MANAGER` 持有的
+        // 有效分配 (BTreeMap 中已存在); 上方已判非空.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
         self.current.store(proc as u64, Ordering::SeqCst);
         proc_ref.store_state(2);
@@ -1531,8 +1554,8 @@ impl UserProcManager {
     /// `table_phys` 必须是有效页表页的物理地址 (页对齐, 512 项), 且 `index < 512`.
     #[cfg(target_arch = "x86_64")]
     unsafe fn read_pt_entry(table_phys: u64, index: usize) -> u64 {
-        // SAFETY: 调用方保证 table_phys 为有效页表页物理地址; 高半区直接映射使其
-        // 内核可读; index < 512 保证不越出该页.
+        // SAFETY: 入口 `# Safety` 段要求 table_phys 为有效页表页物理地址; 高半区
+        // `KERNEL_BASE` 直接映射使其内核可读; index < 512 保证不越出该页.
         unsafe {
             let base = (table_phys + crate::privileged::mm::KERNEL_BASE) as *const u64;
             base.add(index).read_volatile()
@@ -1582,7 +1605,8 @@ impl UserProcManager {
     /// `pdpt_phys` 必须是 `PRESENT` PML4E 的 frame (有效 PDPT 页物理地址).
     #[cfg(target_arch = "x86_64")]
     unsafe fn walk_pdpt_level(pdpt_phys: u64, pdpt_idx: usize, pd_idx: usize, pt_slot_idx: usize) {
-        // SAFETY: 调用方保证 pdpt_phys 为有效 PDPT 页物理地址; 只读单个页表项.
+        // SAFETY: 入口 `# Safety` 段要求 pdpt_phys 为 `PRESENT` PML4E 指向的 PDPT 页;
+        // 只读单个页表项, 索引由 vaddr 位段给出 (< 512).
         let pdpte = unsafe { Self::read_pt_entry(pdpt_phys, pdpt_idx) };
         let pdpte_present = (pdpte & 1) != 0;
         let pdpte_user = (pdpte & 4) != 0;
@@ -1618,7 +1642,8 @@ impl UserProcManager {
     /// `pd_phys` 必须是 `PRESENT` 非 `HUGE` PDPTE 的 frame (有效 PD 页物理地址).
     #[cfg(target_arch = "x86_64")]
     unsafe fn walk_pd_level(pd_phys: u64, pd_idx: usize, pt_slot_idx: usize) {
-        // SAFETY: 调用方保证 pd_phys 为有效 PD 页物理地址; 只读单个页表项.
+        // SAFETY: 入口 `# Safety` 段要求 pd_phys 为 `PRESENT` 非 `HUGE` PDPTE 指向的
+        // PD 页; 只读单个页表项, 索引由 vaddr 位段给出 (< 512).
         let pde = unsafe { Self::read_pt_entry(pd_phys, pd_idx) };
         let pde_present = (pde & 1) != 0;
         let pde_user = (pde & 4) != 0;
@@ -1654,7 +1679,8 @@ impl UserProcManager {
     /// `pt_phys` 必须是 `PRESENT` 非 `HUGE` PDE 的 frame (有效 PT 页物理地址).
     #[cfg(target_arch = "x86_64")]
     unsafe fn walk_pt_level(pt_phys: u64, pt_slot_idx: usize) {
-        // SAFETY: 调用方保证 pt_phys 为有效 PT 页物理地址; 只读单个页表项.
+        // SAFETY: 入口 `# Safety` 段要求 pt_phys 为 `PRESENT` 非 `HUGE` PDE 指向的
+        // PT 页; 只读单个页表项, 索引由 vaddr 位段给出 (< 512).
         let pte = unsafe { Self::read_pt_entry(pt_phys, pt_slot_idx) };
         let leaf_present = (pte & 1) != 0;
         let leaf_user = (pte & 4) != 0;
@@ -1709,7 +1735,8 @@ impl UserProcManager {
 
         if !argv.is_null() {
             for i in 0..arg_count {
-                // SAFETY: argv 由调用方保证至少 arg_count 个有效指针。
+                // SAFETY: `# Safety` 段要求 argv 非空时指向至少 arg_count 个有效 C
+                // 字符串指针; 本处只读第 i 个槽位, i < arg_count.
                 let s = unsafe { *argv.add(i) };
                 if s.is_null() {
                     arg_lens.push(1);
@@ -1728,7 +1755,8 @@ impl UserProcManager {
 
         if !envp.is_null() {
             for i in 0..env_count {
-                // SAFETY: envp 由调用方保证至少 env_count 个有效指针。
+                // SAFETY: `# Safety` 段要求 envp 非空时指向至少 env_count 个有效 C
+                // 字符串指针; 本处只读第 i 个槽位, i < env_count.
                 let s = unsafe { *envp.add(i) };
                 if s.is_null() {
                     env_lens.push(1);
@@ -1779,7 +1807,7 @@ impl UserProcManager {
             raw::write_user_u64(cr3, argv_start_off + i * 8, abs_addr);
 
             if !argv.is_null() && (i < arg_count) {
-                // SAFETY: argv 由调用方保证, i < arg_count 有效。
+                // SAFETY: argv 非空且 i < arg_count, 落在 `# Safety` 段要求的指针数组内.
                 let src = unsafe { *argv.add(i) };
                 let l = arg_lens.get(i).copied().unwrap_or(0);
                 for j in 0..l {
@@ -1803,7 +1831,7 @@ impl UserProcManager {
             raw::write_user_u64(cr3, envp_start_off + i * 8, env_str_off as u64);
 
             if !envp.is_null() {
-                // SAFETY: envp 由调用方保证, i < env_count 有效。
+                // SAFETY: envp 非空且 i < env_count, 落在 `# Safety` 段要求的指针数组内.
                 let src = unsafe { *envp.add(i) };
                 let l = env_lens.get(i).copied().unwrap_or(0);
                 for j in 0..l {
@@ -1841,12 +1869,14 @@ impl UserProcManager {
             return 0;
         }
 
-        // SAFETY: proc 由调用方保证有效, 内部访问均经 UserProcRef 安全包装。
+        // SAFETY: 入口 `# Safety` 段要求 proc 指向有效 `UserProcess`; 内部访问均经
+        // UserProcRef 安全包装, 不直接解引用裸指针.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc) };
         let stack_top = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
 
-        // SAFETY: 调用方保证 argv 有效; cr3/stack_top 取自本进程镜像。
+        // SAFETY: argv/envp 由入口 `# Safety` 段约束; cr3 / stack_top 取自本进程镜像
+        // 的原子字段 (load_cr3 / load_user_stack).
         let new_sp = unsafe {
             Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envp, env_count)
         };
@@ -1903,7 +1933,10 @@ impl UserProcManager {
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     ///
     /// `elf_addr` 为内核地址空间中的 ELF 映像起始地址 (`usize` 地址值中转,
-    /// 避免以裸指针参数越层传递); 区间有效性由本函数首部校验.
+    /// 避免以裸指针参数越层传递); `[elf_addr, elf_addr + elf_size)` 的可读性由
+    /// 调用方保证 (现树两个调用点都传入内核缓冲: init 走 `read_file_kernel` 的
+    /// `Vec`, exec 走 functions 层读入的 ELF 缓冲). 本函数首部只校验非空与
+    /// `elf_size >= size_of::<ElfHeader>()`.
     pub fn load_elf_from_memory(&self, elf_addr: usize, elf_size: u64, pwm: u64) -> i32 {
         let elf_data = elf_addr as *const u8;
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
@@ -1913,16 +1946,13 @@ impl UserProcManager {
         }
 
         // P1-I-33: 委托给 elf::verify::verify_elf 单一来源, 避免解析方式不一致
-        //
-        // SAFETY: elf_data 区间已校验 (非空 + size >= header), verify_elf 内部仅读借用。
         crate::klog_boot_info!("[ELF] calling verify_elf...");
-        // SAFETY: `verify_elf` 的契约是「指针指向至少 `elf_size` 字节可读的缓冲」,
-        // 本函数首部已判 `elf_data` 非空且 `elf_size >= size_of::<ElfHeader>()`;
-        // 其内部只读解析 (魔数/类别/机器码/程序头表范围), 不写缓冲, 头部按
-        // `read_unaligned` 读 ⇒ 不要求对齐。
-        // 已登记缺口 (批6 待裁, 本批不改): 本函数 doc 声称「区间有效性由本函数首部
-        // 校验」, 而首部只判非空与最小长度, **未校验 `elf_addr..elf_addr+elf_size`
-        // 是否落在已映射内存** ⇒ 传入非法区间时 `verify_elf` 的读取即越界访问。
+        // SAFETY: `verify_elf` 的契约是「指针指向至少 `elf_size` 字节可读的缓冲」;
+        // 该可读性由调用点按 doc 约定传入内核缓冲保证 (init 的 `read_file_kernel`
+        // 的 `Vec` / exec 的 ELF 缓冲), 本函数首部只补判非空与
+        // `elf_size >= size_of::<ElfHeader>()`. `verify_elf` 内部只读解析
+        // (魔数/类别/机器码/程序头表范围), 不写缓冲, 头部按 `read_unaligned` 读
+        // ⇒ 不要求对齐.
         let Ok(verified) = (unsafe { super::elf::verify::verify_elf(elf_data, elf_size) }) else {
             crate::klog_boot_info!("[ELF] verify_elf failed");
             return -1;
@@ -2008,7 +2038,7 @@ impl UserProcManager {
             if phdr_offset + phdr_size > elf_size {
                 return None;
             }
-            // SAFETY: 调用方保证 elf_data 区间为已校验的 ELF 映像; 上方已拦截
+            // SAFETY: `# Safety` 段要求 elf_data 区间为已校验的 ELF 映像; 上方已拦截
             // phdr 表越界, 故该偏移处的程序头读取仍在区间内.
             let phdr = unsafe {
                 (elf_data.add(crate::privileged::glue::usize_from_u64(phdr_offset)))

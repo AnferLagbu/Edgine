@@ -969,9 +969,9 @@ fn install_user_signal_frame<F: UserFrame>(
     // (恢复原始栈指针 + 不修改异常帧), 进程继续运行.
     let sigframe_addr = frame_rsp + F::FRAME_HEADER_SIZE as u64;
     let trampoline_addr = sigframe_addr + core::mem::size_of::<ArchSignalFrame>() as u64;
-    // SAFETY: sigframe 由调用方保证指向本函数可读的信号帧; 长度 =
-    // size_of::<ArchSignalFrame>(), 完全在 sigframe 内存范围内;
-    // from_raw_parts 仅借用字节视图供 copy_to_user 读取.
+    // SAFETY: 入口契约要求 `sigframe` 指向本函数可读的信号帧 (`ArchSignalFrame`),
+    // 长度恰为 `size_of::<ArchSignalFrame>()`; `from_raw_parts` 只借用该字节视图
+    // 供 copy_to_user 读取, 不写.
     let sigframe_bytes = unsafe {
         core::slice::from_raw_parts(
             (&raw const *sigframe).cast::<u8>(),

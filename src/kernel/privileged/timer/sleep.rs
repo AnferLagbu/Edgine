@@ -245,7 +245,8 @@ where
     if timeout_ms == 0 {
         // 无限等待
         while !condition() {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `scheduler_yield_ex` 是调度器的 C ABI 入口, 让出本核并重新调度;
+            // 调用点位于 `wait_until` 的等待循环, 属进程上下文而非中断上下文.
             unsafe {
                 // SAFETY: scheduler_yield_ex 由框架调度器提供, 进程上下文安全调用
                 unsafe extern "C" {
@@ -271,7 +272,7 @@ where
             return Err(-1); // 超时
         }
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: 同上: `scheduler_yield_ex` 在进程上下文的等待循环中让出本核.
         unsafe {
             // SAFETY: scheduler_yield_ex 由框架调度器提供, 进程上下文安全调用
             unsafe extern "C" {

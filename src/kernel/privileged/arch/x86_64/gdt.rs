@@ -576,7 +576,7 @@ fn per_cpu_gdt(cpu: u32) -> &'static PerCpuGdt {
 fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
     let idx = gdt_slot(cpu);
     if idx == 0 {
-        // SAFETY: BSP_GDT 为静态实例; 调用方保证该槽位独占访问.
+        // SAFETY: BSP_GDT 为静态实例; 该槽位由写入侧的串行调用契约保证独占访问.
         return BSP_GDT.get_mut().into_inner();
     }
     let ptr = AP_GDT[idx].load(Ordering::Acquire);
@@ -584,7 +584,7 @@ fn per_cpu_gdt_mut(cpu: u32) -> &'static mut PerCpuGdt {
         // SAFETY: 回退 BSP GDT 仅用于避免 null 解引用 (见 per_cpu_gdt 的槽位未分配情形).
         return BSP_GDT.get_mut().into_inner();
     }
-    // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布; 调用方保证该槽位独占访问.
+    // SAFETY: 指针由 alloc_ap_gdt 以 Release 发布; 该槽位由写入侧的串行调用契约保证独占访问.
     unsafe { &mut *ptr }
 }
 

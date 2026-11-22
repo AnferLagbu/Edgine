@@ -119,7 +119,8 @@ impl DmaEngine {
         let virt = VirtAddr(phys.0 + KERNEL_BASE);
 
         // 清零内存
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `pmm_alloc_pages_phys(pages)` 返回 `pages*PAGE_SIZE` 字节的连续帧,
+        // `virt = phys + KERNEL_BASE` 是其直接映射别名; 清零长度恰为该分配尺寸.
         unsafe {
             ptr::write_bytes(
                 virt.0 as *mut u8,
@@ -478,7 +479,8 @@ impl DmaEngine {
             // aarch64: 使用缓存维护指令
             // DCCMVAC — 按虚拟地址清理数据缓存至一致性点
             // 确保 CPU 写入对 DMA 设备可见
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `addr`/`size` 描述一块已分配的一致性缓冲; `dc cvac` 按
+            // CACHE_LINE_SIZE 遍历 [aligned_start, end), 只对已分配区间做缓存维护.
             unsafe {
                 let start = crate::privileged::glue::usize_from_u64(addr.0);
                 let end = start + size;
@@ -529,7 +531,8 @@ impl DmaEngine {
         {
             // aarch64: 使用 DC IVAC 指令
             // 失效缓存行, 以便 CPU 从内存读入最新数据
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `dc ivac` 同上按缓存行失效 [aligned_start, end); 区间来自同一块
+            // 一致性缓冲, 不影响其他映射.
             unsafe {
                 let start = crate::privileged::glue::usize_from_u64(addr.0);
                 let end = start + size;
@@ -693,7 +696,8 @@ pub fn submit_transfer(
             .is_ok()
     })?;
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `ioremap` 把 src/dst 物理区间映射为临时内核虚拟地址 (失败返回 None,
+    // 上方 `?` 提前退出); 复制后立即 `ioremap_unmap_pair` 解除, 映射窗口不跨调用保留.
     unsafe {
         let src_virt = ioremap(src.0, size)?;
         let dst_virt = ioremap(dst.0, size)?;
@@ -733,7 +737,8 @@ pub fn submit_transfer_async(
     Some(id)
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+/// # Safety
+/// `phys..phys+size` 须为有效物理区间; 本函数只建立映射, 不访问内存.
 unsafe fn ioremap(phys: u64, size: usize) -> Option<u64> {
     dma().ioremap(PhysAddr(phys), size).map(|v| v.0)
 }
@@ -742,7 +747,8 @@ unsafe fn ioremap(phys: u64, size: usize) -> Option<u64> {
 ///
 /// 当前实现是同步内存复制近似 (真实硬件 DMA 应通过中断回调触发释放);
 /// 复制完成即刻解除映射, 避免 MMIO 虚拟地址区间泄漏。
-// SAFETY: 调用方保证 `src/dst/size` 与之前 ioremap 的参数一致 (区间大小相同).
+/// # Safety
+/// `src`/`dst`/`size` 须与同一次 `submit_transfer` 中 `ioremap` 的参数一致 (区间大小相同).
 unsafe fn ioremap_unmap_pair(src: PhysAddr, dst: PhysAddr, size: usize) {
     dma().iounmap(VirtAddr(src.0), size);
     dma().iounmap(VirtAddr(dst.0), size);

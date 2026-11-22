@@ -77,7 +77,8 @@ pub fn test_runner_init() {
     {
         let read_u64 = |phys: u64, idx: usize| -> u64 {
             let va = phys + crate::privileged::mm::KERNEL_BASE + idx as u64 * 8;
-            // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+            // SAFETY: 0x10_9000 是本次诊断读取的页目录物理页, 加 `KERNEL_BASE` 得到
+            // 高半区直接映射别名; idx 为固定常量 (24 / 63), 偏移仍在页内.
             unsafe { core::ptr::read_volatile(va as *const u64) }
         };
         let pd24 = read_u64(0x10_9000, 24);

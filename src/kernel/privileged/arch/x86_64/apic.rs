@@ -80,8 +80,8 @@ fn rdmsr(msr: u32) -> u64 {
 
 fn wrmsr(msr: u32, value: u64) {
     // SAFETY: `wrmsr` 写模型特定寄存器: ecx 为 MSR 号, eax/edx 为值的低/高 32 位,
-    // 全部是 `in` 操作数; 不访存. 调用方保证 MSR 号对当前 CPU 有效 (本文件只用
-    // APIC_BASE_MSR).
+    // 全部是 `in` 操作数; 不访存. MSR 号对当前 CPU 有效: 本文件只以
+    // APIC_BASE_MSR 调用.
     unsafe {
         core::arch::asm!("wrmsr", in("ecx") msr, in("eax") crate::privileged::glue::low_u32_from_u64(value), in("edx") (value >> 32) as u32, options(nomem, nostack));
     }
