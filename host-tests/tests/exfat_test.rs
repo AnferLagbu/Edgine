@@ -1,9 +1,12 @@
 //! exFAT 文件系统测试
 //!
-//! 夹具由 `build.rs` 恒生成到 `OUT_DIR` (确定性最小镜像, 不入仓).
+//! 夹具由 `build.rs` 恒生成到 `OUT_DIR` (确定性最小镜像, 不入仓); 断言走
+//! 内核真实解析器 `ExfatSuperBlock::from_bytes`, 而非只读原始字节.
 
 use std::fs;
 use std::path::Path;
+
+use edgine::kernel::functions::fs::exfat::super_block::ExfatSuperBlock;
 
 /// 夹具路径 (构建期生成)
 fn fixture() -> &'static str {
@@ -15,43 +18,83 @@ fn test_exfat_image_exists() {
     assert!(Path::new(fixture()).exists(), "exFAT 测试镜像不存在");
 }
 
+/// 夹具必须能被内核真实解析器接受, 且各字段落在规范偏移上.
 #[test]
-fn test_exfat_boot_signature() {
+fn test_exfat_superblock_parses_via_kernel() {
     let data = fs::read(fixture()).unwrap();
-    assert!(data.len() >= 512, "镜像太小");
+    let sb = ExfatSuperBlock::from_bytes(&data).expect("引导扇区应可解析");
 
-    // 检查 boot signature
-    assert_eq!(data[510], 0x55);
-    assert_eq!(data[511], 0xAA);
+    assert_eq!(&sb.fs_name[..5], &ExfatSuperBlock::MAGIC);
+    assert_eq!(sb.boot_signature, ExfatSuperBlock::BOOT_SIGNATURE);
+    assert_eq!(sb.volume_serial, 0x1234_5678);
+    assert_eq!(sb.fs_revision, 0x0100);
+    assert_eq!(sb.volume_flags, 0, "卷标志位于偏移 106");
+    assert_eq!(sb.bytes_per_sector_shift, 9, "扇区位移位于偏移 108");
+    assert_eq!(sb.sectors_per_cluster_shift, 0);
+    assert_eq!(sb.num_fats, 1);
+    assert_eq!(sb.cluster_count, 4);
+    assert_eq!(sb.root_dir_first_cluster, 2);
+    assert_eq!(sb.bytes_per_sector(), 512);
+    assert_eq!(sb.bytes_per_cluster(), 512);
+    assert_eq!(sb.data_start_sector(), 2);
+    assert_eq!(sb.cluster_to_sector(2), 2);
 }
 
+/// `repr(C)` 布局必须与磁盘规范逐字节对齐 (防止字段再漂移).
 #[test]
-fn test_exfat_fs_name() {
-    let data = fs::read(fixture()).unwrap();
-    let fs_name = &data[3..8];
-    assert_eq!(fs_name, b"EXFAT");
+fn test_exfat_superblock_layout_matches_disk_spec() {
+    use core::mem::{offset_of, size_of};
+
+    assert_eq!(size_of::<ExfatSuperBlock>(), ExfatSuperBlock::SIZE);
+    assert_eq!(
+        offset_of!(ExfatSuperBlock, volume_serial),
+        100,
+        "卷序列号偏移"
+    );
+    assert_eq!(
+        offset_of!(ExfatSuperBlock, volume_flags),
+        106,
+        "卷标志偏移 (旧实现误置于 100)"
+    );
+    assert_eq!(
+        offset_of!(ExfatSuperBlock, bytes_per_sector_shift),
+        108,
+        "扇区位移偏移 (旧实现误置于 102)"
+    );
+    assert_eq!(offset_of!(ExfatSuperBlock, boot_code), 120, "引导代码偏移");
+    assert_eq!(offset_of!(ExfatSuperBlock, boot_signature), 510, "签名偏移");
 }
 
+/// 非法形态必须返回 `None`, 不得把畸形引导扇区当成合法卷.
 #[test]
-fn test_exfat_sector_size() {
-    let data = fs::read(fixture()).unwrap();
-    // exFAT 规范: 108 = BytesPerSectorShift; 102 属 VolumeSerialNumber
-    // (旧实现读 102, 靠真镜像的序列号字节偶然落在合法区间才通过)
-    let bytes_per_sector_shift = data[108];
-    let sector_size = 1u32 << bytes_per_sector_shift.min(12); // 限制最大 12，防止溢出
-    assert!((512..=4096).contains(&sector_size), "扇区大小无效");
-}
+fn test_exfat_superblock_rejects_malformed() {
+    let base = fs::read(fixture()).unwrap();
 
-#[test]
-fn test_exfat_cluster_count() {
-    let data = fs::read(fixture()).unwrap();
-    let cluster_count = u32::from_le_bytes([data[92], data[93], data[94], data[95]]);
-    assert!(cluster_count > 0, "簇数量为 0");
-}
+    let mut bad_name = base.clone();
+    bad_name[3..8].copy_from_slice(b"NTFS!");
+    assert!(
+        ExfatSuperBlock::from_bytes(&bad_name).is_none(),
+        "非 EXFAT 魔数应拒绝"
+    );
 
-#[test]
-fn test_exfat_root_cluster() {
-    let data = fs::read(fixture()).unwrap();
-    let root_cluster = u32::from_le_bytes([data[96], data[97], data[98], data[99]]);
-    assert!(root_cluster >= 2, "根目录簇号无效");
+    let mut bad_signature = base.clone();
+    bad_signature[510] = 0;
+    assert!(
+        ExfatSuperBlock::from_bytes(&bad_signature).is_none(),
+        "签名缺失应拒绝"
+    );
+
+    let mut bad_shift = base.clone();
+    bad_shift[108] = 8;
+    assert!(
+        ExfatSuperBlock::from_bytes(&bad_shift).is_none(),
+        "扇区位移 8 (256 B) 越界应拒绝"
+    );
+
+    let mut bad_root = base;
+    bad_root[96..100].copy_from_slice(&1u32.to_le_bytes());
+    assert!(
+        ExfatSuperBlock::from_bytes(&bad_root).is_none(),
+        "根目录簇号 < 2 应拒绝"
+    );
 }
