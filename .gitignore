@@ -1,11 +1,16 @@
 # ===== 临时目录 =====
 logs/
-build/
+# 根级构建/产物目录用前导 `/` 锚定: 裸 `build/`、`other/` 会连带忽略 src/ 下的
+# 同名源码目录 (实测误伤 src/user/vendor/wasmi_ir/build/)
+/build/
 isodir/
 tmp/
-other/
+/other/
 backup/
 .mimocode/
+
+# 本地审计临时输出 (历史遗留目录, 非源码)
+/src/kernel/other/
 
 # ===== 临时文件扩展 =====
 # 通用临时文件 (一些工具链或编辑器会生成)
@@ -16,7 +21,9 @@ backup/
 *.log
 
 # Linux coredump 防御 (内核崩溃可能产生)
-core
+# 锚定根目录: 裸 `core` 会吞掉任意层名为 core 的源码目录
+# (实测误伤 src/user/vendor/wasmparser/src/{readers,validator}/core)
+/core
 core.[0-9]*
 
 # ===== 通用构建产物 =====
@@ -89,12 +96,16 @@ desktop.ini
 *~
 *.bak
 *.orig
+# cargo vendor 完整性: vendored crate 的 Cargo.toml.orig 被 .cargo-checksum.json
+# 收账, 属 vendor 源树的一部分 (通用 *.orig 规则不适用于此)
+!src/user/vendor/**/Cargo.toml.orig
 *.rej
 
 # IDE 配置目录
 .idea/
 .vs/
 .vscode/
+.trae/
 *.code-workspace
 *.iml
 
