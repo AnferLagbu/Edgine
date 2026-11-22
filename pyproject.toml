@@ -1,0 +1,10 @@
+[project]
+name = "edgine"
+version = "0.1.0"
+description = "Edgine 内核工程的 Python 工具环境"
+requires-python = ">=3.14,<3.15"
+dependencies = []
+
+[tool.uv]
+# 仓库主体为 Rust，Python 仅用于辅助脚本，不安装自身
+package = false
