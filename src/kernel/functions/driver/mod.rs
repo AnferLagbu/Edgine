@@ -4,12 +4,12 @@
 //! ## 当前状态: 驱动业务层落 functions (0 unsafe); privileged 保留机制原语
 //!
 //! functions 侧安全驱动层 (0 unsafe):
-//! - [char/](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/char/) — 字符设备 (VGA/serial, x86_64)
-//! - [display/](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/display/) — 显示 (HDMI/DP/DDC)
-//! - [net/e1000.rs](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/net/e1000.rs) — E1000 网卡
-//! - [storage/](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/storage/) — 存储 (NVMe/AHCI/ATA)
-//! - [virtio/](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/virtio/) — VirtIO 网卡/块设备
-//! - [usb/](file:///home/anfer/Code/Edgine/src/kernel/functions/driver/usb/) — USB/XHCI (2-D 整体下沉, functions 唯一权威)
+//! - `char/` — 字符设备 (VGA/serial, x86_64)
+//! - `display/` — 显示 (HDMI/DP/DDC)
+//! - `net/e1000.rs` — E1000 网卡
+//! - `storage/` — 存储 (NVMe/AHCI/ATA)
+//! - `virtio/` — VirtIO 网卡/块设备
+//! - `usb/` — USB/XHCI (2-D 整体下沉, functions 唯一权威)
 //!
 //! 注: `privileged/driver/` 对应模块**保留机制原语** (业务下沉后已非影子双份):
 //! MMIO 安全代理 (`net/e1000_io.rs`)、DMA 环机制 (`net/e1000.rs` + `net/dma_ring.rs`)、

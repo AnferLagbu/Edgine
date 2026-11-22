@@ -10,6 +10,7 @@
 set -uo pipefail
 VENDORED="src/kernel/functions/net/smoltcp"
 PATCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$PATCH_DIR/../.." && pwd)"
 
 # 14 个本地化文件 (路径 → patch)
 declare -A PATCHES=(
@@ -29,7 +30,7 @@ declare -A PATCHES=(
     ["src/wire/udp.rs"]="src_wire_udp.rs.patch"
 )
 
-cd /home/anfer/Code/Edgine/$VENDORED
+cd "$REPO_ROOT/$VENDORED"
 total=${#PATCHES[@]}
 ok=0
 fail=0

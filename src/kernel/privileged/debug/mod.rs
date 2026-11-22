@@ -12,10 +12,10 @@
 //!
 //! ## 子模块
 //!
-//! - [ringbuf](file:///home/anfer/Code/Edgine/src/kernel/privileged/debug/ringbuf.rs) — 单生产者单消费者环形缓冲区
-//! - [ftrace](file:///home/anfer/Code/Edgine/src/kernel/privileged/debug/ftrace.rs) — 跟踪点/事件记录
-//! - [kgdb](file:///home/anfer/Code/Edgine/src/kernel/privileged/debug/kgdb.rs) — KGDB 桩
-//! - [api](file:///home/anfer/Code/Edgine/src/kernel/privileged/debug/api.rs) — 公共 re-export
+//! - `ringbuf` — 单生产者单消费者环形缓冲区
+//! - `ftrace` — 跟踪点/事件记录
+//! - `kgdb` — KGDB 桩
+//! - `api` — 公共 re-export
 // ebpf 公共接口 re-export — 避免跨子系统直接访问 debug::ebpf 内部
 pub use ebpf::bpf_init;
 pub use ebpf::sys_bpf;
