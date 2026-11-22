@@ -132,7 +132,12 @@ fn s3_functions_poll_at_delegates_to_real_value() {
     let start = src
         .find("fn poll_at(&self) -> Option<u64>")
         .expect("S-3: functions 层 poll_at 签名变更");
-    let body = squash(&src[start..start + 400]);
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut end = (start + 400).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = squash(&src[start..end]);
     assert!(
         body.contains("fw_init::smoltcp_net_stack_poll_at_ms()"),
         "S-3: poll_at 仍是不读真实登记值的桩 (恒 None)"

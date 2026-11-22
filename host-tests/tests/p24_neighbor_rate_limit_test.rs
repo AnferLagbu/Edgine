@@ -77,7 +77,12 @@ fn test_flush_clears_silent_ring() {
     let idx = src
         .find("fn flush(&mut self)")
         .expect("P-24: 应存在 flush() 方法");
-    let body = &src[idx..idx + 200];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut end = (idx + 200).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &src[idx..end];
     assert!(
         body.contains("self.silent_until.clear()"),
         "P-24: flush() 应清空 silent_until 环"

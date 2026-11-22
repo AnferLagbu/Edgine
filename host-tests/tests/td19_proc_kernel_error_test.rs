@@ -75,7 +75,12 @@ fn elf_error_to_errno_present() {
         "ElfError 必须有 to_errno() 方法"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
-    let block = &src[to_errno_block_start..to_errno_block_start + 600];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut to_errno_block_end = (to_errno_block_start + 600).min(src.len());
+    while !src.is_char_boundary(to_errno_block_end) {
+        to_errno_block_end -= 1;
+    }
+    let block = &src[to_errno_block_start..to_errno_block_end];
     for variant in &[
         "Self::BadMagic",
         "Self::NotElf64",
@@ -191,7 +196,12 @@ fn mlock_error_to_errno_present() {
         "MlockError 必须有 to_errno() 方法"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
-    let block = &src[to_errno_block_start..to_errno_block_start + 400];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut to_errno_block_end = (to_errno_block_start + 400).min(src.len());
+    while !src.is_char_boundary(to_errno_block_end) {
+        to_errno_block_end -= 1;
+    }
+    let block = &src[to_errno_block_start..to_errno_block_end];
     assert!(
         block.contains("Self::NotMapped"),
         "MlockError::to_errno 必须映射 NotMapped"
@@ -212,7 +222,12 @@ fn mlock_error_from_errno_uses_kernel_wrapper() {
     let from_block_start = src
         .find("pub fn from_errno(e: Errno) -> Self")
         .expect("from_errno 存在");
-    let block = &src[from_block_start..from_block_start + 600];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut from_block_end = (from_block_start + 600).min(src.len());
+    while !src.is_char_boundary(from_block_end) {
+        from_block_end -= 1;
+    }
+    let block = &src[from_block_start..from_block_end];
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
         kernel_count >= 6,
@@ -288,7 +303,12 @@ fn proc_error_to_errno_present() {
         "ProcError 必须有 to_errno() 方法"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
-    let block = &src[to_errno_block_start..to_errno_block_start + 400];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut to_errno_block_end = (to_errno_block_start + 400).min(src.len());
+    while !src.is_char_boundary(to_errno_block_end) {
+        to_errno_block_end -= 1;
+    }
+    let block = &src[to_errno_block_start..to_errno_block_end];
     assert!(
         block.contains("Self::Exited"),
         "ProcError::to_errno 必须映射 Exited"
@@ -306,7 +326,12 @@ fn proc_error_from_i32_uses_kernel_wrapper() {
     let from_block_start = src
         .find("pub fn from_i32(rc: i32) -> Self")
         .expect("from_i32 存在");
-    let block = &src[from_block_start..from_block_start + 500];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut from_block_end = (from_block_start + 500).min(src.len());
+    while !src.is_char_boundary(from_block_end) {
+        from_block_end -= 1;
+    }
+    let block = &src[from_block_start..from_block_end];
     let kernel_count = block.matches("Self::Kernel(K::").count();
     assert!(
         kernel_count >= 4,

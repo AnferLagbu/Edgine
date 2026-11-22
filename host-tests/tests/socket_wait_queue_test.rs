@@ -442,7 +442,12 @@ fn p5d_blocking_loops_eintr_timeout_wired() {
     );
     // connect 超时保守异步语义: 返 -E_INPROGRESS (非 -E_AGAIN).
     let conn_start = sm.find("fn sm_connect(").expect("P5d: 缺 sm_connect");
-    let conn_body = &sm[conn_start..conn_start + 4000];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut conn_end = (conn_start + 4000).min(sm.len());
+    while !sm.is_char_boundary(conn_end) {
+        conn_end -= 1;
+    }
+    let conn_body = &sm[conn_start..conn_end];
     assert!(
         conn_body.contains("return -E_INPROGRESS;"),
         "P5d: sm_connect 超时未返 -E_INPROGRESS"

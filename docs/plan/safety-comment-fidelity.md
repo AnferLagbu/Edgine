@@ -352,7 +352,21 @@ Lockbud 4/4、QEMU 2/2、未执行腿数 0）· `make test-host` **212 套 / 165
 ② 补窗口自测：构造「窗口恰落在多字节汉字中间」的输入，断言不 panic；
 ③ 本批属 host-tests 树，该树 clippy 腿已带 `-D clippy::undocumented_unsafe_blocks`
 （批 5c 翻，**勿重复翻**）；④ 项数标签若有针须同批改钉。
-状态：[]
+**结果**：现树 grep 实测 **14 处**未夹字符边界的定长字节窗口（计划原文登记 13 处；
+差异归因为 `socket_multicast_membership_test.rs` 的 2000 窗口一处未在原 13 处清单内，
+原「修 1」的 3000 窗口已夹取），全部改为
+`(start + N).min(len)` + `while !src.is_char_boundary(end) { end -= 1; }` 夹取：
+td17 400 / td19 600·400·600·400·500 / td18 600·300 / p24 200 / virtio 1200 /
+net_poll 400 / net_snapshot 5000 / socket_wait_queue 4000 / multicast 2000。
+补 `fixed_byte_window_clamps_to_char_boundary` 自测（构造窗口末端落在三字节汉字 '中' 内部，
+断言回退到字符边界并得到合法切片）；multicast 四条契约针的相对偏移未动。
+四树 clippy 腿已带 `-D clippy::undocumented_unsafe_blocks`，本批未重复翻。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never
+bash ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、safety_content 腿通过）·
+`make test-host` **212 套 / 1652 passed / 0 failed**（较 C6 的 1651 多 1＝新增窗口自测）·
+`make test-kernel-host` **3 套 / 1431 passed / 0 failed** · `make -f Makefile.ci ci-rustdoc`
+x86_64 与 aarch64 两腿各 exit 0。
+状态：[X]
 
 ### 批 C8・收口
 

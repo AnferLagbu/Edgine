@@ -106,7 +106,12 @@ fn try_inc_ref_uses_into() {
     let src = read(TABLE_RS);
     // try_inc_ref 错误路径必须用 `.into()` 从 KernelError 自动包装
     let try_inc_block_start = src.find("pub fn try_inc_ref").expect("try_inc_ref 存在");
-    let try_inc_block = &src[try_inc_block_start..try_inc_block_start + 400];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut try_inc_block_end = (try_inc_block_start + 400).min(src.len());
+    while !src.is_char_boundary(try_inc_block_end) {
+        try_inc_block_end -= 1;
+    }
+    let try_inc_block = &src[try_inc_block_start..try_inc_block_end];
     assert!(
         try_inc_block.contains("NoSuchProcess"),
         "try_inc_ref 错误路径必须返回 NoSuchProcess"

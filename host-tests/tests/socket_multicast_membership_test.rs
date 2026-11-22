@@ -264,7 +264,12 @@ fn syscall_copyin_covers_ipv6_mreq() {
     let start = src
         .find("fn setsockopt_syscall(")
         .expect("D11: setsockopt_syscall 不存在");
-    let body = &src[start..start + 2_000];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut end = (start + 2_000).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &src[start..end];
     assert!(
         body.contains("let mut buf = [0u8; 20];"),
         "D11: setsockopt copy-in 缓冲须容纳 struct ipv6_mreq (20 字节)"
@@ -283,4 +288,23 @@ fn mcast_inline_tests_present() {
         n >= 10,
         "D11: mcast.rs 内联单测不足 (当前 {n}, 要求 >= 10): 引用计数分支必须全覆盖"
     );
+}
+
+/// 回归: 定长字节窗口若恰落在多字节汉字中间, 必须回退到字符边界而不是 panic.
+/// 该形态曾让 `sm_close` 窗口在批 5f 补注释后直接 panic; 全仓同类窗口统一夹边界.
+#[test]
+fn fixed_byte_window_clamps_to_char_boundary() {
+    // "fn f() " 占 7 字节, 第 8 字节落在三字节汉字 '中' 的内部.
+    let src = "fn f() 中文注释";
+    let raw_end = 8;
+    assert!(
+        !src.is_char_boundary(raw_end),
+        "构造点应落在多字节字符内部, 否则本自测未覆盖目标形态"
+    );
+    let mut end = raw_end.min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    assert_eq!(end, 7, "窗口末端应回退到汉字起始边界");
+    assert!(src.get(..end).is_some(), "夹取后必须是合法 UTF-8 切片");
 }

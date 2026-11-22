@@ -182,7 +182,12 @@ fn net_restore_restores_fd_table() {
     let src = read_src("src/kernel/privileged/net/init.rs");
     let marker = "unsafe fn net_restore()";
     let start = src.find(marker).expect("missing net_restore");
-    let body = &src[start..start + 5000];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut end = (start + 5000).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &src[start..end];
     assert!(
         body.contains("raw::set_fd_type("),
         "P2-I-44: net_restore 必须按 fd 恢复 FD_TYPES"

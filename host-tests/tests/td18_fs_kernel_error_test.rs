@@ -81,7 +81,12 @@ fn to_errno_method_present() {
         "FsError 必须有 to_errno() 方法 (4 变体全覆盖)"
     );
     let to_errno_block_start = src.find("pub fn to_errno(self)").expect("to_errno 存在");
-    let to_errno_block = &src[to_errno_block_start..to_errno_block_start + 600];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut to_errno_block_end = (to_errno_block_start + 600).min(src.len());
+    while !src.is_char_boundary(to_errno_block_end) {
+        to_errno_block_end -= 1;
+    }
+    let to_errno_block = &src[to_errno_block_start..to_errno_block_end];
     for variant in &[
         "Self::NotInitialized",
         "Self::IoError",
@@ -111,7 +116,12 @@ fn from_i32_delegates_to_kernel_error() {
     let from_i32_block_start = src
         .find("pub fn from_i32(code: i32) -> Self")
         .expect("from_i32 存在");
-    let from_i32_block = &src[from_i32_block_start..from_i32_block_start + 300];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut from_i32_block_end = (from_i32_block_start + 300).min(src.len());
+    while !src.is_char_boundary(from_i32_block_end) {
+        from_i32_block_end -= 1;
+    }
+    let from_i32_block = &src[from_i32_block_start..from_i32_block_end];
     assert!(
         from_i32_block.contains("KernelError::from_i32(code)"),
         "FsError::from_i32 必须委托给 KernelError::from_i32"

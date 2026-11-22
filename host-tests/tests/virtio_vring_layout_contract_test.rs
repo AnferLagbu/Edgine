@@ -148,7 +148,12 @@ fn net_setup_queue_legacy_follows_linux_paradigm() {
     let start = src
         .find("if self.device.is_legacy() {")
         .expect("setup_queue 必须有 legacy 分支");
-    let body = &src[start..start + 1200];
+    // 定长窗口末端须落在 UTF-8 字符边界上, 否则中文注释被切在字节中间会 panic
+    let mut end = (start + 1200).min(src.len());
+    while !src.is_char_boundary(end) {
+        end -= 1;
+    }
+    let body = &src[start..end];
     let num_off = body
         .find("set_queue_num(num)")
         .expect("legacy 必须写 QueueNum");
