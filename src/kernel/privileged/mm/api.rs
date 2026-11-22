@@ -623,7 +623,7 @@ pub extern "C" fn kmalloc_stats(stats: *mut u8) {
 
     let heap_stats = get_kmalloc().get_stats();
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `stats` 已在上方 `is_null()` 判空, 是 FFI 调用方提供的 `struct kmalloc_stats*` 输出槽; `KmallocStats` 为 `#[repr(C)]` 且四字段布局与 C 侧一致, 本函数独占写入 32 字节, 不越界.
     unsafe {
         let stats_ptr = stats as usize as *mut KmallocStats;
         (*stats_ptr).total_allocs = heap_stats.alloc_count;

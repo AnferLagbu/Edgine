@@ -628,7 +628,7 @@ impl VirtualMemoryManager {
 
         let pml4_virt = PhysAddr(pml4).to_virt();
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `pml4` 已在入口判非 0, 是进程根表物理地址; `PhysAddr::to_virt` 的 HHDM 给出整页可读别名; `pml4_idx/pdpt_idx/pd_idx/pt_idx` 均 `& 0x1FF` ⇒ < 512, `add`/`read_volatile` 不越页.
         unsafe {
             let pml4_raw = pml4_virt.0 as *const u64;
             let pml4e = pml4_raw.add(virt.pml4_idx()).read_volatile();
@@ -1247,7 +1247,7 @@ impl VirtualMemoryManager {
         let kview_pd = pd_phys.to_virt().0 as *mut u64;
 
         // SAFETY: 三个 kview 帧刚由 PMM 分配 (各为完整 4KB 页), boot 三表来自
-        // `boot_identity_tables` 校验过的恒等映射链, 用户根表由调用方保证有效;
+        // `boot_identity_tables` 校验过的恒等映射链, 用户根表由入参契约保证有效;
         // 调用方持 VMM_LOCK, kview 尚未发布 ⇒ 无并发读写. 所有槽位索引均在
         // 512 项页内; 清零按字节计数, 不会越页.
         unsafe {
@@ -1630,7 +1630,6 @@ impl VirtualMemoryManager {
         Ok(())
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
     /// 取 (必要时创建) `entry` 指向的下一级页表, 返回 `(表指针, 本次是否拆分巨页)`.
     ///
     /// 第二个返回值供调用方判定"本次叶子写入是否为替换": 拆分把既有巨页条目换成下一级
@@ -1642,7 +1641,7 @@ impl VirtualMemoryManager {
         huge_step: u64,
     ) -> (*mut PageTableEntry, bool) {
         unsafe {
-            // SAFETY: 调用方保证 `entry` 指向 PMM 分配的页表页内合法 PageTableEntry.
+            // SAFETY: 调用方须保证 `entry` 指向 PMM 分配的页表页内合法 PageTableEntry.
             // 解引用通过 512 项表大小做边界检查.
             let e = &*entry;
 
@@ -2218,14 +2217,14 @@ impl VirtualMemoryManager {
     }
 
     #[inline]
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: 读取本核 CR3 是特权指令; 无内存解引用、无副作用, 返回当前页表基址供调用方按页表布局解释.
     unsafe fn read_cr3() -> u64 {
         // SAFETY: Reading CR3 is always safe; returns current page table base
         crate::arch!(read_page_table_base())
     }
 
     #[inline]
-    // SAFETY: val 必须指向有效 PML4 页表; 调用方保证页表分配后保持有效.
+    // SAFETY: val 必须指向有效 PML4 页表; 调用方须保证页表分配后保持有效.
     unsafe fn write_cr3(val: u64) {
         // SAFETY: val must point to a valid PML4 table; caller guarantees this
         crate::arch!(write_page_table_base(val));
@@ -2267,7 +2266,7 @@ impl VirtualMemoryManager {
 
     fn is_table_empty(table: *mut PageTableEntry) -> bool {
         for i in 0..512usize {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `table` 是 PMM 分配的页表页 `to_virt` 别名; `0..512` 恰覆盖整页 512 个 `PageTableEntry`, `add(i)` 不越页; 只调用 `is_present()` 读标志位.
             unsafe {
                 if (*table.add(i)).is_present() {
                     return false;

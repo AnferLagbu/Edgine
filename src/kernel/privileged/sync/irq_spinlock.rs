@@ -208,7 +208,7 @@ impl<T> IrqSpinLock<T> {
     /// 永不返回 (iretq 到 next 用户态), Guard 的 Drop 不执行 → 锁永久泄漏 →
     /// next 进程运行时 `p.context.lock()` (如 syscall 入口保存寄存器) 自旋死锁。
     pub unsafe fn get_mut_unchecked(&mut self) -> &mut T {
-        // SAFETY: 调用方保证无并发访问 (见函数文档)
+        // SAFETY: `&mut self` 的独占借用已在类型层排除并发借用; 本方法仅由 `process_switch_asm` 切换路径在单核 (smp=off) 入口调用 (见函数文档), 返回的 `&mut T` 借自 `self.data` 的 `UnsafeCell`.
         unsafe { &mut *self.data.get() }
     }
 
@@ -272,7 +272,7 @@ impl<T> IrqSpinLock<T> {
     /// `IrqSpinLockGuard` 的 `DerefMut` 借用同一字段。
     #[inline]
     pub unsafe fn data_ptr(&self) -> *mut T {
-        // SAFETY: UnsafeCell::get 返回 *mut T，调用方保证互斥访问。
+        // SAFETY: `UnsafeCell::get` 只产出 `*mut T`, 不解引用; 互斥由本 `IrqSpinLock` 的持锁 Guard (经 `lock()`/`try_lock()`) 保证.
         self.data.get()
     }
 
@@ -282,7 +282,7 @@ impl<T> IrqSpinLock<T> {
     ///
     /// 调用方必须保证当前没有其他线程或中断上下文在访问此锁。
     pub unsafe fn into_inner(self) -> T {
-        // SAFETY: 借用规则由调用方契约保证 (见方法文档)。
+        // SAFETY: `into_inner` 消费 `self`, 无其它借用可同时存在; 跨线程/中断并发由本 `IrqSpinLock` 的 `# Safety` 契约排除 (见方法文档).
         self.data.into_inner()
     }
 }

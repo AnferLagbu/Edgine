@@ -34,7 +34,7 @@ use crate::privileged::racy_cell::RacyCell;
 pub struct RcuHead {
     /// 链表后继节点指针 (`null` 表示链尾)
     pub next: *mut Self,
-    // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `func` 是 `Option<unsafe fn(*mut RcuHead)>` 函数指针; 宽限期末由 `process_callbacks` 用入链时记录的 `head` 调用, 该内存的存活期由 `call_rcu` 的 `# Safety` 契约约束.
     /// 宽限期结束后的回调函数 (`None` 表示未注册)
     pub func: Option<unsafe fn(*mut Self)>,
 }
@@ -350,7 +350,7 @@ pub unsafe fn rcu_dereference<T>(ptr: *const T) -> *const T {
 #[inline]
 pub unsafe fn rcu_assign_pointer<T>(slot: *mut *const T, new_val: *const T) {
     // SAFETY: `slot` 有效、可写、对齐且为发布方独占写的共享指针槽, 由 fn 的 `# Safety`
-    // 契约与调用方保证. Release fence 置于发布写之前, 使 new_val 所指对象的全部初始化
+    // 契约确立. Release fence 置于发布写之前, 使 new_val 所指对象的全部初始化
     // 先于该写对其它 CPU 可见, 与读者侧 `rcu_dereference` 的 Acquire 配对;
     // write_volatile 保证这次发布写不被编译器合并或省略. 旧值回收不在本函数职责内 ——
     // 须待所有读者退出 (synchronize_rcu 宽限期 / call_rcu 回调), 由契约约束调用方.
@@ -689,14 +689,13 @@ mod tests {
         let _serial = SerialGuard::acquire();
         static CALLED: AtomicBool = AtomicBool::new(false);
 
-        // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
-        // call_rcu 的 func 形参为 `unsafe fn(*mut RcuHead)` (Rust ABI), 非 C fn 指针.
+        // SAFETY: `callback` 的形参是 `unsafe fn(*mut RcuHead)`, 与 `call_rcu` 的 `func` 形参类型逐字一致 (Rust ABI, 非 C fn 指针); 测试内只在宽限期末被调用.
         unsafe fn callback(_head: *mut RcuHead) {
             CALLED.store(true, Ordering::Release);
         }
 
         let mut head = RcuHead::new();
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `head` 是测试栈上经 `RcuHead::new()` 初始化的节点, 存活到本测试末尾的 `synchronize_rcu()` 完成之后; `callback` 签名与 `func` 形参一致.
         unsafe {
             call_rcu(&mut head as *mut RcuHead, callback);
         }

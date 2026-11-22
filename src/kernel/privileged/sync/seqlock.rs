@@ -36,7 +36,7 @@ pub struct SeqLock<T> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: `SeqLock<T>` 的读写由 `sequence` 协议串行化 —— 写者经 `write()` 置奇序并独占 `UnsafeCell<T>`, 读者经 `read()`/`is_valid()` 复核; `T: Send` 覆盖跨线程独占转移.
 unsafe impl<T: Send> Sync for SeqLock<T> {}
 
 impl<T> SeqLock<T> {
@@ -126,7 +126,7 @@ impl<T> SeqLockReadGuard<'_, T> {
     /// 直接获取受保护数据的共享引用 (不校验一致性, 一致性由 `is_valid` 负责).
     #[must_use]
     pub fn get(&self) -> &T {
-        // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `self.lock` 是 `SeqLockReadGuard` 持有的 `&SeqLock<T>`; 读者仅在 `seq1` 为偶时入守卫, `&*data.get()` 的共享借用与写者的 `&mut` 由 `is_valid` 复检协议排他 (单写者多读者).
         unsafe { &*self.lock.data.get() }
     }
 
@@ -156,14 +156,14 @@ pub struct SeqLockWriteGuard<'a, T> {
 impl<T> core::ops::Deref for SeqLockWriteGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `self.lock` 是 `SeqLockWriteGuard` 持有的 `&SeqLock<T>`; 写者以奇序独占 `UnsafeCell<T>` 直到 `Drop`, 故此处共享借用不与写者别名.
         unsafe { &*self.lock.data.get() }
     }
 }
 
 impl<T> core::ops::DerefMut for SeqLockWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `&mut self` 独占写守卫, 且守卫已置奇序 (见 `write`/`try_write`); 由此 `&mut *data.get()` 是唯一的可变借用, 写临界区到 `Drop` 结束.
         unsafe { &mut *self.lock.data.get() }
     }
 }

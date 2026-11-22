@@ -249,7 +249,7 @@ impl SpinLock {
         self.raw_lock();
 
         // 安全: 我们已持有锁，可以创建可变引用
-        // SAFETY: `data` 由调用方保证为有效指针; 只读访问
+        // SAFETY: `raw_lock()` 已成功, 本 `SpinLock` 在 Guard 存活期内独占 `data`; `&mut *data.get()` 只在 `SpinLockGuard` 生命周期内存在, `Drop` 中 `raw_unlock()` 释放.
         let data_ref = unsafe { &mut *data.get() };
 
         SpinLockGuard {

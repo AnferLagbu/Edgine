@@ -146,7 +146,7 @@ fn copy_in_mm(
         // SAFETY: `t.phys` 由 `translate_in_pml4` 返回, 对应目标进程**已映射**的物理帧;
         // HHDM 别名 (`phys + KERNEL_BASE`) 是内核对全部物理内存的恒等映射, 恒存在,
         // 且其页表项 `U/S=0` 属内核映射, 不放宽 SMAP. `kernel_buf.add(done)` 满足
-        // `done < len` 且调用方保证内核缓冲区长度 >= len, 故 `chunk` 字节读写均落在
+        // `done < len`, 且内核缓冲区长度 >= len (系统调用入口已校验), 故 `chunk` 字节读写均落在
         // 两个缓冲区内; 用户物理页与内核缓冲区不重叠, `copy_nonoverlapping` 成立.
         unsafe {
             let target = t.phys.to_virt().0 as *mut u8;

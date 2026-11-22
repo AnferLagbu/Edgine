@@ -139,7 +139,7 @@ pub unsafe extern "C" fn atomic_cmpxchg(ptr: *mut i32, oldval: i32, newval: i32)
 ///
 /// `ptr` 是指向 `i32` 的有效且正确对齐的指针, 在调用期间持续有效.
 pub unsafe extern "C" fn atomic_add(ptr: *mut i32, val: i32) -> i32 {
-    // SAFETY: 类别 A; val 由调用方给定且不校验范围, fetch_add 按补码回绕返回旧值.
+    // SAFETY: 类别 A; `val` 是任意 i32 实参, `AtomicI32::fetch_add` 按补码回绕并返回旧值, 无范围前提.
     unsafe {
         let atomic = &*(ptr as *const core::sync::atomic::AtomicI32);
         atomic.fetch_add(val, Ordering::SeqCst)
@@ -217,7 +217,7 @@ mod tests {
         let mut val: i32 = 10;
         let ptr = &mut val as *mut i32;
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `ptr` 指向本测试栈上独占的 `val: i32`, 生命周期覆盖整个块; 五个原子操作串行作用于同一地址.
         unsafe {
             // inc
             assert_eq!(atomic_inc(ptr), 10);

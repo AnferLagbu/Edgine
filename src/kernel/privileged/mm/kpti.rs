@@ -62,14 +62,14 @@ const INVPCID_TYPE_ALL_INCL_GLOBAL: u64 = 2;
 ///
 /// # Safety
 ///
-/// 调用方保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
+/// 调用方须保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
 #[inline]
 pub unsafe fn invpcid(pcid: u64, addr: u64, typ: u64) {
     // INVPCID 描述符: 16 字节, [0:7] PCID, [8:15] 线性地址
     // 在栈上构造描述符, 通过内存操作数传递给 INVPCID.
     // INVPCID 格式: invpcid r64, m128 — 第二操作数必须是内存引用.
     let desc: [u64; 2] = [pcid, addr];
-    // SAFETY: 调用方保证 CPU 支持 INVPCID; desc 在栈上有效, 16 字节对齐.
+    // SAFETY: 调用方须保证 CPU 支持 INVPCID; desc 在栈上有效, 16 字节对齐.
     unsafe {
         core::arch::asm!(
             "invpcid {typ}, [{desc}]",
@@ -84,10 +84,10 @@ pub unsafe fn invpcid(pcid: u64, addr: u64, typ: u64) {
 ///
 /// # Safety
 ///
-/// 调用方保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
+/// 调用方须保证 CPU 支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认).
 #[inline]
 pub unsafe fn invpcid_flush_all() {
-    // SAFETY: 调用方保证 CPU 支持 INVPCID; type 2 刷新所有 TLB 条目是安全操作.
+    // SAFETY: 调用方须保证 CPU 支持 INVPCID; type 2 刷新所有 TLB 条目是安全操作.
     unsafe {
         invpcid(0, 0, INVPCID_TYPE_ALL_INCL_GLOBAL);
     }
@@ -101,13 +101,13 @@ pub unsafe fn invpcid_flush_all() {
 ///
 /// - `pcid` 必须是有效的 PCID (0-4095)
 /// - `vaddr` 必须是页对齐的虚拟地址
-/// - 调用方保证 vaddr 属于当前地址空间或已通过 CR3 切换访问
+/// - 调用方须保证 vaddr 属于当前地址空间或已通过 CR3 切换访问
 /// - CPU 必须支持 INVPCID (通过 CPUID.07H:EBX.IVPCID 确认)
 #[inline]
 pub unsafe fn invpcid_flush_single(pcid: u16, vaddr: u64) {
     // SAFETY: INVPCID type 0 (by individual address + PCID).
     // 前提: pcid 有效 (0-4095), vaddr 页对齐.
-    // 调用方保证: vaddr 属于调用方地址空间.
+    // 调用方须保证: vaddr 属于调用方地址空间.
     // 硬件契约: INVPCID 指令在支持的 CPU 上原子刷新单条 TLB.
     unsafe {
         invpcid(u64::from(pcid), vaddr, INVPCID_TYPE_SINGLE);
@@ -284,7 +284,7 @@ pub unsafe fn kpti_exit_to_user() {
 ///
 /// # Safety
 ///
-/// 调用方保证: `KERNEL_PML4` 已初始化; PMM 可分配页面; KPTI 全局状态在 boot 阶段被独占写入。
+/// 调用方须保证: `KERNEL_PML4` 已初始化; PMM 可分配页面; KPTI 全局状态在 boot 阶段被独占写入。
 /// # Panics
 /// 分配 `USER_PML4` 页失败时 panic。
 pub unsafe fn kpti_init(kernel_pml4: u64) {
@@ -457,13 +457,13 @@ pub unsafe fn kpti_init(kernel_pml4: u64) {
 ///
 /// # Safety
 ///
-/// 调用方保证 `user_pml4_phys` 是已清零的有效 4 级页表根物理地址;
+/// 调用方须保证 `user_pml4_phys` 是已清零的有效 4 级页表根物理地址;
 /// 在 boot 阶段单线程执行或持 `VMM_LOCK`, 无并发修改页表.
 pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64) {
     let user_pml4 = PhysAddr(user_pml4_phys).to_virt().0 as *mut u64;
 
     // SAFETY: 三个链接脚本符号仅做地址取值 (不读内容); user_pml4 由 PMM 分配的
-    // 页表根物理地址转换而来, 有效; 调用方保证无并发修改.
+    // 页表根物理地址转换而来, 有效; 调用方须保证无并发修改.
     unsafe {
         let text_start = core::ptr::addr_of!(_kernel_text_start) as u64;
         let trampoline_end = core::ptr::addr_of!(_kpti_trampoline_end) as u64;
@@ -504,7 +504,7 @@ pub unsafe fn map_kernel_pages_in_user_pml4(user_pml4_phys: u64) {
 /// `user_pml4_phys` 必须是已清零的有效 4 级页表根物理地址; `kernel_pml4_phys`
 /// 必须是当前内核页表物理地址; 调用方需保证无并发修改 `user_pml4_phys` 指向的页表.
 pub unsafe fn assemble_kernel_half(user_pml4_phys: u64, kernel_pml4_phys: u64) {
-    // SAFETY: 两个 PML4 物理地址均由调用方保证有效; 本函数只改 user 页表.
+    // SAFETY: 两个 PML4 物理地址均由调用方须保证有效; 本函数只改 user 页表.
     unsafe {
         // 符号桩化 (host-test): host 无链接脚本符号与页表上下文, 跳过真机分支.
         #[cfg(not(feature = "host-test"))]
@@ -541,7 +541,7 @@ pub unsafe fn assemble_kernel_half(user_pml4_phys: u64, kernel_pml4_phys: u64) {
 ///
 /// # Safety
 ///
-/// 调用方保证 `user_pml4_phys` 是有效用户页表根物理地址 (低 12 位可为 PCID 编码,
+/// 调用方须保证 `user_pml4_phys` 是有效用户页表根物理地址 (低 12 位可为 PCID 编码,
 /// 本函数自行去掉); `kernel_stack_top` 是该任务内核栈顶的高半区 VA.
 pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
     // 符号桩化 (host-test): host 无页表上下文与 PMM, 真机分支整段跳过.
@@ -549,7 +549,7 @@ pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
     let _ = (user_pml4_phys, kernel_stack_top);
 
     #[cfg(not(feature = "host-test"))]
-    // SAFETY: 调用方保证 user_pml4_phys 有效; 目标 VA 属该进程私有页表,
+    // SAFETY: 调用方须保证 user_pml4_phys 有效; 目标 VA 属该进程私有页表,
     // 每次切换 PA 值恒定, 无并发写冲突 (见本函数文档).
     unsafe {
         let top_page = (kernel_stack_top - 1) & !(PAGE_SIZE - 1);
@@ -594,7 +594,7 @@ pub unsafe fn map_rsp0_page(user_pml4_phys: u64, kernel_stack_top: u64) {
 ///
 /// # Safety
 ///
-/// 调用方保证: `user_pml4` 是有效的用户页表虚拟地址指针;
+/// 调用方须保证: `user_pml4` 是有效的用户页表虚拟地址指针;
 /// `text_start_phys`/`text_end_phys` 是 `.text` 物理地址范围;
 /// 在 boot 阶段单线程执行, 无并发修改页表.
 pub(super) unsafe fn map_text_region_in_user_pml4(
@@ -632,7 +632,7 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
         (page_end_phys - page_start_phys) / PAGE_SIZE
     );
 
-    // SAFETY: 调用方保证 user_pml4 有效; text_start/text_end 是合法地址范围;
+    // SAFETY: 调用方须保证 user_pml4 有效; text_start/text_end 是合法地址范围;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
     unsafe {
         let mut phys = page_start_phys;
@@ -661,14 +661,14 @@ pub(super) unsafe fn map_text_region_in_user_pml4(
 ///
 /// # Safety
 ///
-/// 调用方保证: `user_pml4` 有效; `vma` 和 `phys` 对齐;
+/// 调用方须保证: `user_pml4` 有效; `vma` 和 `phys` 对齐;
 /// boot 阶段单线程执行, 无并发修改页表.
-// 有意窄化: 显式收窄, 调用方保证值域
+// 有意窄化: 显式收窄, 调用方须保证值域
 // 符号桩化 (host-test): 调用点 (map_kpti_data_pages / map_text_region_in_user_pml4)
 // 均已被 cfg 排除, host 下无调用者, 函数整体不编译 (避免 dead_code).
 #[cfg(not(feature = "host-test"))]
 unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _desc: &str) {
-    // SAFETY: 调用方保证 user_pml4 有效; vma/phys 是合法地址;
+    // SAFETY: 调用方须保证 user_pml4 有效; vma/phys 是合法地址;
     // boot 阶段单线程执行, 无并发修改页表. PMM 分配的页已对齐且属于内核.
     unsafe {
         // 计算 4 级页表索引
@@ -828,7 +828,7 @@ unsafe fn map_text_page(user_pml4: *mut u64, vma: u64, phys: u64, flags: u64, _d
 ///
 /// # Safety
 ///
-/// 调用方保证: `user_pml4` 是有效的 `USER_PML4` 虚拟地址指针;
+/// 调用方须保证: `user_pml4` 是有效的 `USER_PML4` 虚拟地址指针;
 /// 在 boot 阶段单线程执行或持 `VMM_LOCK`, 无并发修改页表.
 pub(super) unsafe fn map_kpti_data_pages(user_pml4: *mut u64) {
     // 权限: PRESENT (bit 0) + WRITABLE (bit 1) = 0x3

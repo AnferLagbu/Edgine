@@ -135,7 +135,7 @@ pub(crate) mod raw {
     /// - `ptr` 必须指向 `len` 字节的合法可写区
     #[inline]
     pub unsafe fn zero_memory(ptr: *mut u8, len: usize) {
-        // SAFETY: 可写区契约由调用方按上方 `# Safety` 履行 —— 本函数的内核调用面是
+        // SAFETY: 可写区契约按上方 `# Safety` 履行 —— 本函数的内核调用面是
         // RawMetaStore::setup_bitmap/counts/owner/cow, 传入的都是 phys_to_virt(区段物理
         // 基址) 的内核直射 VA, 区段页对齐且尚未交给分配器使用. ptr 已是 *mut u8,
         // write_bytes 按字节计数写满 len, 不越界.
@@ -424,13 +424,13 @@ impl MetaStore for RawMetaStore {
             // 载体未就绪: 返回已分配态 (保守, 阻止误合并)
             return BUDDY_ALLOCATED;
         };
-        // SAFETY: 调用方保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
         unsafe { *meta.as_ptr().add(idx) }
     }
 
     fn meta_write(&self, idx: usize, val: u8) {
         let Some(meta) = self.meta else { return };
-        // SAFETY: 调用方保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; meta 在 setup_meta 中建立 (buddy 就绪后)
         unsafe {
             *meta.as_ptr().add(idx) = val;
         }
@@ -441,13 +441,13 @@ impl MetaStore for RawMetaStore {
             // 载体未就绪 (bitmap 就绪前): 视为未计数 (0), 归还走传统路径
             return 0;
         };
-        // SAFETY: 调用方保证 idx < total_pages; counts 在 setup_counts 中建立
+        // SAFETY: 调用方须保证 idx < total_pages; counts 在 setup_counts 中建立
         unsafe { *counts.as_ptr().add(idx) }
     }
 
     fn counts_write(&self, idx: usize, val: u8) {
         let Some(counts) = self.counts else { return };
-        // SAFETY: 调用方保证 idx < total_pages; counts 在 setup_counts 中建立
+        // SAFETY: 调用方须保证 idx < total_pages; counts 在 setup_counts 中建立
         unsafe {
             *counts.as_ptr().add(idx) = val;
         }
@@ -458,7 +458,7 @@ impl MetaStore for RawMetaStore {
             // 载体未就绪 (bitmap 就绪前): 两槽均为无记录
             return (0, 0);
         };
-        // SAFETY: 调用方保证 idx < total_pages; owner 在 setup_owner 中建立
+        // SAFETY: 调用方须保证 idx < total_pages; owner 在 setup_owner 中建立
         // (`#[repr(C)]` 保证转接后字段顺序与区段布局一致).
         unsafe {
             let slot = &*owner.as_ptr().add(idx);
@@ -489,13 +489,13 @@ impl MetaStore for RawMetaStore {
             // 载体未就绪 (bitmap 就绪前): 视为未标记
             return 0;
         };
-        // SAFETY: 调用方保证 idx < total_pages; cow 在 setup_cow 中建立
+        // SAFETY: 调用方须保证 idx < total_pages; cow 在 setup_cow 中建立
         unsafe { *cow.as_ptr().add(idx) }
     }
 
     fn cow_write(&self, idx: usize, val: u8) {
         let Some(cow) = self.cow else { return };
-        // SAFETY: 调用方保证 idx < total_pages; cow 在 setup_cow 中建立
+        // SAFETY: 调用方须保证 idx < total_pages; cow 在 setup_cow 中建立
         unsafe {
             *cow.as_ptr().add(idx) = val;
         }
@@ -505,7 +505,7 @@ impl MetaStore for RawMetaStore {
         let Some(links) = self.links else {
             return SENTINEL;
         };
-        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe { (*links.as_ptr().add(idx)).prev }
     }
 
@@ -513,13 +513,13 @@ impl MetaStore for RawMetaStore {
         let Some(links) = self.links else {
             return SENTINEL;
         };
-        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe { (*links.as_ptr().add(idx)).next }
     }
 
     fn links_set_prev(&self, idx: usize, val: u64) {
         let Some(links) = self.links else { return };
-        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe {
             (*links.as_ptr().add(idx)).prev = val;
         }
@@ -527,7 +527,7 @@ impl MetaStore for RawMetaStore {
 
     fn links_set_next(&self, idx: usize, val: u64) {
         let Some(links) = self.links else { return };
-        // SAFETY: 调用方保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
+        // SAFETY: 调用方须保证 idx < total_pages; links 在 setup_links 中建立 (buddy 就绪后)
         unsafe {
             (*links.as_ptr().add(idx)).next = val;
         }
@@ -1031,7 +1031,7 @@ impl PhysicalMemoryManager {
     /// host 测试经本方法注入 `VecMetaStore`; 二者只能取其一且只写入一次.
     #[cfg(any(test, feature = "host-test"))]
     pub fn inject_meta_store(&self, store: VecMetaStore) {
-        // SAFETY: 调用方保证在 init_bitmap 之前注入且仅注入一次;
+        // SAFETY: 调用方须在 init_bitmap 之前注入且仅注入一次;
         // buddy 就绪后 store 为只读路径且均在 PMM 锁下访问 (见 meta_store).
         // cfg(any(test, host-test)) 下 MetaStoreImpl = VecMetaStore, 直接赋值.
         unsafe { *self.store.get() = Some(store) };

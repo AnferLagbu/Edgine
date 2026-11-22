@@ -268,129 +268,14 @@
       9
     ],
     [
-      "src/kernel/privileged/mm/api.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/api.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/copy_user.rs",
-      "narrow",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/copy_user.rs",
-      "wide",
-      5
-    ],
-    [
-      "src/kernel/privileged/mm/cow.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/cow.rs",
-      "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/cross_process.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/deferred_free.rs",
-      "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/kmalloc.rs",
-      "narrow",
-      1
-    ],
-    [
       "src/kernel/privileged/mm/kmalloc.rs",
       "wide",
-      3
+      1
     ],
     [
       "src/kernel/privileged/mm/kpti.rs",
       "wide",
-      8
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "narrow",
       1
-    ],
-    [
-      "src/kernel/privileged/mm/page_fault.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/pcache.rs",
-      "wide",
-      2
-    ],
-    [
-      "src/kernel/privileged/mm/pmm.rs",
-      "wide",
-      13
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "narrow",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/slab.rs",
-      "wide",
-      6
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/swap.rs",
-      "wide",
-      9
-    ],
-    [
-      "src/kernel/privileged/mm/uffd.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vma.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "narrow",
-      15
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_aarch64.rs",
-      "wide",
-      16
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "narrow",
-      4
-    ],
-    [
-      "src/kernel/privileged/mm/vmm_x86_64.rs",
-      "wide",
-      7
     ],
     [
       "src/kernel/privileged/net/api.rs",
@@ -528,66 +413,6 @@
       1
     ],
     [
-      "src/kernel/privileged/sync/atomic.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/atomic.rs",
-      "wide",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/irq_spinlock.rs",
-      "wide",
-      3
-    ],
-    [
-      "src/kernel/privileged/sync/mod.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "narrow",
-      2
-    ],
-    [
-      "src/kernel/privileged/sync/mutex.rs",
-      "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/once_cell.rs",
-      "wide",
-      3
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/rcu.rs",
-      "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/sync/seqlock.rs",
-      "wide",
-      4
-    ],
-    [
-      "src/kernel/privileged/sync/spinlock.rs",
-      "wide",
-      1
-    ],
-    [
       "src/kernel/privileged/syscall/dispatch.rs",
       "narrow",
       2
@@ -669,8 +494,8 @@
     ]
   ],
   "totals": {
-    "files": 88,
-    "keys": 129,
-    "sites": 475
+    "files": 66,
+    "keys": 94,
+    "sites": 335
   }
 }

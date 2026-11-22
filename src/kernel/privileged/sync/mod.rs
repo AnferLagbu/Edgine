@@ -606,8 +606,8 @@ pub(crate) mod raw {
 
     /// 获取 SpinLockInner.locked 字段引用
     pub fn spin_locked<'a>(ptr: *const SpinLockInner) -> &'a core::sync::atomic::AtomicU32 {
-        // SAFETY: ptr 假定非空, 指向有效 SpinLockInner。
-        // 返回的引用生命周期由调用方保证 (ptr 在使用期间有效)。
+        // SAFETY: `ptr` 是 `SpinLockInner` 实体地址 (非空), 指向其中 `locked: AtomicU32` 字段;
+        // 返回引用的 `'a` 由本 fn 调用方选定的作用域界定, 不超过 `ptr` 所指数值存活期 (见 fn 文档).
         unsafe { &(*ptr).locked }
     }
 

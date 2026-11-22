@@ -645,8 +645,8 @@ pub fn fill_provided_page(page_addr: u64, phys: PhysAddr) -> bool {
         return false;
     }
 
-    // SAFETY: phys 由调用方以 PMM 分配的页帧传入, `to_virt` 得到恒等/高半核映射的
-    // 有效内核虚拟地址; 该页尚未映射到任何用户地址空间 (调用方刚分配), 独占写入.
+    // SAFETY: phys 是 PMM 分配的页帧, `to_virt` 得到恒等/高半核映射的
+    // 有效内核虚拟地址; 该页尚未映射到任何用户地址空间 (刚分配), 独占写入.
     unsafe {
         let dst = phys.to_virt().0 as *mut u8;
         if inst.staged_zero {

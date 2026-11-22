@@ -82,7 +82,7 @@ const CHAIN_WALK_LIMIT: u64 = 1 << 20;
 /// 映射引用 (即该帧已逻辑死亡、尚未归还 PMM).
 unsafe fn frame_link_next(frame: u64) -> u64 {
     let p = PhysAddr(frame).to_virt().0 as *mut u64;
-    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    // SAFETY: `frame` 是页对齐的有效物理帧, 且前 16 字节不被任何映射引用 (契约见本 fn `# Safety`); `to_virt` 的 HHDM 恒等映射给出可读写内核别名, 访问不跨界.
     unsafe { p.read() }
 }
 
@@ -93,7 +93,7 @@ unsafe fn frame_link_next(frame: u64) -> u64 {
 /// 同 [`frame_link_next`].
 unsafe fn frame_link_set_next(frame: u64, next: u64) {
     let p = PhysAddr(frame).to_virt().0 as *mut u64;
-    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    // SAFETY: `frame` 是页对齐的有效物理帧, 且前 16 字节不被任何映射引用 (契约见本 fn `# Safety`); `to_virt` 的 HHDM 恒等映射给出可读写内核别名, 访问不跨界.
     unsafe { p.write(next) };
 }
 
@@ -104,7 +104,7 @@ unsafe fn frame_link_set_next(frame: u64, next: u64) {
 /// 同 [`frame_link_next`].
 unsafe fn frame_link_gen(frame: u64) -> u64 {
     let p = PhysAddr(frame).to_virt().0 as *mut u64;
-    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    // SAFETY: `frame` 是页对齐的有效物理帧, 且前 16 字节不被任何映射引用 (契约见本 fn `# Safety`); `to_virt` 的 HHDM 恒等映射给出可读写内核别名, 访问不跨界.
     unsafe { p.add(1).read() >> 1 }
 }
 
@@ -115,7 +115,7 @@ unsafe fn frame_link_gen(frame: u64) -> u64 {
 /// 同 [`frame_link_next`].
 unsafe fn frame_link_set_gen(frame: u64, generation: u64) {
     let p = PhysAddr(frame).to_virt().0 as *mut u64;
-    // SAFETY: 调用方保证 frame 为页对齐有效帧, 且前 16 字节不被任何映射引用.
+    // SAFETY: `frame` 是页对齐的有效物理帧, 且前 16 字节不被任何映射引用 (契约见本 fn `# Safety`); `to_virt` 的 HHDM 恒等映射给出可读写内核别名, 访问不跨界.
     unsafe { p.add(1).write(generation << 1) };
 }
 

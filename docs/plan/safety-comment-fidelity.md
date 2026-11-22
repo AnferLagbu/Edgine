@@ -160,7 +160,29 @@ ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_co
 ③ sync 面重点核**锁层级与中断上下文**（理由须与 `docs/explain/ref-lock-order.md` 的层级号一致，
 不得写「调用方保证已持锁」而不指明哪把锁）；④ 本批**不改代码**——读出的代码缺口按 §11.5
 登记并归姊妹册，不顺手修。
-状态：[]
+**结果**：C3 面（`privileged/{mm,sync}`）**窄口径 38 处 → 0**（计划册原文 39，现树实测 38，
+差 1 为立项快照漂移）、**宽口径 104 处 → 1**（仅剩 `kmalloc::validate` 一条已具体的链表校验理由），
+全树侧车 475 处 / 129 键 → **335 处 / 94 键**。mm 面逐处改写为页表 / PMM 实装依据：页表遍历
+引用 `l0_index`..`l3_index` 的 `& 0x1FF ⇒ < 512` 与 `phys_to_virt` 的 HHDM 恒等映射；
+`alloc_table` 清零引用 `get_pmm().alloc_page()` 的整页帧；COW / 缺页复制引用 `alloc_page()`
+新帧与已映射 PTE 帧；`vmm_x86_64::get_pte_value` 引用入口判非 0；`swap_init` 删除一条悬在
+安全调用 `find_contig_range` 上方、无对应 unsafe 块的错位 SAFETY 标签。sync 面逐处点名锁：
+`Mutex::raw_lock` / `SpinLock::raw_lock` 的 Guard 临界区、`IrqSpinLock` 自身锁、`SeqLock` 的
+sequence 奇偶协议、`OnceCellStorage` 的 `Once` 串行化，并把 `swap.rs` 八处统一写明 `SWAP.lock`
+（`ref-lock-order.md` **层级 6**）。另订正两类注释失真：`rcu::RcuHead.func` 上方原 SAFETY
+误写「`mut` 由调用方保证…只读访问」（字段无 `mut`、函数指针非只读访问），改为函数指针 ABI
+与 `head` 存活期契约；`mutex.rs` 两处对 `&mut *data.get()` 误称「只读访问」，改为
+`MutexGuard` 存活期内的独占可变借用。
+**纯注释面判据**：`git diff` 删除行逐行核验后**全部为注释/文档行**（含 swap 错位 SAFETY 与
+rcu 失真 SAFETY 两条删除）。
+**读数缺口登记**：本批未读出需上姊妹册的代码缺口；`get_pte_value` 未做 `translate_in_pml4`
+同款的 `root_paddr == 0` 早退，只影响零根入参语义、不构成 unsafe 前提缺失，按 §11.2 不顺手改。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never bash
+ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_content` 腿通过）·
+`make test-host` **212 套 / 1651 passed / 0 failed** · `make test-kernel-host`
+**3 套 / 1431 passed / 0 failed** · `make -f Makefile.ci ci-rustdoc` 双架构 exit 0。
+侧车已 `--update-baseline` 重导（**335 处 / 94 键**）。
+状态：[X]
 
 ### 批 C4・net + driver + egdf 占位改写与注释失真（㉗ ㉘ ㉙ ㉝ ㉞ ㉟ ㊳ ㊴）
 

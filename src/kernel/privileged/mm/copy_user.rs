@@ -364,7 +364,7 @@ pub fn copy_from_user(
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `is_user_buf(user_src, len)` 已确认 [user_src, user_src+len) 全落在用户地址空间, `kernel_dst.len() >= len` 已检查; 源为用户页、目的为内核 slice, 两区不相交; 缺页由下方 `setup_recovery` 捕获并转 `KernelError::Fault`.
 
     unsafe {
         let src_ptr = user_src as *const u8;
@@ -424,7 +424,7 @@ pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usiz
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `is_user_buf(user_dst, len)` 已确认 [user_dst, user_dst+len) 全落在用户地址空间, `kernel_src.len() >= len` 已检查; 源为内核 slice、目的为用户页, 两区不相交; 缺页由下方 `setup_recovery` 捕获.
 
     unsafe {
         let src_ptr = kernel_src.as_ptr();
@@ -466,7 +466,7 @@ pub fn copy_string_from_user(
 
     let mut bytes = alloc::vec::Vec::with_capacity(max_len);
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `is_user_ptr(user_str)` 已确认起点落在用户地址空间; 读取范围 0..max_len 的越界/缺页由下方 `setup_recovery` 捕获; 目标 `bytes` 是独立 `Vec`, 与用户页不重叠.
 
     unsafe {
         let ptr = user_str as *const u8;
@@ -513,7 +513,7 @@ pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, KernelError> {
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `is_user_buf(user_ptr, len)` 已确认 [user_ptr, user_ptr+len) 全落在用户地址空间; 写长度即该检查界定的 len; 缺页由下方 `setup_recovery` 捕获.
 
     unsafe {
         let ptr = user_ptr as *mut u8;
@@ -549,7 +549,7 @@ pub fn strlen_user(user_str: u64, max_len: usize) -> Result<usize, KernelError> 
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `is_user_ptr(user_str)` 已确认起点落在用户地址空间; 逐字节读到 NUL 或 `max_len` 为止, 任何缺页由下方 `setup_recovery` 捕获并转 `KernelError::Fault`.
 
     unsafe {
         let ptr = user_str as *const u8;

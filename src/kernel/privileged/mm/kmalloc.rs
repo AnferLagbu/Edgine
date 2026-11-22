@@ -218,7 +218,7 @@ pub(crate) mod raw {
         /// 在本地址写入新的 `HeapHeader` 值.
         #[inline]
         pub fn write(&self, val: HeapHeader) {
-            // SAFETY: 调用方保证指针合法, 且持锁
+            // SAFETY: `self.0` 来自 `HeaderRef::new_unchecked`/`from_data_ptr` 包装的堆内合法 `HeapHeader`; 本方法只在 `KernelHeap::acquire_lock()` 持有的 `GLOBAL_KMALLOC` 堆锁下调用, 整头覆盖写不与其他节点别名.
             unsafe {
                 *self.0 = val;
             }
@@ -233,7 +233,7 @@ pub(crate) mod raw {
         /// 通过字节偏移计算相邻的下一个头部.
         #[inline]
         pub fn adjacent_next(&self, offset: usize) -> Self {
-            // SAFETY: 调用方保证偏移仍在堆区范围内
+            // SAFETY: `offset` 由 buddy 块尺寸/相邻头部算术给出, 仍在同一堆区范围内 (见本方法调用点); 只构造指针, 不解引用.
             unsafe { Self::new_unchecked(self.byte_ptr().add(offset) as usize as *mut HeapHeader) }
         }
     }

@@ -351,7 +351,7 @@ impl Aarch64Vmm {
     fn alloc_table() -> Option<u64> {
         let paddr = get_pmm().alloc_page()?;
         // Zero the table
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `paddr` 来自 `get_pmm().alloc_page()` 的整页帧; `phys_to_virt` 的 HHDM 恒等映射给出可写内核别名, 清零 PAGE_SIZE 字节不越界; 该页尚未挂入任何页表, 无别名读者.
         unsafe {
             ptr::write_bytes(
                 phys_to_virt(paddr.as_u64()) as *mut u8,
@@ -757,7 +757,7 @@ impl Aarch64Vmm {
     /// Ensure the next-level page table exists at `table[idx]`.
     /// Returns a pointer to the next-level table.
     fn ensure_next_level(table: *mut u64, idx: usize) -> Result<*mut u64, &'static str> {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `table` 是 `alloc_table`/`get_next_level` 返回的页表页基址 (经 `phys_to_virt` 的 HHDM 映射); `idx` 由 `l0_index`..`l3_index` 从 vaddr 取出, 恒 `< TABLE_ENTRIES` (512), `add`/`read_volatile`/`write_volatile` 均落在该页内.
         unsafe {
             let entry = ptr::read_volatile(table.add(idx));
             if entry & 0b11 == 0b11 {
@@ -905,7 +905,7 @@ impl Aarch64Vmm {
 
     /// 当一个页表页的全部 512 项均为 0 时返回 true.
     fn is_table_empty(table: *mut u64) -> bool {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `table` 是页表页基址 (HHDM 映射); 遍历 `0..TABLE_ENTRIES` 恰好覆盖整页 512 项, 不越界; 本函数只在 `unmap_page_in_table` 持 `VMM_LOCK` 的临界区内调用.
         unsafe {
             for i in 0..TABLE_ENTRIES {
                 if ptr::read_volatile(table.add(i)) != 0 {
@@ -919,7 +919,7 @@ impl Aarch64Vmm {
     /// 遍历表项到下一级 (只读, 不分配).
     /// 若该表项不是合法的表描述符则返回 null.
     fn get_next_level(table: *mut u64, idx: usize) -> *mut u64 {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `table` 是页表页基址 (HHDM 映射); `idx` 由 `l0_index`..`l3_index` 取出, 恒 `< TABLE_ENTRIES` (512), 该次 `read_volatile` 落在页内且不解引用表项内容.
         unsafe {
             let entry = ptr::read_volatile(table.add(idx));
             if entry & 0b11 == 0b11 {
@@ -962,7 +962,7 @@ impl Aarch64Vmm {
         let user_l0_ptr = phys_to_virt(user_l0) as *mut u64;
         let user_l1_desc = table_descriptor(user_l1);
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `user_l0_ptr`/`user_l1`/`user_l2` 是 `alloc_table` 刚分配并清零的页表页 (HHDM 映射); `kernel_l0` 来自 `self.kernel_l0` 的有效内核根表; 槽位 0 与 index 256..512 均在页内, 只做 `write/read_volatile`.
         unsafe {
             // L0[0] → 新的用户 L1 表 (干净, 不共享)
             ptr::write_volatile(user_l0_ptr.add(0), user_l1_desc);
@@ -1061,8 +1061,8 @@ impl Aarch64Vmm {
 
         let el1_l0_ptr = phys_to_virt(el1_l0) as *mut u64;
         let el1_l1_ptr = phys_to_virt(el1_l1) as *mut u64;
-        // SAFETY: el1_l0/el1_l1 是刚分配并清零的表页; 各索引均 < 512;
-        // 写入后由调用方在切换 TTBR0 前经 tlbi 生效 (见 exception.rs 入口汇编).
+        // SAFETY: `el1_l0`/`el1_l1` 是刚分配并清零的表页; 各索引均 < 512;
+        // 写入后在切换 TTBR0 前经 `tlbi` 生效 (见 exception.rs 入口汇编).
         unsafe {
             // ① 共享用户 L0 的有效项 (PIE / mmap 栈).
             //    保留槽自身位 [1:0] = 0 ⇒ 不满足 0b11, 天然跳过.
@@ -1157,7 +1157,7 @@ impl Aarch64Vmm {
 
     /// 切换用户页表: 写入 `TTBR0_EL1` 并执行全局 TLB 失效 (dsb/isb 屏障包裹).
     pub fn switch_page_table(ttbr0: u64) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `msr ttbr0_el1` 是系统寄存器写入, 仅把入参 L0 物理地址写入本核 TTBR0; 前后 `dsb ish`/`isb` 保证页表写与切换生效, `tlbi vmalle1is` 广播失效; 无内存解引用.
         unsafe {
             core::arch::asm!(
                 "dsb ish",
@@ -1201,7 +1201,7 @@ impl Aarch64Vmm {
 
         let l0 = phys_to_virt(root_paddr) as *const u64;
         let l0_idx = l0_index(vaddr);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `l0` 是 `phys_to_virt(root_paddr)` 的 HHDM 恒等映射; `l0_idx = l0_index(vaddr) < 512`; 只读 `read_volatile`, 不构造引用.
         let l0_entry = unsafe { ptr::read_volatile(l0.add(l0_idx)) };
         if l0_entry & 0b11 != 0b11 {
             return None;
@@ -1264,7 +1264,7 @@ impl Aarch64Vmm {
 
         let l0 = phys_to_virt(root_paddr) as *const u64;
         let l0_idx = l0_index(vaddr);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `l0` 是 `phys_to_virt(root_paddr)` 的 HHDM 恒等映射; `l0_idx = l0_index(vaddr) < 512`; 只读 `read_volatile`, 不构造引用.
         let l0_entry = unsafe { ptr::read_volatile(l0.add(l0_idx)) };
         if l0_entry & 0b11 != 0b11 {
             return None;
@@ -1272,7 +1272,7 @@ impl Aarch64Vmm {
 
         let l1 = phys_to_virt(l0_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l1_idx = l1_index(vaddr);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `l1` 是上一级 table descriptor 帧地址经 `phys_to_virt` 的 HHDM 映射; `l1_idx = l1_index(vaddr) < 512`; 只读 `read_volatile`.
         let l1_entry = unsafe { ptr::read_volatile(l1.add(l1_idx)) };
         if l1_entry & 0b11 != 0b11 {
             return None;
@@ -1280,7 +1280,7 @@ impl Aarch64Vmm {
 
         let l2 = phys_to_virt(l1_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l2_idx = l2_index(vaddr);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `l2` 是上一级 table descriptor 帧地址经 `phys_to_virt` 的 HHDM 映射; `l2_idx = l2_index(vaddr) < 512`; 只读 `read_volatile`.
         let l2_entry = unsafe { ptr::read_volatile(l2.add(l2_idx)) };
         if l2_entry & 0b11 != 0b11 {
             return None;
@@ -1288,7 +1288,7 @@ impl Aarch64Vmm {
 
         let l3 = phys_to_virt(l2_entry & 0x0000_FFFF_FFFF_F000) as *const u64;
         let l3_idx = l3_index(vaddr);
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `l3` 是上一级 table descriptor 帧地址经 `phys_to_virt` 的 HHDM 映射; `l3_idx = l3_index(vaddr) < 512`; 只读 `read_volatile`.
         let l3_entry = unsafe { ptr::read_volatile(l3.add(l3_idx)) };
 
         Some(l3_entry)
@@ -1440,7 +1440,7 @@ impl Aarch64Vmm {
     fn destroy_l1_table(paddr: u64) {
         let l1 = phys_to_virt(paddr) as *mut u64;
         for i in 0..512 {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `l1` 是 `phys_to_virt(paddr)` 的 HHDM 映射, paddr 来自上一级 table descriptor 的帧位域; 遍历 0..512 恰覆盖整页; 调用方 `destroy_page_table` 已持 `VMM_LOCK`.
             unsafe {
                 let entry = ptr::read_volatile(l1.add(i));
                 if entry & 0b11 == 0b11 {
@@ -1455,7 +1455,7 @@ impl Aarch64Vmm {
     fn destroy_l2_table(paddr: u64) {
         let l2 = phys_to_virt(paddr) as *mut u64;
         for i in 0..512 {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `l2` 是 `phys_to_virt(paddr)` 的 HHDM 映射, paddr 来自上一级 table descriptor 的帧位域; 遍历 0..512 恰覆盖整页; 调用方 `destroy_page_table` 已持 `VMM_LOCK`.
             unsafe {
                 let entry = ptr::read_volatile(l2.add(i));
                 if entry & 0b11 == 0b11 {
@@ -1477,7 +1477,7 @@ impl Aarch64Vmm {
     fn destroy_l3_table(paddr: u64) {
         let l3 = phys_to_virt(paddr) as *mut u64;
         for i in 0..512 {
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `l3` 是 `phys_to_virt(paddr)` 的 HHDM 映射, paddr 来自上一级 table descriptor 的帧位域; 遍历 0..512 恰覆盖整页; 调用方 `destroy_page_table` 已持 `VMM_LOCK`.
             let entry = unsafe { ptr::read_volatile(l3.add(i)) };
             if is_user_leaf(entry) {
                 let user_phys = entry & 0x0000_FFFF_FFFF_F000;
@@ -1526,7 +1526,7 @@ pub fn get_kernel_pml4() -> u64 {
 #[must_use]
 pub fn get_current_pml4() -> u64 {
     let ttbr0: u64;
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `mrs TTBR0_EL1` 只把本核系统寄存器读入 `out(reg)` 输出, 无内存访问/副作用; 返回值按下方逻辑判 0 后回退内核根表.
     unsafe {
         core::arch::asm!("mrs {}, TTBR0_EL1", out(reg) ttbr0);
     }

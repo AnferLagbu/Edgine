@@ -1401,7 +1401,7 @@ pub unsafe extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
     if mm_ptr.is_null() {
         return 0;
     }
-    // SAFETY: `mm_ptr` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `mm_ptr` 是 `vma_find` 的 FFI 入参, 上方已判 `is_null()`; 指向合法 `MmStruct` 是调用的前置契约, 此处只做只读 `find_vma` 查询.
     let mm = unsafe { &*mm_ptr };
     mm.find_vma(crate::privileged::glue::usize_from_u64(addr))
         .map_or(0, |vma| {

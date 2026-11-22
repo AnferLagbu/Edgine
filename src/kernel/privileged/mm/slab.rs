@@ -198,7 +198,7 @@ pub(crate) mod raw {
 
         #[inline]
         pub fn set_next(&self, p: *mut SlabHeader) {
-            // SAFETY: 调用方保证指针合法
+            // SAFETY: `self.0` 来自 `SlabRef::new_unchecked` 包装的 slab 页内合法 `SlabHeader`; 本方法只在 `GENERAL_CACHES` 锁下的链表操作 (`new_slab`/`destroy_slab`/迁移) 中调用.
             unsafe {
                 (*self.0).next = p;
             }
@@ -207,7 +207,7 @@ pub(crate) mod raw {
         /// 在该位置写入默认的 `SlabHeader`.
         #[inline]
         pub fn write_default(&self) {
-            // SAFETY: 调用方保证指针合法
+            // SAFETY: `self.0` 指向 slab 页内合法 `SlabHeader`; 本方法只在 `GENERAL_CACHES` 锁下初始化新 slab, 整头写入 `SlabHeader::default()` 不越出头部区.
             unsafe {
                 *self.0 = SlabHeader::default();
             }
@@ -217,7 +217,7 @@ pub(crate) mod raw {
         /// Bitmap 起始于 header + 对象区之后.
         #[inline]
         pub fn bitmap_ptr(&self, object_size: usize) -> *mut u8 {
-            // SAFETY: 调用方保证指针合法且 object_size 正确
+            // SAFETY: `self.0` 指向 slab 页内合法 `SlabHeader`; `object_size` 是该 cache 的固定对象尺寸 (来自 `GENERAL_CACHES` 描述符); `obj_count * object_size` 不超过 `new_slab` 按 `SLAB_DEFAULT_SIZE` 划出的对象区.
             unsafe {
                 let obj_area = (*self.0).start_addr;
                 obj_area.add((*self.0).obj_count as usize * object_size)
@@ -227,7 +227,7 @@ pub(crate) mod raw {
         /// 获取指定索引处的对象指针.
         #[inline]
         pub fn object_ptr(&self, idx: u32, object_size: usize) -> *mut u8 {
-            // SAFETY: 调用方保证指针合法且 idx < obj_count
+            // SAFETY: `self.0` 指向 slab 页内合法 `SlabHeader`; `idx < obj_count` 由位图空闲位扫描给出 (见 `alloc` 路径), `idx * object_size` 落在对象区内.
             unsafe { (*self.0).start_addr.add(idx as usize * object_size) }
         }
     }
@@ -618,7 +618,7 @@ impl KmemCache {
             return;
         }
         // SAFETY: slab 由 new_slab 中 pmm_alloc_pages 分配,
-        // 释放同等数量页. 调用方保证 slab 已不在任何链表中且不持有活动对象.
+        // 释放同等数量页. 调用方须保证 slab 已不在任何链表中且不持有活动对象.
         unsafe {
             // SAFETY: pmm_free_pages 由 PMM 层提供, 符号与 C ABI 声明一致
             unsafe extern "C" {
@@ -1000,7 +1000,7 @@ pub unsafe extern "C" fn slab_get_system_stats(
         }
     }
 
-    // SAFETY: 调用方保证指针有效
+    // SAFETY: 三个输出指针已在上方统一判空; 均为 FFI 调用方提供的 `u64`/`u32` 输出槽, 本函数各写一次且不越界; `GENERAL_CACHES` 守卫在写之前已释放.
     unsafe {
         *total_memory = total;
         *used_memory = used;

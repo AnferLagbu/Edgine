@@ -501,7 +501,7 @@ fn handle_file_fault(
             // 从缓存页复制数据到新页
             let src_virt = PhysAddr(cache_phys).to_virt();
             let dst_virt = new_phys.to_virt();
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: `cache_phys` 是页缓存持有的 PMM 有效帧, `new_phys` 来自 `pmm.alloc_page()`; 两者均已页对齐并经 `to_virt` 的 HHDM 恒等映射可读写; 复制 PAGE_SIZE 字节, 新帧尚未映射, 两区不重叠.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     src_virt.0 as *const u8,

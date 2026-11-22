@@ -60,7 +60,7 @@ impl<T> OnceCellStorage<T> {
     /// - 调用方必须确保本 cell **此前未被初始化** (写独占)。
     /// - 调用方必须确保此后只有读访问, 或正确调用 `drop_in_place`。
     pub unsafe fn write(&self, val: T) {
-        // SAFETY: 由调用方保证写独占 (无其他线程可观察到 uninit 状态)。
+        // SAFETY: `write()` 的 `# Safety` 语义即写独占: 调用时该 `UnsafeCell<MaybeUninit<T>>` 尚未初始化, 故此处 `write` 不与任何读/写别名; 后续可见性由 `Once` 的 Acquire/Release 配对建立.
         unsafe { (*self.value.get()).write(val) };
     }
 
@@ -69,7 +69,7 @@ impl<T> OnceCellStorage<T> {
     /// # SAFETY
     /// 调用方必须确保本 cell 已被 `write()` 初始化 (即 `Once::is_completed()` 为真)。
     pub unsafe fn assume_init_ref(&self) -> &T {
-        // SAFETY: 由调用方保证 cell 已初始化。
+        // SAFETY: 该 cell 已被 `write()` 初始化 (`Once::is_completed()` 为真), `assume_init_ref` 只在初始化后构引用; `&T` 不逃出 `Once` 的保护期.
         unsafe { (*self.value.get()).assume_init_ref() }
     }
 
@@ -79,7 +79,7 @@ impl<T> OnceCellStorage<T> {
     /// - 调用方必须确保本 cell 已被 `write()` 初始化。
     /// - 调用方必须确保 drop 后不再访问 cell (在所有权终止时调用一次即可)。
     pub unsafe fn assume_init_drop(&self) {
-        // SAFETY: 由调用方保证 cell 已初始化。
+        // SAFETY: 该 cell 已被 `write()` 初始化, 且本方法只在所有权终止时调用一次; `assume_init_drop` 后不再访问 cell (见 `# Safety`).
         unsafe { (*self.value.get()).assume_init_drop() };
     }
 }

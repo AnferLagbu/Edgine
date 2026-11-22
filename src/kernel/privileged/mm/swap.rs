@@ -163,7 +163,6 @@ impl SwapArea {
         let pmm_inst = pmm::get_pmm();
         let swap_bytes = SWAP_MAX_SLOTS * crate::privileged::glue::usize_from_u64(PAGE_SIZE);
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
         let Some(phys_base) = pmm_inst.find_contig_range(swap_bytes) else {
             crate::klog_warn!(
                 Swap,
@@ -558,7 +557,7 @@ static SWAP: SwapState = SwapState {
 /// 初始化 swap 子系统
 pub fn swap_init() -> bool {
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let area = unsafe { &mut *SWAP.area.get() };
     area.init()
 }
@@ -571,7 +570,7 @@ pub fn swap_init() -> bool {
 /// - 将来 swap 模块热卸载
 pub fn swap_deinit() -> bool {
     let guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let area = unsafe { &mut *SWAP.area.get() };
     // 锁内只摘除状态; 未初始化时 taken 为 None.
     let taken = area.take_storage();
@@ -720,7 +719,7 @@ pub fn swap_in(entry: SwapEntry) -> Option<PhysAddr> {
 pub fn swap_free(entry: SwapEntry) {
     let slot = entry.slot();
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let area = unsafe { &mut *SWAP.area.get() };
     area.free_slot(slot);
 }
@@ -737,7 +736,7 @@ pub fn is_swap_pte(pte: u64) -> bool {
 /// `locked` 表示该页是否被 mlock 锁定 (由调用方根据 VMA `vm_flags.MLOCKED` 推导).
 pub fn lru_touch(pml4: u64, virt_addr: u64, phys_addr: u64, dirty: bool, locked: bool) {
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let lru = unsafe { &mut *SWAP.lru.get() };
     lru.add_active(pml4, virt_addr, phys_addr, dirty, locked);
 }
@@ -754,7 +753,7 @@ pub fn lru_touch(pml4: u64, virt_addr: u64, phys_addr: u64, dirty: bool, locked:
 /// - 保留的 locked 状态对 `get_victim` 不可见, 不会被 swap-out
 pub fn set_page_locked(virt_addr: u64, locked: bool) -> bool {
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let lru = unsafe { &mut *SWAP.lru.get() };
     lru.set_locked(virt_addr, locked)
 }
@@ -764,7 +763,7 @@ pub fn set_page_locked(virt_addr: u64, locked: bool) -> bool {
 /// 返回 Some(true/false) 表示 LRU 中存在该条目, None 表示该页未在 LRU 跟踪.
 pub fn is_page_locked(virt_addr: u64) -> Option<bool> {
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let lru = unsafe { &*SWAP.lru.get() };
     lru.is_locked(virt_addr)
 }
@@ -778,7 +777,7 @@ pub fn reclaim_pages(max_count: u32) -> u32 {
     while reclaimed < max_count {
         let victim = {
             let _guard = SWAP.lock.lock();
-            // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
             let lru = unsafe { &mut *SWAP.lru.get() };
             lru.get_victim()
         };
@@ -827,7 +826,7 @@ pub fn reclaim_pages(max_count: u32) -> u32 {
 /// 获取 swap 信息
 pub fn swap_info() -> (u64, u64) {
     let _guard = SWAP.lock.lock();
-    // SAFETY: `SWAP` 由调用方保证为有效指针; 只读访问
+    // SAFETY: `SWAP` 是模块级 `static SwapState`; 本函数已持 `SWAP.lock` (层级 6), `area`/`lru` 的 `UnsafeCell` 借用只在本临界区内有效, 与其它持锁访问互斥.
     let area = unsafe { &mut *SWAP.area.get() };
     let total = SWAP_MAX_SLOTS as u64;
     let free = area.free_slots();

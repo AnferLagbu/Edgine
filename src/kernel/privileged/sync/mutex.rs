@@ -107,7 +107,7 @@ impl<T> Mutex<T> {
 
         // 创建守卫 (RAII)
         MutexGuard {
-            // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+            // SAFETY: `self.data` 的 `UnsafeCell` 在 `raw_lock()` 成功后由本 `Mutex` 独占; 所得 `&mut T` 只在 `MutexGuard` 存活期内存在, `Drop` 时 `raw_unlock()` 释放.
             data: unsafe { &mut *self.data.get() },
             mutex: &self.inner,
             #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -121,7 +121,7 @@ impl<T> Mutex<T> {
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         if self.raw_trylock() {
             Some(MutexGuard {
-                // SAFETY: `self` 由调用方保证为有效指针; 只读访问
+                // SAFETY: `self.data` 的 `UnsafeCell` 在 `raw_lock()` 成功后由本 `Mutex` 独占; 所得 `&mut T` 只在 `MutexGuard` 存活期内存在, `Drop` 时 `raw_unlock()` 释放.
                 data: unsafe { &mut *self.data.get() },
                 mutex: &self.inner,
                 #[cfg(any(debug_assertions, feature = "lockdep"))]
@@ -336,7 +336,7 @@ impl CondVar {
         self.waiters.fetch_add(1, Ordering::AcqRel);
         mutex.raw_unlock();
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `timer_sleep_busy` 是上方声明的 `extern "C" fn(u64)` (框架定时器导出); 唯一实参是值类型毫秒数, 无指针/生命周期契约, 调用后返回本函数.
         unsafe {
             timer_sleep_busy(u64::from(timeout_ms));
         }
@@ -385,7 +385,7 @@ fn scheduler_yield() {
     unsafe extern "C" {
         fn scheduler_yield();
     }
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `scheduler_yield` 是上方声明的无参 `extern "C" fn` (调度器导出); 不传指针、无内存契约, 本函数只调用一次.
     unsafe {
         scheduler_yield();
     }

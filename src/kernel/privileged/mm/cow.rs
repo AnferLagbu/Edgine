@@ -370,7 +370,7 @@ fn for_each_cow_leaf_in_pd(
     f: &mut impl FnMut(*mut u64, *mut u64, u64),
 ) {
     for k in 0..512usize {
-        // SAFETY: k 在 PD 页范围内; 两端指针由调用方保证指向有效页表帧
+        // SAFETY: `k` 在 `0..512` 的 PD 项内; `parent_pd`/`child_pd` 是 `for_each_cow_leaf` 的调用点从已判 present 的页表项取出的 PMM 页表页 (经 `to_virt` 的 HHDM 恒等映射), 此处只做 `read_volatile`.
         let pde = unsafe { parent_pd.add(k).read_volatile() };
         // PS 位 (0x80) 置位 = 2MB 大页, 无下级 PT
         if (pde & 1) == 0 || (pde & 0x80) != 0 {
@@ -392,7 +392,7 @@ fn for_each_cow_leaf_in_pd(
             if (pte & 1) == 0 {
                 continue;
             }
-            // SAFETY: 两端槽位均在有效 PT 页内; 写权限由调用方持有的 VMM_LOCK 保证
+            // SAFETY: `l` 在 `0..512` 的 PT 项内; 两端槽位均在有效 PT 页内; 写权限由临界区外持有的 `VMM_LOCK` 保证 (调用链见 `clone_user_page_table_cow`).
             unsafe {
                 f(parent_table.add(l), child_table.add(l), pte);
             }
@@ -413,7 +413,7 @@ fn for_each_cow_leaf(
     let child_pml4 = PhysAddr(child_root).to_virt().0 as *mut u64;
 
     for i in 0..256usize {
-        // SAFETY: i 在 PML4 低半区范围内; 两个根均由调用方保证为有效页表帧
+        // SAFETY: `i` 在 `0..256` 的 PML4 低半区内; `parent_pml4`/`child_pml4` 由 `PhysAddr::to_virt` 转出的 PMM 页表帧 (HHDM 恒等映射), 此处只做 `read_volatile`.
         let pml4e = unsafe { parent_pml4.add(i).read_volatile() };
         if (pml4e & 1) == 0 {
             continue;
@@ -549,7 +549,7 @@ fn cow_handle_fault_locked(pml4: u64, fault_addr: u64) -> Option<u64> {
     let new_virt = new_phys.to_virt();
 
     let old_virt = PhysAddr(old_frame).to_virt();
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `old_frame` 取自 `get_physical_in_pml4` 返回的已映射 PTE 帧地址, `new_phys` 来自 `pmm_inst.alloc_page()`; 两者均为页对齐的 PMM 有效帧, 经 `PhysAddr::to_virt` 的 HHDM 恒等映射可读/写; 复制 PAGE_SIZE 字节, 新帧尚未映射故两区不重叠; 本函数要求已持 `VMM_LOCK`.
     unsafe {
         core::ptr::copy_nonoverlapping(
             old_virt.0 as *const u8,

@@ -460,11 +460,11 @@ pub unsafe fn pcache_copy_to_user(phys: u64, dest_virt: u64) {
     // SAFETY: 源是 `phys_to_virt(phys)` 的内核直射 VA (高半区), 目的是用户低半区页, 两区
     // 地址域不相交 ⇒ 满足 copy_nonoverlapping 的不重叠前提; 两侧各 PAGE_SIZE 字节可读 /
     // 可写由 fn 的 `# Safety` 契约保证 (phys 为 Page Cache 有效物理页, dest_virt 为已映射
-    // 用户页). 本函数不取锁, 页归属由调用方在 #PF 填充路径上保证.
+    // 用户页). 本函数不取锁, 页归属在本 #PF 填充路径上确立.
     // (接线面登记: 全仓无调用方, 属 audit_unwired_pub_fn R1 报告项, 本批不改接线.)
     unsafe {
         let src_virt = crate::privileged::mm::phys_to_virt(phys);
-        // SAFETY: 调用方保证 dest_virt 指向有效用户空间页, phys 为有效物理页.
+        // SAFETY: 调用方须保证 dest_virt 指向有效用户空间页, phys 为有效物理页.
         core::ptr::copy_nonoverlapping(
             src_virt as *const u8,
             dest_virt as *mut u8,
