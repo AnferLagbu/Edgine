@@ -377,7 +377,16 @@ memory 更新、按路径提交推送。
 与 `check_doc_paths`；③ 七门槛复跑取读数（判据 = 日志内 `*-RC=` 回显）；
 ④ `git commit --only --pathspec-from-file`，不夹带其余暂存态；
 ⑤ **复核 AGENTS 授权状态**：C1 若已取得授权并改了 §2.2 计数，须在 memory 记录该次授权已用掉。
-状态：[]
+**结果**：① 内容面侧车 `scripts/audit_safety_content.baseline.json` 的 `totals` 为
+`{sites: 0, files: 0, keys: 0}`、`entries` 空，脚本已打印「✓ 硬零门禁」文案（C5 归零后转硬零），
+塌缩守卫 `collapse_suspected` 与自测 ⑨ 四条断言原样保留、未削弱；② 本批无新建源码文件，
+`scan_obsolete_naming` 与 `check_doc_paths` 终态复跑均 RC=0（见下读数）；③ 七门槛终态复跑：
+`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never bash ci/audit.sh full`
+RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_content` 硬零门禁通过）· `make test-host`
+**212 套 / 1652 passed / 0 failed** · `make test-kernel-host` **3 套 / 1431 passed / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` x86_64 与 aarch64 两腿各 exit 0；④ 按路径提交，未夹带 `.trae/`；
+⑤ C1 的 AGENTS §2.2 授权（10→11 条腿、26→27 个 `audit_*.py`）已在 C1 用掉，已记入 memory。
+状态：[X]
 
 ---
 
