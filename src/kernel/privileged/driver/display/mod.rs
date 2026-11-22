@@ -161,7 +161,9 @@ struct VgaFbInfo {
 /// 通过 Bochs DISPI 端口读取 VGA 帧缓冲分辨率
 #[cfg(target_arch = "x86_64")]
 fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: port_outw/port_inw 是 DISPI 索引口 (0x01CE) 与数据口 (0x01CF) 的
+    // CPL=0 端口原语; 本函数按 ID→ENABLE→XRES→YRES→BPP 的寄存器序列读写,
+    // 索引口/数据口的配对互斥依据见文件末「unsafe 依据单源」段.
     unsafe {
         port_outw(VBE_DISPI_PORT_INDEX, VBE_DISPI_INDEX_ID);
         let id = port_inw(VBE_DISPI_PORT_DATA);
@@ -195,8 +197,8 @@ fn read_bochs_disp_mode() -> Option<(u32, u32, u8)> {
 /// - 偏移计算: `VBE_DISPI_MMIO_BASE` + reg * 2 (每寄存器 2 字节间距)
 #[cfg(target_arch = "x86_64")]
 unsafe fn read_bochs_disp_mode_mmio(mmio_base: u64) -> Option<(u32, u32, u8)> {
-    // SAFETY: 调用方保证 mmio_base 是有效的 VGA BAR0 映射,
-    // 偏移在 BAR0 范围内, volatile 访问对 MMIO 寄存器是必需的.
+    // SAFETY: mmio_base 来自 `probe_vga_fb_via_pci` 读到的 VGA BAR0 映射; 本处按
+    // DISPI 寄存器布局做 volatile 读, 最高偏移 = 0x500 + 4*2 = 0x508, 落在 BAR0 内.
     unsafe {
         let base = mmio_base + VBE_DISPI_MMIO_BASE;
         let read_reg = |reg: u16| -> u16 {
@@ -453,16 +455,19 @@ pub fn display_probe_controllers() {
 //   使用者, 故配对期间不会被另一路径插入改索引. 注意 SMP 已在
 //   boot_interrupt_timer_init 阶段完成 secondary_cpu_bringup(), 互斥依据是
 //   「唯一消费者 + 仅 BSP 启动期探测」而非「单核」.
-// - 收敛点 (登记不改): 本对原语与 privileged::ioport::IoPort 安全代理重复, 后者
-//   已带端口区间独占校验; 迁移属结构改造, 超出 SAFETY 补注释批范围.
+// - 收敛点 (已登记姊妹册 `safety-gap-remediation.md` 的 R11, 本批不改代码): 本对原语与
+//   privileged::ioport::IoPort 安全代理重复, 后者已带端口区间独占校验; 迁移属结构改造,
+//   超出 SAFETY 补注释批范围, 且会改动端口访问路径, 需单独回归 QEMU 显示路径.
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: port 为 DISPI 索引口 (0x01CE) 或数据口 (0x01CF), 由 read_bochs_disp_mode()
+// 以 VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 常量传入; 内核 CPL=0 对 in/out 不做
+// I/O 位图检查, 故只需端口常量为已知的 DISPI 端口.
 unsafe fn port_outw(port: u16, val: u16) {
     // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 out 的目标是 dx 选定的索引口
-    // 或数据口, 写入值 val 为 16 位 DISPI 寄存器值; 端口号由调用方
-    // read_bochs_disp_mode() 以 VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 常量传入.
+    // 或数据口, 写入值 val 为 16 位 DISPI 寄存器值; 端口号取自本文件
+    // VBE_DISPI_PORT_INDEX / VBE_DISPI_PORT_DATA 两个常量.
     unsafe {
         core::arch::asm!("out dx, ax", in("dx") port, in("ax") val, options(nomem, nostack));
     }
@@ -470,7 +475,8 @@ unsafe fn port_outw(port: u16, val: u16) {
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: port 为 DISPI 索引口 (0x01CE) 或数据口 (0x01CF), 由 read_bochs_disp_mode()
+// 以常量传入; 内核 CPL=0 对 in/out 不做 I/O 位图检查, 且读前已先 out 索引口选定寄存器.
 unsafe fn port_inw(port: u16) -> u16 {
     // SAFETY: 类别「DISPI 端口对」(见本节单源). 本处 in 从 dx 选定的数据口读回
     // 16 位寄存器值到 ax; 读前调用方已先 out 索引口选定寄存器, 两次 I/O 的配对

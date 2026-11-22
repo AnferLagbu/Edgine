@@ -61,7 +61,8 @@ use crate::privileged::error::KernelError;
 /// - `kernel_test` 模式下不可用 (无真实硬件)
 #[cfg(not(feature = "kernel_test"))]
 pub fn poll_network() {
-    // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+    // SAFETY: `super::init::poll_network` 无入参, 内部经 NET_STATE 的 `try_lock`
+    // 串行访问全局 NET_DEVICE/NET_STACK; 本包装层不引入任何指针或类型前提.
     unsafe { super::init::poll_network() }
 }
 

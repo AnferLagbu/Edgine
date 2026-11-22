@@ -444,7 +444,9 @@ pub fn nvme_drain_completions(
     iomem: &IoMem,
     cq_db_offset: usize,
 ) -> (usize, u16) {
-    // SAFETY: cq_virt 由 DMA 分配保证有效; head/phase 由调用方在锁内独占推进
+    // SAFETY: cq_virt 来自 NVMe 队列的 DMA 分配 (alloc_coherent), 大小 = depth * 16;
+    // cq_head/phase 由调用处持 NVMe 队列锁独占推进, 同一队列无第二个推进者.
+    // read_volatile 因控制器以 DMA 写完成条目.
     unsafe {
         let cq = cq_virt as *const nvme::NvmeCompletion;
         let mut drained: usize = 0;
@@ -475,7 +477,8 @@ pub fn nvme_drain_completions(
 /// `src` 为源地址 (调用方保证有效且长度匹配 `len`; 以地址值传递以保持 functions
 /// 层无需 unsafe, 见 P-64 第十六批).
 pub fn nvme_copy_to_dma(dst_vaddr: u64, src: u64, len: usize) {
-    // SAFETY: dst_vaddr 由 DMA 分配保证有效; 调用方保证 src 有效且 len 匹配
+    // SAFETY: dst_vaddr 来自 alloc_dma_buffer 的 DmaStream 虚拟地址; src 为
+    // 调用方借入的切片首址, len ≤ 该切片长度.
     unsafe {
         core::ptr::copy_nonoverlapping(src as *const u8, dst_vaddr as *mut u8, len);
     }
@@ -486,7 +489,8 @@ pub fn nvme_copy_to_dma(dst_vaddr: u64, src: u64, len: usize) {
 /// `dst` 为目标地址 (调用方保证有效且长度匹配 `len`; 以地址值传递以保持 functions
 /// 层无需 unsafe, 见 P-64 第十六批).
 pub fn nvme_copy_from_dma(dst: u64, src_vaddr: u64, len: usize) {
-    // SAFETY: src_vaddr 由 DMA 分配保证有效; 调用方保证 dst 有效且 len 匹配
+    // SAFETY: src_vaddr 来自 alloc_dma_buffer 的 DmaStream 虚拟地址; dst 为
+    // 调用方借出的切片首址, len ≤ 该切片长度.
     unsafe {
         core::ptr::copy_nonoverlapping(src_vaddr as *const u8, dst as *mut u8, len);
     }
@@ -570,7 +574,8 @@ pub fn ahci_alloc_dma_buffer(size: usize) -> Option<DmaStream> {
 
 /// 复制数据到 AHCI DMA 缓冲区
 pub fn ahci_copy_to_dma(dst_vaddr: u64, src: u64, len: usize) {
-    // SAFETY: dst_vaddr 由 DMA 分配保证有效; 调用方保证 src 有效且 len 匹配
+    // SAFETY: dst_vaddr 来自 ahci_alloc_dma_buffer 的 DmaStream 虚拟地址; src 为
+    // 调用方借入的切片首址, len ≤ 该切片长度.
     unsafe {
         core::ptr::copy_nonoverlapping(src as *const u8, dst_vaddr as *mut u8, len);
     }
@@ -578,7 +583,8 @@ pub fn ahci_copy_to_dma(dst_vaddr: u64, src: u64, len: usize) {
 
 /// 从 AHCI DMA 缓冲区复制数据
 pub fn ahci_copy_from_dma(dst: u64, src_vaddr: u64, len: usize) {
-    // SAFETY: src_vaddr 由 DMA 分配保证有效; 调用方保证 dst 有效且 len 匹配
+    // SAFETY: src_vaddr 来自 ahci_alloc_dma_buffer 的 DmaStream 虚拟地址; dst 为
+    // 调用方借出的切片首址, len ≤ 该切片长度.
     unsafe {
         core::ptr::copy_nonoverlapping(src_vaddr as *const u8, dst as *mut u8, len);
     }
@@ -616,7 +622,8 @@ pub fn ahci_fill_cmd_header(
 /// 使用字节拷贝避免 packed struct 对齐问题。
 /// `fis_src` — FIS 源指针, `fis_size` — 字节大小
 pub fn ahci_fill_h2d_fis(cmd_table_virt: u64, fis_src: usize, fis_size: usize) {
-    // SAFETY: cmd_table_virt 由 DMA 分配保证有效; fis_src 由调用方保证指向有效 FIS 内存
+    // SAFETY: cmd_table_virt 来自 ahci_alloc 的 DMA 命令表区域; fis_src 为
+    // 调用方借入的 FIS 字节序列首址, fis_size 为其长度 (≤ CFIS 容量).
     unsafe {
         let cfis = cmd_table_virt as *mut u8;
         let src = fis_src as *const u8;
@@ -657,7 +664,8 @@ pub fn ahci_fill_prdt(
 /// `index` — TRB 索引 (0-based)
 /// `trb_src` — 源 TRB 地址 (调用方保证指向有效 16 字节内存; 以地址值传递)
 pub fn xhci_write_trb(ring_vaddr: u64, index: u32, trb_src: u64) {
-    // SAFETY: ring_vaddr 由 DMA 分配保证有效; trb_src 由调用方保证指向有效 16 字节内存
+    // SAFETY: ring_vaddr 来自 xHCI Transfer Ring 的 DMA 分配; trb_src 为
+    // 调用方借入的 16 字节 TRB 首址 (长度固定 16).
     unsafe {
         let dst = (ring_vaddr as *mut u8).add((index as usize) * 16);
         core::ptr::copy_nonoverlapping(trb_src as *const u8, dst, 16);
@@ -670,7 +678,8 @@ pub fn xhci_write_trb(ring_vaddr: u64, index: u32, trb_src: u64) {
 /// `index` — TRB 索引 (0-based)
 /// `dst` — 目标缓冲区地址 (至少 16 字节; 以地址值传递)
 pub fn xhci_read_trb(ring_vaddr: u64, index: u32, dst: u64) {
-    // SAFETY: ring_vaddr 由 DMA 分配保证有效; dst 由调用方保证有效
+    // SAFETY: ring_vaddr 来自 xHCI Transfer Ring 的 DMA 分配; dst 为
+    // 调用方借出的 16 字节缓冲首址 (长度固定 16).
     unsafe {
         let src = (ring_vaddr as *const u8).add((index as usize) * 16);
         core::ptr::copy_nonoverlapping(src, dst as *mut u8, 16);

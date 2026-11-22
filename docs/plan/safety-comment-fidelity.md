@@ -208,7 +208,33 @@ ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_co
 ㊴ `driver/display/mod.rs` 的 DISPI 端口对（`VBE_DISPI_PORT_INDEX` / `VBE_DISPI_PORT_DATA`）
 重复 IoPort safe 代理（收敛为单一代理，**不改端口时序**）。
 ③ net 面的「已校验」类假称若指向**真实代码缺口**，归姊妹册 R2，本册只改注释措辞使其不撒谎。
-状态：[]
+**结果**：C4 面（`privileged/{net,driver,egdf}`）**窄口径 14 处 → 0**、**宽口径 52 处 → 0**
+（计划册原文约 48，现树实测 52），全树侧车 335 处 / 94 键 → **269 处 / 71 键**。8 项失真处置：
+㉗ 经用户裁定**保留** `driver_as_mut` / `driver_as_ref`（全仓零调用方；privileged crate 的 pub API
+不触发 dead_code）并订正 `# Safety` doc 为真实写入面（`egdf_register` / `egdf_register_with_ops`
+的 `driver_data` 形参）；㉘ 把截断 + 重复的两条 SAFETY 合并为一条准确依据（裸指针 `driver_data`
+所有权按 `driver_owned` 区分、`&'static mut dyn BlockDevice` 只经 `EGDF_DEVICES` 锁独占借用）；
+㉙ doc 的 `UninitCell` 改为 `static mut MaybeUninit<SocketSet<'static>>`；㉝ 现树复核**无
+`check_user_buf` 命中**（net 面 SAFETY 已统一引用 `userptr::validate_user_buf`），无需改；
+㉞ keyboard 的「单核内核」改为「字段为 plain 数据 + `KEYBOARD_DEVICE` 的 `IrqSpinLock` 串行化
+（持锁期间本核中断屏蔽）」；㉟ 经用户裁定三处 auto-trait impl **全保留**，注释写明「auto trait
+本可派生 / 非类型必需（`IrqSpinLock<T>: Sync` 只要求 `T: Send`）」；㊳ doc 改为 `"SANX"` /
+`0x584E_4153` 小端字节 `0x53 0x41 0x4E 0x58`，常量字节未动；㊴ 按用户裁定只订正注释，并把
+DISPI 双代理收敛登记为姊妹册 **R11**（未开工）。另订正同面读出的注释失真：
+`egdf/mod.rs::driver_from_obj` 两处把 `&mut DriverObject` / `&mut dyn Driver` 误称「只读访问」
+（与 C3 的 rcu / mutex 同型）；`net/save.rs` 文件头把实装
+`static NET_SNAPSHOT_LOCK: Mutex<NetSnapshot>` 写成旧述 `static mut NET_SNAPSHOT` / `NET_LOCK`。
+**纯注释面判据**：`git diff` 删除行逐行核验后**全部为注释/文档行**（含 `egdf` 截断 SAFETY 与
+`driver_from_obj` 失真 SAFETY 两条删除）。
+**读数缺口登记**：本批未读出需上姊妹册的新代码缺口；㉝ 的现树复核结果与计划册登记不一致
+（登记称三处引用 `check_user_buf`，现树零命中）⇒ 按 §1.5「施工时仍须再核一次」以现树为准，
+不追改历史登记。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）· `CARGO_TERM_COLOR=never bash
+ci/audit.sh full` RC=0（未执行腿数 0、Lockbud 4/4、QEMU 2/2、`safety_content` 腿通过）·
+`make test-host` **212 套 / 1651 passed / 0 failed** · `make test-kernel-host`
+**3 套 / 1431 passed / 0 failed** · `make -f Makefile.ci ci-rustdoc` 双架构 exit 0。
+侧车已 `--update-baseline` 重导（**269 处 / 71 键**）。
+状态：[X]
 
 ### 批 C5・kernel 其余面占位改写与注释失真（⑨ ㊷ 53 54 55 57）
 

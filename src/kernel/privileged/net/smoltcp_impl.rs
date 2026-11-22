@@ -97,9 +97,13 @@ impl EGDFNetDevice {
     }
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: EGDFNetDevice 含 `driver_data: *mut c_void` 裸指针 (故 auto Send/Sync 不成立),
+// 该指针由 `new` 的调用方传入的注册驱动私有数据, EGDFNetDevice 不拥有它.
+// 设备实例只由 net 栈在 `NET_STATE` (IrqSpinLock) 锁内构造与轮询, 锁外不复制别名,
+// 故跨核移动 EGDFNetDevice 不会并发解引用同一 driver_data.
 unsafe impl Send for EGDFNetDevice {}
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: 同 Send 依据 (裸指针 driver_data 只在 NET_STATE 锁内的 transmit/try_receive
+// 路径解引用); `ops` 是 &'static 不可变操作表, 其余字段为内联缓冲区与 Copy 标量.
 unsafe impl Sync for EGDFNetDevice {}
 
 impl Device for EGDFNetDevice {

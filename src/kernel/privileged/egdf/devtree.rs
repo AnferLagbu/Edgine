@@ -168,8 +168,9 @@ impl EGDFNode {
     }
 }
 
-// SAFETY: EGDFNode 访问由 DEV_TREE 锁 (Mutex) 串行化.
-// 无需 UnsafeCell, 因为我们已用 Mutex 保护的集合.
+// SAFETY: EGDFNode 全部字段 (u32 / &'static str / Vec / BTreeMap / Option /
+// DeviceState / FirmwareBlob) 都是自有数据或 &'static 共享引用, auto Send 本可派生,
+// 本 impl 只是显式化; 并发访问由 DEV_TREE (IrqSpinLock<DevTree>) 串行化.
 unsafe impl Send for EGDFNode {}
 // SAFETY: EGDFNode 全部字段 (u32 / &static str / Vec / BTreeMap / Option /
 // DeviceState / FirmwareBlob) 都是自有数据或 static 共享引用, 无内部可变性,
@@ -426,8 +427,9 @@ pub extern "C" fn devtree_create_node(name: *const u8, proto: u32, parent_id: u3
     let name_str = if name.is_null() {
         "unknown"
     } else {
-        // SAFETY: name 来自 FFI 的 C 字符串; 调用方保证其以 NUL 结尾,
-        // 且在函数执行期间持续有效.
+        // SAFETY: name 为 FFI 入参, 契约要求其指向 NUL 结尾字符串且在
+        // devtree_create_node 执行期间有效; 非 NUL 结尾的后果由 CStr::from_ptr
+        // 的 UB 风险承担, 属 FFI 边界契约.
         unsafe {
             let bytes = core::ffi::CStr::from_ptr(name.cast::<core::ffi::c_char>());
             bytes.to_str().unwrap_or("unknown")

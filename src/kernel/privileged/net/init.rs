@@ -89,12 +89,12 @@ pub use cmd::*;
 ///
 /// - 仅在内核启动网络子系统的临界区内调用一次
 /// - `SOCKET_STORAGE` (惰性堆置切片) 由 `sockets::socket_storage()` 分配并初始化, 供 `SocketSet` 长期借用
-/// - `SOCKET_SET` 是 `UninitCell<SocketSet<'static>>`, 初始化后只读
+/// - `SOCKET_SET` 是 `static mut MaybeUninit<SocketSet<'static>>` (定义见 `net::init::sockets`), 初始化后只读
 unsafe fn init_sockets() {
     // SAFETY: 本块经 addr_of_mut! 取 static mut SOCKET_SET (实际类型
     // MaybeUninit<SocketSet<static>>) 的裸指针并 write 初值 (P-64: 不对 static mut
     // 直接取引用). 依据: 上方 SOCKETS_INITIALIZED 的 Acquire 早退使已初始化时不再写;
-    // 写入只发生在调用方保证的串行临界区内 (契约见本函数 # Safety), 此时无其它核
+    // 写入只发生在本函数的单次初始化临界区内 (契约见本函数 # Safety), 此时无其它核
     // 持有 SOCKET_SET 的引用; 复位路径 query::reset_network_state 在 NET_STATE 锁内
     // 清该标志, 故重写同样在锁内. socket_storage() 的堆切片由 SocketSet 长期借用,
     // 不在此释放.
@@ -116,7 +116,7 @@ unsafe fn init_sockets() {
 unsafe fn socket_set() -> *mut SocketSet<'static> {
     // SAFETY: 本块只把 static mut SOCKET_SET 的 MaybeUninit 转成 *mut SocketSet
     // (as_mut_ptr 不解引用、不要求已初始化), 经 addr_of_mut! 避免对 static mut 取引用.
-    // 返回指针的有效性由调用方契约保证: init_sockets 已执行, 且指针只在持
+    // 返回指针的有效性由本函数 `# Safety` 契约约束: init_sockets 已执行, 且指针只在持
     // NET_STATE 锁的 socket 调度上下文内解引用 (见各调用点注释).
     unsafe { (*core::ptr::addr_of_mut!(SOCKET_SET)).as_mut_ptr() }
 }

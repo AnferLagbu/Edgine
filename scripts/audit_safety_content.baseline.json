@@ -83,81 +83,6 @@
       6
     ],
     [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "narrow",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/display/mod.rs",
-      "wide",
-      5
-    ],
-    [
-      "src/kernel/privileged/driver/infra.rs",
-      "wide",
-      6
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/input/keyboard.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/driver/net/e1000.rs",
-      "wide",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/storage/mod.rs",
-      "wide",
-      8
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/queue.rs",
-      "narrow",
-      3
-    ],
-    [
-      "src/kernel/privileged/driver/virtio/queue.rs",
-      "wide",
-      7
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "narrow",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/composite.rs",
-      "wide",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/devtree.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "narrow",
-      2
-    ],
-    [
-      "src/kernel/privileged/egdf/mod.rs",
-      "wide",
-      5
-    ],
-    [
-      "src/kernel/privileged/egdf/user_driver.rs",
-      "wide",
-      1
-    ],
-    [
       "src/kernel/privileged/freg/api.rs",
       "narrow",
       2
@@ -276,46 +201,6 @@
       "src/kernel/privileged/mm/kpti.rs",
       "wide",
       1
-    ],
-    [
-      "src/kernel/privileged/net/api.rs",
-      "narrow",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/api.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/init.rs",
-      "wide",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/init/cmd.rs",
-      "wide",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/init/sm_fi.rs",
-      "wide",
-      5
-    ],
-    [
-      "src/kernel/privileged/net/save.rs",
-      "wide",
-      1
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "narrow",
-      2
-    ],
-    [
-      "src/kernel/privileged/net/smoltcp_impl.rs",
-      "wide",
-      2
     ],
     [
       "src/kernel/privileged/net_socket.rs",
@@ -494,8 +379,8 @@
     ]
   ],
   "totals": {
-    "files": 66,
-    "keys": 94,
-    "sites": 335
+    "files": 50,
+    "keys": 71,
+    "sites": 269
   }
 }

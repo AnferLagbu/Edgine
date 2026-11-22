@@ -224,12 +224,16 @@ pub struct EGDFDevice {
     pub block_dev: Option<&'static mut dyn BlockDevice>,
 }
 
-// SAFETY: EGDFDevice 含一个原始指针 (`driver_data`), 其不
-// 拥有内存 —— 内存由驱动方自行管理. 其它字段均为 Copy 类型或
-// SAFETY: EGDFDevice 含裸指针, 但通过 Option 包装, 写操作由设备树锁保护.
-//         该指针仅在驱动自身锁内解引用.
+// SAFETY: EGDFDevice 含裸指针 `driver_data: *mut u8` (故 auto Send/Sync 不成立) 与
+// `block_dev: Option<&'static mut dyn BlockDevice>`. `driver_data` 不拥有内存, 所有权
+// 按 `driver_owned` 区分: true 时指向 EGDF 自有的 `DriverObject`, false 时由注册方自持.
+// 该指针只在 `EGDF_DEVICES` (IrqSpinLock) 锁内经 `driver_as_mut` / `driver_as_ref` /
+// `driver_from_obj` 解引用, 锁外不复制别名; `block_dev` 的 `&'static mut` 也只经该锁的
+// 独占借用访问 (见字段 doc). 故跨核移动 EGDFDevice 不会并发解引用同一底层对象.
 unsafe impl Send for EGDFDevice {}
-// SAFETY: 同上, 设备树锁保护并发访问.
+// SAFETY: 同 Send 依据: 设备条目只存在于 `EGDF_DEVICES` (IrqSpinLock<Vec<EGDFDevice>>),
+// 读改均需 `lock()` 独占借出 (持锁期间本核中断屏蔽); 全仓没有返回 `&EGDFDevice` 的入口,
+// `egdf_with_device*` 只在锁内给出 `&mut EGDFDevice`.
 unsafe impl Sync for EGDFDevice {}
 
 impl EGDFDevice {
@@ -237,8 +241,9 @@ impl EGDFDevice {
     ///
     /// # Safety
     ///
-    /// `self.driver_data` 由驱动在 probe 阶段设置. 调用方必须保证
-    /// `T` 与 `set_driver_data` 写入时的具体类型一致.
+    /// `self.driver_data` 由注册入口 (`egdf_register` / `egdf_register_with_ops` 的
+    /// `driver_data` 形参) 传入. 调用方必须保证 `T` 与注册时传入的具体类型一致,
+    /// 且该值已初始化、按 `T` 的对齐要求对齐、在借用期间存活.
     #[must_use]
     pub unsafe fn driver_as_mut<T>(&mut self) -> &mut T {
         // SAFETY: driver_data 是类型擦除的 *mut u8, 由注册入口 (egdf_register /
@@ -255,8 +260,9 @@ impl EGDFDevice {
     ///
     /// # Safety
     ///
-    /// `self.driver_data` 由驱动在 probe 阶段设置. 调用方必须保证
-    /// `T` 与 `set_driver_data` 写入时的具体类型一致.
+    /// `self.driver_data` 由注册入口 (`egdf_register` / `egdf_register_with_ops` 的
+    /// `driver_data` 形参) 传入. 调用方必须保证 `T` 与注册时传入的具体类型一致,
+    /// 且该值在借用期间不被任何 `&mut` 别名改写.
     #[must_use]
     pub unsafe fn driver_as_ref<T>(&self) -> &T {
         // SAFETY: 同 driver_as_mut 的类型/对齐/存活契约 (driver_data 由注册入口
@@ -874,7 +880,8 @@ struct DriverObject {
 
 impl Drop for DriverObject {
     fn drop(&mut self) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `self.ptr` 来自 `egdf_register_driver` 的 `Box::into_raw(Box<dyn Driver>)`,
+        // DriverObject 持有其所有权; 本 Drop 是该指针唯一的 `Box::from_raw` 归还点.
         unsafe {
             drop(Box::from_raw(self.ptr));
         }
@@ -949,9 +956,12 @@ pub fn egdf_register_driver_with_ops(
 }
 
 fn driver_from_obj<'a>(ptr: *mut u8) -> &'a mut dyn Driver {
-    // SAFETY: `mut` 由调用方保证为有效指针; 只读访问
+    // SAFETY: ptr 来自 `EGDF_DEVICES` 中 `driver_owned=true` 条目的 `driver_data`,
+    // 由 egdf_register_driver 以 `Box::into_raw(Box<DriverObject>)` 生成; 本处把它重建为
+    // &mut DriverObject (独占借用, 非只读), 且调用发生在 EGDF_DEVICES 锁内, 无第二个借用.
     let obj: &mut DriverObject = unsafe { &mut *(ptr as usize as *mut DriverObject) };
-    // SAFETY: `obj` 由调用方保证为有效指针; 只读访问
+    // SAFETY: obj.ptr 指向 `Box<dyn Driver>` 的 trait object, 由 DriverObject 持有所有权;
+    // 返回 &mut dyn Driver 供 init/shutdown 独占调用, 生命周期绑定 &mut DriverObject.
     unsafe { &mut *obj.ptr }
 }
 
@@ -1065,7 +1075,8 @@ mod tests {
         assert_eq!(egdf_count(), 1);
 
         EGDF_DEVICES.lock().clear();
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: `raw` 由上方 `box_to_raw(Box::new(42u32))` 产生, 本用例是唯一所有者;
+        // 清表后按原类型 u32 归还 Box.
         unsafe {
             drop(Box::from_raw(raw as *mut u32));
         }
@@ -1147,7 +1158,8 @@ mod tests {
         // 复用同一 guard 内 clear: EGDF_DEVICES 为非重入 Mutex,
         // 原写法「guard 存活期间再次 lock()」为自死锁 (guard 的 drop 作用域至函数末尾).
         devices.clear();
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+        // SAFETY: `raw` 由本用例 `box_to_raw(Box::new(0u8))` 产生且是唯一所有者;
+        // 清表后按原类型 u8 归还 Box.
         unsafe {
             drop(Box::from_raw(raw as *mut u8));
         }

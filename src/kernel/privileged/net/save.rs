@@ -27,15 +27,16 @@
 //
 // ## 线程安全
 //
-// 快照本身是 `static mut NET_SNAPSHOT`, 写入路径 (`net_save`) 与读取
-// 路径 (`net_restore`) 通过 NET_LOCK 串行化, 互斥访问安全.
+// 快照本身是 `static NET_SNAPSHOT_LOCK: Mutex<NetSnapshot>`, 写入路径 (`save`) 与
+// 读取路径 (`load`) 都先取该锁再经 `save_unchecked` / `load_unchecked` 访问,
+// 与网络栈的 `NET_STATE` 锁是两把独立锁 (见 `save_unchecked` 的文档契约).
 //
 // ## 与 Framekernel 安全契约
 //
 // 快照不含敏感凭证 (无密码无 key), 仅网络配置 + 槽位索引.
 use crate::privileged::sync::IrqSpinLock as Mutex;
 
-/// 快照魔数 (`"ANXS"` 0x584E414C  小端)
+/// 快照魔数 (`"SANX"`, `0x584E_4153` 小端字节 `0x53 0x41 0x4E 0x58`)
 pub const NET_SNAPSHOT_MAGIC: u32 = 0x584E_4153;
 /// 快照版本
 pub const NET_SNAPSHOT_VERSION: u32 = 1;
@@ -180,7 +181,8 @@ where
         let mut snap = NetSnapshot::empty();
         filler(&mut snap);
         snap.seal();
-        // SAFETY: NET_SNAPSHOT_LOCK 由调用方独占持有, 写路径串行, 与 `save()` 互斥.
+        // SAFETY: NET_SNAPSHOT_LOCK 已由 `save()` 的 guard 独占持有, 写路径串行;
+        // 本处做整块覆盖写入, 与 `save()` 的读侧互斥.
         let ptr = NET_SNAPSHOT_LOCK.data_ptr();
         *ptr = snap;
     }

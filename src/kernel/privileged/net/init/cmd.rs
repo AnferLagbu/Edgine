@@ -119,7 +119,8 @@ unsafe fn cstr_to_str(ptr: *const u8) -> Option<&'static str> {
     if ptr.is_null() {
         return None;
     }
-    // SAFETY: 调用方保证 NUL 终止; 扫描长度无上界约束 (FFI 契约)
+    // SAFETY: NUL 终止由 FFI 入参契约约束; 扫描长度无上界 (当前唯一调用方
+    // 传入内核侧构造的 NUL 终止 Vec, 不触发越界形态)
     let mut len = 0usize;
     // SAFETY: 逐字节扫描到 NUL 为止. ptr 非空已在上方早退; 调用方契约保证 ptr
     // 指向 NUL 终止且调用期间有效的内存, 故 ptr.add(len) 始终落在该字符串对象内.
@@ -128,7 +129,7 @@ unsafe fn cstr_to_str(ptr: *const u8) -> Option<&'static str> {
     while unsafe { *ptr.add(len) } != 0 {
         len += 1;
     }
-    // SAFETY: ptr..ptr+len 是有效内存区间 (调用方保证), 且已被扫描确认
+    // SAFETY: ptr..ptr+len 是有效内存区间 (已由上方逐字节扫描确认到 NUL), 且已被扫描确认
     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
     core::str::from_utf8(slice).ok()
 }

@@ -399,7 +399,8 @@ pub unsafe extern "C" fn user_driver_unbind(
     if mm.is_null() {
         return ERR_NOT_FOUND;
     }
-    // SAFETY: `mm` 由调用方保证为有效指针; 只读访问
+    // SAFETY: mm 由 FFI 调用方传入且非 NULL 已在上方早退; 本处只构造 &MmStruct
+    // 共享借用并传给 devtree_unbind_user_device, 不写入该结构.
     let mm_ref = unsafe { &*mm };
     match devtree_unbind_user_device(node_id, pid, pwm, mm_ref) {
         Ok(()) => 0,

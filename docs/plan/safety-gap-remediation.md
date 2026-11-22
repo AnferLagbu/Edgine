@@ -433,6 +433,21 @@ ARM 定义不符：代码以 `(typer >> 5) & 0x1F` 取「SPI 行数」、以 `(t
 属诊断日志面，无安全后果，不与 R1–R9 的缺口合并。
 状态：[]
 
+### 批 R11・C4 读出的结构重复：DISPI 端口原语与 `IoPort` 安全代理
+
+描述：姊妹册 [safety-comment-fidelity.md](./safety-comment-fidelity.md) 批 C4 改写
+`driver/display/mod.rs` 的 SAFETY 时确认：该文件自定义的 `port_outw` / `port_inw`
+（0x01CE 索引口 / 0x01CF 数据口）与 `privileged::ioport::IoPort` 安全代理重复，后者
+已带端口区间独占校验与越界检查。C4 按纯注释批口径只把「收敛点（登记不改）」订正为
+指向本批的登记引用，未改端口访问路径与端口时序。
+方案：以 `IoPort::new(VBE_DISPI_PORT_INDEX, 2, "vbe-dispi")` 建一个覆盖
+0x01CE..0x01CF 的句柄，`read_bochs_disp_mode` 改经 `write_u16` / `read_u16(offset)`
+访问，删除本地 `port_outw` / `port_inw` 两个 unsafe 原语；端口时序（ID→ENABLE→
+XRES→YRES→BPP 的索引/数据配对）保持不变。
+详情：属结构改造而非安全缺口，不改端口常量与寄存器序列；需回归
+`scripts/qemu_boot_test.sh all` 的显示探测路径（MMIO 失败后回退到端口探测的分支）。
+状态：[]
+
 ---
 
 ## 四、验证门槛

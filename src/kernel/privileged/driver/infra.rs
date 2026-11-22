@@ -33,9 +33,9 @@
 ///
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
 pub unsafe fn outb(port: u16, value: u8) {
-    // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口; value 任意 u8。
-    // arch!() 委托给 <CurrentArch as Arch>::outb, 内部汇编执行特权指令;
-    // 外层 unsafe 函数已声明 SAFETY 契约 (见 docstring)。
+    // SAFETY: port 取自设备 PCI BAR 映射的 PIO 区间 (ATA/VGA/串口等); 内核 CPL=0
+    // 对 in/out 不做 I/O 位图检查, value 为任意 u8; arch!() 委托给
+    // <CurrentArch as Arch>::outb, 内部汇编执行特权指令.
     crate::arch!(outb(port, value));
 }
 
@@ -47,8 +47,8 @@ pub unsafe fn outb(port: u16, value: u8) {
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
 #[must_use]
 pub unsafe fn inb(port: u16) -> u8 {
-    // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口;
-    // 读操作返回 CPU 端口值到 u8 (截断高 8 位), 无其他副作用。
+    // SAFETY: port 取自设备 PCI BAR 映射的 PIO 区间且 CPL=0 可访问;
+    // in 指令只把端口值读入 u8 (截断高 8 位), 无其他副作用.
     crate::arch!(inb(port))
 }
 
@@ -61,8 +61,8 @@ pub unsafe fn inb(port: u16) -> u8 {
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
 pub unsafe fn outw(port: u16, value: u16) {
     unsafe {
-        // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (字宽 16-bit);
-        // options(nomem, nostack, preserves_flags) 正确声明 out 指令的副作用范围。
+        // SAFETY: port 为 16 位 PIO 端口, CPL=0 可访问; out 指令的
+        // options(nomem, nostack, preserves_flags) 声明不触碰内存/栈/flags.
         core::arch::asm!(
             "out dx, ax",
             in("dx") port,
@@ -82,8 +82,8 @@ pub unsafe fn outw(port: u16, value: u16) {
 #[must_use]
 pub unsafe fn inw(port: u16) -> u16 {
     unsafe {
-        // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (字宽 16-bit);
-        // in 指令仅返回端口值到指定寄存器, 无其他副作用。
+        // SAFETY: port 为 16 位 PIO 端口, CPL=0 可访问; in 指令只返回端口值到 ax,
+        // options(nomem, nostack, preserves_flags) 声明无内存/栈/flags 副作用.
         let value: u16;
         core::arch::asm!(
             "in ax, dx",
@@ -102,8 +102,8 @@ pub unsafe fn inw(port: u16) -> u16 {
 ///
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
 pub unsafe fn outl(port: u16, value: u32) {
-    // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (双字 32-bit);
-    // arch!() 委托给 <CurrentArch as Arch>::outl, value 任意 u32。
+    // SAFETY: port 为 32 位 PIO 端口且 CPL=0 可访问; arch!() 委托给
+    // <CurrentArch as Arch>::outl, value 为任意 u32.
     crate::arch!(outl(port, value));
 }
 
@@ -115,8 +115,8 @@ pub unsafe fn outl(port: u16, value: u32) {
 /// `port` 必须是当前特权级 (Ring 0) 可访问的有效 I/O 端口地址.
 #[must_use]
 pub unsafe fn inl(port: u16) -> u32 {
-    // SAFETY: 调用方保证 `port` 是内核态可访问的有效 I/O 端口 (双字 32-bit);
-    // 读操作返回 CPU 端口值, 无其他副作用。
+    // SAFETY: port 为 32 位 PIO 端口且 CPL=0 可访问; inl 只返回端口值,
+    // 无其他副作用.
     crate::arch!(inl(port))
 }
 

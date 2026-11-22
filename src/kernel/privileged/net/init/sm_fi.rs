@@ -367,7 +367,7 @@ pub(crate) unsafe fn parse_endpoint_trait(
 ) -> Option<crate::privileged::net::iface_trait::NetEndpoint> {
     // SAFETY: 类别 C. 先 read_unaligned 读前 2 字节族号, 再按族 (2/10) 读 16B/28B
     // 结构; 全用 unaligned 形态故不要求 addr 对齐, addr 为 NULL 已早退. 区间已初始化
-    // 由调用方契约保证: bind/connect/sendto 路径实为内核栈上重编码数组 (见类别 C).
+    // 由本函数 `# Safety` 契约约束: bind/connect/sendto 路径实为内核栈上重编码数组 (见类别 C).
     unsafe {
         if addr.is_null() {
             return None;
@@ -1137,8 +1137,8 @@ pub unsafe extern "C" fn sm_send(
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
     // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe 只有
-    // socket_set() 解引用; buf/len 由调用方保证有效可读 (send/sendto 路径传的是
-    // 已 copy-in 的内核 Vec), 挂起前释放 guard.
+    // socket_set() 解引用; buf/len 的有效性由 `sm_send` 入参契约约束 (send/sendto
+    // 路径传的是已 copy-in 的内核 Vec), 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1245,8 +1245,8 @@ pub unsafe extern "C" fn sm_recv(
     let can_block = pid != 0 && !in_irq_context();
     let mut deadline: Option<u64> = None;
     // SAFETY: 类别 A (阻塞 loop 形态). 每轮取 NET_STATE 锁, 块内 unsafe 只有
-    // socket_set() 解引用; buf/len 由调用方保证有效可写 (recvfrom_syscall 传内核栈
-    // bounce 缓冲), 挂起前释放 guard.
+    // socket_set() 解引用; buf/len 的有效性由 `sm_recv` 入参契约约束 (recvfrom_syscall
+    // 传内核栈 bounce 缓冲), 挂起前释放 guard.
     unsafe {
         loop {
             let guard = NET_STATE.lock();
@@ -1340,7 +1340,8 @@ pub unsafe extern "C" fn sm_sendto(
     addr: *const u8,
     _addrlen: u32,
     blocking: bool,
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+    // SAFETY: addr 为非 NULL 时其有效性在 copy-in 阶段已校验 (见 sm_sendto 调用链);
+    // buf 为已 copy-in 的内核 Vec 指针, len 与 Vec 长度一致
 ) -> i32 {
     // P5b: TCP sendto 与 sm_send 同阻塞语义 (方向 WAITER_WRITE); UDP sendto 为数据报不阻塞.
     // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞; 阻塞时叠加信号 (-EINTR) 与 SO_SNDTIMEO (-E_AGAIN).
@@ -1441,7 +1442,8 @@ pub unsafe extern "C" fn sm_recvfrom(
     addr: *mut u8,
     addrlen: *mut u32,
     blocking: bool,
-    // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+    // SAFETY: addr/addrlen 为可空输出指针, 非 NULL 时其可写性在 copy-in 阶段已校验
+    // (见 sm_recvfrom 调用链); buf 为内核栈 bounce 缓冲, len ≤ 其长度
 ) -> i32 {
     // P5b: 与 sm_recv 同阻塞语义 (方向 WAITER_READ), UDP 额外写回对端 sockaddr.
     // P5d (DECISION-096): MSG_DONTWAIT 本次非阻塞; 阻塞时叠加信号 (-EINTR) 与 SO_RCVTIMEO (-E_AGAIN).

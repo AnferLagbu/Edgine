@@ -223,7 +223,8 @@ impl RxRing {
     /// 获取描述符的接收长度
     #[must_use]
     pub fn packet_length(&self, idx: usize) -> usize {
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+        // SAFETY: idx 由 RxRing 的 count 约束在 0..count; ptr 指向
+        // alloc_coherent 分配的 DMA 描述符环, 按下标访问不越界.
         let desc = unsafe { &*self.ptr.add(idx) };
         desc.length as usize
     }
@@ -231,7 +232,8 @@ impl RxRing {
     /// 获取描述符的错误码
     #[must_use]
     pub fn errors(&self, idx: usize) -> u8 {
-        // SAFETY: 指针操作在有效范围内，调用方保证指针有效性
+        // SAFETY: idx 由 RxRing 的 count 约束在 0..count; ptr 指向
+        // alloc_coherent 分配的 DMA 描述符环, 按下标访问不越界.
         let desc = unsafe { &*self.ptr.add(idx) };
         desc.errors
     }
@@ -240,8 +242,8 @@ impl RxRing {
     pub fn copy_packet(&self, idx: usize, buf: &mut [u8]) -> usize {
         let len = self.packet_length(idx).min(buf.len()).min(self.buf_size);
         if !self.bufs[idx].is_null() && len > 0 {
-            // SAFETY: bufs[idx] 由 alloc_coherent 分配, 大小为 buf_size (向上取整到页);
-            // buf 由调用方保证有效; len <= buf_size && len <= buf.len()。
+            // SAFETY: bufs[idx] 由 alloc_coherent 分配且大小为 buf_size (页对齐向上取整);
+            // dst 为调用方 &mut [u8], len 已 clamp 到 dst.len() 与 buf_size.
             unsafe {
                 core::ptr::copy_nonoverlapping(self.bufs[idx], buf.as_mut_ptr(), len);
             }

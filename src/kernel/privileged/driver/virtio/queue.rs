@@ -146,7 +146,8 @@ impl VirtQueue {
         let (_avail_off, used_off, total_size) = vring_layout(legacy, num);
         let desc_size = 16 * num as usize;
         let pages = total_size.div_ceil(crate::privileged::glue::usize_from_u64(PAGE_SIZE));
-        // SAFETY: extern 函数的参数/返回值类型与 C ABI 声明一致; 调用方保证指针有效
+        // SAFETY: pmm_alloc_pages 由 privileged::mm::api 以 C ABI 导出, 入参页数、
+        // 返回页对齐的虚拟地址; 本处只透传 pages (已 div_ceil 到页).
         let mem = unsafe { pmm_alloc_pages(pages as u64) };
         if mem.is_null() {
             return None;
@@ -155,7 +156,9 @@ impl VirtQueue {
         let mem_phys = mem as u64;
         let mem_virt = (mem_phys + KERNEL_BASE) as *mut u8;
 
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: mem_virt 来自 pmm_alloc_pages 的整页分配, 先 write_bytes 全量清零
+        // total_size 字节; desc/avail/used 指针按 vring_layout 偏移落在同一分配区内,
+        // 循环只写 desc[0..num] (desc_size = 16*num).
         unsafe {
             core::ptr::write_bytes(mem_virt, 0, total_size);
 
@@ -208,7 +211,8 @@ impl VirtQueue {
             return 0xFFFF;
         }
         let head = self.free_head;
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: self.desc 指向 PMM 分配的描述符数组, head 取自 free_head 链且在
+        // 0..num 内; 本块只改该描述符的 addr/len/flags/next.
         unsafe {
             let desc = &mut *self.desc.add(head as usize);
             let next_free = desc.next; // 覆盖前先保存
@@ -225,7 +229,8 @@ impl VirtQueue {
     /// 提交描述符链到可用环 (不碰 idx, 由 `commit_and_kick` 发布).
     /// 返回已提交的可用环索引.
     pub fn submit(&mut self, desc_head: u16) -> u16 {
-        // SAFETY: 调用方保证指针有效; 环槽位 = 头 4B + (idx % num) * 2
+        // SAFETY: self.avail 指向同一 vring 分配区的可用环; slot 偏移 =
+        // RING_HEAD_BYTES + (idx % num)*2 落在环内; write_volatile 因设备会 DMA 读该槽.
         unsafe {
             let slot = self
                 .avail
@@ -240,7 +245,8 @@ impl VirtQueue {
 
     /// 提交后发布 avail.idx (调用方随后写 `QueueNotify`).
     pub fn commit_and_kick(&mut self) {
-        // SAFETY: 调用方保证指针有效; avail.idx 位于环基址偏移 2
+        // SAFETY: avail.idx 位于可用环基址偏移 2 (u16), 由本队列独占推进;
+        // write_volatile 确保设备 DMA 读之前该发布值可见.
         unsafe {
             // 全内存屏障: 确保描述符与 ring 写入全局可见
             crate::privileged::sync::arch::fence();
@@ -251,7 +257,7 @@ impl VirtQueue {
 
     /// 检查是否有已用描述符可用, 有则返回.
     pub fn pop_used(&mut self) -> Option<(u16, u32)> {
-        // SAFETY: 调用方保证指针有效; used.idx 位于基址偏移 2,
+        // SAFETY: self.used 指向同一 vring 分配区的已用环; used.idx 位于偏移 2,
         // 环项 = 头 4B + (idx % num) * size_of(VqUsedElem). 全部 volatile:
         // 设备 DMA 写入, 普通读可被 spin 循环 CSE 提升致永不可见.
         unsafe {
@@ -272,7 +278,8 @@ impl VirtQueue {
 
     /// 完成后将描述符归还到空闲链.
     pub fn reclaim_desc(&mut self, head: u16) {
-        // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+        // SAFETY: self.desc 指向 PMM 分配的描述符数组, head 为 prepare_desc/链尾
+        // 返回的 0..num 索引; 只改该描述符的 next 并把 head 挂回 free_head.
         unsafe {
             let desc = &mut *self.desc.add(head as usize);
             desc.next = self.free_head;

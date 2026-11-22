@@ -480,7 +480,10 @@ fn negotiate_scancode_set(cmd_port: &IoPort, data_port: &IoPort) {
 // Driver Trait 实现
 // ============================================================================
 
-// SAFETY: 单核内核, 键盘操作无并发
+// SAFETY: KeyboardDriver 的字段 (ModifierState / KeyboardBuffer / DeviceInfo / bool /
+// 两个 IoPort) 均为自有 plain 数据或 Copy 标量, auto Send 本可派生, 本 impl 只是
+// 显式化 (非类型必需: 唯一存储点 KEYBOARD_DEVICE 是 IrqSpinLock<Option<Box<…>>>).
+// SMP 下的并发访问由该锁串行化: 取锁期间本核中断屏蔽, &mut 独占借出.
 unsafe impl Send for KeyboardDriver {}
 // SAFETY: KeyboardDriver 的字段 (ModifierState / KeyboardBuffer / DeviceInfo / bool /
 // 两个 IoPort) 全是自有 plain 数据, 无内部可变性, auto Sync 本可派生, 本 impl 只是
@@ -727,7 +730,9 @@ impl KeyboardDriver {
 
             // 让出 CPU (避免忙等待)
             #[cfg(not(feature = "kernel_test"))]
-            // SAFETY: 调用方保证指针/类型有效 (详见上下文)
+            // SAFETY: 本块只声明 `scheduler_yield_ex` 的 extern 签名并调用它; 该符号由
+            // privileged::proc::sched_ops 以 `#[unsafe(no_mangle)] extern "C"` 导出,
+            // 无参数/返回值, 故无指针或类型前提; 调用发生在键盘 read_line 的进程上下文中.
             unsafe {
                 // SAFETY: scheduler_yield_ex 由框架调度器提供, 进程上下文安全调用
                 unsafe extern "C" {

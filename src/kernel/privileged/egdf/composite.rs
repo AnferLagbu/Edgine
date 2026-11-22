@@ -62,9 +62,11 @@ pub struct CompositeBlockDevice {
     read_round_robin: AtomicU32,
 }
 
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: CompositeBlockDevice 的字段全为自有 plain 数据 (u8 数组 / u8 / u64 /
+// AtomicU32), 无裸指针或非线程安全单元; AtomicU32 本身满足 Sync 且此处只做
+// Relaxed 轮转计数, 故 auto Send/Sync 本可派生, 本 impl 只是显式化.
 unsafe impl Send for CompositeBlockDevice {}
-// SAFETY: 调用方保证指针/类型有效 (详见上下文)
+// SAFETY: 同 Send 依据: 无 &mut 跨线程共享路径, read_round_robin 的读写均为原子操作.
 unsafe impl Sync for CompositeBlockDevice {}
 
 impl Clone for CompositeBlockDevice {
