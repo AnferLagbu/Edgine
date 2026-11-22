@@ -27,8 +27,7 @@
 #   │  9. Python 3 CI 胶水: audit_*.py / check_bench_*.py      │
 #   │                       record_bench_*.py / ci_check_*.py  │
 #   │ 10. 调试            : gdb-multiarch / strace             │
-#   │ 11. 项目本地工具    : tools/check_tcb.sh                 │
-#   │                       tools/audit_unsafe.{sh,py}         │
+#   │ 11. 项目本地工具    : tools/audit_unsafe.{sh,py}         │
 #   └──────────────────────────────────────────────────────────┘
 #
 # 用法:
@@ -687,7 +686,7 @@ ${YELLOW}选项:${NC}
       --skip-c-linker   仅跳过 C 链接层 (保留 C 测试桩检查)
       --skip-iso        跳过 ISO 制作工具 (grub2-mkrescue + xorriso)
       --skip-tests      跳过 Rust 测试工具链 (clippy/llvm-cov 等仍属于推荐)
-      --skip-project    跳过项目本地工具 (tools/check_tcb.sh 等)
+      --skip-project    跳过项目本地工具 (tools/audit_unsafe.* 等)
       --check-only      仅检查, 不安装
   -v, --verbose         显示详细版本信息
   -h, --help            显示此帮助
@@ -711,7 +710,7 @@ ${YELLOW}依赖分类 (8 类, v3.2):${NC}
   ${BLUE}C 链接 (5/8)${NC}   : nasm / {x86_64,aarch64}-linux-gnu-{ld,objcopy,as}
   ${BLUE}C 测试 (6/8)${NC}   : {x86_64,aarch64}-linux-gnu-gcc (C 测试桩编译)
   ${BLUE}ISO (7/8)${NC}      : grub2-mkrescue / xorriso / mtools (--skip-iso)
-  ${CYAN}项目工具 (8/8)${NC} : tools/check_tcb.sh + tools/audit_unsafe.{sh,py}
+  ${CYAN}项目工具 (8/8)${NC} : tools/audit_unsafe.{sh,py}
 
 ${YELLOW}C 工具链 v3.2 决策:${NC}
   Edgine 源码已 100% Rust 化, C 工具链默认归类为"可选" (--skip-c 即可跳过).
@@ -1086,16 +1085,12 @@ fi
 
 # ==================== 第 8 部分: 项目本地工具 (v3.2 新增) ====================
 if [ "$SKIP_OPTIONAL" = false ] && [ "$SKIP_PROJECT" = false ]; then
-    print_section "[8/8] 项目本地工具 (Project Tools) — 框内核 TCB 审计"
-    echo -e "  ${BLUE}说明: 项目根 tools/ 下的 TCB 审计脚本, 由 ci/audit.sh 引用${NC}"
-    echo -e "  ${BLUE}       1. tools/check_tcb.sh      - functions/ 0 unsafe 强制门禁${NC}"
-    echo -e "  ${BLUE}       2. tools/audit_unsafe.sh   - privileged/ SAFETY 注释覆盖率${NC}"
-    echo -e "  ${BLUE}       3. tools/audit_unsafe.py   - 上述 sh 的 Python 解析版${NC}"
+    print_section "[8/8] 项目本地工具 (Project Tools) — SAFETY 注释审计"
+    echo -e "  ${BLUE}说明: 项目根 tools/ 下的 SAFETY 审计脚本, 由 ci/audit.sh 引用${NC}"
+    echo -e "  ${BLUE}       1. tools/audit_unsafe.sh   - privileged/ SAFETY 注释覆盖率${NC}"
+    echo -e "  ${BLUE}       2. tools/audit_unsafe.py   - 上述 sh 的 Python 解析版${NC}"
     echo -e "  ${BLUE}  缺失这些工具时 ci/audit.sh 会失败, 建议保留${NC}"
     echo -e "  ${BLUE}  可通过 --skip-project 跳过此节${NC}"
-
-    print_subsection "TCB 边界门禁"
-    check_project_tool "TCB 边界检查" "tools/check_tcb.sh"
 
     print_subsection "SAFETY 注释审计"
     check_project_tool "privileged/ SAFETY 审计 (Bash)" "tools/audit_unsafe.sh"

@@ -308,7 +308,39 @@ QEMU 2/2）· `make test-host` **212 套 / 1651 passed / 0 failed** ·
 （它有内联单测，须 `cd src/user/lib && cargo test`）。这是 ④ 的**同型漂移**：
 批 6 只改了 AGENTS §2.3 的「七成员→十成员」，脚本注释与测试自述未同批改 ⇒
 本项把三处口径一次对齐（**改测试自述须核该文件是否有针钉住这些字样**）。
-状态：[]
+**结果**：① `src/kernel/clippy.toml` 的 `missing-docs-in-crate-items` 上方补 P-59 注记
+（与 `src/rust/clippy.toml` 孪生件同文）：该键只被 `clippy::missing_docs_in_private_items`
+（restriction 组）读取，门槛从不启用该组 ⇒ 惰性配置，不构成 F8 执法点。
+② 按用户裁定**改条文**（方案 A）：`spec-engineering.md` 规则 8.3 去掉对
+`audit_safety_coverage.py` 的假归属，改为「**当前无机械执法点**，由 review 把关；
+`audit_safety_coverage.py` 只判 privileged 的 SAFETY 注释覆盖，不判 unwrap，存量待专项治理」
+（实测 `src/kernel` 328 处 `.unwrap()` + 307 处 `.expect()`，接执法点须先清存量，故不取）。
+③ 按用户裁定标注**设计主张未实装**：`freg-design.md` 六契约第 3 条改为「目标契约，尚未实装」，
+写明 `kernel-freg` leaf crate 落地时才写该 deny 组，当前 `src/kernel` 全仓无任何
+`deny(clippy::…)` 组、现 freg 实装在 `privileged/freg`（crate 根只写 `#![deny(missing_docs)]`）。
+④ ⑤ 按批 4 判据**整腿退役** `tools/check_tcb.sh`：F1 由 functions crate 根
+`#![forbid(unsafe_code)]` 编译期硬执法（`-A` 压不住），无生态缺口面；`ci/audit.sh` 删除
+步骤 0 并把 quick/full 档位自述改为 `0.5a–…`，接线形状锁的首步骤定位改 `step "0.5a/6`；
+`scripts/requirements.sh` 项目工具清单去掉该脚本（8 类分类不变）；
+`functions/mod.rs` 两处与 `sgeg/policy.rs` 一处自述改指 `forbid` + 步骤 0.5k 边界审计。
+⑤ ⑦ 按用户裁定改表项形态：`src/user/clippy.toml` 的 `disallowed-types` 改为
+`{ path = "spin::Once", allow-invalid = true }`（两条目），只静音 wasmrun 经 wasmi 传递依赖
+spin 造成的「不可达」**配置级** warning，不改执法（实测 wasmrun 腿 0 warning）；同批把
+D-7 丙 的引脚从「精确字符串命中」改为「取 `disallowed-types` 声明到首个 `]` 的文本」，
+两形态都判两个类型（避免注释里提到类型名造成假绿）。
+⑥ 59 三处口径一次对齐：`ci/audit.sh` 注释与 `ci_entrypoint_unified_test.rs` 两处改为
+「该 workspace 的 bin 成员无 test harness + `lib` 内联单测另跑 `cd src/user/lib && cargo test`」，
+不写死成员数（单源 = `src/user/Cargo.toml` 的 `[workspace].members`）；经用户授权同步
+`AGENTS.md` §2.3「十成员」→「`--workspace` 覆盖全部成员（清单单源 = …）」（实测 11 个成员）。
+**本批不适用「纯注释零删除行」判据**：面为非源码注释/配置/工具，含脚本删除与测试引脚改写。
+收口读数：`./ci/build.sh all` RC=0（Passed 6 / Failed 0）·
+`CARGO_TERM_COLOR=never bash ci/audit.sh full` RC=0（审计腿 17/17、P-49 11/11、
+Lockbud 4/4、QEMU 2/2、未执行腿数 0）· `make test-host` **212 套 / 1651 passed** ·
+`make test-kernel-host` **3 套 / 1431 passed / 0 failed** ·
+`make -f Makefile.ci ci-rustdoc` 双架构 exit 0。中途红两处并已修复：host-tests fmt 漂移
+（`cargo fmt --manifest-path host-tests/Cargo.toml` 后复跑）；`scan_obsolete_naming`
+扫 `git ls-files` 时仍见已删脚本（先暂存删除再复跑即绿）。
+状态：[X]
 
 ### 批 C7・host-tests 定长字节窗口（㊵）
 

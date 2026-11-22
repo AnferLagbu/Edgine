@@ -721,8 +721,8 @@ fn test_p69_leg_manifest_is_reconciled_against_agents() {
         .find("AUDIT_REQUIRED_LEGS_FULL=\"")
         .unwrap_or_else(|| panic!("缺少 AUDIT_REQUIRED_LEGS_FULL 清单"));
     let first_step = sh
-        .find("\nstep \"0/6")
-        .unwrap_or_else(|| panic!("找不到步骤 0 头"));
+        .find("\nstep \"0.5a/6")
+        .unwrap_or_else(|| panic!("找不到首个步骤头"));
     assert!(
         start > quick_line && start > full_line,
         "P-69 对账块在清单定义之前使用它们 —— 读到空/未定义值, 对账恒绿"
@@ -1236,8 +1236,9 @@ fn step_2_block(sh: &str) -> &str {
 /// ① host-tests 腿带 `--all-targets` (存量绝大多数在 tests/ 集成用例里, 只 lint lib
 ///    即假绿) + `--no-deps` + pedantic 双 `-D`;
 /// ② src/user 腿带 `--workspace` + 双裸机三元组循环 + `--no-deps` + pedantic, 且
-///    **不得**带 `--all-targets` (七个成员都是无 test harness 的裸机 crate, 该开关
-///    直接 E0463 + 缺 `#[panic_handler]`, 腿恒红 ⇒ 只会诱发摘腿);
+///    **不得**带 `--all-targets` (该 workspace 的 bin 成员都是无 test harness 的裸机
+///    crate, 该开关直接 E0463 + 缺 `#[panic_handler]`, 腿恒红 ⇒ 只会诱发摘腿;
+///    `lib` 成员的内联单测另跑 `cd src/user/lib && cargo test`, 不在本腿射程);
 /// ③ 壳与 edgine-abi 在同一条循环里逐一点名 (edgine-abi 是独立 workspace, 步骤 2 的
 ///    `--workspace` 与 cargo 的 workspace-wrapper 语义都覆盖不到它);
 /// ④ 四腿一律位于 quick 早退分支之前 (裁定为双档加维, P-52 甲 同族);
@@ -1300,8 +1301,8 @@ fn assert_user_leg_is_dual_arch(lines: &[String]) {
     );
     assert!(
         !leg.contains("--all-targets"),
-        "src/user 腿重新带上 --all-targets —— 七个成员都是无 test harness 的裸机 crate, \
-         该开关会 E0463 + 缺 #[panic_handler] 让腿恒红: {leg}"
+        "src/user 腿重新带上 --all-targets —— 该 workspace 的 bin 成员都是无 test harness \
+         的裸机 crate, 该开关会 E0463 + 缺 #[panic_handler] 让腿恒红: {leg}"
     );
 }
 
@@ -2563,16 +2564,27 @@ fn test_p60_scope_closure_and_silent_skips_fixed() {
     //    D-7 丙: audit_once_cell.py 整腿退役). 改钉不删针 —— 原三面 (BASES 四树 / 循环由
     //    BASES 驱动 / 根缺失 fail-closed) 钉的是自建脚本内部结构, 现钉替代执法点的覆盖面,
     //    并钉住「已退役腿不许静默回插清单」.
+    // 四树的 `disallowed-types` 允许两种语法: 字符串数组, 或表项 (src/user 用
+    // `{ path = "…", allow-invalid = true }` —— C6 ⑦ 用它静音 wasmrun 经 wasmi
+    // 传递依赖 spin 造成的「不可达」配置级 warning, 不改执法). 判据只取声明本身
+    // (到首个 `]` 为止), 不得用全文命中 —— 注释里也提到这两个类型.
     for cfg in [
         "../src/kernel/clippy.toml",
         "../src/rust/clippy.toml",
         "../host-tests/clippy.toml",
         "../src/user/clippy.toml",
     ] {
-        assert!(
-            read(cfg).contains(r#"disallowed-types = ["spin::Once", "spin::OnceCell"]"#),
-            "{cfg} 缺 spin 两条目 —— OnceCell 统一性失去替代执法面 (D-7 丙)"
-        );
+        let text = read(cfg);
+        let tail = &text[text.find("disallowed-types").unwrap_or_else(|| {
+            panic!("{cfg} 缺 disallowed-types —— OnceCell 统一性失去替代执法面 (D-7 丙)")
+        })..];
+        let decl = &tail[..tail.find(']').map_or(tail.len(), |i| i + 1)];
+        for ty in ["spin::Once", "spin::OnceCell"] {
+            assert!(
+                decl.contains(&format!("\"{ty}\"")),
+                "{cfg} 的 disallowed-types 缺 {ty} —— OnceCell 统一性失去替代执法面 (D-7 丙): {decl}"
+            );
+        }
     }
     let audit_sh = read(AUDIT_SH);
     for manifest in ["AUDIT_REQUIRED_LEGS=", "AUDIT_REQUIRED_LEGS_FULL="] {

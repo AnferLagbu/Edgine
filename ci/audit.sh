@@ -5,7 +5,7 @@
 #         + audit_*.py 审计腿群 + Lockbud 死锁扫描 + QEMU 真实启动 (full 档)
 # 用法: ./ci/audit.sh [quick|full]   (缺省档 = quick)
 #
-# - quick: 步骤 0–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 内核双架构 + 四树 pedantic
+# - quick: 步骤 0.5a–0.5n 审计腿群 + 1 双架构 check + 2/2b clippy (2 内核双架构 + 四树 pedantic
 #           扩围, 2b feature 维) + 2c rustfmt, 到 2c 后即退出
 # - full:  quick + 2d 内核测试 release 维 compile-only + 2e 存量审计腿群 (P-49) + 2f 性能指标测试腿 + 2g 文档路径新鲜度腿 + 3 Lockbud + 4 QEMU
 #
@@ -182,27 +182,11 @@ report_unexecuted_legs() {
 # 分支, 在本函数里复写同一字面会让它们把函数定义误认成早退位置.
 report_mode_boundary() {
     if [ "${MODE}" = "quick" ]; then
-        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0–2c; 不含 2d/2e/2f/2g/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
+        echo -e "${BLUE}→ 档位: quick —— 覆盖步骤 0.5a–2c; 不含 2d/2e/2f/2g/Lockbud/QEMU; 不构成 §2.3 第 3 条验收依据, 验收请用 bash ci/audit.sh full${NC}"
     else
-        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0–4 全部腿 (含 2d/2e/2f/2g/Lockbud/QEMU)${NC}"
+        echo -e "${BLUE}→ 档位: full —— 覆盖步骤 0.5a–4 全部腿 (含 2d/2e/2f/2g/Lockbud/QEMU)${NC}"
     fi
 }
-
-# ── 0. F1 预检: functions/ 零 unsafe ────────────────────────────
-# 服务层 (functions/) 不允许任何 unsafe 代码, 这是框内核架构的核心契约.
-# check_tcb.sh 现只做秒级预检, 早于构建与 0.5k 审计腿; 权威判定在编译期
-# src/kernel/functions/mod.rs 的 #![forbid(unsafe_code)] 与步骤 0.5k 的
-# scripts/audit_functions_boundary.py. TCB 占比度量不在此处, 见步骤 0.5b.
-step "0/6 F1 预检 (functions/ 零 unsafe)"
-if [ -x "$PROJECT_ROOT/tools/check_tcb.sh" ]; then
-    if "$PROJECT_ROOT/tools/check_tcb.sh"; then
-        ok "F1 预检通过: functions/ 零 unsafe"
-    else
-        err "F1 预检失败! functions/ 出现 unsafe, 见上方 FAIL 输出"
-    fi
-else
-    err "tools/check_tcb.sh 不存在或不可执行"
-fi
 
 # ── 0.5a 产物目录卫生门禁 ────────────────────────────────────────
 # 临时/构建产物统一收敛到 other/ 下 (整个 other/ 被 .gitignore 覆盖).
@@ -582,10 +566,13 @@ popd > /dev/null
 # 形态要点 (均为实测约束, 改动前先复现):
 #   · host-tests 必须 `--all-targets`: 存量绝大多数在 tests/ 集成用例里, 只 lint lib
 #     会退化成假绿;
-#   · src/user **不得** `--all-targets`: 七个成员都是裸机 crate (无 test harness),
-#     该开关直接 E0463 (can't find crate for `test`) + 缺 `#[panic_handler]`;
-#     改用 `--workspace` 覆盖七成员, 且必须双架构 —— aarch64 腿曾暴露 x86_64 单架构
+#   · src/user **不得** `--all-targets`: 该 workspace 的 bin 成员都是裸机 crate
+#     (无 test harness), 该开关直接 E0463 (can't find crate for `test`) +
+#     缺 `#[panic_handler]`; 改用 `--workspace` 覆盖全部成员 (成员清单单源 =
+#     src/user/Cargo.toml 的 [workspace].members; 勿在本注释写死数字),
+#     且必须双架构 —— aarch64 腿曾暴露 x86_64 单架构
 #     看不到的未用导入 (`#[cfg(target_arch = "x86_64")]` 探针的 ABI 常量);
+#     `lib` 成员的内联单测不在本腿射程, 另跑 `cd src/user/lib && cargo test`;
 #   · edgine-abi 是独立 workspace (不是 kernel 成员), 步骤 2 的 `--workspace` 与
 #     cargo 的 RUSTC_WORKSPACE_WRAPPER 语义都覆盖不到它, 必须单独点名;
 #   · 四腿一律 `--no-deps`: path 依赖 (kernel / userlib) 的诊断已由步骤 2 与本腿其它

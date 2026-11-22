@@ -21,13 +21,8 @@
 //! //! 所有 unsafe 操作已委托至 privileged API。
 //! ```
 //!
-//! CI 检查: `grep -rn 'unsafe ' src/kernel/functions/` 必须输出为空。
-//!
-//! ## 检查脚本
-//!
-//! ```bash
-//! tools/check_tcb.sh  # 自动检查 functions/ 中无 unsafe
-//! ```
+//! CI 检查: 编译期由 crate 根 `#![forbid(unsafe_code)]` 直接执法 (见下);
+//! 边界面另由 `scripts/audit_functions_boundary.py` 审计 (ci/audit.sh 步骤 0.5k).
 
 // P-71: functions 已独立为 `kernel-functions` crate (100% safe 业务层).
 // host-test (std) 下剥离裸机约束, 与 kernel-privileged 同构.
@@ -151,6 +146,6 @@ pub mod userctx;
 
 /// 编译时断言: functions 层禁止 unsafe。
 ///
-/// 实际检查由 `tools/check_tcb.sh` 在 CI 中完成。
-/// 此常量仅用于文档目的。
+/// 实际执法由本 crate 根的 `#![forbid(unsafe_code)]` 在编译期完成
+/// (命令行 `-A` 也压不住), 此常量仅用于文档目的。
 pub const FUNCTIONS_SAFE_RUST: bool = true;

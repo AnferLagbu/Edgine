@@ -17,4 +17,15 @@
 # 只 `use` 不使用即命中 disallowed_types 且 RC=101 ⇒ 本文件确被发现、该键确生效.
 # 但 spin 两条目本身**未验证命中**: 无成员直接声明 spin, 注入 `use spin::Once;`
 # 会先报 unresolved import, 走不到本 lint.
-disallowed-types = ["spin::Once", "spin::OnceCell"]
+#
+# `allow-invalid = true` (safety-comment-fidelity C6 ⑦): `wasmrun` 成员经 wasmi 传递
+# 依赖 spin (wasmi 的 `[dependencies.spin]` 非可选, 见 vendor/wasmi/Cargo.toml), clippy
+# 能看到 crate 名但该成员无法直接命名它 ⇒ 只在 wasmrun 腿报 2 条**配置级** warning
+# (`does not refer to a reachable type`), 两腿 RC 仍 0. 该键只静音「本 crate 不可达」
+# 这条配置诊断, **不改执法**: 成员一旦直接声明 spin, 路径即可解析, 命中照旧 (实测
+# 其余成员无此警告, 因 spin 不在其依赖图内). 这不是 lint 级 `#[allow(clippy::…)]`,
+# 不落入 F9 的抑制清单.
+disallowed-types = [
+    { path = "spin::Once", allow-invalid = true },
+    { path = "spin::OnceCell", allow-invalid = true },
+]

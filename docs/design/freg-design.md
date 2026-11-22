@@ -1295,7 +1295,7 @@ aarch64 帧草案（FIQ / SError，EL1）：
 
 1. **不分配**：crate 不依赖 `alloc`，`[dependencies]` 为空；`FregState` 定长。
 2. **不取锁，只用 `try_lock`**：crate 无 `Mutex` / `OnceLock`；状态由调用方以 `&mut FregState` 传入；privileged 侧只用 `try_lock`。
-3. **不再 panic**：`#![deny(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]`；无形式化验证载体（原 Kani harness 已整树退役，且其证明对象是 `wasm/leb128` 而非 freg）。
+3. **不再 panic**：**目标契约，尚未实装** —— `kernel-freg` leaf crate 落地时须在 crate 根写 `#![deny(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]`；当前 `src/kernel` 全仓无任何 `deny(clippy::…)` 组，现 freg 实装在 `privileged/freg`（其 crate 根只写 `#![deny(missing_docs)]`）；无形式化验证载体（原 Kani harness 已整树退役，且其证明对象是 `wasm/leb128` 而非 freg）。
 4. **不递归**：privileged 的 `arbiter_claim` 用 `compare_exchange`；crate 状态机无回调、无重入。
 5. **迭代有界**：所有循环上界为 `MAX_DOMAINS` / `MAX_DEPS` / `MAX_AUDIT` 常量。
 6. **日志无锁 best-effort**：`FregEnv::log` 契约；实现侧只写无锁环或串口，失败静默。

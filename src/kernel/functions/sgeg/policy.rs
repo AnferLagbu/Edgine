@@ -20,7 +20,7 @@
 //! ## @SAFE
 //! 本文件不含 `unsafe`。所有硬件交互通过 `privileged::sgeg` 的安全 API。
 //!
-//! CI 由 `tools/check_tcb.sh` 通过 `grep -rP 'unsafe\s*(\{|fn |impl)'` 实际校验,
+//! CI 由 crate 根的 `#![forbid(unsafe_code)]` 在编译期执法 (命令行 `-A` 也压不住),
 //! 不用编译期假属性 (历史上曾误用 `//! #![@SAFE]` 注释伪装, 已删除)。
 
 use core::sync::atomic::{AtomicU64, Ordering};

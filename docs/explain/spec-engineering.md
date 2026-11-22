@@ -52,7 +52,7 @@ F3 的边模型口径（`audit_coupling.py`，P-65 乙 收口）：依赖边只�
 
 ### 8 错误处理
 
-3 条错误处理规则：8.1 统一错误类型（KernelError 跨子系统，禁止传递子系统内部错误类型）；8.2 可恢复错误用 Result（禁止 panic!() 用于业务逻辑）；8.3 非 test 代码禁止 unwrap()（audit_safety_coverage.py 检测）。
+3 条错误处理规则：8.1 统一错误类型（KernelError 跨子系统，禁止传递子系统内部错误类型）；8.2 可恢复错误用 Result（禁止 panic!() 用于业务逻辑）；8.3 非 test 代码不得 unwrap()（**当前无机械执法点**，由 review 把关；`audit_safety_coverage.py` 只判 privileged 的 SAFETY 注释覆盖，不判 unwrap，存量待专项治理）。
 
 ### 9 测试
 
