@@ -1,17 +1,24 @@
 //! ext2 只读文件系统测试
+//!
+//! 夹具由 `build.rs` 恒生成到 `OUT_DIR` (确定性最小镜像, 不入仓).
 
 use std::fs;
 use std::path::Path;
 
+/// 夹具路径 (构建期生成)
+fn fixture() -> &'static str {
+    concat!(env!("OUT_DIR"), "/ext2_test.img")
+}
+
 #[test]
 fn test_ext2_image_exists() {
-    assert!(Path::new("ext2_test.img").exists(), "ext2 测试镜像不存在");
+    assert!(Path::new(fixture()).exists(), "ext2 测试镜像不存在");
 }
 
 #[test]
 fn test_ext2_superblock_magic() {
     // 读取超级块并验证 magic number
-    let data = fs::read("ext2_test.img").unwrap();
+    let data = fs::read(fixture()).unwrap();
     assert!(data.len() >= 1024 + 1024, "镜像太小");
 
     let magic = u16::from_le_bytes([data[1024 + 56], data[1024 + 57]]);
@@ -20,7 +27,7 @@ fn test_ext2_superblock_magic() {
 
 #[test]
 fn test_ext2_block_size() {
-    let data = fs::read("ext2_test.img").unwrap();
+    let data = fs::read(fixture()).unwrap();
     let log_block_size = u32::from_le_bytes([
         data[1024 + 24],
         data[1024 + 25],
@@ -33,7 +40,7 @@ fn test_ext2_block_size() {
 
 #[test]
 fn test_ext2_inode_count() {
-    let data = fs::read("ext2_test.img").unwrap();
+    let data = fs::read(fixture()).unwrap();
     let inode_count =
         u32::from_le_bytes([data[1024], data[1024 + 1], data[1024 + 2], data[1024 + 3]]);
     assert!(inode_count > 0, "inode 数量为 0");
@@ -41,7 +48,7 @@ fn test_ext2_inode_count() {
 
 #[test]
 fn test_ext2_block_count() {
-    let data = fs::read("ext2_test.img").unwrap();
+    let data = fs::read(fixture()).unwrap();
     let block_count = u32::from_le_bytes([
         data[1024 + 4],
         data[1024 + 5],
@@ -49,6 +56,18 @@ fn test_ext2_block_count() {
         data[1024 + 7],
     ]);
     assert!(block_count > 0, "块数量为 0");
+}
+
+/// 生成夹具必须能被内核真实解析器接受 (不止"头部字节像 ext2").
+#[test]
+fn test_ext2_superblock_parses_via_kernel() {
+    use edgine::kernel::functions::fs::ext2::super_block::Ext2SuperBlock;
+
+    let data = fs::read(fixture()).unwrap();
+    let sb = Ext2SuperBlock::from_bytes(&data[1024..2048]).expect("超级块应可解析");
+    assert_eq!(sb.s_magic, Ext2SuperBlock::MAGIC);
+    assert_eq!(sb.block_size(), 1024);
+    assert_eq!(sb.inode_size(), 128, "GOOD_OLD_REV 默认 inode 大小");
 }
 
 /// 提取 `src` 中 `sig` 起始的函数体 (至下一个同级 `fn` 定义前)
