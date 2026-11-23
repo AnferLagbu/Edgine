@@ -1262,11 +1262,10 @@ fn inotify_dispatch_sites_use_vfs_object_path() {
 
 #[test]
 fn timerfd_object_implements_file_contract() {
-    use edgine::kernel::functions::fs::timerfd::TimerFdFile;
+    use edgine::kernel::functions::fs::timerfd::{TimerFdContext, TimerFdFile};
 
-    // 槽位下标不触碰定时器策略表 (read/poll 会访问, 此处仅验证纯对象面)
-    let tf = TimerFdFile::new(2);
-    assert_eq!(tf.idx(), 2, "策略表槽位下标原样保存");
+    // 新 context 不触碰定时器状态 (read/poll 会访问, 此处仅验证纯对象面)
+    let tf = TimerFdFile::new(TimerFdContext::create());
     assert!(tf.stream(), "timerfd 不可定位 (lseek → ESPIPE)");
     assert!(tf.as_inode().is_none(), "timerfd 非 inode 承载");
     assert!(tf.mmap_backing().is_none(), "timerfd 不可作 mmap 后端");
@@ -1286,13 +1285,11 @@ fn timerfd_object_implements_file_contract() {
         "timerfd fd 只读 (写 → EINVAL)"
     );
 
-    let of = OpenFile::from_file(Arc::new(TimerFdFile::new(2)), 0, 0);
-    let recovered = of
-        .file()
-        .as_any()
-        .downcast_ref::<TimerFdFile>()
-        .expect("TimerFdFile 必须可下转型");
-    assert_eq!(recovered.idx(), 2);
+    let of = OpenFile::from_file(Arc::new(TimerFdFile::new(TimerFdContext::create())), 0, 0);
+    assert!(
+        of.file().as_any().downcast_ref::<TimerFdFile>().is_some(),
+        "TimerFdFile 必须可下转型"
+    );
     assert!(!of.is_nonblock(), "OpenFile 缺省阻塞");
     of.set_nonblock(true);
     assert!(
@@ -1311,8 +1308,7 @@ fn timerfd_created_via_open_file_table_not_fdplan() {
         "t.alloc_fd(handle_id, cloexec)",
         "OPEN_FILE_TABLE.close(handle_id)",
         "OPEN_FILE_TABLE.dec_ref(handle_id)",
-        "Self::free_slot(idx)",
-        "Self::free_slot(self.idx)",
+        "self.ctx.release()",
     ] {
         assert!(
             src.contains(needle),
@@ -1349,8 +1345,8 @@ fn timerfd_created_via_open_file_table_not_fdplan() {
         );
     }
     assert!(
-        mech.contains("pub fn alloc_slot"),
-        "privileged 定时器机制必须只暴露 slot 分配 (OpenFileTable 独占 fd 编号)"
+        mech.contains("pub fn create() -> Arc<Self>"),
+        "privileged 定时器机制必须暴露 per-context 创建 (OpenFileTable 独占 fd 编号)"
     );
 }
 
@@ -1480,35 +1476,48 @@ fn sendfile_has_no_stale_uds_numeric_range() {
 
 #[test]
 fn stale_hrtimer_callbacks_are_gated_by_activation_generation() {
-    // 槽位复用后, 旧激活的迟到回调必须被代际序号挡掉; 回调不得取 TFD_LOCK
-    // (否则与持锁等待在途回调的 set_time 形成 AB-BA), 槽位经静态数组反查.
+    // context 复用/重新设时后, 旧激活的迟到回调必须被代际序号挡掉;
+    // 回调不得取控制面占位 (否则与等待在途回调的 set_time 形成 AB-BA),
+    // 也不得在回调内重挂周期.
     let timerfd = read_file("privileged/syscall/timerfd.rs");
     assert!(
         timerfd.contains("fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart"),
         "timerfd 回调必须接收激活序号"
     );
     assert!(
-        timerfd.contains("arm_seq != 0 && arm_seq != seq"),
-        "回调必须按槽位激活序号做代际校验（arm_seq==0 仅认领新激活）"
+        timerfd.contains("generation != 0 && generation != seq"),
+        "回调必须按 context 激活序号做代际校验（generation==0 仅认领新激活）"
     );
     assert!(
-        timerfd.contains("slot.arm_seq.store(new_seq, Ordering::Release)"),
-        "周期重挂必须回写新激活序号"
+        timerfd.matches("compare_exchange(").count() >= 2,
+        "设时/read 路径必须以 CAS 回写当前激活序号"
     );
     assert!(
-        timerfd.contains("compare_exchange(0, seq"),
-        "设时路径必须以 CAS 回写当前激活序号，且不覆盖回调重挂"
+        timerfd.contains("self.ticks.swap(0, Ordering::AcqRel)"),
+        "read 路径必须消费 ticks"
     );
-    // 形状锁: 回调不得取控制面锁, 否则 set_time 持锁等待在途回调时 AB-BA.
+    let (_, take_body) = braced_block_after(&timerfd, "pub fn take_expiry", 0)
+        .expect("take_expiry 必须是可解析的函数体");
+    assert!(
+        take_body.contains("hrtimer_start(&self.timer, next)"),
+        "周期重挂必须落在 read/take_expiry 路径"
+    );
+    // 形状锁: 回调不得取控制面占位, 且不得自行重挂.
     let (_, callback_body) = braced_block_after(&timerfd, "fn timerfd_callback", 0)
         .expect("timerfd_callback 必须是可解析的函数体");
+    for forbidden in ["control_busy", "TFD_LOCK", "TFD_SLOTS", "hrtimer_start"] {
+        assert!(
+            !callback_body.contains(forbidden),
+            "timerfd_callback 不得包含 `{forbidden}` (不取控制面/不重挂/不线性反查)"
+        );
+    }
     assert!(
-        !callback_body.contains("TFD_LOCK.lock()"),
-        "timerfd_callback 不得取 TFD_LOCK (取消方可能在持锁等待它)"
+        callback_body.contains("cast::<TimerFdContext>()"),
+        "timerfd_callback 必须用 container_of 从 HrTimer 定位 context"
     );
     assert!(
-        callback_body.contains("TFD_SLOTS"),
-        "timerfd_callback 必须经静态槽位数组反查, 不依赖表锁"
+        callback_body.contains("ticks.fetch_add(1"),
+        "timerfd_callback 只累计 ticks"
     );
     let hrtimer = read_file("privileged/timer/hrtimer.rs");
     assert!(

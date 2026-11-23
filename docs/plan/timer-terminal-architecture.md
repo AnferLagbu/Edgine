@@ -63,9 +63,9 @@
 
 描述：删除 `TFD_SLOTS` / `TFD_LOCK`，改为 `Arc<TimerFdContext>`；回调用 `container_of` O(1) 定位，只累加 ticks、置 expired、唤醒，不再在回调内重挂；周期重挂移到 `read` 路径；动态对象替代固定 16 槽。
 
-方案：`TimerFdContext` 首字段放 `HrTimer`，其余用 `ticks/interval/armed/generation` 原子量；`set_time` 用控制面占位，等待在途回调前释放状态锁；`read` 消费 ticks 后按 `last_expiry + interval` 重挂；`release` 先 `shutdown`/`cancel` 再释放 `Arc`。回调与 `poll` 不取控制锁，避免 `epoll_pwake → timerfd poll` 回取。
+方案：`TimerFdContext` 首字段放 `HrTimer`，其余用 `ticks/interval/armed/generation/last_expiry` 原子量；`set_time` 用 per-context 控制面占位，等待在途回调不持任何回调需要的锁；`read` 消费 ticks 后按 `last_expiry + interval` 重挂；`release` 先 `hrtimer_shutdown` 再释放 `Arc`，`Drop` 兜底。回调与 `poll` 不取控制面占位，避免 `epoll_pwake → timerfd poll` 回取。
 
-状态：[]
+状态：[x] 已落地。`TFD_SLOTS` / `TFD_LOCK` / `TFD_MAX_SLOTS` 已删除，动态 `Arc<TimerFdContext>` 替代 16 槽静态表；回调经 `container_of`（`timer` 为 `#[repr(C)]` 首字段）O(1) 定位，只累计 ticks、置 `armed=false`、`wake_fd` 唤醒并返回 `OneShot`，不在回调内重挂；周期由 `take_expiry`/`read` 按 `last_expiry + interval` 重挂，落后当前时刻则从当前时刻起算，未读对象只产生首个 tick。`release` 走 `hrtimer_shutdown` 等待在途回调，`TimerFdContext::drop` 兜底 shutdown；回调与 `poll` 均不取 `control_busy`。`CLOCK_REALTIME` 改为 `ENOTSUP`，不再静默按单调基计时；未知 clockid 仍 `EINVAL`。timerfd 数量只受 fd 表/堆内存限制。验证：timerfd privileged 单测 4 passed、functions 单测 6 passed、kernel host 1445 passed（kernel 622 / functions 811 / privileged 12）、host 1652 passed、fd 形状锁 43 passed、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 + 存量 11/11 审计腿、Lockbud 4/4、QEMU 2/2）；锁序表删除 `TFD_LOCK`。
 
 ### 条目 5・CPU 上下线 quiesce/迁移
 

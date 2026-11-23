@@ -56,7 +56,6 @@
 
 层级 11: VFS / FS（文件系统）
   DCACHE, ICACHE, RAMFS_DATA（文件系统特定锁的代表条目；EGFS / devfs 走各自对象锁）
-  TFD_LOCK（timerfd 槽位控制面；回调不取本锁，set/free 等待在途回调前先放本锁 → HRTIMER_QUEUE 仅短临界区嵌套）
 
 层级 12: Network（网络）
   NET_STATE（原 NET_LOCK 与 12 个 static mut 的替代单源）, NET_SNAPSHOT_LOCK,

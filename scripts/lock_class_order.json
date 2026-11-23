@@ -67,7 +67,6 @@
     { "level": 9, "name": "fs_context.cwd", "anchor": "symbol", "note": "umask 为原子量, 不占锁条目" },
     { "level": 9, "name": "fs_context.root", "anchor": "symbol" },
     { "level": 10, "name": "TIMER_MANAGER", "anchor": "symbol" },
-    { "level": 11, "name": "TFD_LOCK", "anchor": "symbol", "note": "timerfd 槽位控制面锁; 回调不取本锁, set/free 在等待在途回调前先放本锁 (control_busy 占位), 故与 TIMER_BASE 仅短临界区嵌套" },
     { "level": 11, "name": "DCACHE", "anchor": "symbol", "note": "VFS 全局面 (dentry 缓存)" },
     { "level": 11, "name": "ICACHE", "anchor": "symbol", "note": "VFS 全局面 (inode 缓存)" },
     { "level": 11, "name": "RAMFS_DATA", "anchor": "symbol", "note": "文件系统特定锁的代表条目; EGFS/devfs 走各自对象锁, 见文档说明" },

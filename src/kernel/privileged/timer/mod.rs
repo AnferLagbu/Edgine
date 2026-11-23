@@ -172,8 +172,8 @@ pub use wait::{Deadline, poll_until_ms, poll_until_ns};
 /// 使用 `hrtimer` 模块的高精度定时器功能
 pub use hrtimer::{
     HrTimer, HrTimerRestart, HrTimerState, InitError, StartOutcome, hrtimer_cancel,
-    hrtimer_clock_read, hrtimer_init, hrtimer_next_expiry, hrtimer_run_queues, hrtimer_start,
-    hrtimer_start_periodic, hrtimer_start_rel, is_hrtimer_ready,
+    hrtimer_clock_read, hrtimer_init, hrtimer_next_expiry, hrtimer_run_queues, hrtimer_shutdown,
+    hrtimer_start, hrtimer_start_periodic, hrtimer_start_rel, is_hrtimer_ready,
 };
 
 // tickless 已下沉 functions; time_sync 公共接口 re-export — 避免跨子系统直接

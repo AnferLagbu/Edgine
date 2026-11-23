@@ -6,10 +6,10 @@
 //!
 //! timerfd 不再是"全局 fd 编号区间 [1160, 1176)"的位图模型, 而是
 //! [`TimerFdFile`] 对象挂在全局 `OpenFileTable`, 用户 fd 由 per-process
-//! `FdTable` 分配 (与 VFS / socket / UDS / inotify fd 同源). 对象只持有
-//! privileged 槽位表 (`privileged::syscall::timerfd::TFD_SLOTS`) 的**槽位
-//! 下标**; 槽位生灭由对象 `release()` 驱动: 最后一个 fd 引用关闭 →
-//! `release()` → 槽位复位. 由此与其它 fd 对象同构地获得:
+//! `FdTable` 分配 (与 VFS / socket / UDS / inotify fd 同源). 对象持有
+//! privileged 的 `Arc<TimerFdContext>`; context 生灭由对象 `release()` 驱动:
+//! 最后一个 fd 引用关闭 → `release()` → `hrtimer_shutdown` 等待在途回调 →
+//! `Arc` 归零. 由此与其它 fd 对象同构地获得:
 //!
 //! - **close / dup / fork**: 引用计数语义与 VFS fd 一致;
 //! - **CLOEXEC**: fd 级标志落 per-process fd 表;
@@ -20,18 +20,19 @@
 //! 对象**不实现** `Inode` (`as_inode() == None`), 不参与 pcache / inotify
 //! 命名空间, 也不可作 mmap 后端.
 //!
-//! ## 槽位归属
+//! ## 对象归属
 //!
-//! `HrTimer` 与到期回调留在 privileged 静态槽位表 (见该模块文档的 UAF
-//! 论证): 回调经静态数组指针反查槽位; 即使 `hrtimer_cancel` 已阻塞化,
-//! 静态槽位仍保证 `HrTimer` 地址稳定, 不随堆上对象释放. 本模块只持槽位
-//! 下标, 经 safe 槽位 API (分配 / 设时 / 取到期 / 轮询 / 释放) 驱动机制面.
+//! `HrTimer` 与到期回调留在 privileged `TimerFdContext` (见该模块文档的
+//! UAF 论证): 回调用 `container_of` 从 `HrTimer` 指针定位宿主 context.
+//! context 由堆上 `Arc` 持有, 发布后不移动; `release()` 的 shutdown 保证
+//! 回调退出前 `Arc` 不归零. 本模块持有 `Arc`, 经 safe 方法 (设时 / 取到期 /
+//! 轮询 / 释放) 驱动机制面.
 //!
 //! ## 语义 (Linux timerfd)
 //!
-//! - create: 校验 `clockid` 与 flags, 分配槽位并挂表
+//! - create: 校验 `clockid` 与 flags, 创建 context 并挂表
 //! - settime: `it_value` 全零 = disarm; `TFD_TIMER_ABSTIME` 按绝对时刻解释;
-//!   周期定时器由回调按上次到期时刻推进
+//!   周期定时器首次到期后由 read 按 `last_expiry + interval` 重挂
 //! - gettime: 返回 `(interval, remaining)`
 //! - read: 返回到期次数 (u64) 并清零; 无到期事件 → `EAGAIN`
 //! - poll: 到期计数非空 → `IN`
@@ -42,11 +43,9 @@ use crate::functions::fs::file::{File, PollEvents};
 use crate::functions::fs::open_file_table::OPEN_FILE_TABLE;
 use crate::functions::fs::vfs_types::{KernelError, KernelResult, OpenFile, VfsFileType};
 use crate::privileged::syscall::Errno;
+pub use crate::privileged::syscall::TimerFdContext;
 use crate::privileged::syscall::api::{read_struct_from_user, write_struct_to_user};
-use crate::privileged::syscall::{
-    SetTimeError, TakeExpiry, alloc_slot, free_slot, get_time, poll_ready, set_time, set_wake_fd,
-    take_expiry,
-};
+use crate::privileged::syscall::{SetTimeError, TakeExpiry};
 
 // ============================================================================
 // 常量
@@ -133,54 +132,44 @@ fn spec_ns(sec: i64, nsec: i64) -> Result<u64, Errno> {
 // 对象结构
 // ============================================================================
 
-/// timerfd fd 对象 — 仅持 privileged 槽位表下标
+/// timerfd fd 对象 — 持有 privileged per-context 定时器
 pub struct TimerFdFile {
-    /// `TFD_SLOTS` 槽位下标
-    idx: usize,
+    /// context 所有权与生命周期由 `Arc` 承担
+    ctx: Arc<TimerFdContext>,
 }
 
 impl TimerFdFile {
-    /// 以槽位下标构造对象 (槽位所有权转移给本对象)
+    /// 以 context 构造对象 (context 所有权转移给本对象)
     #[must_use]
-    pub fn new(idx: usize) -> Self {
-        Self { idx }
+    pub fn new(ctx: Arc<TimerFdContext>) -> Self {
+        Self { ctx }
     }
 
-    /// 槽位下标 — 系统调用层委托槽位操作时使用
-    #[must_use]
-    pub fn idx(&self) -> usize {
-        self.idx
-    }
-
-    /// 归还槽位 (最后一个 fd 引用关闭时调用)
-    fn free_slot(idx: usize) {
-        free_slot(idx);
-    }
-
-    /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败归还槽位
-    fn attach(idx: usize, nonblock: bool, cloexec: bool) -> Result<usize, Errno> {
+    /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败释放 context
+    fn attach(ctx: Arc<TimerFdContext>, nonblock: bool, cloexec: bool) -> Result<usize, Errno> {
+        let ctx_for_wake = Arc::clone(&ctx);
         let pwm = subject::current_raw();
-        let open_file = OpenFile::from_file(Arc::new(Self::new(idx)), 0, pwm);
+        let open_file = OpenFile::from_file(Arc::new(Self::new(ctx)), 0, pwm);
         open_file.set_nonblock(nonblock);
         let Some(handle_id) = OPEN_FILE_TABLE.alloc(open_file) else {
-            // 对象未挂表 → release() 不会被调用, 槽位须在此显式归还
-            Self::free_slot(idx);
+            // 对象未挂表 → release() 不会被调用; Arc 随 OpenFile 释放, context
+            // 的 Drop 兜底 shutdown, 不会留下活动定时器.
             return Err(Errno::Emfile);
         };
         let Some(fd_idx) =
             crate::privileged::proc::with_current_fd_table(|t| t.alloc_fd(handle_id, cloexec))
                 .flatten()
         else {
-            // 挂表成功但 fd 表耗尽: close 触发最后一个引用的 release() → 归还槽位
+            // 挂表成功但 fd 表耗尽: close 触发最后一个引用的 release()
             OPEN_FILE_TABLE.close(handle_id);
             return Err(Errno::Emfile);
         };
         // SIMPLIFIED: epoll 唤醒注册表仍以数值 fd 为键 (跨子系统统一改造归
         // epoll 子系统); 影响面 = 仅登记创建时的首个 fd 号, dup 别名的就绪
         // 唤醒需按该 fd 注册兴趣 (与 socket/UDS/inotify 迁移同口径); 何时需
-        // 扩展: 唤醒注册表改按 OpenFile handle 索引时.
+        // 扩展: 唤醒注册表改按 OpenFile handle 索引时 (条目 6 的 token 化).
         let wake_fd = crate::functions::intcast::low_i32_from_usize(fd_idx);
-        set_wake_fd(idx, wake_fd);
+        ctx_for_wake.set_wake_fd(wake_fd);
         Ok(fd_idx)
     }
 }
@@ -194,13 +183,12 @@ impl File for TimerFdFile {
         if buf.len() < TFD_EXPIRY_SIZE {
             return Err(KernelError::InvalidArgument);
         }
-        match take_expiry(self.idx) {
+        match self.ctx.take_expiry() {
             TakeExpiry::Count(count) => {
                 buf[..TFD_EXPIRY_SIZE].copy_from_slice(&count.to_ne_bytes());
                 Ok(TFD_EXPIRY_SIZE)
             }
             TakeExpiry::Empty => Err(KernelError::WouldBlock),
-            TakeExpiry::Invalid => Err(KernelError::BadFd),
         }
     }
 
@@ -210,7 +198,7 @@ impl File for TimerFdFile {
     }
 
     fn poll(&self, events: PollEvents) -> PollEvents {
-        if matches!(poll_ready(self.idx), Some(true)) {
+        if self.ctx.poll_ready() {
             events & PollEvents::IN
         } else {
             PollEvents::empty()
@@ -222,7 +210,8 @@ impl File for TimerFdFile {
     }
 
     fn release(&self) {
-        Self::free_slot(self.idx);
+        // 最后一个 fd 引用关闭: 先 shutdown 等待在途回调, 之后 Arc 才可能归零.
+        self.ctx.release();
     }
 
     // SIMPLIFIED: `VfsFileType` 无独立的 timerfd 变体 — 以 File 呈现 (与
@@ -243,21 +232,23 @@ impl File for TimerFdFile {
     }
 }
 
-/// 由用户 fd 解析 timerfd 槽位下标, 并在解析期间钉住 `OpenFile`.
+/// 由用户 fd 解析 timerfd context, 并在解析期间钉住 `OpenFile`.
 ///
 /// 返回的 `handle_id` 供调用方用毕后 `dec_ref`; 解析与 `inc_ref` 在同一
-/// `OpenFileTable` 临界区内完成, 避免 close 竞争导致的槽位 ABA.
-fn resolve_timerfd_fd(fd: i64) -> Option<(u32, usize)> {
+/// `OpenFileTable` 临界区内完成. 返回的 `Arc` 克隆独立钉住 context, 即使
+/// `OpenFile` 在 syscall 中途关闭, context 也不会在操作期间归零.
+fn resolve_timerfd_fd(fd: i64) -> Option<(u32, Arc<TimerFdContext>)> {
     let fd_idx = usize::try_from(fd).ok()?;
     let handle_id = crate::functions::fs::vfs_get_fd_handle(fd_idx)?;
-    let idx = OPEN_FILE_TABLE
+    let ctx = OPEN_FILE_TABLE
         .with_file(handle_id, |of| {
-            let idx = of.file().as_any().downcast_ref::<TimerFdFile>()?.idx();
+            let timer = of.file().as_any().downcast_ref::<TimerFdFile>()?;
+            let ctx = Arc::clone(&timer.ctx);
             of.inc_ref();
-            Some(idx)
+            Some(ctx)
         })
         .flatten()?;
-    Some((handle_id, idx))
+    Some((handle_id, ctx))
 }
 
 // ============================================================================
@@ -268,23 +259,22 @@ fn resolve_timerfd_fd(fd: i64) -> Option<(u32, usize)> {
 ///
 /// # Errors
 ///
-/// - `clockid` 非 `CLOCK_MONOTONIC` / `CLOCK_REALTIME` → `EINVAL`
+/// - `clockid` 非 `CLOCK_MONOTONIC` → `EINVAL`; `CLOCK_REALTIME` → `ENOTSUP`
 /// - flags 含未知位 → `EINVAL`
-/// - 槽位表 / `OpenFileTable` / per-process fd 表耗尽 → `EMFILE`
+/// - `OpenFileTable` / per-process fd 表耗尽 → `EMFILE`
 pub fn timerfd_create_syscall(clockid: i32, flags: i32) -> Result<usize, Errno> {
-    if clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME {
+    if clockid == CLOCK_REALTIME {
+        // 终态 v1 只有单调时基: 不再接受 REALTIME 后静默按单调基计时.
+        return Err(Errno::Enotsup);
+    }
+    if clockid != CLOCK_MONOTONIC {
         return Err(Errno::Einval);
     }
     if flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
         return Err(Errno::Einval);
     }
-    // SIMPLIFIED: clockid 仅校验不参与计时基 — hrtimer 只有单调时基, 原实现
-    // 亦只保存未使用; 影响面 = CLOCK_REALTIME 定时器按单调时基计时; 何时需
-    // 扩展: hrtimer 支持实时时钟基时.
-    let Some(idx) = alloc_slot() else {
-        return Err(Errno::Emfile);
-    };
-    TimerFdFile::attach(idx, flags & TFD_NONBLOCK != 0, flags & TFD_CLOEXEC != 0)
+    let ctx = TimerFdContext::create();
+    TimerFdFile::attach(ctx, flags & TFD_NONBLOCK != 0, flags & TFD_CLOEXEC != 0)
 }
 
 /// `timerfd_settime` 的策略入口 — `itimerspec` 已从用户态读出
@@ -298,27 +288,30 @@ pub fn timerfd_create_syscall(clockid: i32, flags: i32) -> Result<usize, Errno> 
 /// - flags 含 `TFD_TIMER_ABSTIME` 之外的位 → `EINVAL`
 /// - `sec` 为负 / `nsec` 为负或 ≥ 1e9 → `EINVAL`
 pub fn timerfd_settime_apply(fd: i64, flags: i32, spec: &Itimerspec) -> Result<Itimerspec, Errno> {
-    let Some((handle_id, idx)) = resolve_timerfd_fd(fd) else {
+    let Some((handle_id, ctx)) = resolve_timerfd_fd(fd) else {
         return Err(Errno::Ebadf);
     };
-    let result = settime_on_slot(idx, flags, spec);
+    let result = settime_on_context(&ctx, flags, spec);
     OPEN_FILE_TABLE.dec_ref(handle_id);
     result
 }
 
-/// 在已解析的槽位上下发设时请求
-fn settime_on_slot(idx: usize, flags: i32, spec: &Itimerspec) -> Result<Itimerspec, Errno> {
+/// 在已解析的 context 上下发设时请求
+fn settime_on_context(
+    ctx: &TimerFdContext,
+    flags: i32,
+    spec: &Itimerspec,
+) -> Result<Itimerspec, Errno> {
     if flags & !TFD_TIMER_ABSTIME != 0 {
         return Err(Errno::Einval);
     }
     let value_ns = spec_ns(spec.value_sec, spec.value_nsec)?;
     let interval_ns = spec_ns(spec.interval_sec, spec.interval_nsec)?;
-    match set_time(idx, value_ns, interval_ns, flags & TFD_TIMER_ABSTIME != 0) {
+    match ctx.set_time(value_ns, interval_ns, flags & TFD_TIMER_ABSTIME != 0) {
         Ok((old_interval_ns, old_remaining_ns)) => {
             Ok(Itimerspec::from_ns(old_interval_ns, old_remaining_ns))
         }
-        Err(SetTimeError::InvalidSlot) => Err(Errno::Ebadf),
-        // 槽位存在但 timer 未就绪/已 shutdown：内部状态不可用，不冒充设时成功.
+        // context 存在但 timer 未就绪/已 shutdown：内部状态不可用，不冒充设时成功.
         Err(SetTimeError::TimerUnavailable) => Err(Errno::Eio),
     }
 }
@@ -341,7 +334,7 @@ pub fn timerfd_settime_syscall(
         return Err(Errno::Efault);
     }
     let old = timerfd_settime_apply(fd, flags, &new_value)?;
-    // 旧值在槽位表锁外拷回用户空间
+    // 旧值在 context 控制面外拷回用户空间
     if old_value_ptr != 0 && !write_struct_to_user(old_value_ptr, &old) {
         return Err(Errno::Efault);
     }
@@ -354,14 +347,11 @@ pub fn timerfd_settime_syscall(
 ///
 /// - `fd` 不是 timerfd 对象 → `EBADF`
 pub fn timerfd_gettime_apply(fd: i64) -> Result<Itimerspec, Errno> {
-    let Some((handle_id, idx)) = resolve_timerfd_fd(fd) else {
+    let Some((handle_id, ctx)) = resolve_timerfd_fd(fd) else {
         return Err(Errno::Ebadf);
     };
-    let time = get_time(idx);
+    let (interval_ns, remaining_ns) = ctx.get_time();
     OPEN_FILE_TABLE.dec_ref(handle_id);
-    let Some((interval_ns, remaining_ns)) = time else {
-        return Err(Errno::Ebadf);
-    };
     Ok(Itimerspec::from_ns(interval_ns, remaining_ns))
 }
 
@@ -437,7 +427,7 @@ mod tests {
 
     #[test]
     fn object_contract_sentinels() {
-        let file = TimerFdFile::new(0);
+        let file = TimerFdFile::new(TimerFdContext::create());
         assert!(file.stream(), "timerfd 不可定位 (ESPIPE)");
         assert!(file.as_inode().is_none(), "timerfd 非 inode 承载");
         assert_eq!(file.file_type(), VfsFileType::File);
@@ -450,6 +440,12 @@ mod tests {
             file.read_at(0, &mut [0u8; TFD_EXPIRY_SIZE - 1], 0),
             Err(KernelError::InvalidArgument),
             "短缓冲读返回 EINVAL"
+        );
+        let mut empty = [0u8; TFD_EXPIRY_SIZE];
+        assert_eq!(
+            file.read_at(0, &mut empty, 0),
+            Err(KernelError::WouldBlock),
+            "新 context 无到期事件返回 EAGAIN"
         );
         assert_eq!(
             file.io_control(0, 0),
@@ -567,20 +563,17 @@ mod tests {
     }
 
     #[test]
-    fn syscall_slot_exhaustion_and_reclaim() {
+    fn syscall_create_beyond_static_slot_limit() {
         let _lock = crate::functions::fs::FS_GLOBAL_TEST_LOCK.lock();
-        with_temp_process("timerfd-slots", || {
-            let mut fds = [0usize; crate::privileged::syscall::TFD_MAX_SLOTS];
+        with_temp_process("timerfd-capacity", || {
+            // 终态不再有 16 槽硬上限: 一次创建 32 个对象 (受限 fd 表/内存, 不是槽位表).
+            let mut fds = [0usize; 32];
             for fd in &mut fds {
                 *fd = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("创建 timerfd");
             }
-            assert_eq!(
-                timerfd_create_syscall(CLOCK_MONOTONIC, 0),
-                Err(Errno::Emfile),
-                "槽位耗尽返回 EMFILE"
-            );
+            // 关闭其中一个后仍可继续创建, 不依赖静态槽位回收.
             close_fd(fds[0]);
-            let again = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("槽位释放后可重建");
+            let again = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("context 动态分配");
             for &fd in &fds[1..] {
                 close_fd(fd);
             }
@@ -594,6 +587,11 @@ mod tests {
             timerfd_create_syscall(99, 0),
             Err(Errno::Einval),
             "非法 clockid"
+        );
+        assert_eq!(
+            timerfd_create_syscall(CLOCK_REALTIME, 0),
+            Err(Errno::Enotsup),
+            "终态 v1 不支持 REALTIME (不得静默按单调基计时)"
         );
         assert_eq!(
             timerfd_create_syscall(CLOCK_MONOTONIC, 0x10),
@@ -656,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn syscall_dup_shares_slot_and_close_frees() {
+    fn syscall_dup_shares_context_and_close_frees() {
         let _lock = crate::functions::fs::FS_GLOBAL_TEST_LOCK.lock();
         with_temp_process("timerfd-dup", || {
             let fd = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("创建 timerfd");
@@ -670,10 +668,10 @@ mod tests {
             assert_eq!(
                 crate::functions::fs::vfs_get_fd_handle(dup_idx),
                 Some(handle),
-                "dup 共享同一 OpenFile (同一槽位)"
+                "dup 共享同一 OpenFile (同一 context)"
             );
 
-            // 经 dup 设时, 经原 fd 读周期 (共享同一槽位).
+            // 经 dup 设时, 经原 fd 读周期 (共享同一 context).
             // host 测试无 tick 中断推进到期, 剩余时间恒为原值, 故以周期读回作共享判据.
             let spec = Itimerspec {
                 interval_sec: 0,
@@ -684,9 +682,9 @@ mod tests {
             timerfd_settime_apply(crate::functions::intcast::i64_from_usize(dup_idx), 0, &spec)
                 .expect("经 dup 设时");
             let armed = timerfd_gettime_apply(fd_i64).expect("经原 fd 读数");
-            assert_eq!(armed.interval_nsec, 5_000_000, "同一槽位的周期应共享");
+            assert_eq!(armed.interval_nsec, 5_000_000, "同一 context 的周期应共享");
 
-            // 关闭原 fd 后槽位仍由 dup 持有
+            // 关闭原 fd 后 context 仍由 dup 持有
             close_fd(fd);
             assert_eq!(
                 timerfd_gettime_apply(crate::functions::intcast::i64_from_usize(dup_idx))
@@ -695,14 +693,14 @@ mod tests {
                 5_000_000
             );
 
-            // 最后一个引用关闭 → 槽位归还, fd 失效
+            // 最后一个引用关闭 → context release, fd 失效
             close_fd(dup_idx);
             assert_eq!(
                 timerfd_gettime_apply(crate::functions::intcast::i64_from_usize(dup_idx)),
                 Err(Errno::Ebadf),
                 "close 后 fd 失效"
             );
-            let reclaimed = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("槽位已归还");
+            let reclaimed = timerfd_create_syscall(CLOCK_MONOTONIC, 0).expect("context 可重新分配");
             close_fd(reclaimed);
         });
     }

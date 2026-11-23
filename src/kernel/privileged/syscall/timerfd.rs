@@ -1,51 +1,55 @@
-//! timerfd — 定时器槽位机制 (TCB)
+//! timerfd — per-context 定时器对象 (TCB)
 //!
-//! ## fd 对象模型 (阶段 3 第 6 个迁移子系统)
+//! ## fd 对象模型
 //!
-//! 自 fd 对象模型阶段 3 起, timerfd 的 fd 编号与对象归属不再由本模块持有:
 //! `TimerFdFile` 对象 (`functions::fs::timerfd`) 挂在全局 `OpenFileTable`,
 //! 用户 fd 由 per-process `FdTable` 分配. 本模块只保留**机制面**:
 //!
-//! - 全局槽位表 `TFD_SLOTS` (静态存储, 内核生命周期) + 控制面 `TFD_LOCK`
-//! - 嵌入槽位的 `HrTimer` 与到期回调
-//! - 供对象层调用的安全槽位 API (分配 / 设时 / 取到期 / 轮询 / 释放)
+//! - 堆上 `Arc<TimerFdContext>` 持有嵌入式 `HrTimer` 与全部到期状态
+//! - 回调经 `container_of` 从 `HrTimer` 指针 O(1) 定位宿主 context
+//! - 供对象层调用的安全 API (创建 / 设时 / 取到期 / 轮询 / 释放)
 //!
-//! 槽位表留在 privileged 静态存储: 回调经静态数组指针反查槽位, 不持有对象
-//! 引用; `hrtimer_cancel` 已是阻塞语义 (`Busy` 时等待在途回调退出), 但静态
-//! 槽位仍保证 `HrTimer` 地址稳定、回调反查无需额外生命周期协议.
+//! 对象生命周期由 `Arc` 与 fd 引用计数承担: `TimerFdFile` 持有
+//! `Arc<TimerFdContext>`, 最后一个 fd 引用关闭时对象层调用 [`TimerFdContext::release`],
+//! 先 `hrtimer_shutdown` 等待在途回调退出, 之后 `Arc` 才能归零. 回调只借
+//! `&HrTimer`, 不克隆 `Arc`; `TimerFdContext` 发布后不再移动, 故 `container_of`
+//! 不会悬垂.
 //!
 //! ```text
-//! TFD_SLOTS (全局静态数组)
-//!   └── [TimerFdSlot; TFD_MAX_SLOTS]
-//!         ├── timer: HrTimer            (嵌入 hrtimer 对象)
-//!         ├── expiry_count: AtomicU64   (到期次数累计)
-//!         ├── interval_ns: AtomicU64    (周期间隔, 0=单次)
-//!         ├── armed: AtomicBool         (是否已启动)
-//!         ├── arm_seq: AtomicU64        (当前激活序号)
-//!         ├── used: AtomicBool
-//!         └── wake_fd: AtomicI32        (对象挂表时登记的唤醒 fd, -1=未登记)
-//! TFD_LOCK (IrqSpinLock<()>)             (只保护控制面复合操作, 回调不取)
+//! TimerFdContext (Arc, 堆)
+//!   ├── timer: HrTimer              (首字段; container_of 偏移 0)
+//!   ├── ticks: AtomicU64            (到期次数累计, read 清零)
+//!   ├── interval_ns: AtomicU64      (周期间隔, 0=单次)
+//!   ├── armed: AtomicBool           (是否已启动)
+//!   ├── generation: AtomicU64       (当前激活序号)
+//!   ├── last_expiry_ns: AtomicU64   (上次计划到期时刻, read 重挂基准)
+//!   ├── control_busy: AtomicBool    (控制面占位; 回调与 poll 不取)
+//!   └── wake_fd: AtomicI32          (数值唤醒 fd, -1=未登记; 条目 6 改 token)
 //! ```
 //!
-//! epoll 集成: `expiry_count > 0` → `EPOLLIN`; 回调在槽位表锁释放后用
-//! `epoll_pwake(wake_fd)` 唤醒等待者.
+//! ## 周期语义
+//!
+//! 回调只累计 ticks、置 `armed=false`、唤醒等待者, 返回 `OneShot`:
+//! **不在回调内重挂**. 周期 timerfd 在首次到期后自然停住; `read` 消费 ticks 后
+//! 以 `last_expiry + interval` 为基准重挂下一次到期. 无人 `read` 的周期对象
+//! 不会在硬中断里持续点火.
 //!
 //! # Safety
 //!
-//! - `TimerFdTable` 由 `IrqSpinLock` 保护
-//! - `HrTimer` 回调在中断上下文执行 (不可睡眠), 且**直接不取槽位控制面锁**:
-//!   槽位经静态数组指针反查, 计数/代际/间隔均为原子量; 回调只做计数、周期重挂
-//!   与 epoll 唤醒. 注意 `epoll_pwake` 可能经 timerfd poll 间接取 `TFD_LOCK`,
-//!   故 `set_time`/`free_slot` 在等待在途回调前必须先放 `TFD_LOCK`
-//! - `HrTimer` 对象嵌入静态槽位, 生命周期与内核一致
+//! - 回调在中断上下文执行 (不可睡眠), 只做原子读写与 `epoll_pwake`; 不取
+//!   `control_busy`, 避免 `epoll_pwake → check_fd_ready → timerfd poll` 回取.
+//! - 控制面占位在等待 `hrtimer_cancel`/`hrtimer_shutdown` 期间保护 context 不被
+//!   并发 `release`; `Arc` 保证对象本身存活, 占位保证状态操作串行.
+//! - `container_of` 依赖 `timer` 为 `#[repr(C)]` 结构的首字段, 且 context 在
+//!   回调在途期间不会释放 (`release` 的 shutdown 语义).
 
 #![deny(missing_docs)]
 
+use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
-use crate::privileged::sync::IrqSpinLock as Mutex;
 use crate::privileged::timer::{
-    HrTimer, HrTimerRestart, InitError, StartOutcome, hrtimer_cancel, hrtimer_clock_read,
+    HrTimer, HrTimerRestart, StartOutcome, hrtimer_cancel, hrtimer_clock_read, hrtimer_shutdown,
     hrtimer_start,
 };
 
@@ -53,299 +57,267 @@ use crate::privileged::timer::{
 // 公共类型
 // ============================================================================
 
-/// timerfd 最大实例数 (全局槽位表容量, 非 fd 编号空间)
-pub const TFD_MAX_SLOTS: usize = 16;
-
-/// 槽位时间读数 `(interval_ns, remaining_ns)`
+/// timerfd 时间读数 `(interval_ns, remaining_ns)`
 pub type TimerTime = (u64, u64);
 
 /// `set_time` 失败原因
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetTimeError {
-    /// 槽位下标无效或槽位未使用
-    InvalidSlot,
-    /// 槽位存在但底层定时器无法进入 `Pending` (未就绪/已 shutdown/初始化失败)
+    /// 底层定时器未就绪/已 shutdown, 无法进入 `Pending`
     TimerUnavailable,
 }
 
 /// 到期计数出队结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TakeExpiry {
     /// 有待消费的到期次数
     Count(u64),
     /// 无待消费事件 (非阻塞读 → `EAGAIN`)
     Empty,
-    /// 槽位无效 (fd 已关闭 → `EBADF`)
-    Invalid,
 }
 
 // ============================================================================
 // 数据结构
 // ============================================================================
 
-/// timerfd 槽位
+/// timerfd 的 per-context 状态
 ///
-/// 回调只持 `&TimerFdSlot` (静态槽位地址), 故所有可变状态均为原子量: 槽位表
-/// 锁只串行化控制面 (set/get/free), 回调不参与该锁域, 避免 `set_time` 持锁
-/// 等待在途回调时与回调形成 AB-BA 死锁.
-struct TimerFdSlot {
-    /// 嵌入的 hrtimer 对象 (必须是首字段: 回调经 `core::ptr::eq` 在静态数组
-    /// 中反查槽位, 不依赖偏移或锁)
+/// `timer` 必须是首字段 (配合 `#[repr(C)]`), 回调据此用 `container_of` 从
+/// `&HrTimer` 反推宿主. 其余状态均为原子量: 回调不取控制面占位, 控制面只
+/// 串行化 `set_time`/`read`/`release` 的复合操作.
+#[repr(C)]
+pub struct TimerFdContext {
+    /// 嵌入的 hrtimer 对象 (首字段; 地址即 context 地址)
     timer: HrTimer,
     /// 到期次数累计 (read 时清零)
-    expiry_count: AtomicU64,
+    ticks: AtomicU64,
     /// 周期间隔 (纳秒, 0 = 单次)
     interval_ns: AtomicU64,
     /// 是否已启动 (armed)
     armed: AtomicBool,
-    /// 当前激活序号 (`hrtimer_start` 分配的入队序号; 0 = 无有效激活)
-    ///
-    /// 回调携带入队时序号, 与此值不一致即说明槽位已释放/复用或已重新设时,
-    /// 该回调属迟到条目, 不得计入当前实例.
-    arm_seq: AtomicU64,
-    /// 是否已使用
-    used: AtomicBool,
-    /// 控制面互斥 (`set_time`/`free_slot` 在放 `TFD_LOCK` 等待在途回调期间占位,
-    /// 防止槽位被并发释放/复用; 回调与只读查询不取)
+    /// 当前激活序号 (`hrtimer_start` 分配; 0 = 新激活尚未回写)
+    generation: AtomicU64,
+    /// 上次计划到期时刻 (纳秒); `read` 重挂的基准
+    last_expiry_ns: AtomicU64,
+    /// 控制面占位 (`set_time`/`read`/`release` 串行; 回调与 `poll` 不取)
     control_busy: AtomicBool,
     /// 唤醒用数值 fd (对象挂表时登记; -1 = 未登记)
     wake_fd: AtomicI32,
 }
 
-impl TimerFdSlot {
-    const fn new() -> Self {
-        Self {
+impl TimerFdContext {
+    /// 创建一个已初始化 `HrTimer` 的 context
+    ///
+    /// 堆分配由内核全局分配器承担; 新建 `HrTimer` 处于 `Uninit`, 初始化回调不会
+    /// 被活动定时器拒绝. 失败时保留 `Uninit`, 后续 `set_time` 会返回
+    /// [`SetTimeError::TimerUnavailable`], 不会留下半武装对象.
+    #[must_use]
+    pub fn create() -> Arc<Self> {
+        let ctx = Arc::new(Self {
             timer: HrTimer::uninit(),
-            expiry_count: AtomicU64::new(0),
+            ticks: AtomicU64::new(0),
             interval_ns: AtomicU64::new(0),
             armed: AtomicBool::new(false),
-            arm_seq: AtomicU64::new(0),
-            used: AtomicBool::new(false),
+            generation: AtomicU64::new(0),
+            last_expiry_ns: AtomicU64::new(0),
             control_busy: AtomicBool::new(false),
             wake_fd: AtomicI32::new(-1),
+        });
+        if ctx.timer.try_init(timerfd_callback).is_err() {
+            debug_assert!(false, "新建 timerfd 上下文的 HrTimer 初始化被拒绝");
+        }
+        ctx
+    }
+
+    /// 登记唤醒用数值 fd (对象完成 `OpenFileTable` + per-process fd 表挂载后调用)
+    pub fn set_wake_fd(&self, fd: i32) {
+        self.wake_fd.store(fd, Ordering::Release);
+    }
+
+    /// 设置定时器, 返回设置前的 `(interval_ns, remaining_ns)`
+    ///
+    /// `value_ns == 0` 表示 disarm (与 Linux 一致). `abstime == true` 时
+    /// `value_ns` 视为绝对到期时刻 (与 [`hrtimer_clock_read`] 同一单调时基).
+    ///
+    /// # Errors
+    ///
+    /// 底层 timer 无法入队时返回 [`SetTimeError::TimerUnavailable`]; 已写入的
+    /// armed 状态会回滚, 不留半武装 context.
+    pub fn set_time(
+        &self,
+        value_ns: u64,
+        interval_ns: u64,
+        abstime: bool,
+    ) -> Result<TimerTime, SetTimeError> {
+        let _control = ControlGuard::acquire(self);
+        let now = hrtimer_clock_read();
+        let remaining = if self.armed.load(Ordering::Acquire) {
+            self.timer.expiry_ns().saturating_sub(now)
+        } else {
+            0
+        };
+        let old = (self.interval_ns.load(Ordering::Acquire), remaining);
+
+        if self.armed.load(Ordering::Acquire) {
+            // 控制面占位已取得; 回调不取该占位, 故等待在途回调不会自锁.
+            hrtimer_cancel(&self.timer);
+        }
+        self.armed.store(false, Ordering::Release);
+        self.generation.store(0, Ordering::Release);
+        self.ticks.store(0, Ordering::Release);
+
+        if value_ns == 0 {
+            self.interval_ns.store(0, Ordering::Release);
+            self.last_expiry_ns.store(0, Ordering::Release);
+            return Ok(old);
+        }
+
+        let expiry_ns = if abstime {
+            value_ns
+        } else {
+            now.saturating_add(value_ns)
+        };
+        self.interval_ns.store(interval_ns, Ordering::Release);
+        self.last_expiry_ns.store(expiry_ns, Ordering::Release);
+        // 新激活先以 generation=0 + armed=true 发布; 回调若在 start 返回前抢到,
+        // 允许它以 seq 认领 (唯一合法窗口). 回写用 CAS, 不覆盖回调已写入的值.
+        self.generation.store(0, Ordering::Release);
+        self.armed.store(true, Ordering::Release);
+        match hrtimer_start(&self.timer, expiry_ns) {
+            StartOutcome::Started(seq) => {
+                let _ =
+                    self.generation
+                        .compare_exchange(0, seq, Ordering::Release, Ordering::Relaxed);
+                Ok(old)
+            }
+            StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
+                self.armed.store(false, Ordering::Release);
+                self.generation.store(0, Ordering::Release);
+                Err(SetTimeError::TimerUnavailable)
+            }
         }
     }
 
-    /// 复位槽位 (调用方必须已取消在途定时器)
-    fn reset(&self) -> Result<(), InitError> {
-        self.timer.try_init(timerfd_callback)?;
-        self.expiry_count.store(0, Ordering::Release);
-        self.interval_ns.store(0, Ordering::Release);
+    /// 读取当前 `(interval_ns, remaining_ns)`
+    ///
+    /// `armed=false` (含“已到期但尚未 read 重挂”) 时 remaining 为 0, 对应 Linux
+    /// timerfd 的到期后读数语义.
+    #[must_use]
+    pub fn get_time(&self) -> TimerTime {
+        let _control = ControlGuard::acquire(self);
+        let remaining = if self.armed.load(Ordering::Acquire) {
+            self.timer.expiry_ns().saturating_sub(hrtimer_clock_read())
+        } else {
+            0
+        };
+        (self.interval_ns.load(Ordering::Acquire), remaining)
+    }
+
+    /// 取出到期次数 (读后清零), 并在周期对象上重挂下一次到期
+    ///
+    /// 重挂只在 `read` 路径发生: 回调用 `OneShot` 收敛后不自行续期, 无人 `read`
+    /// 的周期对象在首次到期后自然停住. 重挂失败不影响本次已消费的 ticks,
+    /// 只把 `armed` 回滚为 false.
+    pub fn take_expiry(&self) -> TakeExpiry {
+        let _control = ControlGuard::acquire(self);
+        let count = self.ticks.swap(0, Ordering::AcqRel);
+        if count == 0 {
+            return TakeExpiry::Empty;
+        }
+
+        let interval_ns = self.interval_ns.load(Ordering::Acquire);
+        if interval_ns > 0 {
+            let now = hrtimer_clock_read();
+            let base = self.last_expiry_ns.load(Ordering::Acquire);
+            let next = if base == 0 {
+                now.saturating_add(interval_ns)
+            } else {
+                base.saturating_add(interval_ns)
+            };
+            // 落后于当前时刻则从当前时刻重新计时, 避免补发一串过期 tick.
+            let next = if next <= now {
+                now.saturating_add(interval_ns)
+            } else {
+                next
+            };
+            self.last_expiry_ns.store(next, Ordering::Release);
+            self.generation.store(0, Ordering::Release);
+            self.armed.store(true, Ordering::Release);
+            match hrtimer_start(&self.timer, next) {
+                StartOutcome::Started(seq) => {
+                    let _ = self.generation.compare_exchange(
+                        0,
+                        seq,
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    );
+                }
+                StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
+                    self.armed.store(false, Ordering::Release);
+                    self.generation.store(0, Ordering::Release);
+                }
+            }
+        }
+        TakeExpiry::Count(count)
+    }
+
+    /// 查询是否就绪 (到期计数非空)
+    ///
+    /// poll 只读 `ticks`, 不取控制面占位; 否则回调唤醒 epoll 后的间接 poll
+    /// 会回取同一占位, 形成自死锁.
+    #[must_use]
+    pub fn poll_ready(&self) -> bool {
+        self.ticks.load(Ordering::Acquire) > 0
+    }
+
+    /// 释放 context: 关闭定时器、等待在途回调退出, 再清空到期状态
+    ///
+    /// 由对象层在最后一个 fd 引用关闭时调用. 返回后不再有本 context 的回调,
+    /// `Arc` 可以安全归零.
+    pub fn release(&self) {
+        let _control = ControlGuard::acquire(self);
+        hrtimer_shutdown(&self.timer);
         self.armed.store(false, Ordering::Release);
-        self.arm_seq.store(0, Ordering::Release);
-        self.used.store(false, Ordering::Release);
+        self.generation.store(0, Ordering::Release);
+        self.ticks.store(0, Ordering::Release);
+        self.interval_ns.store(0, Ordering::Release);
+        self.last_expiry_ns.store(0, Ordering::Release);
         self.wake_fd.store(-1, Ordering::Release);
-        Ok(())
     }
 }
 
-/// 槽位控制面占位守卫: 在 `TFD_LOCK` 外等待在途回调期间防止槽位被释放/复用.
-struct SlotGuard {
-    slot: &'static TimerFdSlot,
+impl Drop for TimerFdContext {
+    fn drop(&mut self) {
+        // 兜底: 即使对象层漏掉 release, 也不能在仍有 Pending/Running 激活时释放
+        // context 内存, 否则回调的 container_of 会悬垂. shutdown 会等待在途回调.
+        hrtimer_shutdown(&self.timer);
+    }
 }
 
-impl SlotGuard {
-    fn acquire(slot: &'static TimerFdSlot) -> Self {
-        while slot
+/// 控制面占位守卫: 串行化 `set_time`/`take_expiry`/`get_time`/`release`
+///
+/// 回调与 `poll` 不取该占位: 回调只写原子量并 `epoll_pwake`, `poll` 只读 ticks.
+/// 因此释放该占位去等待在途回调不会与回调路径形成 AB-BA.
+struct ControlGuard<'a> {
+    ctx: &'a TimerFdContext,
+}
+
+impl<'a> ControlGuard<'a> {
+    fn acquire(ctx: &'a TimerFdContext) -> Self {
+        while ctx
             .control_busy
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
             core::hint::spin_loop();
         }
-        Self { slot }
+        Self { ctx }
     }
 }
 
-impl Drop for SlotGuard {
+impl Drop for ControlGuard<'_> {
     fn drop(&mut self) {
-        self.slot.control_busy.store(false, Ordering::Release);
-    }
-}
-
-/// 全局 timerfd 槽位表 (静态存储, 生命周期与内核一致)
-static TFD_SLOTS: [TimerFdSlot; TFD_MAX_SLOTS] = [const { TimerFdSlot::new() }; TFD_MAX_SLOTS];
-
-/// 槽位控制面锁 (只保护 set/get/free 的复合操作; 回调直接不取, 但其
-/// `epoll_pwake` 间接路径可能取, 故等待在途回调前必须放锁)
-static TFD_LOCK: Mutex<()> = Mutex::new(());
-
-// ============================================================================
-// 槽位 API (供 `TimerFdFile` 对象调用)
-// ============================================================================
-
-/// 分配一个空闲槽位并初始化其 `HrTimer`; 表满或槽位初始化失败返回 `None`.
-pub fn alloc_slot() -> Option<usize> {
-    let _guard = TFD_LOCK.lock();
-    for (idx, slot) in TFD_SLOTS.iter().enumerate() {
-        if slot.used.load(Ordering::Acquire) {
-            continue;
-        }
-        // `reset` 的运行时拒绝只在槽位仍有活动 timer 时发生; 这种槽位不可
-        // 重新分配 (否则会覆盖在途回调的对象), 跳过继续找下一个空闲槽.
-        if slot.reset().is_err() {
-            continue;
-        }
-        slot.used.store(true, Ordering::Release);
-        return Some(idx);
-    }
-    None
-}
-
-/// 登记唤醒用数值 fd (对象完成 `OpenFileTable` + per-process fd 表挂载后调用).
-pub fn set_wake_fd(idx: usize, fd: i32) {
-    let _guard = TFD_LOCK.lock();
-    if let Some(slot) = TFD_SLOTS.get(idx) {
-        slot.wake_fd.store(fd, Ordering::Release);
-    }
-}
-
-/// 设置定时器, 返回设置前的 `(interval_ns, remaining_ns)`。
-///
-/// `value_ns == 0` 表示 disarm (与 Linux 一致). `abstime == true` 时
-/// `value_ns` 视为绝对到期时刻 (与 `hrtimer_clock_read()` 同一单调时基).
-///
-/// # Errors
-///
-/// 槽位无效返回 [`SetTimeError::InvalidSlot`]；底层 timer 无法初始化或入队返回
-/// [`SetTimeError::TimerUnavailable`]。后者的已置 armed 状态会回滚，不留半武装槽位。
-pub fn set_time(
-    idx: usize,
-    value_ns: u64,
-    interval_ns: u64,
-    abstime: bool,
-) -> Result<TimerTime, SetTimeError> {
-    let Some(slot) = TFD_SLOTS.get(idx) else {
-        return Err(SetTimeError::InvalidSlot);
-    };
-    // 控制面占位必须在取 TFD_LOCK 之前: 若先持表锁再等 control_busy, 另一
-    // set_time/free_slot 可能正持 control_busy 等表锁 → AB-BA.
-    let _busy = SlotGuard::acquire(slot);
-    let mut guard = TFD_LOCK.lock();
-    if !slot.used.load(Ordering::Acquire) {
-        return Err(SetTimeError::InvalidSlot);
-    }
-
-    let now = hrtimer_clock_read();
-    let remaining = if slot.armed.load(Ordering::Acquire) {
-        slot.timer.expiry_ns().saturating_sub(now)
-    } else {
-        0
-    };
-    let old = (slot.interval_ns.load(Ordering::Acquire), remaining);
-
-    if slot.armed.load(Ordering::Acquire) {
-        // 关键: 放 TFD_LOCK 再等待. 回调虽不取 TFD_LOCK, 但它调用的
-        // epoll_pwake → check_fd_ready → timerfd poll 会取 TFD_LOCK; 持锁等待
-        // 会与该路径形成自死锁. control_busy 保证放锁期间槽位不被释放/复用.
-        drop(guard);
-        hrtimer_cancel(&slot.timer);
-        guard = TFD_LOCK.lock();
-        if !slot.used.load(Ordering::Acquire) {
-            return Err(SetTimeError::InvalidSlot);
-        }
-        slot.armed.store(false, Ordering::Release);
-        slot.arm_seq.store(0, Ordering::Release);
-    }
-    slot.expiry_count.store(0, Ordering::Release);
-
-    if value_ns == 0 {
-        slot.interval_ns.store(0, Ordering::Release);
-        return Ok(old);
-    }
-
-    slot.interval_ns.store(interval_ns, Ordering::Release);
-    // 取消后槽位可能停在 Inactive；try_init 同时在队列锁内拒绝 Pending/Running,
-    // 失败时不得继续 start，也不能留下 armed=true 的半武装状态.
-    if slot.timer.try_init(timerfd_callback).is_err() {
-        slot.armed.store(false, Ordering::Release);
-        slot.arm_seq.store(0, Ordering::Release);
-        return Err(SetTimeError::TimerUnavailable);
-    }
-    let expiry_ns = if abstime {
-        value_ns
-    } else {
-        now.saturating_add(value_ns)
-    };
-    // 先置 armed、arm_seq=0, 再入队: 若回调在 start 返回前抢到该激活, 允许它
-    // 以 seq 认领 (arm_seq==0 + armed 是「新激活尚未回写序号」的唯一窗口).
-    // 回写用 CAS, 避免覆盖回调周期重挂写入的更新序号.
-    slot.arm_seq.store(0, Ordering::Release);
-    slot.armed.store(true, Ordering::Release);
-    match hrtimer_start(&slot.timer, expiry_ns) {
-        StartOutcome::Started(seq) => {
-            let _ = slot
-                .arm_seq
-                .compare_exchange(0, seq, Ordering::Release, Ordering::Relaxed);
-            drop(guard);
-            Ok(old)
-        }
-        StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
-            slot.armed.store(false, Ordering::Release);
-            slot.arm_seq.store(0, Ordering::Release);
-            drop(guard);
-            Err(SetTimeError::TimerUnavailable)
-        }
-    }
-}
-
-/// 读取当前 `(interval_ns, remaining_ns)`; 槽位无效返回 `None`.
-pub fn get_time(idx: usize) -> Option<TimerTime> {
-    let _guard = TFD_LOCK.lock();
-    let slot = TFD_SLOTS.get(idx)?;
-    if !slot.used.load(Ordering::Acquire) {
-        return None;
-    }
-    let remaining = if slot.armed.load(Ordering::Acquire) {
-        slot.timer.expiry_ns().saturating_sub(hrtimer_clock_read())
-    } else {
-        0
-    };
-    Some((slot.interval_ns.load(Ordering::Acquire), remaining))
-}
-
-/// 取出到期次数 (读后清零).
-pub fn take_expiry(idx: usize) -> TakeExpiry {
-    let _guard = TFD_LOCK.lock();
-    let Some(slot) = TFD_SLOTS.get(idx) else {
-        return TakeExpiry::Invalid;
-    };
-    if !slot.used.load(Ordering::Acquire) {
-        return TakeExpiry::Invalid;
-    }
-    let count = slot.expiry_count.swap(0, Ordering::AcqRel);
-    if count == 0 {
-        return TakeExpiry::Empty;
-    }
-    TakeExpiry::Count(count)
-}
-
-/// 查询槽位是否就绪 (到期计数非空); 槽位无效返回 `None`.
-pub fn poll_ready(idx: usize) -> Option<bool> {
-    let _guard = TFD_LOCK.lock();
-    let slot = TFD_SLOTS.get(idx)?;
-    if !slot.used.load(Ordering::Acquire) {
-        return None;
-    }
-    Some(slot.expiry_count.load(Ordering::Acquire) > 0)
-}
-
-/// 释放槽位 (最后一个 fd 引用关闭时调用).
-pub fn free_slot(idx: usize) {
-    let Some(slot) = TFD_SLOTS.get(idx) else {
-        return;
-    };
-    let _busy = SlotGuard::acquire(slot);
-    let used = {
-        let _guard = TFD_LOCK.lock();
-        slot.used.load(Ordering::Acquire)
-    };
-    if used {
-        // 放 TFD_LOCK 等待: 回调经 epoll_pwake → timerfd poll 会取 TFD_LOCK.
-        hrtimer_cancel(&slot.timer);
-        let _guard = TFD_LOCK.lock();
-        // 取消成功后 reset 理论上必成功。若运行时仍拒绝（有在途回调/状态未收敛），
-        // 宁可把槽位保持 used 泄漏，也不能把它交给新对象覆盖活动 timer.
-        let _ = slot.reset();
+        self.ctx.control_busy.store(false, Ordering::Release);
     }
 }
 
@@ -355,73 +327,41 @@ pub fn free_slot(idx: usize) {
 
 /// timerfd 定时器回调
 ///
-/// 在中断上下文执行: 代际校验 → 递增到期计数 → 周期重挂 (锁内) → 锁外
-/// 唤醒 epoll. 槽位经 `timer` 地址在静态槽位表中反查 (不依赖裸指针偏移假设).
+/// 在中断上下文执行: 代际校验 → 累计 ticks → 置 `armed=false` → 唤醒 epoll.
+/// **不做周期重挂**; 周期续期由 [`TimerFdContext::take_expiry`] 在 read 路径完成.
 ///
-/// `seq` 为本次激活的入队序号. 槽位释放/复用或重新设时后, 旧激活的迟到
-/// 回调携带的序号与 `arm_seq` 不一致, 直接丢弃 — 不得计入新实例.
+/// `seq` 为本次激活的入队序号; 与 `generation` 不一致说明是旧激活的迟到回调,
+/// 直接丢弃. `generation == 0 && armed` 是新激活在 `hrtimer_start` 返回前被
+/// 回调抢到的唯一窗口, 允许认领该 seq.
 fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart {
-    // 槽位表是静态数组, 回调只做指针反查, 不取 TFD_LOCK: 控制面可持锁等待
-    // 在途回调 (hrtimer_cancel), 不会与回调形成 AB-BA.
-    let Some(slot) = TFD_SLOTS
-        .iter()
-        .find(|s| core::ptr::eq(&raw const s.timer, timer))
-    else {
-        return HrTimerRestart::OneShot;
-    };
+    let timer_ptr = core::ptr::from_ref(timer);
+    // SAFETY: `TimerFdContext` 是 `#[repr(C)]` 且 `timer` 为首字段, 故 `&HrTimer`
+    // 与宿主 context 同地址; context 由 `Arc` 持有, `release` 的 shutdown 会等待
+    // 本回调退出后才允许 Arc 归零, 因此回调期间该地址始终有效.
+    let ctx = unsafe { &*timer_ptr.cast::<TimerFdContext>() };
 
-    // 代际校验: 槽位释放/复用或重新设时后, 旧激活的迟到回调直接丢弃.
-    // `arm_seq==0 && armed` 是新激活在 `hrtimer_start` 返回前被回调抢到的
-    // 唯一窗口 (见 `set_time`): 认领该 seq, 不丢首个 tick.
-    if !slot.used.load(Ordering::Acquire) {
+    if !ctx.armed.load(Ordering::Acquire) {
         return HrTimerRestart::OneShot;
     }
-    let arm_seq = slot.arm_seq.load(Ordering::Acquire);
-    if arm_seq != 0 && arm_seq != seq {
+    let generation = ctx.generation.load(Ordering::Acquire);
+    if generation != 0 && generation != seq {
         return HrTimerRestart::OneShot;
     }
-    if arm_seq == 0 {
-        if !slot.armed.load(Ordering::Acquire) {
-            return HrTimerRestart::OneShot;
-        }
-        let _ = slot
-            .arm_seq
+    if generation == 0 {
+        let _ = ctx
+            .generation
             .compare_exchange(0, seq, Ordering::Release, Ordering::Relaxed);
     }
 
-    slot.expiry_count.fetch_add(1, Ordering::Relaxed);
-    let wake_fd = slot.wake_fd.load(Ordering::Acquire);
-    let interval_ns = slot.interval_ns.load(Ordering::Acquire);
+    // 先收敛状态、记录到期时刻, 再发布 ticks: read 路径只在看到 ticks 后才重挂,
+    // 因此不会与回调写 armed/generation/last_expiry 竞争.
+    let last_expiry = ctx.timer.expiry_ns();
+    ctx.last_expiry_ns.store(last_expiry, Ordering::Release);
+    ctx.armed.store(false, Ordering::Release);
+    ctx.generation.store(0, Ordering::Release);
+    ctx.ticks.fetch_add(1, Ordering::Release);
 
-    if interval_ns == 0 {
-        // 单次定时器到期后自动解除 armed
-        slot.armed.store(false, Ordering::Release);
-        slot.arm_seq.store(0, Ordering::Release);
-    } else {
-        // 周期定时器: 相对原到期时刻推进, 落后于当前时刻则从当前时刻重新计时.
-        // 回调内自重挂 (hrtimer 允许), 并回写新激活序号供下一次回调校验.
-        let now = hrtimer_clock_read();
-        let next = timer.expiry_ns().saturating_add(interval_ns);
-        let next = if next <= now {
-            now.saturating_add(interval_ns)
-        } else {
-            next
-        };
-        let restart = hrtimer_start(timer, next);
-        match restart {
-            StartOutcome::Started(seq) => {
-                slot.armed.store(true, Ordering::Release);
-                slot.arm_seq.store(seq, Ordering::Release);
-            }
-            StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
-                // 重挂失败（尤其 shutdown）: 必须解除 armed，不能留下
-                // “读路径以为仍会到期”的假状态.
-                slot.armed.store(false, Ordering::Release);
-                slot.arm_seq.store(0, Ordering::Release);
-            }
-        }
-    }
-
+    let wake_fd = ctx.wake_fd.load(Ordering::Acquire);
     if wake_fd >= 0 {
         crate::privileged::syscall::epoll::epoll_pwake(wake_fd);
     }
@@ -437,47 +377,49 @@ fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart {
 mod tests {
     use super::*;
 
-    /// 取槽位内 `HrTimer` 的裸指针 (回调经静态数组反查槽位).
-    fn timer_ptr(idx: usize) -> *const HrTimer {
-        core::ptr::from_ref(&TFD_SLOTS[idx].timer)
+    fn mark_armed(ctx: &TimerFdContext, interval_ns: u64, generation: u64) {
+        ctx.interval_ns.store(interval_ns, Ordering::Release);
+        ctx.last_expiry_ns.store(0, Ordering::Release);
+        ctx.armed.store(true, Ordering::Release);
+        ctx.generation.store(generation, Ordering::Release);
     }
 
     #[test]
-    fn stale_callback_after_slot_reuse_is_ignored() {
-        let idx = alloc_slot().expect("分配槽位");
-        let old_seq = 7_u64;
-        {
-            let _guard = TFD_LOCK.lock();
-            let slot = &TFD_SLOTS[idx];
-            slot.armed.store(true, Ordering::Release);
-            slot.interval_ns.store(0, Ordering::Release);
-            slot.arm_seq.store(old_seq, Ordering::Release);
-        }
-        // SAFETY: 指针指向静态槽位表内的 `HrTimer`, 表生命周期覆盖进程;
-        // 本测试独占该槽位, 期间无并发释放.
-        let timer = unsafe { &*timer_ptr(idx) };
-        let _ = timerfd_callback(timer, old_seq);
-        assert!(matches!(take_expiry(idx), TakeExpiry::Count(1)));
+    fn callback_accumulates_ticks_without_rearming() {
+        let ctx = TimerFdContext::create();
+        mark_armed(&ctx, 5_000_000, 7);
+        let _ = timerfd_callback(&ctx.timer, 7);
+        assert!(ctx.poll_ready(), "回调应累计 ticks");
+        assert_eq!(ctx.take_expiry(), TakeExpiry::Count(1), "read 应消费 ticks");
+        assert!(!ctx.poll_ready(), "回调不得自行重挂并持续产生 tick");
+        ctx.release();
+    }
 
-        // 释放并复用槽位 (代际变更)
-        free_slot(idx);
-        let new_seq = 8_u64;
-        {
-            let _guard = TFD_LOCK.lock();
-            let slot = &TFD_SLOTS[idx];
-            slot.used.store(true, Ordering::Release);
-            slot.armed.store(true, Ordering::Release);
-            slot.interval_ns.store(0, Ordering::Release);
-            slot.arm_seq.store(new_seq, Ordering::Release);
+    #[test]
+    fn stale_generation_is_ignored() {
+        let ctx = TimerFdContext::create();
+        mark_armed(&ctx, 0, 9);
+        let _ = timerfd_callback(&ctx.timer, 8);
+        assert!(!ctx.poll_ready(), "旧激活回调不得计入");
+        let _ = timerfd_callback(&ctx.timer, 9);
+        assert!(ctx.poll_ready(), "当前激活回调应计入");
+        ctx.release();
+    }
+
+    #[test]
+    fn container_of_address_matches_context() {
+        let ctx = TimerFdContext::create();
+        let ctx_addr = Arc::as_ptr(&ctx) as *const u8;
+        let timer_addr = (&raw const ctx.timer).cast::<u8>();
+        assert_eq!(ctx_addr, timer_addr, "timer 必须是 context 首字段");
+    }
+
+    #[test]
+    fn context_count_is_not_capped_to_static_slots() {
+        let mut contexts = alloc::vec::Vec::new();
+        for _ in 0..32 {
+            contexts.push(TimerFdContext::create());
         }
-        // SAFETY: 同上, 静态槽位指针在整个测试期间有效.
-        let timer = unsafe { &*timer_ptr(idx) };
-        // 旧代际的迟到回调不得计入新实例
-        let _ = timerfd_callback(timer, old_seq);
-        assert!(matches!(take_expiry(idx), TakeExpiry::Empty));
-        // 新代际回调正常计数
-        let _ = timerfd_callback(timer, new_seq);
-        assert!(matches!(take_expiry(idx), TakeExpiry::Count(1)));
-        free_slot(idx);
+        assert_eq!(contexts.len(), 32, "timerfd 数量不再受 16 静态槽位限制");
     }
 }

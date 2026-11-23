@@ -52,24 +52,24 @@
 
 当前实现已经完成了取消协议的语义收口，但承载结构仍是单队列 + 静态槽位的中间态：
 
-| 部件 | 当前形态 | 终态差距 |
+| 部件 | 当前形态（条目 1–4 已落地） | 剩余差距 |
 |---|---|---|
-| 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化；后续只随 `TimerBase` 迁移调整锁域，不再改调用方语义 |
-| 队列 | 单一全局 `HRTIMER_QUEUE: Mutex<Vec<TimerEntry>>`，按到期时间排序 | 改为每 CPU 一个 `TimerBase`，队列操作不再全局串行 |
-| 队列操作 | `Vec` 的 `retain` / 插入 / 排序，入队和分发都有 O(n) 扫描 | 改为侵入式有序结构，入队/出队 O(log n)，回调路径不分配 |
-| 定时器状态 | `Uninit` / `Inactive` / `Pending` / `Running` / `Shutdown` 五态，无独立 `closed` 旁路 | 已落地；剩余是迁移到 per-CPU `TimerBase` 后的状态发布约束 |
-| 生命周期 | `in_flight` + 调用方保活契约；静态槽位保证地址稳定 | 取消后即可释放；对象所有权 + 不可移动契约承担生命周期 |
-| timerfd 槽位 | `TFD_SLOTS: [TimerFdSlot; 16]`，全局 `TFD_LOCK`，回调线性反查 | 改为 per-context `Arc` 对象，回调 `container_of` O(1) 定位 |
-| timerfd 周期 | 回调内直接 `hrtimer_start` 自重挂 | 回调只累加 ticks 并唤醒；周期重挂移到 `read` 路径 |
-| timerfd 唤醒 | 保存单个数值 `wake_fd`，`epoll_pwake(fd)` | 改为按 epoll 兴趣/对象注册唤醒，避免 fd 复用误唤醒；单一 fd 无法覆盖多 epoll 兴趣 |
-| tickless | `get_next_timer_expiry(_cpu_id)` 忽略 CPU，取全局最早到期 | 改为每 CPU 查询自己的 `TimerBase`，各自装填下一次中断 |
-| 多核可用性 | 所有 CPU 共用一把 `HRTIMER_QUEUE` 锁和一个最早到期读数 | 民用多核下必须 per-CPU；否则核间竞争、错核唤醒和空闲功耗都不可接受 |
-| 锁域 | `TFD_LOCK`（控制面）+ `HRTIMER_QUEUE`（全局队列） | `TFD_CTX` 控制面 + 每 CPU `TIMER_BASE`，不再有全局定时器锁 |
+| 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化，不再改调用方语义 |
+| 队列 | `TIMER_BASES: [TimerBase; MAX_CPUS]`，每 CPU 一把 `IrqSpinLock`，绑定在首次 `start` 的 CPU | 条目 5 增加 `Quiescing` 与 offline 强制迁移 |
+| 队列操作 | 侵入式红黑树 `RbNode` / `RbTree`，入队/出队/取最早 O(log n)，分发路径不分配 | 已落地 |
+| 定时器状态 | `Uninit` / `Inactive` / `Pending` / `Running` / `Shutdown` 五态，无独立 `closed` 旁路 | 已落地 |
+| 生命周期 | `in_flight` + `Arc<TimerFdContext>`；`release` 先 shutdown 等待在途回调，`Drop` 兜底 | 已落地；条目 5 只调整迁移期瞬态 |
+| timerfd 对象 | `Arc<TimerFdContext>`，`HrTimer` 首字段，回调 `container_of` O(1)，无 16 槽上限 | 已落地 |
+| timerfd 周期 | 回调只累计 ticks、置 `armed=false` 并唤醒；`read` 消费 ticks 后按 `last_expiry + interval` 重挂 | 已落地；未读不风暴 |
+| timerfd 唤醒 | 仍保存单个数值 `wake_fd`，`epoll_pwake(fd)`；仅登记创建时首个 fd | 条目 6 改为 epoll 兴趣/对象 token，覆盖 dup 与多 epoll |
+| tickless | `get_next_timer_expiry(cpu_id)` 只查该 CPU 的 `TimerBase` | 已落地 |
+| 多核可用性 | 每 CPU base 独立锁与树；`MAX_CPUS = 1024` 启动校验 | 条目 5 的 CPU 上下线协议仍缺 |
+| 锁域 | 每 CPU `TIMER_BASE.base_lock`；timerfd 用 per-context 原子 `control_busy` 占位，不再有全局 `TFD_LOCK` | 条目 6 登记 `TFD_CTX` 锁类并完成唤醒 token 化 |
 
 当前代码事实来源：
 
-- `HrTimer` 结构、三态、`in_flight`、`closed`、全局队列与取消协议见 [hrtimer.rs](../../src/kernel/privileged/timer/hrtimer.rs)。
-- `TFD_SLOTS` / `TFD_LOCK` / 回调重挂见 [timerfd.rs](../../src/kernel/privileged/syscall/timerfd.rs)。
+- `HrTimer` 五态、`in_flight`、`TIMER_BASES`、侵入式红黑树与取消协议见 [hrtimer.rs](../../src/kernel/privileged/timer/hrtimer.rs)。
+- `TimerFdContext` / `container_of` 回调 / read 路径重挂见 [timerfd.rs](../../src/kernel/privileged/syscall/timerfd.rs)。
 - timerfd 对象层与 read/poll 语义见 [functions/fs/timerfd.rs](../../src/kernel/functions/fs/timerfd.rs)。
 - tickless 取下一次到期见 [tickless.rs](../../src/kernel/functions/timer/tickless.rs)。
 - 定时器中断统一入口见 [tick.rs](../../src/kernel/privileged/timer/tick.rs)。
@@ -79,7 +79,7 @@
 无论底层结构如何替换，以下契约不再改变：
 
 1. **取消返回即可释放**：`hrtimer_cancel` 返回后，回调不再访问该 timer；`try_cancel` 返回 `Cancelled` 时，队列不再持有该 timer 指针。`Busy` 只表示“尚未安全”，不是“取消失败”。
-2. **取消等待不持锁**：等待在途回调期间，不持队列锁、不持调用方控制锁，也不持回调可能需要的锁。
+2. **取消等待不阻塞回调**：等待在途回调期间不持队列锁，也不持回调可能获取的任何锁；控制面只允许保留回调不取的占位（如 `control_busy`），用于防止对象被并发释放，不得用它串行化回调路径。
 3. **回调硬中断化**：hrtimer 回调只在硬中断上下文执行，不睡眠、不分配、不做长任务；软定时器不在本终态内。
 4. **CPU 亲和**：timer 在首次 `start` 时绑定到当前 CPU；运行期间不迁移。取消可以从任意 CPU 发起。
 5. **无分配队列**：入队、出队、分发、周期重挂都不走堆分配；`HrTimer` 的链节点内嵌在对象里。
@@ -289,23 +289,24 @@ timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，�
 timerfd 不再有全局槽位表和槽位下标。终态对象：
 
 ```rust
-struct TimerFdContext {
+struct TimerFdContext {             // 条目 4 已落地形态
     timer: HrTimer,                 // 必须是首字段，便于 container_of
     ticks: AtomicU64,
     interval_ns: AtomicU64,
     armed: AtomicBool,
     generation: AtomicU64,
-    waker: WakeRegistration,        // 不是数值 fd
-    waiters: WaitQueue,
+    last_expiry_ns: AtomicU64,       // read 重挂基准
+    control_busy: AtomicBool,        // 控制面占位，回调与 poll 不取
+    wake_fd: AtomicI32,              // 条目 4 保留数值 fd；条目 6 换 waker
+    // 条目 6 追加：waker: WakeRegistration, waiters: WaitQueue
 }
 
 struct TimerFdFile {
-    ctx: Arc<TimerFdContext>,
-    nonblock: bool,
+    ctx: Arc<TimerFdContext>,       // nonblock 由 OpenFile 单点持有
 }
 ```
 
-`TimerFdFile` 挂在 `OpenFileTable`，fd 由 per-process `FdTable` 分配；对象生命周期由 `Arc` 与 fd 引用计数承担。`release` 只在最后一个 fd 引用关闭时调用，先 `cancel`/`shutdown`，确认回调退出后再释放 `Arc`。
+`TimerFdFile` 挂在 `OpenFileTable`，fd 由 per-process `FdTable` 分配；对象生命周期由 `Arc` 与 fd 引用计数承担。`release` 只在最后一个 fd 引用关闭时调用，先 `hrtimer_shutdown`，确认回调退出后再释放 `Arc`。
 
 回调通过 `container_of` 从 `HrTimer` 指针定位 `TimerFdContext`，不再线性扫描静态数组。`HrTimer` 在 `TimerFdContext` 中地址稳定；`TimerFdContext` 一旦发布到 fd 表，不允许移动。
 
