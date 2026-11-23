@@ -76,19 +76,28 @@ for (;;) {
 关闭位让 `dispatch_expired` 的 Periodic 分支与回调自重挂都失效。测试覆盖三态与
 「取消返回后立即释放 timer」的 UAF 面。
 
-状态：[]
+状态：[x] 已落地。`hrtimer_start*` 统一返回入队序号，`try_cancel` 三态 +
+阻塞 `cancel`（锁外等待回环）+ `shutdown` 关闭位；`in_flight` 阻止同一 timer
+两轮回调重叠。host 侧覆盖三态、关停后不复活、真实线程等待；kernel host 611 passed。
 
 ### 条目 2・timerfd 回调叶子化
 
-描述：把 `timerfd_callback` 对 `TFD_TABLE` 的依赖去掉，或把周期重挂移出回调，
-使回调满足「不取取消方锁」的叶子约束。
+描述：把 `timerfd_callback` 对 `TFD_TABLE` 的依赖去掉，使回调直接不取控制面锁，
+并保证「取消等待」不与其唤醒路径成环。
 
-方案：优先按 Linux 形态改 —— 回调只置原子 `ticks` / `expired` 并唤醒等待者，
-周期重挂移到 `set_time` / `read` 路径；`set_time` 的取消改为
-「持表锁 try → 失败放锁等待 → 回环」。需要同步收紧槽位代际校验与 `arm_seq` 语义，
-并补「取消与回调交错」「槽位复用」两条并发回归。
+方案：最终采用**静态槽位数组 + 原子字段 + 指针反查**：`TFD_SLOTS` 保证 `HrTimer`
+地址稳定，回调按 `&slot.timer` 反查槽位，只做 `expiry_count` 累加、`arm_seq` 校验、
+周期重挂与 `epoll_pwake`；`TFD_LOCK` 只保护控制面复合操作。`set_time`/`free_slot`
+用 `control_busy` 占位，**先放 `TFD_LOCK` 再 `hrtimer_cancel`**，返回后重新取锁复查
+并写状态，避免「回调 → `epoll_pwake` → timerfd `poll` → `TFD_LOCK`」的自死锁。
+`arm_seq` 以 `0` 表示「已激活但序号未回写」，`set_time` 用 `compare_exchange(0, seq)`
+避免覆盖回调周期重挂写入的新序号。
 
-状态：[]
+未采用 Linux 的「read 路径重挂」：本项目 `read` 非阻塞且无等待队列，回调内重挂只
+取 `HRTIMER_QUEUE`，而取消方等待时已释放队列锁，已足以消除 AB-BA。
+
+状态：[x] 已落地。`TFD_TABLE` 已删除；回调直接不取 `TFD_LOCK`（形状锁静态断言）；
+槽位复用/迟到回调/arm_seq 竞态回归通过；timerfd 单测 6 passed。
 
 ### 条目 3・锁序登记与审计腿
 
@@ -98,4 +107,7 @@ for (;;) {
 不得位于持锁临界区」补静态判据（或 host 形状锁），并跑
 `scripts/audit_deadlock_matrix.py` 与 full 档审计。
 
-状态：[]
+状态：[x] 已落地。`lock_class_order.json` 登记 `TFD_LOCK`(11) / `HRTIMER_QUEUE`(14)；
+`ref-lock-order.md` 同步注记「等待前放锁」；`fd_object_model_test` 增回调不取
+`TFD_LOCK` 形状锁；死锁矩阵 0 问题、未分类 864 vs 基线 882、新增 0；
+`ci/audit.sh full` 17/17 腿 + QEMU 2/2 通过，静态基线按收缩重录 (864 处 / 194 项)。

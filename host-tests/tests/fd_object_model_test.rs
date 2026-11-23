@@ -1480,20 +1480,35 @@ fn sendfile_has_no_stale_uds_numeric_range() {
 
 #[test]
 fn stale_hrtimer_callbacks_are_gated_by_activation_generation() {
-    // 槽位复用后, 旧激活的迟到回调必须被代际序号挡掉; 周期重挂须在
-    // TFD_TABLE 锁域内完成 (与 set_time 的重设互斥).
+    // 槽位复用后, 旧激活的迟到回调必须被代际序号挡掉; 回调不得取 TFD_LOCK
+    // (否则与持锁等待在途回调的 set_time 形成 AB-BA), 槽位经静态数组反查.
     let timerfd = read_file("privileged/syscall/timerfd.rs");
     assert!(
         timerfd.contains("fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart"),
         "timerfd 回调必须接收激活序号"
     );
     assert!(
-        timerfd.contains("slot.arm_seq != seq"),
-        "回调必须按槽位激活序号做代际校验"
+        timerfd.contains("arm_seq != 0 && arm_seq != seq"),
+        "回调必须按槽位激活序号做代际校验（arm_seq==0 仅认领新激活）"
     );
     assert!(
-        timerfd.contains("slot.arm_seq = timer.activation_seq()"),
-        "设时/重挂必须回写当前激活序号"
+        timerfd.contains("slot.arm_seq.store(new_seq, Ordering::Release)"),
+        "周期重挂必须回写新激活序号"
+    );
+    assert!(
+        timerfd.contains("compare_exchange(0, seq"),
+        "设时路径必须以 CAS 回写当前激活序号，且不覆盖回调重挂"
+    );
+    // 形状锁: 回调不得取控制面锁, 否则 set_time 持锁等待在途回调时 AB-BA.
+    let (_, callback_body) = braced_block_after(&timerfd, "fn timerfd_callback", 0)
+        .expect("timerfd_callback 必须是可解析的函数体");
+    assert!(
+        !callback_body.contains("TFD_LOCK.lock()"),
+        "timerfd_callback 不得取 TFD_LOCK (取消方可能在持锁等待它)"
+    );
+    assert!(
+        callback_body.contains("TFD_SLOTS"),
+        "timerfd_callback 必须经静态槽位数组反查, 不依赖表锁"
     );
     let hrtimer = read_file("privileged/timer/hrtimer.rs");
     assert!(

@@ -7,7 +7,7 @@
 //! timerfd 不再是"全局 fd 编号区间 [1160, 1176)"的位图模型, 而是
 //! [`TimerFdFile`] 对象挂在全局 `OpenFileTable`, 用户 fd 由 per-process
 //! `FdTable` 分配 (与 VFS / socket / UDS / inotify fd 同源). 对象只持有
-//! privileged 槽位表 (`privileged::syscall::timerfd::TFD_TABLE`) 的**槽位
+//! privileged 槽位表 (`privileged::syscall::timerfd::TFD_SLOTS`) 的**槽位
 //! 下标**; 槽位生灭由对象 `release()` 驱动: 最后一个 fd 引用关闭 →
 //! `release()` → 槽位复位. 由此与其它 fd 对象同构地获得:
 //!
@@ -23,9 +23,9 @@
 //! ## 槽位归属
 //!
 //! `HrTimer` 与到期回调留在 privileged 静态槽位表 (见该模块文档的 UAF
-//! 论证): `hrtimer_cancel` 异步生效, `HrTimer` 不能随堆上对象释放. 本模块
-//! 只持槽位下标, 经 safe 槽位 API (分配 / 设时 / 取到期 / 轮询 / 释放)
-//! 驱动机制面.
+//! 论证): 回调经静态数组指针反查槽位; 即使 `hrtimer_cancel` 已阻塞化,
+//! 静态槽位仍保证 `HrTimer` 地址稳定, 不随堆上对象释放. 本模块只持槽位
+//! 下标, 经 safe 槽位 API (分配 / 设时 / 取到期 / 轮询 / 释放) 驱动机制面.
 //!
 //! ## 语义 (Linux timerfd)
 //!
@@ -134,7 +134,7 @@ fn spec_ns(sec: i64, nsec: i64) -> Result<u64, Errno> {
 
 /// timerfd fd 对象 — 仅持 privileged 槽位表下标
 pub struct TimerFdFile {
-    /// `TFD_TABLE` 槽位下标
+    /// `TFD_SLOTS` 槽位下标
     idx: usize,
 }
 

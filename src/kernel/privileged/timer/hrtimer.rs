@@ -40,11 +40,14 @@
 //! # Safety
 //!
 //! - HrTimer 必须在有效内存中 (通常嵌入其他结构体), 生命周期覆盖 `Pending` /
-//!   `Running` 两个状态. `hrtimer_cancel` 在队列锁内真出队, 取消后队列不再持有该
-//!   timer; 但取消时已开始执行的回调仍会跑完 (它持有 `&HrTimer`), 调用方须等其
-//!   退出后再释放内存. 仓内生产定时器一律嵌在静态槽位, 该窗口不可达.
+//!   `Running` 两个状态. `hrtimer_try_cancel` 在队列锁内真出队后即可返回; 若回调
+//!   已被收集/正在执行, 它返回 `Busy`, 此时调用方仍须保活. `hrtimer_cancel`
+//!   会等到在途回调退出后返回, 返回即可释放 timer 内存.
+//! - **阻塞取消的锁域约束**: 等待期间 `hrtimer_cancel` 不持队列锁, 但调用方不得
+//!   持有回调所需的任何锁 (否则回调无法前进 ⇒ 死锁). 不得在自身回调内、中断
+//!   上下文或关中断上下文调用 `hrtimer_cancel`; 这些场景用 `hrtimer_try_cancel`.
 //! - 回调在中断上下文执行, 不可睡眠
-//! - 回调内不得再取消自身并等待其退出 (框架不提供等待语义, 也不依赖回调的锁域)
+//! - 回调内不得再取消自身并等待其退出
 
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
@@ -88,6 +91,17 @@ pub enum HrTimerState {
     Running,
 }
 
+/// 非阻塞取消结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// 本次调用真正摘除了一个 Pending 激活 (返回即可释放)
+    Cancelled,
+    /// 没有待取消的激活 (已 Inactive, 或定时器从未入队)
+    NotPending,
+    /// 回调已被收集/正在执行; 不能安全释放, 须等待 `in_flight` 清零后重试
+    Busy,
+}
+
 // ============================================================================
 // HrTimer — 定时器对象 (嵌入用户结构体)
 // ============================================================================
@@ -103,8 +117,8 @@ pub enum HrTimerState {
 /// - `expiry_ns` / `interval_ns` / `callback` / `state` / `queue_seq` 均为原子量,
 ///   支持跨 CPU 读写; `init` 只接收 `&self`, 不再要求调用方独占引用
 /// - 入队/出队/收集由全局 spinlock 保护; 回调在锁释放后执行 (允许回调内重挂)
-/// - 取消在队列锁内真出队; 若回调已开始执行 (`Running`), 它仍会跑完 —— 调用方
-///   须在该窗口内保持 `HrTimer` 所在内存有效
+/// - 取消在队列锁内真出队; 若回调已被收集/正在执行 (`in_flight`), `try_cancel`
+///   返回 `Busy`, `cancel` 等待其在途回调退出后返回
 pub struct HrTimer {
     /// 绝对到期时间 (纳秒)
     expiry_ns: AtomicU64,
@@ -116,6 +130,10 @@ pub struct HrTimer {
     state: AtomicU64, // 编码为 HrTimerState 的 u64
     /// 队列内序号 (用于快速定位, 0 = 未入队)
     queue_seq: AtomicU64,
+    /// 是否已被收集/回调在途 (dispatch 退出前为 true; 取消方据此判定 Busy)
+    in_flight: AtomicBool,
+    /// shutdown 关闭位: 置位后 `start` 拒绝入队, 回调自重挂/Periodic 重挂失效
+    closed: AtomicBool,
 }
 
 impl HrTimer {
@@ -130,6 +148,8 @@ impl HrTimer {
             callback: AtomicUsize::new(0),
             state: AtomicU64::new(HrTimerState::Inactive as u64),
             queue_seq: AtomicU64::new(0),
+            in_flight: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -147,6 +167,7 @@ impl HrTimer {
         self.state
             .store(HrTimerState::Inactive as u64, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
+        self.closed.store(false, Ordering::Release);
     }
 
     /// 读取当前回调 (0 = 未设置 ⇒ `noop_callback`)
@@ -284,8 +305,9 @@ pub fn is_hrtimer_ready() -> bool {
 
 /// 启动定时器 (绝对时间)
 ///
-/// 将定时器以绝对到期时间 `expiry_ns` 入队。
-/// 如果定时器已在队列中, 先移除旧条目再重新入队。
+/// 将定时器以绝对到期时间 `expiry_ns` 入队。若定时器已在队列中, 先移除旧条目
+/// 再重新入队。返回本次激活的入队序号; `0` 表示框架未就绪或定时器已
+/// `hrtimer_shutdown` (未入队)。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象 (必须已 init)
@@ -296,30 +318,27 @@ pub fn is_hrtimer_ready() -> bool {
 /// 调用方必须保证:
 /// - `timer` 在回调触发前保持有效内存
 /// - 回调在队列锁释放后执行, 允许在回调内调用本函数 (timerfd 周期路径)
-pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
+pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> u64 {
     if !HRTIMER_READY.load(Ordering::Acquire) {
-        return;
+        return 0;
     }
 
     let seq = QUEUE_SEQ.fetch_add(1, Ordering::Relaxed);
+
+    let mut queue = HRTIMER_QUEUE.lock();
+
+    // shutdown 与 start 的关闭位判定同在队列锁内: 要么 start 先入队、shutdown
+    // 随后摘除; 要么 shutdown 先置位、start 看到关闭位后不再入队.
+    if timer.closed.load(Ordering::Acquire) {
+        return 0;
+    }
+
     timer.expiry_ns.store(expiry_ns, Ordering::Release);
     timer.queue_seq.store(seq, Ordering::Release);
     timer.set_state(HrTimerState::Pending);
 
-    let mut queue = HRTIMER_QUEUE.lock();
-
-    // 移除同一 timer 的旧条目 (seq 不同则跳过)
-    queue.retain(|entry| {
-        if core::ptr::eq(entry.timer.as_ptr(), timer) {
-            // 同一个 timer, 检查 seq 是否匹配
-            // SAFETY: `entry.timer` 是插入时固定的 `NonNull<HrTimer>` (回调前保持有效);
-            // 本处只读其 `queue_seq` 原子字段.
-            let old_seq = unsafe { (*entry.timer.as_ptr()).queue_seq.load(Ordering::Acquire) };
-            old_seq != seq
-        } else {
-            true
-        }
-    });
+    // 移除同一 timer 的旧条目 (该 timer 的所有旧激活都失效)
+    queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
 
     // 按到期时间插入 (保持升序)
     let insert_pos = queue
@@ -338,52 +357,108 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) {
         core::ptr::NonNull::new_unchecked(core::ptr::from_ref::<HrTimer>(timer).cast_mut())
     };
     queue.insert(insert_pos, TimerEntry { timer: ptr, seq });
+
+    seq
 }
 
 /// 启动定时器 (相对时间)
 ///
-/// 便捷接口: 从当前时间起延迟 `delay_ns` 纳秒后触发。
+/// 便捷接口: 从当前时间起延迟 `delay_ns` 纳秒后触发。返回入队序号, `0` = 未入队。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象
 /// * `delay_ns` - 延迟时间 (纳秒)
-pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) {
+pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> u64 {
     let now = hrtimer_clock_read();
-    hrtimer_start(timer, now + delay_ns);
+    hrtimer_start(timer, now.saturating_add(delay_ns))
 }
 
 /// 启动周期定时器
 ///
 /// 首次在 `delay_ns` 纳秒后触发, 之后每 `interval_ns` 纳秒触发一次。
+/// 返回入队序号, `0` = 未入队。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象
 /// * `delay_ns` - 首次延迟 (纳秒)
 /// * `interval_ns` - 周期间隔 (纳秒)
-pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) {
+pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) -> u64 {
     timer.interval_ns.store(interval_ns, Ordering::Release);
-    hrtimer_start_rel(timer, delay_ns);
+    hrtimer_start_rel(timer, delay_ns)
 }
 
-/// 取消定时器
+/// 非阻塞取消定时器
 ///
-/// 在队列锁内真出队: 摘除该定时器的全部队列条目, 并把状态置 Inactive、激活序号
-/// 清零. 返回 true 表示调用时定时器处于 Pending 状态.
+/// 在队列锁内摘除该定时器的全部队列条目:
+/// - `Cancelled`: 确实摘除了 Pending 激活, 返回即可释放 timer 内存
+/// - `NotPending`: 没有待取消的激活
+/// - `Busy`: 回调已被收集/正在执行, 不能安全释放; 等 `in_flight` 清零后重试,
+///   或改用阻塞版 [`hrtimer_cancel`]
 ///
-/// # 在途回调
-///
-/// 若取消时回调已被 `hrtimer_run_queues` 收集并开始执行 (`Running`), 该回调仍会
-/// 跑完 —— 它持有 `&HrTimer`, 且框架无法在不引入调用方锁域依赖的前提下等待其
-/// 退出. 调用方在状态为 Pending/Running 期间不得释放 `HrTimer` 所在内存.
-pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
+/// 与 `hrtimer_run_queues` 的收集互斥: 取消成功后队列不再持有该 timer 的
+/// `NonNull`, 调用方不会在下次 `run_queues` 时被踩到悬垂指针.
+pub fn hrtimer_try_cancel(timer: &HrTimer) -> CancelOutcome {
     let mut queue = HRTIMER_QUEUE.lock();
+
+    if timer.in_flight.load(Ordering::Acquire) {
+        return CancelOutcome::Busy;
+    }
+
     let was_pending = timer.state() == HrTimerState::Pending;
-    // 与 `hrtimer_run_queues` 的收集互斥: 取消成功后队列不再持有该 timer 的
-    // `NonNull`, 调用方不会在下次 run_queues 时被踩到悬垂指针.
     queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
-    timer.set_state(HrTimerState::Inactive);
-    timer.queue_seq.store(0, Ordering::Release);
-    was_pending
+
+    if was_pending {
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+        CancelOutcome::Cancelled
+    } else {
+        CancelOutcome::NotPending
+    }
+}
+
+/// 等待 `timer` 的在途回调退出.
+///
+/// 调用方必须保证当前上下文允许该回调推进 (不持有回调所需锁、中断已开启)。
+fn wait_in_flight(timer: &HrTimer) {
+    while timer.in_flight.load(Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
+}
+
+/// 阻塞取消定时器
+///
+/// 摘除 Pending 激活; 若回调已被收集/正在执行, 先等待其在途回调退出, 再重试。
+/// 返回 `true` 表示最终摘除了一个 Pending 激活 (返回即可释放 timer 内存);
+/// `false` 表示取消时本来就没有待取消的激活。
+///
+/// # 锁域约束
+///
+/// 等待期间不持队列锁, 但调用方不得持有回调所需的锁 —— 否则回调无法前进,
+/// 形成死锁。不得在自身回调内、中断上下文或关中断上下文调用; 这些场景用
+/// [`hrtimer_try_cancel`]。
+pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
+    loop {
+        match hrtimer_try_cancel(timer) {
+            CancelOutcome::Cancelled => return true,
+            CancelOutcome::NotPending => return false,
+            CancelOutcome::Busy => wait_in_flight(timer),
+        }
+    }
+}
+
+/// 关闭定时器: 置关闭位、摘除队列条目并等待在途回调退出.
+///
+/// 关闭位使回调内的自重挂与框架 `Periodic` 重挂都不再入队; 返回后 timer 可安全
+/// 释放或复用 (`init` 会清除关闭位)。与 `hrtimer_cancel` 相同的锁域/上下文约束.
+pub fn hrtimer_shutdown(timer: &HrTimer) {
+    {
+        let mut queue = HRTIMER_QUEUE.lock();
+        timer.closed.store(true, Ordering::Release);
+        queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+    }
+    wait_in_flight(timer);
 }
 
 /// 处理已到期的定时器
@@ -416,17 +491,25 @@ pub fn hrtimer_run_queues() {
             // 承担: 取消已在队列锁内真出队, 故本次收集期间队列条目指向的 timer 仍有效
             // (调用方只在 Pending/Running 窗口外才可释放). `state()` 只读原子字段.
             let state = unsafe { (*timer_ptr).state() };
+            // 上一次回调仍持有该 timer (自重挂后 in_flight 仍为 true): 本轮不得
+            // 再次收集, 否则同一 timer 的两个回调会并发执行.
+            // SAFETY: `timer_ptr` 取自队列条目, 有效期由 `hrtimer_start` / 取消契约
+            // 承担; 本处只读 `in_flight` 原子字段.
+            let in_flight = unsafe { (*timer_ptr).in_flight.load(Ordering::Acquire) };
 
-            if expiry <= now_ns && state == HrTimerState::Pending {
+            if expiry <= now_ns && state == HrTimerState::Pending && !in_flight {
                 // SAFETY: 指针有效性同上; 回调指针经原子量以 Acquire 读出, 与 `init`
                 // 的 Release 写入构成同步 —— 跨核并发 `init` 不再产生数据竞争或
                 // &/&mut 别名 (init 只接收 &self).
                 let cb = unsafe { (*timer_ptr).callback_fn() };
                 let seq = entry.seq;
                 // SAFETY: `set_state` 只对 HrTimer 的原子 state 字段做 store, 指针有效性同由
-                // `hrtimer_start` 契约承担。本处在队列锁内把状态置 Running, 随后的 `queue.retain`
-                // 只保留 Pending 条目 ⇒ 已收集条目同轮出队, 不会被重复收集。
-                unsafe { (*timer_ptr).set_state(HrTimerState::Running) };
+                // `hrtimer_start` 契约承担。本处在队列锁内把状态置 Running、置 in_flight,
+                // 随后的 `queue.retain` 只保留 Pending 条目 ⇒ 已收集条目同轮出队.
+                unsafe {
+                    (*timer_ptr).in_flight.store(true, Ordering::Release);
+                    (*timer_ptr).set_state(HrTimerState::Running);
+                }
                 expired.push((entry.timer, cb, seq));
             } else if state == HrTimerState::Inactive {
                 // 已取消, 跳过
@@ -472,6 +555,15 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
         if timer.activation_seq() == 0 && timer.state() == HrTimerState::Running {
             timer.set_state(HrTimerState::Inactive);
         }
+        timer.in_flight.store(false, Ordering::Release);
+        return;
+    }
+
+    // shutdown 已置关闭位: 不再执行回调, 直接收敛并放行等待方.
+    if timer.closed.load(Ordering::Acquire) {
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+        timer.in_flight.store(false, Ordering::Release);
         return;
     }
 
@@ -488,25 +580,31 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
         HrTimerRestart::Periodic => {
             // 取消可能恰在回调执行期间发生 (置 Inactive): 此时不得重挂, 否则已取消
             // 的定时器会被回调复活. 回调自行重挂后状态为 Pending, 同样不得覆盖.
-            if timer.state() != HrTimerState::Running {
-                return;
-            }
-            let interval = timer.interval_ns.load(Ordering::Acquire);
-            if interval > 0 {
-                let old_expiry = timer.expiry_ns.load(Ordering::Acquire);
-                let new_expiry = old_expiry + interval;
-                // 如果已严重过期, 从当前时间开始
-                let next = if new_expiry <= now_ns {
-                    now_ns + interval
+            if timer.state() == HrTimerState::Running {
+                let interval = timer.interval_ns.load(Ordering::Acquire);
+                if interval > 0 {
+                    let old_expiry = timer.expiry_ns.load(Ordering::Acquire);
+                    let new_expiry = old_expiry.saturating_add(interval);
+                    // 如果已严重过期, 从当前时间开始
+                    let next = if new_expiry <= now_ns {
+                        now_ns.saturating_add(interval)
+                    } else {
+                        new_expiry
+                    };
+                    if hrtimer_start(timer, next) == 0 {
+                        timer.set_state(HrTimerState::Inactive);
+                        timer.queue_seq.store(0, Ordering::Release);
+                    }
                 } else {
-                    new_expiry
-                };
-                hrtimer_start(timer, next);
-            } else {
-                timer.set_state(HrTimerState::Inactive);
+                    timer.set_state(HrTimerState::Inactive);
+                    timer.queue_seq.store(0, Ordering::Release);
+                }
             }
         }
     }
+
+    // 所有路径统一放行等待方; 必须在状态收敛/重挂写入之后 (Release).
+    timer.in_flight.store(false, Ordering::Release);
 }
 
 /// 获取下一个到期时间 (纳秒)
@@ -765,6 +863,100 @@ mod tests {
             !queue_contains(&timer),
             "取消必须在队列锁内真出队 —— 否则调用方释放 timer 后队列持悬垂 NonNull"
         );
+    }
+
+    #[test]
+    fn test_try_cancel_pending_and_busy() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+
+        assert_eq!(
+            hrtimer_try_cancel(&timer),
+            CancelOutcome::Cancelled,
+            "Pending 激活必须被 try_cancel 摘除"
+        );
+        assert!(!queue_contains(&timer));
+        assert_eq!(timer.state(), HrTimerState::Inactive);
+
+        // 模拟 run_queues 已收集、回调在途: try_cancel 必须报 Busy 且不摘队列.
+        timer.init(noop_callback);
+        hrtimer_start(&timer, 0);
+        timer.set_state(HrTimerState::Running);
+        timer.in_flight.store(true, Ordering::Release);
+        assert_eq!(
+            hrtimer_try_cancel(&timer),
+            CancelOutcome::Busy,
+            "在途回调未退出前不得承诺可释放"
+        );
+        timer.in_flight.store(false, Ordering::Release);
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+        let _ = hrtimer_try_cancel(&timer);
+    }
+
+    #[test]
+    fn test_shutdown_rejects_restart_until_init() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        assert!(queue_contains(&timer));
+
+        hrtimer_shutdown(&timer);
+        assert!(!queue_contains(&timer), "shutdown 后队列不得再持有该 timer");
+        assert_eq!(timer.state(), HrTimerState::Inactive);
+        assert_eq!(hrtimer_pending_count(), 0);
+
+        // 关闭位生效: 直接 start 不得复活.
+        assert_eq!(
+            hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
+            0
+        );
+        assert_eq!(hrtimer_pending_count(), 0, "shutdown 后 start 必须被拒绝");
+
+        // init 清除关闭位后可重新使用.
+        timer.init(noop_callback);
+        assert_ne!(
+            hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
+            0
+        );
+        assert!(hrtimer_cancel(&timer));
+        assert_eq!(hrtimer_pending_count(), 0);
+    }
+
+    #[test]
+    fn test_blocking_cancel_waits_for_in_flight() {
+        use std::time::{Duration, Instant};
+
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        // 模拟 run_queues 已收集、回调在途.
+        timer.set_state(HrTimerState::Running);
+        timer.in_flight.store(true, Ordering::Release);
+
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                timer.in_flight.store(false, Ordering::Release);
+                timer.set_state(HrTimerState::Inactive);
+                timer.queue_seq.store(0, Ordering::Release);
+            });
+            // Busy → 等 in_flight 清零 → 重试; 回调已自行收敛为 Inactive.
+            assert!(!hrtimer_cancel(&timer));
+        });
+        assert!(
+            started.elapsed() >= Duration::from_millis(40),
+            "cancel 必须等到在途回调退出, 不得提前返回"
+        );
+        assert!(!queue_contains(&timer));
     }
 
     #[test]
