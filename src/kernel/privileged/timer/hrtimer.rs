@@ -10,8 +10,8 @@
 //! ```text
 //! HrTimer Privileged
 //! ├── hrtimer.rs       核心数据结构与 API
-//! │   ├── HrTimer      定时器对象 (嵌入用户结构体)
-//! │   ├── HrTimerQueue 全局优先队列 (按到期时间排序)
+//! │   ├── HrTimer      定时器对象 (内嵌侵入式红黑树节点)
+//! │   ├── TimerBase    每 CPU 一棵树 + 一把锁 (无全局队列)
 //! │   └── hrtimer_*    公共 API
 //! │
 //! ├── [x86_64] LAPIC Timer one-shot 模式 (Phase 2)
@@ -40,20 +40,24 @@
 //! # Safety
 //!
 //! - HrTimer 必须在有效内存中 (通常嵌入其他结构体), 生命周期覆盖 `Pending` /
-//!   `Running` / `Shutdown` 状态. `hrtimer_try_cancel` 在队列锁内真出队后即可返回; 若回调
+//!   `Running` / `Shutdown` 状态. `hrtimer_try_cancel` 在所属 base 锁内真出队后即可返回; 若回调
 //!   已被收集/正在执行, 它返回 `Busy`, 此时调用方仍须保活. `hrtimer_cancel`
 //!   会等到在途回调退出后返回, 返回即可释放 timer 内存.
-//! - **阻塞取消的锁域约束**: 等待期间 `hrtimer_cancel` 不持队列锁, 但调用方不得
+//! - **阻塞取消的锁域约束**: 等待期间 `hrtimer_cancel` 不持 base 锁, 但调用方不得
 //!   持有回调所需的任何锁 (否则回调无法前进 ⇒ 死锁). 不得在自身回调内、中断
 //!   上下文或关中断上下文调用 `hrtimer_cancel`; 这些场景用 `hrtimer_try_cancel`.
 //! - 回调在中断上下文执行, 不可睡眠
 //! - 回调内不得再取消自身并等待其退出
 
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
+use crate::privileged::config::MAX_CPUS;
 use crate::privileged::error::KernelError;
+use crate::privileged::smp;
 use crate::privileged::sync::IrqSpinLock as Mutex;
-use alloc::vec::Vec;
+
+use super::rb_tree::{RbNode, RbTree};
 // ============================================================================
 // 公共类型
 // ============================================================================
@@ -75,7 +79,7 @@ pub enum HrTimerRestart {
 /// # 约束
 /// - 在中断上下文执行, 不可睡眠
 /// - 不可长时间阻塞 (建议 < 1ms)
-/// - 回调在队列锁释放后执行, 允许调用 `hrtimer_start` 自行重挂 (timerfd
+/// - 回调在 base 锁释放后执行, 允许调用 `hrtimer_start` 自行重挂 (timerfd
 ///   周期路径依赖此语义); 自行重挂后应返回 [`HrTimerRestart::OneShot`],
 ///   框架不会覆盖回调写入的 Pending 状态
 pub type HrTimerCallback = fn(&HrTimer, u64) -> HrTimerRestart;
@@ -143,6 +147,104 @@ pub enum InitError {
 }
 
 // ============================================================================
+// per-CPU 定时器基
+// ============================================================================
+
+/// 红黑树排序键: `(到期时间, 激活序号)`。
+///
+/// 到期时间相同时按激活序号稳定排序；序号单调递增且非零，因此同一个
+/// `HrTimer` 不会在同一键上被重复插入。
+type TimerKey = (u64, u64);
+
+/// 一个 base 的生命周期状态。
+///
+/// 条目 3 只区分 `Online` / `Offline`；`Quiescing` 由条目 5 的 CPU 下线流程使用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BaseState {
+    /// base 可接收新定时器、参与本 CPU 分发
+    Online,
+    /// CPU 尚未上线或已下线，拒绝新激活
+    Offline,
+}
+
+/// base 锁内数据。
+struct BaseInner {
+    /// 侵入式红黑树，节点内嵌在 `HrTimer` 里
+    tree: RbTree<TimerKey>,
+    /// base 生命周期状态
+    state: BaseState,
+    /// 已摘树、回调尚未返回的条目数（条目 5 的 quiesce 判据）。
+    ///
+    /// 用 `u32` 而不是 `usize`: `TIMER_BASES` 是 `MAX_CPUS` 个常驻 base，
+    /// 每 base 省 4 字节，避免 1024 核容量包络把内核镜像顶过 `USER_CODE_BASE`。
+    running: u32,
+}
+
+impl BaseInner {
+    const fn new() -> Self {
+        Self {
+            tree: RbTree::new(),
+            state: BaseState::Offline,
+            running: 0,
+        }
+    }
+}
+
+// SAFETY: `BaseInner` 只在对应 `TimerBase` 的自旋锁内被访问；树中节点的地址来自
+// Pending/Running 期间保持存活的 `HrTimer`，锁外只通过 `HrTimer` 自带的原子状态读取。
+unsafe impl Send for BaseInner {}
+
+/// 一个 CPU 的定时器基：一把锁 + 一棵树 + 运行计数。
+struct TimerBase {
+    base_lock: Mutex<BaseInner>,
+}
+
+impl TimerBase {
+    const fn new() -> Self {
+        Self {
+            base_lock: Mutex::new(BaseInner::new()),
+        }
+    }
+}
+
+/// 每个 CPU 一个 base；无全局后备队列。
+static TIMER_BASES: [TimerBase; MAX_CPUS] = [const { TimerBase::new() }; MAX_CPUS];
+
+/// 串行化 `try_init` 与 `Inactive -> Pending` 首次绑定，消除回调/到期字段
+/// 写入与首次入队之间的 TOCTOU。锁序固定为 `TIMER_INIT_LOCK -> TIMER_BASE`。
+static TIMER_INIT_LOCK: Mutex<()> = Mutex::new(());
+
+fn base_for_cpu(cpu: u32) -> Option<&'static TimerBase> {
+    TIMER_BASES.get(cpu as usize)
+}
+
+fn current_cpu_for_timer() -> Option<u32> {
+    let cpu = smp::current_cpu_index();
+    if (cpu as usize) < MAX_CPUS {
+        Some(cpu)
+    } else {
+        None
+    }
+}
+
+fn next_activation_seq() -> u64 {
+    QUEUE_SEQ.fetch_add(1, Ordering::Relaxed)
+}
+
+/// 从树节点反查 `HrTimer`。
+///
+/// `HrTimer::node` 是 `#[repr(C)]` 的首字段，节点地址等于定时器地址。
+///
+/// # Safety
+///
+/// `node` 必须来自一个仍存活、且 `node` 为首字段的 `HrTimer`。
+unsafe fn timer_from_node(
+    node: core::ptr::NonNull<RbNode<TimerKey>>,
+) -> core::ptr::NonNull<HrTimer> {
+    node.cast()
+}
+
+// ============================================================================
 // HrTimer — 定时器对象 (嵌入用户结构体)
 // ============================================================================
 
@@ -154,12 +256,20 @@ pub enum InitError {
 ///
 /// # 线程安全
 ///
-/// - `expiry_ns` / `interval_ns` / `callback` / `state` / `queue_seq` 均为原子量,
-///   支持跨 CPU 读写; `init` 只接收 `&self`, 不再要求调用方独占引用
-/// - 入队/出队/收集由全局 spinlock 保护; 回调在锁释放后执行 (允许回调内重挂)
-/// - 取消在队列锁内真出队; 若回调已被收集/正在执行 (`in_flight`), `try_cancel`
+/// - `expiry_ns` / `interval_ns` / `callback` / `state` / `queue_seq` / `base_id`
+///   均为原子量, 支持跨 CPU 读写; `init` 只接收 `&self`, 不再要求调用方独占引用
+/// - 入队/出队/收集由所属 CPU 的 `TimerBase` 锁保护; 回调在锁释放后执行
+///   (允许回调内重挂)
+/// - 取消在 base 锁内真出队; 若回调已被收集/正在执行 (`in_flight`), `try_cancel`
 ///   返回 `Busy`, `cancel` 等待其在途回调退出后返回
+///
+/// `node` 必须是首字段: `timer_from_node` 依赖节点地址回推定时器地址.
+#[repr(C)]
 pub struct HrTimer {
+    /// 侵入式红黑树节点 (首字段, 地址即 `HrTimer` 地址)
+    node: UnsafeCell<RbNode<TimerKey>>,
+    /// 当前绑定的 CPU base (`NO_BASE` = 未绑定)
+    base_id: AtomicU32,
     /// 绝对到期时间 (纳秒)
     expiry_ns: AtomicU64,
     /// 周期间隔 (纳秒), 0 = 单次
@@ -174,6 +284,13 @@ pub struct HrTimer {
     in_flight: AtomicBool,
 }
 
+// SAFETY: `HrTimer` 的标量字段全部是原子量或只在 base 锁内读写的节点; 节点地址
+// 只在所属 base 树中、由该 base 锁保护。跨线程/跨核共享引用本身不会产生对节点
+// 字段的数据竞争; timer 内存生命周期由 `hrtimer_start` 的 `# Safety` 契约承担。
+unsafe impl Send for HrTimer {}
+// SAFETY: 同上; `&HrTimer` 可跨核共享, 树结构修改必须经所属 base 锁。
+unsafe impl Sync for HrTimer {}
+
 impl HrTimer {
     /// 创建未初始化的 `HrTimer`
     ///
@@ -181,6 +298,8 @@ impl HrTimer {
     #[must_use]
     pub const fn uninit() -> Self {
         Self {
+            node: UnsafeCell::new(RbNode::new((0, 0))),
+            base_id: AtomicU32::new(NO_BASE),
             expiry_ns: AtomicU64::new(0),
             interval_ns: AtomicU64::new(0),
             callback: AtomicUsize::new(0),
@@ -195,11 +314,11 @@ impl HrTimer {
     /// 设置回调函数, 状态置为 `Inactive`。可从 `Uninit`、`Inactive` 或
     /// `Shutdown` 调用; `Pending`/`Running`/仍有在途回调时调用是编程错误。
     ///
-    /// 运行时检查在队列锁内完成 (`try_init`)，不再依赖 debug 构建的断言；
+    /// 运行时检查在 `TIMER_INIT_LOCK` 内完成 (`try_init`)，不再依赖 debug 构建的断言；
     /// [`init`](Self::init) 对活动定时器直接 panic，需要可恢复判定的调用方
     /// 应使用 [`try_init`](Self::try_init)。
     ///
-    /// 只接收 `&self`: 回调指针经原子量写入, 与队列侧跨核读取构成 Release/Acquire
+    /// 只接收 `&self`: 回调指针经原子量写入, 与 base 侧跨核读取构成 Release/Acquire
     /// 同步, 不再要求调用方持有独占引用 (`&mut`)。
     ///
     /// # Panics
@@ -215,28 +334,33 @@ impl HrTimer {
     /// 可诊断地初始化定时器
     ///
     /// 与 [`init`](Self::init) 相同，但活动定时器返回错误而不是 panic。
-    /// 队列锁同时串行化 `start` / `shutdown`，避免“检查后被并发入队”的 TOCTOU；
+    /// `TIMER_INIT_LOCK` 同时串行化 `try_init` 与 `Inactive` 首次 `start`，
+    /// 避免“检查后被并发入队”的 TOCTOU；
     /// 字段写入全部在状态发布为 `Inactive` 之前完成。
     ///
     /// # Errors
     ///
     /// 定时器 `Pending` / `Running` 或 `in_flight` 非零时返回对应 [`InitError`]。
     pub fn try_init(&self, callback: HrTimerCallback) -> Result<(), InitError> {
-        let _queue = HRTIMER_QUEUE.lock();
+        let _init = TIMER_INIT_LOCK.lock();
 
-        if self.in_flight.load(Ordering::Acquire) {
-            return Err(InitError::InFlight);
-        }
         match self.state() {
             HrTimerState::Pending => return Err(InitError::Pending),
             HrTimerState::Running => return Err(InitError::Running),
             HrTimerState::Uninit | HrTimerState::Inactive | HrTimerState::Shutdown => {}
+        }
+        if self.in_flight.load(Ordering::Acquire) {
+            return Err(InitError::InFlight);
         }
 
         self.callback.store(callback as usize, Ordering::Release);
         self.expiry_ns.store(0, Ordering::Relaxed);
         self.interval_ns.store(0, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
+        self.base_id.store(NO_BASE, Ordering::Relaxed);
+        // `Uninit` 与 `Shutdown` 不可能在树中; 重置节点指针, 避免复用时带入旧链接.
+        // SAFETY: 持 `TIMER_INIT_LOCK` 且定时器非 Pending/Running, 节点不在此刻的树中.
+        unsafe { (*self.node.get()).reset() };
         // 字段写完之后才发布 Inactive: 并发的 start 看到 Inactive 时，回调与
         // expiry/interval 已就绪。
         self.state
@@ -266,6 +390,23 @@ impl HrTimer {
     /// 的迟到回调携带的序号与当前值不一致, 应被丢弃.
     pub fn activation_seq(&self) -> u64 {
         self.queue_seq.load(Ordering::Acquire)
+    }
+
+    /// 当前绑定的 CPU base 索引 (`None` = 未绑定)
+    pub fn base_id(&self) -> Option<u32> {
+        let id = self.base_id.load(Ordering::Acquire);
+        if id == NO_BASE { None } else { Some(id) }
+    }
+
+    fn node_ptr(&self) -> core::ptr::NonNull<RbNode<TimerKey>> {
+        // SAFETY: `UnsafeCell` 的地址恒非空, `node` 是结构体内存的一部分.
+        unsafe { core::ptr::NonNull::new_unchecked(self.node.get()) }
+    }
+
+    /// 写树键。调用方必须持有该 timer 所属 base 的锁。
+    fn set_node_key(&self, expiry: u64, seq: u64) {
+        // SAFETY: 节点当前不在树中, 且调用方持有所属 base 锁; 不会有并发树遍历.
+        unsafe { (*self.node.get()).key = (expiry, seq) };
     }
 
     /// 获取周期间隔 (纳秒)
@@ -326,37 +467,11 @@ fn noop_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
     HrTimerRestart::OneShot
 }
 
-// ============================================================================
-// 全局定时器队列
-// ============================================================================
+/// base 索引哨兵: 未绑定任何 CPU.
+const NO_BASE: u32 = u32::MAX;
 
-/// 队列内条目
-struct TimerEntry {
-    /// 定时器指针 (`NonNull` 确保非空)
-    timer: core::ptr::NonNull<HrTimer>,
-    /// 入队时的序号 (用于取消时快速判断是否过期)
-    seq: u64,
-}
-
-// SAFETY: TimerEntry 通过全局 spinlock 同步访问, 指针在回调前有效。
-// NonNull<HrTimer> 本身不是 Send, 但内核中定时器可在任意 CPU 上操作,
-// 由 spinlock 保证互斥。
-unsafe impl Send for TimerEntry {}
-// SAFETY: `TimerEntry` 的两个字段 (`NonNull<HrTimer>` / seq: u64) 都是 Copy 值, 无
-// 内部可变性; 条目只存在于 `HRTIMER_QUEUE: Mutex<Vec<TimerEntry>>` 内, 全部读写
-// (入队 / 遍历 / retain / sort_by_key) 都在该锁临界区里 ⇒ &TimerEntry 跨核共享安全。
-// 指针所指 HrTimer 的有效性不属本 impl 的依据, 由 `hrtimer_start` 的 `# Safety`
-// 契约 (回调触发前保持有效内存) 单独承担。
-unsafe impl Sync for TimerEntry {}
-
-/// 全局序号计数器
+/// 全局激活序号计数器
 static QUEUE_SEQ: AtomicU64 = AtomicU64::new(1);
-
-/// 全局定时器队列
-///
-/// 使用 Vec + spinlock 实现, 按到期时间升序排列。
-/// 后续优化为 per-CPU 无锁队列。
-static HRTIMER_QUEUE: Mutex<Vec<TimerEntry>> = Mutex::new(Vec::new());
 
 /// 框架初始化标志
 static HRTIMER_READY: AtomicBool = AtomicBool::new(false);
@@ -367,10 +482,18 @@ static HRTIMER_READY: AtomicBool = AtomicBool::new(false);
 
 /// 初始化 hrtimer 框架
 ///
-/// 在内核启动早期调用一次。
+/// 在内核启动早期调用一次。清空所有 per-CPU 树并把 base 置为 `Online`。
+///
+/// 条目 3 阶段除启动/测试初始化外没有 CPU 下线事件；条目 5 会按真实 CPU
+/// 上下线状态收紧 `state`。本函数只能在无活动定时器时调用。
 pub fn hrtimer_init() {
-    let mut queue = HRTIMER_QUEUE.lock();
-    queue.clear();
+    let _init = TIMER_INIT_LOCK.lock();
+    for base in &TIMER_BASES {
+        let mut inner = base.base_lock.lock();
+        inner.tree.clear();
+        inner.state = BaseState::Online;
+        inner.running = 0;
+    }
     HRTIMER_READY.store(true, Ordering::Release);
 }
 
@@ -379,32 +502,22 @@ pub fn is_hrtimer_ready() -> bool {
     HRTIMER_READY.load(Ordering::Acquire)
 }
 
-/// 取下一个非零入队序号 (0 保留给"未入队/已取消")
-fn next_queue_seq() -> u64 {
-    loop {
-        let seq = QUEUE_SEQ.fetch_add(1, Ordering::Relaxed);
-        if seq != 0 {
-            return seq;
-        }
-        // 仅在 u64 回绕到 0 时发生; 跳过 0 以保持哨兵语义.
-    }
-}
-
 /// 启动定时器 (绝对时间)
 ///
-/// 将定时器以绝对到期时间 `expiry_ns` 入队。若定时器已在队列中, 先移除旧条目
-/// 再重新入队。成功返回 [`StartOutcome::Started`] 及本次激活的入队序号；
-/// 未入队时返回明确原因，不再用 `0` 混淆三种失败。
+/// - `Inactive`: 绑定**当前 CPU** 的 base 并入树
+/// - `Pending` / `Running`: 使用已有 `base_id`, 不跨 CPU 搬迁
+/// - `Uninit` / `Shutdown`: 分别返回 `NotInitialized` / `Shutdown`
+///
+/// 成功返回 [`StartOutcome::Started`] 及本次激活的序号；失败返回明确原因。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象 (必须已 init)
-/// * `expiry_ns` - 绝对到期时间 (纳秒, 从启动起)
+/// * `expiry_ns` - 绝对到期时间 (纳秒)
 ///
 /// # Safety
 ///
-/// 调用方必须保证:
 /// - `timer` 在回调触发前保持有效内存
-/// - 回调在队列锁释放后执行, 允许在回调内调用本函数 (timerfd 周期路径)
+/// - 回调在 base 锁释放后执行, 允许在回调内调用本函数 (timerfd 周期路径)
 pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
     start_with_ready(timer, expiry_ns, HRTIMER_READY.load(Ordering::Acquire))
 }
@@ -417,43 +530,84 @@ fn start_with_ready(timer: &HrTimer, expiry_ns: u64, ready: bool) -> StartOutcom
     if !ready {
         return StartOutcome::NotReady;
     }
+    match timer.state() {
+        HrTimerState::Uninit => StartOutcome::NotInitialized,
+        HrTimerState::Shutdown => StartOutcome::Shutdown,
+        HrTimerState::Inactive => start_inactive(timer, expiry_ns),
+        HrTimerState::Pending | HrTimerState::Running => start_bound(timer, expiry_ns),
+    }
+}
 
-    let mut queue = HRTIMER_QUEUE.lock();
+/// `Inactive -> Pending`: 取 `TIMER_INIT_LOCK` 串行化首次绑定。
+fn start_inactive(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
+    let Some(cpu) = current_cpu_for_timer() else {
+        return StartOutcome::NotReady;
+    };
+    start_inactive_on(timer, expiry_ns, cpu)
+}
 
-    // shutdown / uninit 与 start 的判定同在队列锁内: 要么 start 先入队、shutdown
-    // 随后摘除; 要么 shutdown 先置状态、start 看到 Shutdown 后不再入队.
+/// `start_inactive` 的显式 CPU 版本 (host 测试用它覆盖多 base 隔离).
+fn start_inactive_on(timer: &HrTimer, expiry_ns: u64, cpu: u32) -> StartOutcome {
+    let _init = TIMER_INIT_LOCK.lock();
+    match timer.state() {
+        HrTimerState::Inactive => {}
+        HrTimerState::Uninit => return StartOutcome::NotInitialized,
+        HrTimerState::Shutdown => return StartOutcome::Shutdown,
+        HrTimerState::Pending | HrTimerState::Running => return StartOutcome::NotReady,
+    }
+
+    let Some(base) = base_for_cpu(cpu) else {
+        return StartOutcome::NotReady;
+    };
+    let mut inner = base.base_lock.lock();
+    if inner.state != BaseState::Online || timer.state() != HrTimerState::Inactive {
+        return StartOutcome::NotReady;
+    }
+
+    let seq = next_activation_seq();
+    timer.base_id.store(cpu, Ordering::Release);
+    timer.expiry_ns.store(expiry_ns, Ordering::Release);
+    timer.queue_seq.store(seq, Ordering::Release);
+    timer.set_node_key(expiry_ns, seq);
+    timer.set_state(HrTimerState::Pending);
+    // SAFETY: `timer` 是 `&HrTimer`, 地址非空; 节点存活由 `hrtimer_start` 的 `# Safety` 契约承担.
+    unsafe { inner.tree.insert(timer.node_ptr()) };
+    StartOutcome::Started(seq)
+}
+
+/// `Pending` / `Running` 的重挂: 只取已有 base 锁。
+fn start_bound(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
+    let Some(base_id) = timer.base_id() else {
+        return StartOutcome::NotReady;
+    };
+    let Some(base) = base_for_cpu(base_id) else {
+        return StartOutcome::NotReady;
+    };
+    let mut inner = base.base_lock.lock();
+
     match timer.state() {
         HrTimerState::Uninit => return StartOutcome::NotInitialized,
         HrTimerState::Shutdown => return StartOutcome::Shutdown,
-        HrTimerState::Inactive | HrTimerState::Pending | HrTimerState::Running => {}
+        HrTimerState::Inactive => return StartOutcome::NotReady,
+        HrTimerState::Pending | HrTimerState::Running => {}
+    }
+    if timer.base_id() != Some(base_id) || inner.state != BaseState::Online {
+        return StartOutcome::NotReady;
     }
 
-    let seq = next_queue_seq();
+    let old_state = timer.state();
+    if old_state == HrTimerState::Pending {
+        // SAFETY: Pending 的节点必在该 base 树中; 移除后节点即将以新键重新插入.
+        unsafe { inner.tree.remove(timer.node_ptr()) };
+    }
+
+    let seq = next_activation_seq();
     timer.expiry_ns.store(expiry_ns, Ordering::Release);
     timer.queue_seq.store(seq, Ordering::Release);
+    timer.set_node_key(expiry_ns, seq);
     timer.set_state(HrTimerState::Pending);
-
-    // 移除同一 timer 的旧条目 (该 timer 的所有旧激活都失效)
-    queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
-
-    // 按到期时间插入 (保持升序)
-    let insert_pos = queue
-        .iter()
-        .position(|entry| {
-            // SAFETY: 同 `queue.retain`: `entry.timer` 在回调前保持有效, 本处只读
-            // `expiry_ns` 原子字段.
-            let other_expiry = unsafe { (*entry.timer.as_ptr()).expiry_ns.load(Ordering::Acquire) };
-            other_expiry > expiry_ns
-        })
-        .unwrap_or(queue.len());
-
-    // SAFETY: `timer` 由 `&HrTimer` 引用经 `from_ref` 取得, 必然非空;
-    // `NonNull::new_unchecked` 只承诺非空, 该引用由调用点在回调前保持有效.
-    let ptr = unsafe {
-        core::ptr::NonNull::new_unchecked(core::ptr::from_ref::<HrTimer>(timer).cast_mut())
-    };
-    queue.insert(insert_pos, TimerEntry { timer: ptr, seq });
-
+    // SAFETY: 同上; 两种入口都保证 timer 内存在回调前有效.
+    unsafe { inner.tree.insert(timer.node_ptr()) };
     StartOutcome::Started(seq)
 }
 
@@ -461,10 +615,6 @@ fn start_with_ready(timer: &HrTimer, expiry_ns: u64, ready: bool) -> StartOutcom
 ///
 /// 便捷接口: 从当前时间起延迟 `delay_ns` 纳秒后触发。
 /// 未入队时返回 [`StartOutcome`] 的失败原因。
-///
-/// # Arguments
-/// * `timer` - 定时器对象
-/// * `delay_ns` - 延迟时间 (纳秒)
 pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> StartOutcome {
     let now = hrtimer_clock_read();
     hrtimer_start(timer, now.saturating_add(delay_ns))
@@ -474,11 +624,6 @@ pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> StartOutcome {
 ///
 /// 首次在 `delay_ns` 纳秒后触发, 之后每 `interval_ns` 纳秒触发一次。
 /// 未入队时返回 [`StartOutcome`] 的失败原因。
-///
-/// # Arguments
-/// * `timer` - 定时器对象
-/// * `delay_ns` - 首次延迟 (纳秒)
-/// * `interval_ns` - 周期间隔 (纳秒)
 pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) -> StartOutcome {
     timer.interval_ns.store(interval_ns, Ordering::Release);
     hrtimer_start_rel(timer, delay_ns)
@@ -486,31 +631,46 @@ pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) 
 
 /// 非阻塞取消定时器
 ///
-/// 在队列锁内摘除该定时器的全部队列条目:
+/// 在所属 base 锁内摘除该定时器的 Pending 节点:
 /// - `Cancelled`: 确实摘除了 Pending 激活, 返回即可释放 timer 内存
 /// - `NotPending`: 没有待取消的激活
 /// - `Busy`: 回调已被收集/正在执行, 不能安全释放; 等 `in_flight` 清零后重试,
 ///   或改用阻塞版 [`hrtimer_cancel`]
 ///
-/// 与 `hrtimer_run_queues` 的收集互斥: 取消成功后队列不再持有该 timer 的
-/// `NonNull`, 调用方不会在下次 `run_queues` 时被踩到悬垂指针.
+/// 与 `hrtimer_run_queues` 的收集互斥: 取消成功后 base 树不再持有该 timer 的
+/// 节点地址, 调用方不会在下次 `run_queues` 时被踩到悬垂指针.
 pub fn hrtimer_try_cancel(timer: &HrTimer) -> CancelOutcome {
-    let mut queue = HRTIMER_QUEUE.lock();
+    if timer.in_flight.load(Ordering::Acquire) {
+        return CancelOutcome::Busy;
+    }
+    match timer.state() {
+        HrTimerState::Pending => {}
+        HrTimerState::Running => return CancelOutcome::Busy,
+        HrTimerState::Uninit | HrTimerState::Inactive | HrTimerState::Shutdown => {
+            return CancelOutcome::NotPending;
+        }
+    }
+
+    let Some(base_id) = timer.base_id() else {
+        return CancelOutcome::NotPending;
+    };
+    let Some(base) = base_for_cpu(base_id) else {
+        return CancelOutcome::NotPending;
+    };
+    let mut inner = base.base_lock.lock();
 
     if timer.in_flight.load(Ordering::Acquire) {
         return CancelOutcome::Busy;
     }
-
-    let was_pending = timer.state() == HrTimerState::Pending;
-    queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
-
-    if was_pending {
-        timer.set_state(HrTimerState::Inactive);
-        timer.queue_seq.store(0, Ordering::Release);
-        CancelOutcome::Cancelled
-    } else {
-        CancelOutcome::NotPending
+    if timer.state() != HrTimerState::Pending || timer.base_id() != Some(base_id) {
+        return CancelOutcome::NotPending;
     }
+    // SAFETY: Pending 节点的节点地址在所属 base 树中, Pending 状态隐含 timer 存活.
+    unsafe { inner.tree.remove(timer.node_ptr()) };
+    timer.set_state(HrTimerState::Inactive);
+    timer.queue_seq.store(0, Ordering::Release);
+    timer.base_id.store(NO_BASE, Ordering::Release);
+    CancelOutcome::Cancelled
 }
 
 /// 等待 `timer` 的在途回调退出.
@@ -530,7 +690,7 @@ fn wait_in_flight(timer: &HrTimer) {
 ///
 /// # 锁域约束
 ///
-/// 等待期间不持队列锁, 但调用方不得持有回调所需的锁 —— 否则回调无法前进,
+/// 等待期间不持 base 锁, 但调用方不得持有回调所需的锁 —— 否则回调无法前进,
 /// 形成死锁。不得在自身回调内、中断上下文或关中断上下文调用; 这些场景用
 /// [`hrtimer_try_cancel`]。
 pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
@@ -543,100 +703,166 @@ pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
     }
 }
 
-/// 关闭定时器: 置 `Shutdown` 状态、摘除队列条目并等待在途回调退出.
+/// 关闭定时器: 置 `Shutdown` 状态、摘除 Pending 节点并等待在途回调退出.
 ///
 /// `Shutdown` 状态使回调内的自重挂与框架 `Periodic` 重挂都不再入队; 返回后 timer
 /// 可安全释放或复用 (`init` 会把它转回 `Inactive`)。与 `hrtimer_cancel` 相同的
 /// 锁域/上下文约束.
 pub fn hrtimer_shutdown(timer: &HrTimer) {
     {
-        let mut queue = HRTIMER_QUEUE.lock();
-        timer.set_state(HrTimerState::Shutdown);
-        queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
-        timer.queue_seq.store(0, Ordering::Release);
+        let _init = TIMER_INIT_LOCK.lock();
+        let state = timer.state();
+        match state {
+            HrTimerState::Pending | HrTimerState::Running => {
+                if let Some(base_id) = timer.base_id() {
+                    if let Some(base) = base_for_cpu(base_id) {
+                        let mut inner = base.base_lock.lock();
+                        timer.set_state(HrTimerState::Shutdown);
+                        timer.queue_seq.store(0, Ordering::Release);
+                        if state == HrTimerState::Pending {
+                            // SAFETY: Pending 节点地址属于该 base 树, Pending 状态隐含 timer 存活.
+                            unsafe { inner.tree.remove(timer.node_ptr()) };
+                            timer.base_id.store(NO_BASE, Ordering::Release);
+                        }
+                    } else {
+                        timer.set_state(HrTimerState::Shutdown);
+                        timer.queue_seq.store(0, Ordering::Release);
+                    }
+                } else {
+                    timer.set_state(HrTimerState::Shutdown);
+                    timer.queue_seq.store(0, Ordering::Release);
+                }
+            }
+            HrTimerState::Uninit | HrTimerState::Inactive | HrTimerState::Shutdown => {
+                timer.set_state(HrTimerState::Shutdown);
+                timer.queue_seq.store(0, Ordering::Release);
+                timer.base_id.store(NO_BASE, Ordering::Release);
+                // SAFETY: 非 Pending/Running 不在树中; 清链接避免复用时带入旧指针.
+                unsafe { (*timer.node.get()).reset() };
+            }
+        }
     }
     wait_in_flight(timer);
+    if timer.state() == HrTimerState::Shutdown {
+        timer.base_id.store(NO_BASE, Ordering::Release);
+    }
 }
 
-/// 处理已到期的定时器
+/// 处理指定 CPU 上已到期的定时器
 ///
-/// 在定时器中断处理程序中调用。遍历队列, 执行所有已到期定时器的回调。
+/// 在定时器中断处理程序中调用。只处理 `cpu` 自己的 base；回调在释放 base 锁后
+/// 执行，允许回调内重挂。
 ///
 /// # Safety
 ///
 /// - 必须在中断上下文调用 (或中断禁用状态)
 /// - 不可递归调用
-pub fn hrtimer_run_queues() {
+pub fn hrtimer_run_queues(cpu: u32) {
+    const MAX_EXPIRED_PER_RUN: usize = 64;
     if !HRTIMER_READY.load(Ordering::Acquire) {
         return;
     }
-
-    let now_ns = hrtimer_clock_read();
-
-    // 收集到期定时器 (释放锁后执行回调, 避免死锁)
-    let expired: Vec<(core::ptr::NonNull<HrTimer>, HrTimerCallback, u64)> = {
-        let mut queue = HRTIMER_QUEUE.lock();
-
-        let mut expired = Vec::new();
-
-        // 队列按到期时间升序, 找到第一个未到期的位置
-        for entry in queue.iter() {
-            let timer_ptr = entry.timer.as_ptr();
-            // SAFETY: 入队时保证指针有效, 出队前不会释放
-            let expiry = unsafe { (*timer_ptr).expiry_ns.load(Ordering::Acquire) };
-            // SAFETY: `timer_ptr` 取自队列条目, 有效性由 `hrtimer_start` / 队列契约
-            // 承担: 取消已在队列锁内真出队, 故本次收集期间队列条目指向的 timer 仍有效
-            // (调用方只在 Pending/Running 窗口外才可释放). `state()` 只读原子字段.
-            let state = unsafe { (*timer_ptr).state() };
-            // 上一次回调仍持有该 timer (自重挂后 in_flight 仍为 true): 本轮不得
-            // 再次收集, 否则同一 timer 的两个回调会并发执行.
-            // SAFETY: `timer_ptr` 取自队列条目, 有效期由 `hrtimer_start` / 取消契约
-            // 承担; 本处只读 `in_flight` 原子字段.
-            let in_flight = unsafe { (*timer_ptr).in_flight.load(Ordering::Acquire) };
-
-            if expiry <= now_ns && state == HrTimerState::Pending && !in_flight {
-                // SAFETY: 指针有效性同上; 回调指针经原子量以 Acquire 读出, 与 `init`
-                // 的 Release 写入构成同步 —— 跨核并发 `init` 不再产生数据竞争或
-                // &/&mut 别名 (init 只接收 &self).
-                let cb = unsafe { (*timer_ptr).callback_fn() };
-                let seq = entry.seq;
-                // SAFETY: `set_state` 只对 HrTimer 的原子 state 字段做 store, 指针有效性同由
-                // `hrtimer_start` 契约承担。本处在队列锁内把状态置 Running、置 in_flight,
-                // 随后的 `queue.retain` 只保留 Pending 条目 ⇒ 已收集条目同轮出队.
-                unsafe {
-                    (*timer_ptr).in_flight.store(true, Ordering::Release);
-                    (*timer_ptr).set_state(HrTimerState::Running);
-                }
-                expired.push((entry.timer, cb, seq));
-            } else if state == HrTimerState::Inactive {
-                // 已取消, 跳过
-            } else if expiry > now_ns {
-                break; // 后续都未到期
-            }
-        }
-
-        // 移除已到期和已取消的条目
-        queue.retain(|entry| {
-            // SAFETY: `entry.timer` 在回调前保持有效 (队列持有期), 本处只读 `state`.
-            let state = unsafe { (*entry.timer.as_ptr()).state() };
-            state == HrTimerState::Pending
-        });
-
-        // 重新排序 (retain 可能打乱顺序)
-        // SAFETY: `entry.timer` 在回调前保持有效, 本处只读 `expiry_ns` 原子字段.
-        queue.sort_by_key(|entry| unsafe {
-            (*entry.timer.as_ptr()).expiry_ns.load(Ordering::Acquire)
-        });
-
-        expired
+    let Some(base) = base_for_cpu(cpu) else {
+        return;
     };
 
-    // 执行回调 (无锁, 允许回调中操作定时器)
-    for (timer_ptr, callback, seq) in expired {
-        // SAFETY: 入队时保证指针有效
+    for _ in 0..MAX_EXPIRED_PER_RUN {
+        let now_ns = hrtimer_clock_read();
+
+        // 在 base 锁内摘掉一个到期节点并置 Running/in_flight; 锁外执行回调.
+        let collected = {
+            let mut inner = base.base_lock.lock();
+            if inner.state != BaseState::Online {
+                break;
+            }
+
+            let mut found = None;
+            // SAFETY: 本处持有 base 锁, 树结构不会被并发修改.
+            let mut cursor = unsafe { inner.tree.first() };
+            while let Some(node) = cursor {
+                // SAFETY: 树中节点都由存活的 `HrTimer` 提供, 且 `node` 是首字段.
+                let timer = unsafe { timer_from_node(node) };
+                // SAFETY: 节点在树中即 timer 存活; 只读原子字段.
+                let timer = unsafe { timer.as_ref() };
+                let state = timer.state();
+                if state == HrTimerState::Pending
+                    && !timer.in_flight.load(Ordering::Acquire)
+                    && timer.expiry_ns() <= now_ns
+                {
+                    let seq = timer.activation_seq();
+                    let cb = timer.callback_fn();
+                    found = Some((node, timer, cb, seq));
+                    break;
+                }
+                // SAFETY: 同上.
+                cursor = unsafe { RbTree::<TimerKey>::next(node) };
+            }
+
+            if let Some((node, timer, cb, seq)) = found {
+                // SAFETY: `node` 刚由本 base 树返回, 仍在树中; timer 由其首字段反推.
+                unsafe { inner.tree.remove(node) };
+                timer.in_flight.store(true, Ordering::Release);
+                timer.set_state(HrTimerState::Running);
+                inner.running = inner.running.saturating_add(1);
+                // SAFETY: 节点在树中 ⇒ timer 内存有效; 回调在锁外执行, 调用方契约
+                // 要求回调前 timer 不释放.
+                let timer_ptr = core::ptr::NonNull::from(timer);
+                Some((timer_ptr, cb, seq))
+            } else {
+                None
+            }
+        };
+
+        let Some((timer_ptr, callback, seq)) = collected else {
+            break;
+        };
+
+        // SAFETY: 收集时节点仍在树中, 证明 timer 内存有效; 调用方契约保证回调
+        // 期间不释放. 回调在 base 锁外执行, 允许回调内重挂/取消.
         let timer = unsafe { timer_ptr.as_ref() };
         dispatch_expired(timer, callback, seq, now_ns);
+
+        let mut inner = base.base_lock.lock();
+        inner.running = inner.running.saturating_sub(1);
     }
+}
+
+/// 查询指定 CPU 上最近的到期时间
+///
+/// 只扫描该 CPU 的 base；tickless 必须按 CPU 调用，不能返回全局最小值。
+#[must_use]
+pub fn hrtimer_next_expiry(cpu: u32) -> Option<u64> {
+    let base = base_for_cpu(cpu)?;
+    let inner = base.base_lock.lock();
+    if inner.state != BaseState::Online {
+        return None;
+    }
+    // SAFETY: 本处持有 base 锁.
+    let mut cursor = unsafe { inner.tree.first() };
+    while let Some(node) = cursor {
+        // SAFETY: 节点在树中 ⇒ timer 存活; `node` 是首字段.
+        let timer = unsafe { timer_from_node(node) };
+        // SAFETY: `node` 由 base 树返回 ⇒ timer 存活; 只读原子状态.
+        let timer = unsafe { timer.as_ref() };
+        if timer.state() == HrTimerState::Pending && !timer.in_flight.load(Ordering::Acquire) {
+            return Some(timer.expiry_ns());
+        }
+        // SAFETY: 同上.
+        cursor = unsafe { RbTree::<TimerKey>::next(node) };
+    }
+    None
+}
+
+/// 当前在所有 per-CPU base 中处于 Pending 的定时器数量.
+///
+/// 仅用于诊断/测试；热路径不应调用 (最坏 O(`MAX_CPUS`) 次加锁)。
+#[must_use]
+pub fn hrtimer_pending_count() -> usize {
+    let mut total = 0;
+    for base in &TIMER_BASES {
+        total += base.base_lock.lock().tree.len();
+    }
+    total
 }
 
 /// 执行单个已到期条目的回调, 并收敛其状态.
@@ -709,31 +935,6 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
     timer.in_flight.store(false, Ordering::Release);
 }
 
-/// 获取下一个到期时间 (纳秒)
-///
-/// 返回 None 表示队列为空。
-/// 用于编程硬件定时器的下次触发时间。
-pub fn hrtimer_next_expiry() -> Option<u64> {
-    if !HRTIMER_READY.load(Ordering::Acquire) {
-        return None;
-    }
-
-    let queue = HRTIMER_QUEUE.lock();
-    queue.first().map(|entry| {
-        // SAFETY: 入队时保证指针有效
-        unsafe { (*entry.timer.as_ptr()).expiry_ns.load(Ordering::Acquire) }
-    })
-}
-
-/// 获取队列中待触发定时器数量
-pub fn hrtimer_pending_count() -> usize {
-    if !HRTIMER_READY.load(Ordering::Acquire) {
-        return 0;
-    }
-    let queue = HRTIMER_QUEUE.lock();
-    queue.len()
-}
-
 // ============================================================================
 // 时钟源
 // ============================================================================
@@ -771,7 +972,7 @@ pub fn hrtimer_clock_read() -> u64 {
 ///
 /// # 后续优化 (后续阶段, 本 fix 不阻塞)
 /// - 阻塞式 sleep: 注册定时器后调 `scheduler_yield`, 定时器 ISR 唤醒
-/// - per-CPU timer 队列 (Phase 2 目标)
+/// - per-CPU timer 队列已由条目 3 落地 (`TimerBase`)
 ///
 /// # Arguments
 /// * `delay_ns` - 延迟时长 (纳秒, 0 = 立即返回)
@@ -837,7 +1038,7 @@ mod tests {
     use alloc::boxed::Box;
     use core::sync::atomic::AtomicU32;
 
-    /// 全局定时器队列是进程级单例: 队列相关用例串行执行, 避免并行测试互相清空/入队.
+    /// `TIMER_BASES` 是进程级单例: 队列相关用例串行执行, 避免并行测试互相清空/入队.
     ///
     /// 用 AtomicBool 自旋而非 `std::sync::Mutex`: 本文件属生产模块, 引入一把仅测试
     /// 使用的锁会污染 `audit_deadlock_matrix` 的锁类表 (该腿不区分 `cfg(test)`).
@@ -864,12 +1065,43 @@ mod tests {
         QueueTestGuard::acquire()
     }
 
-    /// 队列是否仍持有该 timer (只比较指针, 不解引用).
+    /// 该 timer 所属 base 的树是否仍持有其节点 (只比较指针, 不解引用).
     fn queue_contains(timer: &HrTimer) -> bool {
-        let queue = HRTIMER_QUEUE.lock();
-        queue
-            .iter()
-            .any(|entry| core::ptr::eq(entry.timer.as_ptr(), timer))
+        let Some(base_id) = timer.base_id() else {
+            return false;
+        };
+        let Some(base) = base_for_cpu(base_id) else {
+            return false;
+        };
+        let inner = base.base_lock.lock();
+        // SAFETY: 本处持有 base 锁, 测试串行访问树.
+        let mut cursor = unsafe { inner.tree.first() };
+        while let Some(node) = cursor {
+            // SAFETY: 节点在树中 ⇒ timer 存活.
+            let candidate = unsafe { timer_from_node(node) };
+            if core::ptr::eq(candidate.as_ptr(), timer) {
+                return true;
+            }
+            // SAFETY: 同上.
+            cursor = unsafe { RbTree::<TimerKey>::next(node) };
+        }
+        false
+    }
+
+    fn current_cpu() -> u32 {
+        smp::current_cpu_index()
+    }
+
+    /// 模拟 `run_queues` 的收集动作: 从所属 base 树摘节点、置 Running/in_flight.
+    fn simulate_collected(timer: &HrTimer) {
+        let base_id = timer.base_id().expect("Pending 定时器必须已绑定 base");
+        let base = base_for_cpu(base_id).expect("base 必须存在");
+        let mut inner = base.base_lock.lock();
+        // SAFETY: Pending 节点在树中; 测试串行且 timer 存活.
+        unsafe { inner.tree.remove(timer.node_ptr()) };
+        inner.running = inner.running.saturating_add(1);
+        timer.in_flight.store(true, Ordering::Release);
+        timer.set_state(HrTimerState::Running);
     }
 
     /// 断言启动成功并返回非零入队序号.
@@ -949,8 +1181,8 @@ mod tests {
         ));
         assert_eq!(timer.try_init(noop_callback), Err(InitError::Pending));
 
-        // Running 也必须拒绝.
-        timer.set_state(HrTimerState::Running);
+        // Running 也必须拒绝 (按真实收集语义先摘树).
+        simulate_collected(&timer);
         assert_eq!(timer.try_init(noop_callback), Err(InitError::Running));
 
         // 模拟回调在途但状态已收敛: in_flight 非零也必须拒绝初始化.
@@ -1006,12 +1238,69 @@ mod tests {
     }
 
     #[test]
-    fn test_next_expiry_empty() {
-        // UT-06 (2026-09-24): 先 hrtimer_init() 清空队列使断言与环境无关;
-        // 队列是进程级单例, 本用例与其它队列用例经 QUEUE_TEST_LOCK 串行.
+    fn test_per_cpu_base_isolation() {
         let _serial = serialize_queue_tests();
         hrtimer_init();
-        assert!(hrtimer_next_expiry().is_none());
+
+        let timer0 = HrTimer::uninit();
+        timer0.init(noop_callback);
+        let timer1 = HrTimer::uninit();
+        timer1.init(noop_callback);
+
+        expect_started(start_inactive_on(&timer0, 0, 0));
+        expect_started(start_inactive_on(&timer1, 0, 1));
+        assert_eq!(timer0.base_id(), Some(0));
+        assert_eq!(timer1.base_id(), Some(1));
+        assert_eq!(hrtimer_pending_count(), 2);
+        assert_eq!(hrtimer_next_expiry(0), Some(0));
+        assert_eq!(hrtimer_next_expiry(1), Some(0));
+
+        // CPU0 分发只摘自己的树, CPU1 的定时器保持 Pending.
+        hrtimer_run_queues(0);
+        assert_eq!(timer0.state(), HrTimerState::Inactive);
+        assert_eq!(timer1.state(), HrTimerState::Pending);
+        assert_eq!(hrtimer_pending_count(), 1);
+
+        hrtimer_run_queues(1);
+        assert_eq!(timer1.state(), HrTimerState::Inactive);
+        assert_eq!(hrtimer_pending_count(), 0);
+    }
+
+    #[test]
+    fn test_offline_or_invalid_cpu_has_no_fallback() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        {
+            let mut inner = base_for_cpu(0).expect("base0").base_lock.lock();
+            inner.state = BaseState::Offline;
+        }
+        assert_eq!(
+            start_inactive_on(&timer, 0, 0),
+            StartOutcome::NotReady,
+            "离线 base 必须拒绝, 不得落到全局后备队列"
+        );
+        assert_eq!(timer.state(), HrTimerState::Inactive);
+        assert_eq!(timer.base_id(), None);
+        assert_eq!(hrtimer_pending_count(), 0);
+
+        assert_eq!(
+            start_inactive_on(&timer, 0, MAX_CPUS as u32),
+            StartOutcome::NotReady,
+            "超出容量的 CPU 索引必须拒绝"
+        );
+        hrtimer_init(); // 恢复 base0 状态
+    }
+
+    #[test]
+    fn test_next_expiry_empty() {
+        // UT-06 (2026-09-24): 先 hrtimer_init() 清空所有 base 使断言与环境无关;
+        // TIMER_BASES 是进程级单例, 本用例与其它队列用例经 QUEUE_TEST_LOCK 串行.
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        assert!(hrtimer_next_expiry(current_cpu()).is_none());
     }
 
     #[test]
@@ -1037,7 +1326,7 @@ mod tests {
         assert!(hrtimer_cancel(&timer));
         assert!(
             !queue_contains(&timer),
-            "取消必须在队列锁内真出队 —— 否则调用方释放 timer 后队列持悬垂 NonNull"
+            "取消必须在 base 锁内真出队 —— 否则调用方释放 timer 后树持悬垂 NonNull"
         );
     }
 
@@ -1063,8 +1352,7 @@ mod tests {
         // 模拟 run_queues 已收集、回调在途: try_cancel 必须报 Busy 且不摘队列.
         timer.init(noop_callback);
         expect_started(hrtimer_start(&timer, 0));
-        timer.set_state(HrTimerState::Running);
-        timer.in_flight.store(true, Ordering::Release);
+        simulate_collected(&timer);
         assert_eq!(
             hrtimer_try_cancel(&timer),
             CancelOutcome::Busy,
@@ -1124,8 +1412,7 @@ mod tests {
             hrtimer_clock_read().saturating_add(1_000_000_000),
         ));
         // 模拟 run_queues 已收集、回调在途.
-        timer.set_state(HrTimerState::Running);
-        timer.in_flight.store(true, Ordering::Release);
+        simulate_collected(&timer);
 
         let started = Instant::now();
         std::thread::scope(|scope| {
@@ -1157,7 +1444,7 @@ mod tests {
         assert!(!queue_contains(&timer), "取消后队列不得再持有该 timer");
         drop(timer);
 
-        hrtimer_run_queues();
+        hrtimer_run_queues(current_cpu());
         assert_eq!(
             CANCELLED_CALLS.load(Ordering::Relaxed),
             0,
@@ -1401,14 +1688,14 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
     }
     assert_eq_test!(hrtimer_pending_count(), 1, "1 timer");
 
-    let next = hrtimer_next_expiry();
+    let next = hrtimer_next_expiry(crate::privileged::smp::current_cpu_index());
     check!(next.is_some(), "has next expiry");
     assert_eq_test!(next.unwrap(), 1_000_000_000, "expiry matches");
 
     // SAFETY: 经 &raw mut 取裸指针避免对 static mut 取引用
     hrtimer_cancel(unsafe { &*core::ptr::addr_of!(T1) });
-    // 取消在队列锁内立即出队, 无需等下一次 run_queues 清理
-    hrtimer_run_queues();
+    // 取消在 base 锁内立即出队, 无需等下一次 run_queues 清理
+    hrtimer_run_queues(crate::privileged::smp::current_cpu_index());
     assert_eq_test!(hrtimer_pending_count(), 0, "empty after cancel");
     TestResult::Pass
 }
@@ -1436,7 +1723,7 @@ fn test_periodic_restart() -> crate::privileged::tests::TestResult {
     );
 
     // 运行队列 (可能未到期, 但测试回调逻辑)
-    hrtimer_run_queues();
+    hrtimer_run_queues(crate::privileged::smp::current_cpu_index());
     TestResult::Pass
 }
 

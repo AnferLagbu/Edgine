@@ -67,7 +67,7 @@
     { "level": 9, "name": "fs_context.cwd", "anchor": "symbol", "note": "umask 为原子量, 不占锁条目" },
     { "level": 9, "name": "fs_context.root", "anchor": "symbol" },
     { "level": 10, "name": "TIMER_MANAGER", "anchor": "symbol" },
-    { "level": 11, "name": "TFD_LOCK", "anchor": "symbol", "note": "timerfd 槽位控制面锁; 回调不取本锁, set/free 在等待在途回调前先放本锁 (control_busy 占位), 故与 HRTIMER_QUEUE 仅短临界区嵌套" },
+    { "level": 11, "name": "TFD_LOCK", "anchor": "symbol", "note": "timerfd 槽位控制面锁; 回调不取本锁, set/free 在等待在途回调前先放本锁 (control_busy 占位), 故与 TIMER_BASE 仅短临界区嵌套" },
     { "level": 11, "name": "DCACHE", "anchor": "symbol", "note": "VFS 全局面 (dentry 缓存)" },
     { "level": 11, "name": "ICACHE", "anchor": "symbol", "note": "VFS 全局面 (inode 缓存)" },
     { "level": 11, "name": "RAMFS_DATA", "anchor": "symbol", "note": "文件系统特定锁的代表条目; EGFS/devfs 走各自对象锁, 见文档说明" },
@@ -85,7 +85,8 @@
     { "level": 14, "name": "AHCI_CONTROLLERS", "anchor": "symbol" },
     { "level": 14, "name": "ATA_CONTROLLERS", "anchor": "symbol" },
     { "level": 14, "name": "HOTPLUG_MANAGER", "anchor": "symbol", "note": "可移动/热插拔设备注册面" },
-    { "level": 14, "name": "HRTIMER_QUEUE", "anchor": "symbol", "note": "hrtimer 队列叶锁; run_queues 释放后才执行回调, 故出边只到调用方持有的高层锁, 本锁不反向嵌套" },
+    { "level": 14, "name": "TIMER_INIT_LOCK", "anchor": "symbol", "note": "hrtimer 初始化/首次绑定锁; 只在 try_init 与 Inactive→Pending 首次入队时取, 嵌套 TIMER_BASE (14→14)" },
+    { "level": 14, "name": "TIMER_BASE.base_lock", "anchor": "symbol", "note": "per-CPU 定时器 base 锁 (每 CPU 一把); run_queues 释放后才执行回调, 回调用 TIMER_INIT_LOCK→base 不会反向嵌套" },
     {
       "level": null,
       "name": "LOG_EMIT_LOCK",

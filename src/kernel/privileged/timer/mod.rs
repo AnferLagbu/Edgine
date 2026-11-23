@@ -98,6 +98,9 @@ pub mod wait;
 /// 高精度定时器框架 (纳秒级回调)
 pub mod hrtimer;
 
+/// 侵入式红黑树 — `HrTimer` 的私有有序容器
+mod rb_tree;
+
 /// D9: NTP/PTP 时钟同步
 pub mod time_sync;
 

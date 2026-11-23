@@ -31,10 +31,10 @@
 //! ## 锁序
 //!
 //! 登记动作只发生在 `NET_STATE` 临界区**之外**（由 `poll_network` 出临界区后调用），
-//! 因此不存在 `NET_STATE → HRTIMER_QUEUE` 嵌套。本模块自身的 `NET_POLL_TIMER` 锁
-//! 仅在持锁期间调用 `hrtimer_start`/`hrtimer_cancel`（`HRTIMER_QUEUE` 锁），构成
-//! `NET_POLL_TIMER → HRTIMER_QUEUE` 单向序；反向路径不存在 —— `hrtimer_run_queues`
-//! 在释放 `HRTIMER_QUEUE` 之后才执行回调，而回调只置位原子软中断标志。
+//! 因此不存在 `NET_STATE → TIMER_BASE` 嵌套。本模块自身的 `NET_POLL_TIMER` 锁
+//! 仅在持锁期间调用 `hrtimer_start`/`hrtimer_cancel`（`TIMER_BASE` 锁），构成
+//! `NET_POLL_TIMER → TIMER_BASE` 单向序；反向路径不存在 —— `hrtimer_run_queues`
+//! 在释放 `TIMER_BASE` 之后才执行回调，而回调只置位原子软中断标志。
 //!
 //! SIMPLIFIED: E-IV 已把「入向 floor」与 smoltcp 定时截止期收敛成**截止期 min 融合**
 //!   登记到 hrtimer（取更早者），但 **tick 腿仍每 tick 无条件 `poll_network`**，故本

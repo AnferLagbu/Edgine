@@ -70,7 +70,8 @@
 
 层级 14: Block Device Registry（块设备注册表）
   NVME_CONTROLLERS, AHCI_CONTROLLERS, ATA_CONTROLLERS, HOTPLUG_MANAGER,
-  HRTIMER_QUEUE（hrtimer 队列叶锁；`run_queues` 释放后才执行回调，不反向嵌套）
+  TIMER_INIT_LOCK（hrtimer 初始化/首次绑定锁；只串行 `try_init` 与 Inactive→Pending 首次入队）,
+  TIMER_BASE.base_lock（per-CPU 定时器 base 锁；`run_queues` 释放后才执行回调，不反向嵌套）
 ```
 
 本表不再是手写清单：它的**机器可读单源**是 `scripts/lock_class_order.json`（层级定义 + 每条锁类的锚点与归属层级），`scripts/audit_deadlock_matrix.py` 的第 (6) 项检查对本表做双向对账并把四条判据执法——① 代码里 `::named` / `::named_lazy` 注册的锁类若序表未声明即红（新锁类必须先入表）；② 序表声明的 `lockdep` 类在代码里已无注册点、或 `symbol` 锚在代码里定位不到即红（本表因此能抓住改名与删锁，序表对账首跑即抓出 `COW_REFS` 已删、`NET_LOCK` 已改名 `NET_STATE`、层级 14 四名从无实现）；③ 本表的条目集合与序表逐层级双向不符即红（括号内的说明文字不参与判定）；④ 容量对账（A-127c）：序表 `lockdep` 条目数与代码具名类数任一到达 `limits.rs` 的 `MAX_LOCK_CLASSES` 实值即红，上限不在脚本里抄数、单源不可解析即 fail-closed。判据 ④ 之所以必要：类表是定长数组，到顶之后的第 N+1 个类在运行时只表现为「注册被丢弃 + 一条粘滞失效读数」，静态侧必须当场拦住而不是等读数行。`MAX_HELD_LOCKS` 与本表层级数的差只进摘要读数不进取决（当前 8 vs 15，即「一条合法长链可每层持一把、而持有栈只跟得住 8 把」）——抬高上限牵动 boot BSS 定长数组尺寸，属另一轮裁定，溢出本身由运行时粘滞读数执法。改锁的顺序归属 = 改序表 + 改本表，两处同批提交，红在门禁而不是在下一次读文档时。第 (7) 项检查是静态倒序检测（见下节「静态锁序倒序检测」），它消费同一份序表与 `exceptions` 数组。

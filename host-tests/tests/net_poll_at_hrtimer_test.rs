@@ -8,7 +8,7 @@
 //!
 //! 本测试锁接线的四个语义形状，不锁内部实现细节：
 //! 1. `poll_stack` 把 `Interface::poll_at` 的截止期换算成纳秒回报上游（不再丢弃）；
-//! 2. 登记动作发生在 `NET_STATE` 临界区**之外**（禁 `NET_STATE → HRTIMER_QUEUE` 嵌套）；
+//! 2. 登记动作发生在 `NET_STATE` 临界区**之外**（禁 `NET_STATE → TIMER_BASE` 嵌套）；
 //! 3. 到期回调只置 `NetRx` 底半部，不自登记（hrtimer 的 `OneShot` 收尾会覆盖回调内
 //!    的 `hrtimer_start`，导致截止期链条断裂）；
 //! 4. functions 层的 `poll_at()` 委托真实登记值，而非恒 `None` 桩；
@@ -94,7 +94,7 @@ fn s3_registration_happens_outside_net_state() {
         .expect("S-3: 缺截止期登记调用点");
     assert!(
         register_raw > block_end,
-        "S-3: 登记调用被移进 NET_STATE 临界区 ⇒ 引入 NET_STATE → HRTIMER_QUEUE 嵌套锁序 (违反 F8)"
+        "S-3: 登记调用被移进 NET_STATE 临界区 ⇒ 引入 NET_STATE → TIMER_BASE 嵌套锁序 (违反 F8)"
     );
 }
 

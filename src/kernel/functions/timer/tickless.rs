@@ -248,8 +248,8 @@ impl TicklessSubsystem {
     ///
     /// 委托 hrtimer 子系统查询最早到期定时器; `0` 表示无待触发定时器
     /// (进入 tickless 后无限期停 tick, 等外部/设备中断唤醒)。
-    fn get_next_timer_expiry(_cpu_id: u32) -> u64 {
-        hrtimer_next_expiry().unwrap_or(0)
+    fn get_next_timer_expiry(cpu_id: u32) -> u64 {
+        hrtimer_next_expiry(cpu_id).unwrap_or(0)
     }
 
     /// 设置 Per-CPU 模式

@@ -57,7 +57,7 @@
 
 方案：`HrTimer` 增加内嵌链节点与 `base_id`；`start` 在 base 锁内摘旧条目、发新 `seq`、置 `Pending`；`try_cancel` 跨 CPU 只锁目标 base；`cancel` 锁外等待 `in_flight`。`hrtimer_run_queues` 采用“锁内摘一个、锁外回调、预算耗尽立即重装”的无分配分发。`tickless` 的 `get_next_timer_expiry(cpu_id)` 真实传参。
 
-状态：[]
+状态：[x] 已落地。全局 `HRTIMER_QUEUE`/`Vec<TimerEntry>` 已删除；`HrTimer` 内嵌 `RbNode<(expiry, seq)>` + `base_id`，`TIMER_BASES: [TimerBase; MAX_CPUS]` 每 CPU 一把 `IrqSpinLock`；`hrtimer_start` 对 `Inactive` 绑当前 CPU，对 `Pending/Running` 用已有 `base_id`，不跨 CPU 搬迁；`run_queues(cpu)` 锁内摘一个、锁外回调、每轮最多 64 个；`hrtimer_next_expiry(cpu)` 只扫本 base，`tickless` 已传真实 CPU。`TIMER_INIT_LOCK` 串行化 `try_init` 与 `Inactive→Pending` 首次入队。tree 单测 3 passed（含插入/正序/逆序/中序删除红黑性质校验）、hrtimer 26 passed（含双 base 隔离与离线/越界 CPU 无后备拒绝）、kernel host 619 passed、host 测试通过、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 腿、QEMU 2/2）。实现期发现 1024 个常驻 base 把 x86 镜像顶过 `USER_CODE_BASE`（K-08），将每 base `running` 从 `usize` 收为 `u32` 后恢复。
 
 ### 条目 4・timerfd per-context 对象与 read 路径重挂
 

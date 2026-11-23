@@ -240,8 +240,10 @@ pub fn on_timer_interrupt() {
         LAST_TSC.store(current_cnt, Ordering::Relaxed);
     }
 
-    // I-50: 统一入口 — tick 与 hrtimer 合并处理, 调用方不再需要单独调 hrtimer_run_queues.
-    super::hrtimer::hrtimer_run_queues();
+    // I-50: 统一入口 — tick 与 hrtimer 合并处理. 只处理当前 CPU 的 base,
+    // 不能把别的 CPU 的到期定时器在本核上执行.
+    let cpu = crate::privileged::smp::current_cpu_index();
+    super::hrtimer::hrtimer_run_queues(cpu);
 
     // D9: 时钟渐进调整 — 消耗 adjtimex(ADJ_OFFSET) 登记的待调整偏移 (斜率推进).
     // 仅原子操作, 无锁/无分配, 因此可在 hardirq 上下文安全调用.
