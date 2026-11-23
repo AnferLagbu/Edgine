@@ -41,15 +41,15 @@
 
 方案：状态编码按 `Uninit=0, Inactive=1, Pending=2, Running=3, Shutdown=4`；`dispatch_expired` 的关闭分支保留 `Shutdown`，迟到回调不得把 `Shutdown` 收敛成 `Inactive`；Periodic 重挂失败时同样不得覆盖 `Shutdown`。唯一会在活动期调 `init` 的网络 poll timer 改为仅 `Uninit`/`Shutdown` 时初始化，其余路径靠 `start` 替换激活。
 
-状态：[x] 已落地。`closed` 字段删除；状态编码与 `uninit`/`init`/`shutdown` 测试更新；新增“未 init 的 start 被拒绝”回归；hrtimer host 22 passed、kernel host 612 passed、host 测试通过、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 腿，QEMU 2/2）。
+状态：[x] 已落地。`closed` 字段删除；状态编码与 `uninit`/`init`/`shutdown` 测试更新；新增“未 init 的 start 被拒绝”回归；hrtimer host 24 passed（含条目 2 新增例）、kernel host 614 passed、host 测试通过、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 腿，QEMU 2/2）。
 
 ### 条目 2・StartOutcome 与 init 严格化
 
-描述：把 `hrtimer_start*` 的 `0` 哨兵改为显式 `StartOutcome`（`Started(seq)` / `NotReady` / `Shutdown`），让调用方区分“框架未就绪”“未 init”“已 shutdown”；同时把 `init` 的 debug 断言升级为可诊断的运行时拒绝或统一前置检查。
+描述：把 `hrtimer_start*` 的 `0` 哨兵改为显式 `StartOutcome`（`Started(seq)` / `NotReady` / `NotInitialized` / `Shutdown`），让调用方区分“框架未就绪”“未 init”“已 shutdown”；把 `init` 的 debug 断言升级为队列锁内的运行时拒绝：`try_init` 返回 `InitError`，`init` 对活动定时器 panic。
 
-方案：保留 `u64` 入队序号在 `Started` 内；`hrtimer_start_rel` / `periodic` 同步返回 `StartOutcome`；迁移期可加 `into_u64()` 适配层，但终态调用方必须消费枚举。`timerfd` 的 `set_time`、`itimer`、`posix_timer`、`net_poll` 调用点逐一改判，禁止继续用 `0` 当成功。
+方案：保留 `u64` 入队序号在 `Started` 内，并保证恒非 0；`hrtimer_start_rel` / `periodic` 同步返回 `StartOutcome`；不保留 `into_u64()` 适配层，所有内部调用点强制消费枚举。`timerfd` 的 `set_time` 改为 `Result<TimerTime, SetTimeError>`，初始化/入队失败回滚 armed 并映射 `EIO`；`itimer` 的设防失败回滚槽位并返回 `KernelError`，系统调用映射 `EIO`；`posix_timer` 失败撤销 armed/interval 并返回 `EIO`；`net_poll` 失败清截止期；`hrtimer_sleep` 失败直接返回，不再自旋到超时后假成功。
 
-状态：[]
+状态：[x] 已落地。`StartOutcome` 四态与 `InitError` 三态、`try_init` 队列锁内检查、`init` 运行时 panic 均已合入；全部 `start` 调用点已改判，无 `== 0` 哨兵残留；新增 NotReady / NotInitialized / Shutdown / init 活动拒绝回归；hrtimer 24 passed、kernel host 614 passed、host 测试通过、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 腿、QEMU 2/2）。
 
 ### 条目 3・每 CPU TimerBase 与 tickless
 

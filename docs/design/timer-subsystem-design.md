@@ -54,10 +54,10 @@
 
 | 部件 | 当前形态 | 终态差距 |
 |---|---|---|
-| 取消协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 关闭位；`hrtimer_start*` 返回入队序号 | 协议可保留；`closed` 需并入状态机，`start` 的 `0` 哨兵需改为显式结果 |
+| 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化；后续只随 `TimerBase` 迁移调整锁域，不再改调用方语义 |
 | 队列 | 单一全局 `HRTIMER_QUEUE: Mutex<Vec<TimerEntry>>`，按到期时间排序 | 改为每 CPU 一个 `TimerBase`，队列操作不再全局串行 |
 | 队列操作 | `Vec` 的 `retain` / 插入 / 排序，入队和分发都有 O(n) 扫描 | 改为侵入式有序结构，入队/出队 O(log n)，回调路径不分配 |
-| 定时器状态 | `Inactive` / `Pending` / `Running` 三态 + 独立 `closed: AtomicBool` | 增加 `Uninit` / `Shutdown`，关闭位成为状态而不是旁路原子量 |
+| 定时器状态 | `Uninit` / `Inactive` / `Pending` / `Running` / `Shutdown` 五态，无独立 `closed` 旁路 | 已落地；剩余是迁移到 per-CPU `TimerBase` 后的状态发布约束 |
 | 生命周期 | `in_flight` + 调用方保活契约；静态槽位保证地址稳定 | 取消后即可释放；对象所有权 + 不可移动契约承担生命周期 |
 | timerfd 槽位 | `TFD_SLOTS: [TimerFdSlot; 16]`，全局 `TFD_LOCK`，回调线性反查 | 改为 per-context `Arc` 对象，回调 `container_of` O(1) 定位 |
 | timerfd 周期 | 回调内直接 `hrtimer_start` 自重挂 | 回调只累加 ticks 并唤醒；周期重挂移到 `read` 路径 |
@@ -98,7 +98,7 @@
 | `Inactive` | 已初始化，未入队，无在途回调 |
 | `Pending` | 已入队，等待到期；可能同时存在一个旧回调在途（由 `in_flight` 标记） |
 | `Running` | 当前激活的回调正在执行 |
-| `Shutdown` | 关闭位生效，拒绝再次入队；等待在途回调后可重新 `init` |
+| `Shutdown` | 关闭状态生效，拒绝再次入队；等待在途回调后可重新 `init` |
 
 状态迁移：
 
@@ -114,7 +114,7 @@
 | `Running` | 回调返回 `Periodic` | `Pending` | 框架在清 `in_flight` 前重挂；若已 `Shutdown` 则不重挂 |
 | 任意 | `shutdown` | `Shutdown` | 摘条目、置关闭状态、等待 `in_flight` 清零 |
 
-`Inactive` 上允许 `init` 是构造期便利，不表示可以在 `Pending/Running` 上换回调。`Pending` 和 `Running` 上的 `init` 必须被 debug 断言或运行时错误挡住；否则回调指针与在途回调会产生别名语义。
+`Inactive` 上允许 `init` 是构造期便利，不表示可以在 `Pending/Running` 上换回调。`Pending`、`Running` 或 `in_flight` 非零时的 `init` 必须被运行时检查拒绝：可恢复路径用 `try_init` 返回 `InitError`，直接 `init` 对活动定时器 panic。两者都在队列锁内完成检查与字段发布，避免“检查后被并发入队”的 TOCTOU；否则回调指针与在途回调会产生别名语义。
 
 终态 API 轮廓：
 
@@ -122,7 +122,14 @@
 pub enum StartOutcome {
     Started(u64),
     NotReady,
+    NotInitialized,
     Shutdown,
+}
+
+pub enum InitError {
+    Pending,
+    Running,
+    InFlight,
 }
 
 pub enum CancelOutcome {
@@ -138,9 +145,14 @@ pub fn hrtimer_cancel(timer: &HrTimer) -> bool;
 pub fn hrtimer_shutdown(timer: &HrTimer);
 pub fn hrtimer_next_expiry(cpu: u32) -> Option<u64>;
 pub fn hrtimer_run_queues(cpu: u32);
+
+impl HrTimer {
+    pub fn init(&self, callback: HrTimerCallback);
+    pub fn try_init(&self, callback: HrTimerCallback) -> Result<(), InitError>;
+}
 ```
 
-`0` 不再同时表示“框架未就绪”和“已 shutdown”。迁移期可以保留 `0` 适配层，但终态调用方必须消费 `StartOutcome`，否则关闭位与未初始化会被继续混为一谈。
+`0` 不再同时表示“框架未就绪”“未 init”和“已 shutdown”：`NotReady` / `NotInitialized` / `Shutdown` 三态分离。迁移期可以保留 `0` 适配层，但终态调用方必须消费 `StartOutcome`，否则关闭状态与未初始化会被继续混为一谈。当前实现已删除适配层，所有内部调用点按枚举改判。
 
 `hrtimer_start` 在 `Pending/Running` 上的替换语义保留，因为网络 poll timer、POSIX timer 等需要在运行中改截止期；但“替换”只保证旧激活不再产生有效回调，不保证旧回调已经退出。需要“替换且确保旧回调退出”的调用方，先 `cancel` 再 `start`。
 
