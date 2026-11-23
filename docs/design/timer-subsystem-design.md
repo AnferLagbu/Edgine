@@ -52,7 +52,7 @@
 
 当前实现已经完成了取消协议的语义收口，但承载结构仍是单队列 + 静态槽位的中间态：
 
-| 部件 | 当前形态（条目 1–4 已落地） | 剩余差距 |
+| 部件 | 当前形态（条目 1–6 已落地） | 剩余差距 |
 |---|---|---|
 | 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化，不再改调用方语义 |
 | 队列 | `TIMER_BASES: [TimerBase; MAX_CPUS]`，每 CPU 一把 `IrqSpinLock`，绑定在首次 `start` 的 CPU | 已落地；`Quiescing`/offline 强制迁移见本节协议 |
@@ -61,10 +61,10 @@
 | 生命周期 | `in_flight` + `Arc<TimerFdContext>`；`release` 先 shutdown 等待在途回调，`Drop` 兜底 | 已落地；条目 5 只调整迁移期瞬态 |
 | timerfd 对象 | `Arc<TimerFdContext>`，`HrTimer` 首字段，回调 `container_of` O(1)，无 16 槽上限 | 已落地 |
 | timerfd 周期 | 回调只累计 ticks、置 `armed=false` 并唤醒；`read` 消费 ticks 后按 `last_expiry + interval` 重挂 | 已落地；未读不风暴 |
-| timerfd 唤醒 | 仍保存单个数值 `wake_fd`，`epoll_pwake(fd)`；仅登记创建时首个 fd | 条目 6 改为 epoll 兴趣/对象 token，覆盖 dup 与多 epoll |
+| timerfd 唤醒 | `File::wake_token` + epoll 兴趣持有 `(handle_id, token)`；回调用 `epoll_pwake_token`，`epoll_wait` 按 handle 求值 | 已落地；覆盖 dup 与多 epoll |
 | tickless | `get_next_timer_expiry(cpu_id)` 只查该 CPU 的 `TimerBase` | 已落地 |
 | 多核可用性 | 每 CPU base 独立锁与树；`MAX_CPUS = 1024` 启动校验；CPU 上下线 quiesce/迁移/online | 已落地 timer 侧协议；平台级 offline 流程另计 |
-| 锁域 | 每 CPU `TIMER_BASE.base_lock`；timerfd 用 per-context 原子 `control_busy` 占位，不再有全局 `TFD_LOCK` | 条目 6 登记 `TFD_CTX` 锁类并完成唤醒 token 化 |
+| 锁域 | 每 CPU `TIMER_BASE.base_lock`；timerfd 用 per-context `TFD_CTX.tfd_ctx` 控制锁 | 已落地；`TFD_LOCK` / `control_busy` 已删除 |
 
 当前代码事实来源：
 
@@ -79,7 +79,7 @@
 无论底层结构如何替换，以下契约不再改变：
 
 1. **取消返回即可释放**：`hrtimer_cancel` 返回后，回调不再访问该 timer；`try_cancel` 返回 `Cancelled` 时，队列不再持有该 timer 指针。`Busy` 只表示“尚未安全”，不是“取消失败”。
-2. **取消等待不阻塞回调**：等待在途回调期间不持队列锁，也不持回调可能获取的任何锁；控制面只允许保留回调不取的占位（如 `control_busy`），用于防止对象被并发释放，不得用它串行化回调路径。
+2. **取消等待不阻塞回调**：等待在途回调期间不持队列锁，也不持回调可能获取的任何锁；控制面只允许保留回调不取的占位（如 timerfd 的 `TFD_CTX.tfd_ctx`），用于防止对象被并发释放，不得用它串行化回调路径。
 3. **回调硬中断化**：hrtimer 回调只在硬中断上下文执行，不睡眠、不分配、不做长任务；软定时器不在本终态内。
 4. **CPU 亲和**：timer 在首次 `start` 时绑定到当前 CPU；运行期间不迁移。取消可以从任意 CPU 发起。
 5. **无分配队列**：入队、出队、分发、周期重挂都不走堆分配；`HrTimer` 的链节点内嵌在对象里。
@@ -288,16 +288,14 @@ timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，�
 timerfd 不再有全局槽位表和槽位下标。终态对象：
 
 ```rust
-struct TimerFdContext {             // 条目 4 已落地形态
+struct TimerFdContext {             // 条目 6 落地形态
     timer: HrTimer,                 // 必须是首字段，便于 container_of
     ticks: AtomicU64,
     interval_ns: AtomicU64,
     armed: AtomicBool,
     generation: AtomicU64,
     last_expiry_ns: AtomicU64,       // read 重挂基准
-    control_busy: AtomicBool,        // 控制面占位，回调与 poll 不取
-    wake_fd: AtomicI32,              // 条目 4 保留数值 fd；条目 6 换 waker
-    // 条目 6 追加：waker: WakeRegistration, waiters: WaitQueue
+    tfd_ctx: IrqSpinLock<()>,        // `TFD_CTX.tfd_ctx` 控制面锁，回调与 poll 不取
 }
 
 struct TimerFdFile {
@@ -329,13 +327,13 @@ struct TimerFdFile {
 
 ### 唤醒注册
 
-当前 `wake_fd` 是单个数值 fd，`epoll_pwake(fd)` 按 fd 唤醒。这在 dup、close、fd 复用下不成立：timerfd 关闭后，同一个数值 fd 可能已属于另一个对象；timerfd 也可能同时被多个 epoll 实例关注。
+`wake_fd` 是单个数值 fd，`epoll_pwake(fd)` 按 fd 唤醒；这在 dup、close、fd 复用下不成立。终态改为**对象 token + epoll 兴趣持有 token**：
 
-终态要求：
-
-- `TimerFdContext` 不保存裸 fd，而保存 epoll 兴趣注册返回的 `WakeRegistration`（token 或弱引用）。
-- 一个 timerfd 支持多个 epoll 兴趣；回调按注册集合唤醒，而不是按一个 fd 号。
-- epoll 的 timerfd 就绪查询走对象 `poll`，不走数值 fd 分支。
+- `File::wake_token()` 默认 `0`（普通对象按 fd 求值）；`TimerFdFile` 返回 `TimerFdContext` 的稳定地址令牌（非 0，只作身份，不解引用）。
+- `epoll_ctl(ADD)` 记录 `(handle_id, wake_token)`；同一 timerfd 被多个 epoll、多个 dup 别名关注时，每个兴趣都持有同一 token。
+- timerfd 回调只调用 `epoll_pwake_token(token)`；epoll 扫描所有实例中 token 匹配的兴趣，逐个置 `EPOLLIN` 并唤醒等待者。回调不保存 fd、不按 fd 反查。
+- `epoll_wait` 对 token 兴趣按 `handle_id` 调对象 `File::poll`，因此原 fd 关闭但 `dup` 别名仍在时仍能正确求值；普通对象仍走 fd 路径。
+- 最后一个 fd 引用关闭时，`TimerFdContext::release` 在 `hrtimer_shutdown` 后调用 `epoll_forget_token`，移除所有兴趣与就绪项，再允许 `Arc` 归零；地址复用不会误唤醒新对象。
 
 这是 timerfd 终态的前置条件。若 epoll 仍以数值 fd 为键，timerfd 可以完成对象化，但不能宣称完成“fd 复用安全”。
 
@@ -349,15 +347,15 @@ struct TimerFdFile {
 
 | 锁类 | 层级 | 作用 | 约束 |
 |---|---:|---|---|
-| `TFD_CTX` | 11 | timerfd 控制面：set_time/release 的复合状态 | 等待在途回调前先释放；回调不取 |
+| `TFD_CTX.tfd_ctx` | 11 | timerfd 控制面：set_time/release 的复合状态 | 回调与 poll 不取；持锁可等待在途回调，不会与回调形成 ABBA |
 | `TIMER_BASE` | 14 | 每 CPU 定时器队列 | 只允许持有一个 base 锁；锁内不执行回调、不等待 |
 | `EPOLL` | 既有层级 | epoll 实例与等待队列 | 回调唤醒时取；不得在持 `TIMER_BASE` 时取 |
 
 约束：
 
 - 不存在 `TIMER_BASE(cpu0) → TIMER_BASE(cpu1)` 的嵌套。任何跨 CPU 操作都只锁目标 base，释放后再重试或等待。CPU offline 迁移也是“锁源 base 摘除 → 放锁 → 锁目标 base 插入”，不持两把 base 锁。
-- `TFD_CTX` 内可以短临界区调 `hrtimer_start`（11 → 14），但等待 `hrtimer_cancel` 前必须释放 `TFD_CTX` 状态锁，只保留 `control_busy` 占位。
-- timerfd 回调不取 `TFD_CTX`；`poll` 不取 `TFD_CTX`；否则 `epoll_pwake` 的间接 poll 会回取控制锁。
+- `TFD_CTX.tfd_ctx` 内可以调 `hrtimer_start`/`hrtimer_cancel`（11 → 14）；回调与 `poll` 都不取该锁，因此持锁等待在途回调不会形成 ABBA。该锁是 `IrqSpinLock`，等待窗口内本核中断关闭，`set_time`/`release` 不应被放在中断上下文。
+- timerfd 回调不取 `TFD_CTX.tfd_ctx`；`poll` 不取；否则 `epoll_pwake_token` 的间接 poll 会回取控制锁。
 - `hrtimer_run_queues` 在 `TIMER_BASE` 锁外执行回调；周期重挂在清 `in_flight` 前重新取 base 锁，允许回调内调用 `hrtimer_start`，但不允许回调假设自己仍持 base 锁。
 
 内存序：
@@ -387,7 +385,7 @@ struct TimerFdFile {
 5. **无分配**：入队、取消、分发、Periodic 重挂的路径没有堆分配；回调路径没有锁分配或动态容器增长。
 6. **timerfd 不风暴**：周期 timerfd 在无人 `read` 时只产生首次到期，不持续重挂；`read` 后按 interval 重挂。
 7. **timerfd 生命周期**：`dup`/`close`/`fork` 下对象引用正确；fd 复用不会误唤醒新的 timerfd；多个 epoll 兴趣都能被唤醒。
-8. **锁序**：`TFD_CTX` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
+8. **锁序**：`TFD_CTX.tfd_ctx` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
 9. **可扩展性**：多核并发 start/cancel/read 的基准不随全局锁串行；单 CPU 活跃 timer 增加时入队/取消保持对数级，不出现全队列扫描。
 10. **旧语义回归**：itimer、POSIX timer、网络 poll timer、`hrtimer_sleep` 在 per-CPU 队列上保持原有可观察行为。
 11. **容量边界**：`cpu_count > MAX_CPUS` 时启动明确拒绝并给出可诊断错误；不超过时每 CPU base 正常初始化；若未来提高上限，需重测静态 per-CPU 数组的内存与启动时间，不能静默截断 CPU。

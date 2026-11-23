@@ -70,6 +70,7 @@
     { "level": 11, "name": "DCACHE", "anchor": "symbol", "note": "VFS 全局面 (dentry 缓存)" },
     { "level": 11, "name": "ICACHE", "anchor": "symbol", "note": "VFS 全局面 (inode 缓存)" },
     { "level": 11, "name": "RAMFS_DATA", "anchor": "symbol", "note": "文件系统特定锁的代表条目; EGFS/devfs 走各自对象锁, 见文档说明" },
+    { "level": 11, "name": "TFD_CTX.tfd_ctx", "anchor": "lockdep", "note": "timerfd per-context 控制面锁; 回调与 poll 不取, 避免唤醒回取" },
     { "level": 12, "name": "NET_STATE", "anchor": "lockdep", "note": "原 NET_LOCK + 12 static mut 的替代单源" },
     { "level": 12, "name": "NET_SNAPSHOT_LOCK", "anchor": "symbol" },
     { "level": 12, "name": "NET_STACK_INSTANCE", "anchor": "symbol", "note": "smoltcp 栈锁" },

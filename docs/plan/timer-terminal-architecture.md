@@ -77,8 +77,8 @@
 
 ### 条目 6・唤醒 token 化、静态槽清理与审计
 
-描述：timerfd 不再保存裸 `wake_fd`，改为 epoll 兴趣/对象注册返回的 token；回调按注册集合唤醒；删除静态槽残余，锁序表登记 `TFD_CTX` / `TIMER_BASE`，静态锁序、形状锁、死锁矩阵和 full 审计同步。
+描述：timerfd 不再保存裸 `wake_fd`，改为对象级稳定 token；epoll 兴趣按 `(handle_id, token)` 登记，回调按 token 唤醒所有兴趣（覆盖 dup 别名与多个 epoll）；删除静态槽残余，锁序表登记 `TFD_CTX.tfd_ctx` / `TIMER_BASE`，静态锁序、形状锁、死锁矩阵和 full 审计同步。
 
-方案：与 epoll 子系统约定 `WakeRegistration` 接口；timerfd `poll` 走对象路径；锁序表以 `TFD_CTX`(11) / `TIMER_BASE`(14) 替换 `TFD_LOCK` / `HRTIMER_QUEUE`；新增“回调不取控制锁、迁移不双持 base 锁、timerfd 未读不风暴”的形状/行为测试。
+方案：`File::wake_token()` 默认 `0`，`TimerFdFile` 返回 `TimerFdContext` 的地址令牌（非 0，只作身份、不解引用）。`VfsOps` 增加 `fd_watch_token(fd)` 与 `open_file_poll(handle_id, events)`；epoll `EpollItem` 持 `handle_id`/`wake_token`，`epoll_ctl(ADD)` 登记，`epoll_wait` 对 token 兴趣走对象 `File::poll`。回调只调 `epoll_pwake_token(token)`，扫描所有实例按 token 入 `EPOLLIN`，不在中断上下文回查 VFS。最后一个 fd 关闭时 `TimerFdContext::release` 在 `hrtimer_shutdown` 后调 `epoll_forget_token`，移除所有兴趣与就绪项，避免地址复用误唤醒。`ReadyEvent` 带 token，`EPOLL_CTL_DEL` 按 `(data, token)` 精确清理。`control_busy` 换成 `TFD_CTX.tfd_ctx` 控制锁，回调与 `poll` 不取。锁序表以 `TFD_CTX.tfd_ctx`(11) / `TIMER_BASE`(14) 替换 `TFD_LOCK` / `HRTIMER_QUEUE`；新增“回调不取控制锁、token 多 epoll 唤醒、release 清兴趣、timerfd 未读不风暴”的形状/行为测试。
 
-状态：[]
+状态：[x] 已落地。`TimerFdContext` 删除 `wake_fd`/`set_wake_fd`/`control_busy`，新增 `wake_token()` 与 `tfd_ctx`；`File`/`VfsOps`/epoll 三条链路接通；新增 `epoll_pwake_token`/`epoll_forget_token`/`check_item_ready`；形状锁断言 timerfd 无旧裸 fd API、epoll 存在 token/handle API。已知余项：`epoll_forget_token` 清理后不主动唤醒阻塞在 `epoll_wait(-1)` 的等待者；timerfd 阻塞 `read` 仍无 `waiters` 队列，属后续条目。验证：timerfd privileged 5 passed、functions 6 passed、kernel host 1456 passed（kernel 633 / functions 811 / privileged 12）、host 1653 passed、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（未执行腿 0、QEMU 2/2）、QEMU x86_64 + aarch64 2/2、静态死锁矩阵 0 项。

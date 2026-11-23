@@ -147,7 +147,6 @@ impl TimerFdFile {
 
     /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败释放 context
     fn attach(ctx: Arc<TimerFdContext>, nonblock: bool, cloexec: bool) -> Result<usize, Errno> {
-        let ctx_for_wake = Arc::clone(&ctx);
         let pwm = subject::current_raw();
         let open_file = OpenFile::from_file(Arc::new(Self::new(ctx)), 0, pwm);
         open_file.set_nonblock(nonblock);
@@ -164,12 +163,7 @@ impl TimerFdFile {
             OPEN_FILE_TABLE.close(handle_id);
             return Err(Errno::Emfile);
         };
-        // SIMPLIFIED: epoll 唤醒注册表仍以数值 fd 为键 (跨子系统统一改造归
-        // epoll 子系统); 影响面 = 仅登记创建时的首个 fd 号, dup 别名的就绪
-        // 唤醒需按该 fd 注册兴趣 (与 socket/UDS/inotify 迁移同口径); 何时需
-        // 扩展: 唤醒注册表改按 OpenFile handle 索引时 (条目 6 的 token 化).
-        let wake_fd = crate::functions::intcast::low_i32_from_usize(fd_idx);
-        ctx_for_wake.set_wake_fd(wake_fd);
+        // epoll 兴趣在 ADD 时按对象 `wake_token` 登记; 这里不再需要数值 fd.
         Ok(fd_idx)
     }
 }
@@ -203,6 +197,10 @@ impl File for TimerFdFile {
         } else {
             PollEvents::empty()
         }
+    }
+
+    fn wake_token(&self) -> u64 {
+        self.ctx.wake_token()
     }
 
     fn io_control(&self, _cmd: u32, _arg: usize) -> KernelResult<usize> {
@@ -428,6 +426,7 @@ mod tests {
     #[test]
     fn object_contract_sentinels() {
         let file = TimerFdFile::new(TimerFdContext::create());
+        assert_ne!(file.wake_token(), 0, "timerfd 必须暴露非零对象唤醒 token");
         assert!(file.stream(), "timerfd 不可定位 (ESPIPE)");
         assert!(file.as_inode().is_none(), "timerfd 非 inode 承载");
         assert_eq!(file.file_type(), VfsFileType::File);

@@ -190,13 +190,23 @@ impl crate::privileged::fs::VfsOps for FunctionsVfsOps {
                 if of.as_inode().is_some() {
                     return None;
                 }
-                let requested =
-                    PollEvents::from_bits_truncate(crate::functions::intcast::low_i16_from_i32(
-                        crate::functions::intcast::low_i32_from_u32(events),
-                    ));
-                Some(crate::functions::intcast::u32_from_i16(
-                    of.file().poll(requested).bits(),
-                ))
+                Some(special_poll_bits(of.file(), events))
+            })
+            .flatten()
+    }
+
+    fn fd_watch_token(&self, fd: i32) -> Option<(u32, u64)> {
+        let handle_id = vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))?;
+        OPEN_FILE_TABLE.with_file(handle_id, |of| (handle_id, of.file().wake_token()))
+    }
+
+    fn open_file_poll(&self, handle_id: u32, events: u32) -> Option<u32> {
+        OPEN_FILE_TABLE
+            .with_file(handle_id, |of| {
+                if of.as_inode().is_some() {
+                    return None;
+                }
+                Some(special_poll_bits(of.file(), events))
             })
             .flatten()
     }
@@ -211,6 +221,17 @@ impl crate::privileged::fs::VfsOps for FunctionsVfsOps {
     ) -> i32 {
         vfs_pread_inode(mount_idx, inode_id, offset, dst, pwm)
     }
+}
+
+/// 非 inode 对象的 `File::poll` → 原始 Linux `POLL*` 位.
+///
+/// `fd_poll_special` 与 `open_file_poll` 共用: 前者按 fd 解析, 后者按
+/// `OpenFile` handle 求解 (供 epoll 在 dup/close 后仍按对象身份求值).
+fn special_poll_bits(file: &dyn crate::functions::fs::file::File, events: u32) -> u32 {
+    let requested = PollEvents::from_bits_truncate(crate::functions::intcast::low_i16_from_i32(
+        crate::functions::intcast::low_i32_from_u32(events),
+    ));
+    crate::functions::intcast::u32_from_i16(file.poll(requested).bits())
 }
 
 static VFS_OPS_IMPL: FunctionsVfsOps = FunctionsVfsOps;

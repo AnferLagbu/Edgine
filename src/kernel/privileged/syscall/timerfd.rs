@@ -23,31 +23,32 @@
 //!   ├── armed: AtomicBool           (是否已启动)
 //!   ├── generation: AtomicU64       (当前激活序号)
 //!   ├── last_expiry_ns: AtomicU64   (上次计划到期时刻, read 重挂基准)
-//!   ├── control_busy: AtomicBool    (控制面占位; 回调与 poll 不取)
-//!   └── wake_fd: AtomicI32          (数值唤醒 fd, -1=未登记; 条目 6 改 token)
+//!   ├── tfd_ctx: IrqSpinLock<()>    (TFD_CTX 控制面锁; 回调与 poll 不取)
+//!   └── wake_token(): 对象地址令牌    (方法而非字段; epoll 兴趣按此唤醒, 不存裸 fd)
 //! ```
 //!
 //! ## 周期语义
 //!
-//! 回调只累计 ticks、置 `armed=false`、唤醒等待者, 返回 `OneShot`:
+//! 回调只累计 ticks、置 `armed=false`、按对象 token 唤醒 epoll, 返回 `OneShot`:
 //! **不在回调内重挂**. 周期 timerfd 在首次到期后自然停住; `read` 消费 ticks 后
 //! 以 `last_expiry + interval` 为基准重挂下一次到期. 无人 `read` 的周期对象
 //! 不会在硬中断里持续点火.
 //!
 //! # Safety
 //!
-//! - 回调在中断上下文执行 (不可睡眠), 只做原子读写与 `epoll_pwake`; 不取
-//!   `control_busy`, 避免 `epoll_pwake → check_fd_ready → timerfd poll` 回取.
-//! - 控制面占位在等待 `hrtimer_cancel`/`hrtimer_shutdown` 期间保护 context 不被
-//!   并发 `release`; `Arc` 保证对象本身存活, 占位保证状态操作串行.
+//! - 回调在中断上下文执行 (不可睡眠), 只做原子读写与 `epoll_pwake_token`; 不取
+//!   `TFD_CTX`, 避免 `epoll_pwake_token → 对象 poll` 回取控制锁.
+//! - 控制面锁在等待 `hrtimer_cancel`/`hrtimer_shutdown` 期间保护 context 不被
+//!   并发 `release`; `Arc` 保证对象本身存活, 锁保证状态操作串行.
 //! - `container_of` 依赖 `timer` 为 `#[repr(C)]` 结构的首字段, 且 context 在
 //!   回调在途期间不会释放 (`release` 的 shutdown 语义).
 
 #![deny(missing_docs)]
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::privileged::sync::{IrqSpinLock, IrqSpinLockGuard};
 use crate::privileged::timer::{
     HrTimer, HrTimerRestart, StartOutcome, hrtimer_cancel, hrtimer_clock_read, hrtimer_shutdown,
     hrtimer_start,
@@ -99,10 +100,9 @@ pub struct TimerFdContext {
     generation: AtomicU64,
     /// 上次计划到期时刻 (纳秒); `read` 重挂的基准
     last_expiry_ns: AtomicU64,
-    /// 控制面占位 (`set_time`/`read`/`release` 串行; 回调与 `poll` 不取)
-    control_busy: AtomicBool,
-    /// 唤醒用数值 fd (对象挂表时登记; -1 = 未登记)
-    wake_fd: AtomicI32,
+    /// 控制面锁 (`TFD_CTX`；`set_time`/`take_expiry`/`get_time`/`release` 串行;
+    /// 回调与 `poll` 不取)
+    tfd_ctx: IrqSpinLock<()>,
 }
 
 impl TimerFdContext {
@@ -120,8 +120,7 @@ impl TimerFdContext {
             armed: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             last_expiry_ns: AtomicU64::new(0),
-            control_busy: AtomicBool::new(false),
-            wake_fd: AtomicI32::new(-1),
+            tfd_ctx: IrqSpinLock::named("TFD_CTX.tfd_ctx", ()),
         });
         if ctx.timer.try_init(timerfd_callback).is_err() {
             debug_assert!(false, "新建 timerfd 上下文的 HrTimer 初始化被拒绝");
@@ -129,9 +128,15 @@ impl TimerFdContext {
         ctx
     }
 
-    /// 登记唤醒用数值 fd (对象完成 `OpenFileTable` + per-process fd 表挂载后调用)
-    pub fn set_wake_fd(&self, fd: i32) {
-        self.wake_fd.store(fd, Ordering::Release);
+    /// 对象级稳定唤醒 token (非 0)
+    ///
+    /// 只暴露对象地址作为身份, 不据此解引用; epoll 兴趣按它唤醒, 因而
+    /// `dup` 别名与多个 epoll 实例共享同一唤醒源. 最后一个 fd 关闭时
+    /// [`Self::release`] 会从所有 epoll 兴趣中移除该 token, 防止地址复用后
+    /// 误唤醒新对象.
+    #[must_use]
+    pub fn wake_token(&self) -> u64 {
+        core::ptr::from_ref(self) as usize as u64
     }
 
     /// 设置定时器, 返回设置前的 `(interval_ns, remaining_ns)`
@@ -282,7 +287,7 @@ impl TimerFdContext {
         self.ticks.store(0, Ordering::Release);
         self.interval_ns.store(0, Ordering::Release);
         self.last_expiry_ns.store(0, Ordering::Release);
-        self.wake_fd.store(-1, Ordering::Release);
+        crate::privileged::syscall::epoll::epoll_forget_token(self.wake_token());
     }
 }
 
@@ -291,33 +296,23 @@ impl Drop for TimerFdContext {
         // 兜底: 即使对象层漏掉 release, 也不能在仍有 Pending/Running 激活时释放
         // context 内存, 否则回调的 container_of 会悬垂. shutdown 会等待在途回调.
         hrtimer_shutdown(&self.timer);
+        crate::privileged::syscall::epoll::epoll_forget_token(self.wake_token());
     }
 }
 
-/// 控制面占位守卫: 串行化 `set_time`/`take_expiry`/`get_time`/`release`
+/// 控制面守卫: 持有 `TFD_CTX` 串行化 `set_time`/`take_expiry`/`get_time`/`release`
 ///
-/// 回调与 `poll` 不取该占位: 回调只写原子量并 `epoll_pwake`, `poll` 只读 ticks.
-/// 因此释放该占位去等待在途回调不会与回调路径形成 AB-BA.
+/// 回调与 `poll` 不取该锁: 回调只写原子量并按对象 token 唤醒, `poll` 只读 ticks.
+/// 因此持锁等待在途回调不会与回调路径形成 AB-BA.
 struct ControlGuard<'a> {
-    ctx: &'a TimerFdContext,
+    _guard: IrqSpinLockGuard<'a, ()>,
 }
 
 impl<'a> ControlGuard<'a> {
     fn acquire(ctx: &'a TimerFdContext) -> Self {
-        while ctx
-            .control_busy
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
+        Self {
+            _guard: ctx.tfd_ctx.lock(),
         }
-        Self { ctx }
-    }
-}
-
-impl Drop for ControlGuard<'_> {
-    fn drop(&mut self) {
-        self.ctx.control_busy.store(false, Ordering::Release);
     }
 }
 
@@ -361,10 +356,8 @@ fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart {
     ctx.generation.store(0, Ordering::Release);
     ctx.ticks.fetch_add(1, Ordering::Release);
 
-    let wake_fd = ctx.wake_fd.load(Ordering::Acquire);
-    if wake_fd >= 0 {
-        crate::privileged::syscall::epoll::epoll_pwake(wake_fd);
-    }
+    let wake_token = ctx.wake_token();
+    crate::privileged::syscall::epoll::epoll_pwake_token(wake_token);
 
     HrTimerRestart::OneShot
 }
@@ -412,6 +405,41 @@ mod tests {
         let ctx_addr = Arc::as_ptr(&ctx) as *const u8;
         let timer_addr = (&raw const ctx.timer).cast::<u8>();
         assert_eq!(ctx_addr, timer_addr, "timer 必须是 context 首字段");
+    }
+
+    #[test]
+    fn callback_wakes_all_object_token_interests() {
+        let ctx = TimerFdContext::create();
+        let token = ctx.wake_token();
+        assert_ne!(token, 0, "对象唤醒 token 必须非零");
+        assert_eq!(token, ctx.wake_token(), "token 必须稳定");
+
+        let ep1 = super::super::epoll::test_register_token(token, 0x001, 0x111);
+        let ep2 = super::super::epoll::test_register_token(token, 0x001, 0x222);
+        mark_armed(&ctx, 0, 7);
+        let _ = timerfd_callback(&ctx.timer, 7);
+
+        assert!(
+            super::super::epoll::test_token_ready(ep1, 0x111),
+            "第一个 epoll 兴趣必须被 token 唤醒"
+        );
+        assert!(
+            super::super::epoll::test_token_ready(ep2, 0x222),
+            "多个 epoll 兴趣必须同时被 token 唤醒"
+        );
+        assert!(ctx.poll_ready(), "token 唤醒不得吞掉 ticks");
+
+        ctx.release();
+        assert!(
+            !super::super::epoll::test_token_registered(ep1, token),
+            "release 必须移除第一个 epoll 兴趣"
+        );
+        assert!(
+            !super::super::epoll::test_token_registered(ep2, token),
+            "release 必须移除所有 epoll 兴趣"
+        );
+        super::super::epoll::epoll_destroy(ep1.cast_unsigned());
+        super::super::epoll::epoll_destroy(ep2.cast_unsigned());
     }
 
     #[test]

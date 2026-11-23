@@ -3,10 +3,10 @@
   "generated_by": "python3 scripts/audit_deadlock_matrix.py --update-lock-order-baseline",
   "note": "A-3b 覆盖率棘轮: 未分类取锁点按 (文件, 接收者末段名) 冻结. 新增/增加即门禁判红; 收缩时重跑 --update-lock-order-baseline. 这份快照不是锁序判据 —— 倒序判定走 scripts/lock_class_order.json.",
   "totals": {
-    "unclassified_sites": 864,
-    "classified_sites": 427,
-    "acquisition_sites": 1291,
-    "lock_class_edges": 15
+    "unclassified_sites": 869,
+    "classified_sites": 443,
+    "acquisition_sites": 1312,
+    "lock_class_edges": 16
   },
   "unclassified": {
     "src/kernel/functions/config/sysctl.rs::SYSCTL_TABLE": 4,
@@ -198,7 +198,7 @@
     "src/kernel/privileged/sync/seqlock.rs::lock": 4,
     "src/kernel/privileged/sync/spinlock.rs::lock": 3,
     "src/kernel/privileged/syscall/dispatch.rs::FB_MAP_RECORD": 2,
-    "src/kernel/privileged/syscall/epoll.rs::EPOLL_INSTANCES": 6,
+    "src/kernel/privileged/syscall/epoll.rs::EPOLL_INSTANCES": 11,
     "src/kernel/privileged/tests/mod.rs::registry": 3,
     "src/kernel/privileged/timer/calibration.rs::FREQ_TEST_LOCK": 7,
     "src/kernel/privileged/timer/sleep.rs::FREQ_TEST_LOCK": 1,

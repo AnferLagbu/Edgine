@@ -15,6 +15,7 @@
 //! epoll_ctl(DEL):  从 interest_list 移除
 //! epoll_wait:      ready_list → 用户空间 (无事件则挂入 wait_queue, 调度让出)
 //! epoll_pwake(fd): 任意 fd 状态变化 (write/close) 时调用, 唤醒该 fd 注册的 epfd
+//! epoll_pwake_token: timerfd 等对象按稳定 token 唤醒所有兴趣 (含 dup/多 epoll)
 //! ```
 //!
 //! ## VFS poll 集成
@@ -89,8 +90,12 @@ pub struct EpollEvent {
 /// 内核跟踪的 fd 项
 #[derive(Debug, Clone, Copy)]
 struct EpollItem {
-    /// 监控的 fd
+    /// 监控的 fd (用户注册时用于身份/删除; 求值优先走 `handle_id`)
     fd: i32,
+    /// 注册时的 `OpenFile` handle (dup 别名共享; 0 = 无)
+    handle_id: u32,
+    /// 对象稳定唤醒 token (0 = 只能按 fd 唤醒)
+    wake_token: u64,
     /// 事件掩码
     events: u32,
     /// 用户数据
@@ -103,12 +108,21 @@ struct EpollItem {
     ready: bool,
 }
 
+/// 就绪队列项 — 带内部 token 供对象销毁时精确清理
+#[derive(Debug, Clone, Copy)]
+struct ReadyEvent {
+    /// 对外事件 (data 透传用户值)
+    event: EpollEvent,
+    /// 产生该就绪项的对象 token (0 = 按 fd 的普通兴趣)
+    token: u64,
+}
+
 /// epoll 实例
 struct EpollInstance {
     /// 感兴趣列表 (所有注册的 fd)
     interest_list: Vec<EpollItem>,
     /// 就绪列表 (有事件待处理的 fd)
-    ready_list: Vec<EpollEvent>,
+    ready_list: Vec<ReadyEvent>,
     /// 等待队列 (`epoll_wait` 阻塞时挂起线程, `epoll_pwake` 唤醒)
     wait_queue: WaitQueue,
     /// 实例 ID
@@ -206,8 +220,13 @@ fn epoll_ctl_impl(epfd: i64, op: i32, fd: i32, event: Option<EpollEvent>) -> i64
             let ev_events = ev.events;
             let ev_data = ev.data;
 
+            let (handle_id, wake_token) = crate::privileged::fs::current_vfs_ops()
+                .fd_watch_token(fd)
+                .unwrap_or((0, 0));
             let item = EpollItem {
                 fd,
+                handle_id,
+                wake_token,
                 events: ev_events & !EPOLLET & !EPOLLONESHOT,
                 data: ev_data,
                 is_et: (ev_events & EPOLLET) != 0,
@@ -252,6 +271,11 @@ fn epoll_ctl_impl(epfd: i64, op: i32, fd: i32, event: Option<EpollEvent>) -> i64
             );
         }
         EPOLL_CTL_DEL => {
+            let token = instances[idx]
+                .interest_list
+                .iter()
+                .find(|i| i.fd == fd)
+                .map_or(0, |i| i.wake_token);
             let len_before = instances[idx].interest_list.len();
             instances[idx].interest_list.retain(|i| i.fd != fd);
             if instances[idx].interest_list.len() == len_before {
@@ -259,9 +283,10 @@ fn epoll_ctl_impl(epfd: i64, op: i32, fd: i32, event: Option<EpollEvent>) -> i64
             }
 
             // 同时从就绪列表移除
+            let ready_key = crate::privileged::glue::u64_from_i32(fd);
             instances[idx]
                 .ready_list
-                .retain(|e| e.data != crate::privileged::glue::u64_from_i32(fd));
+                .retain(|e| !(e.event.data == ready_key && e.token == token));
 
             crate::klog_debug!(Sync, "[epoll] DEL fd={} from epfd={}", fd, epfd_id);
         }
@@ -296,7 +321,7 @@ pub fn sys_epoll_wait(epfd: i64, events: u64, maxevents: i32, timeout: i32) -> i
     let mut ready_events = Vec::new();
 
     for item in &instances[idx].interest_list {
-        let revents = check_fd_ready(item.fd, item.events);
+        let revents = check_item_ready(item, item.events);
 
         if revents != 0 {
             ready_events.push(EpollEvent {
@@ -333,7 +358,7 @@ pub fn sys_epoll_wait(epfd: i64, events: u64, maxevents: i32, timeout: i32) -> i
             let instances = EPOLL_INSTANCES.lock();
             if let Some(idx) = instances.iter().position(|i| i.id == epfd_id) {
                 for item in &instances[idx].interest_list {
-                    let revents = check_fd_ready(item.fd, item.events);
+                    let revents = check_item_ready(item, item.events);
                     if revents != 0 {
                         ready_events.push(EpollEvent {
                             events: revents,
@@ -439,27 +464,104 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
     let Some(pos) = instance.interest_list.iter().position(|item| item.fd == fd) else {
         return false;
     };
+    enqueue_ready_for_item(instance, pos)
+}
 
-    let events = instance.interest_list[pos].events;
-    let data = instance.interest_list[pos].data;
+/// 策略: 把 `interest_list[pos]` 的就绪事件加入 `ready_list`.
+///
+/// 有对象 token 的项由 token 唤醒直接报告可读 (timerfd 回调只在 tick 后发
+/// token), 不在中断上下文回查 VFS; 无 token 的项仍按 fd 求值.
+fn enqueue_ready_for_item(instance: &mut EpollInstance, pos: usize) -> bool {
+    let item = instance.interest_list[pos];
+    if item.wake_token != 0 {
+        let revents = item.events & EPOLLIN;
+        if revents == 0 {
+            return false;
+        }
+        if instance
+            .ready_list
+            .iter()
+            .any(|e| e.event.data == item.data && e.token == item.wake_token)
+        {
+            return false;
+        }
+        instance.ready_list.push(ReadyEvent {
+            event: EpollEvent {
+                events: revents,
+                data: item.data,
+            },
+            token: item.wake_token,
+        });
+        return true;
+    }
+
+    let events = item.events;
+    let data = item.data;
 
     // 策略 1: 决策 revents (委托 VfsPollPolicy)
-    let revents = check_fd_ready(fd, events);
+    let revents = check_fd_ready(item.fd, events);
     if revents == 0 {
         return false;
     }
 
     // 策略 2: dedup (避免 ready_list 重复)
-    if instance.ready_list.iter().any(|e| e.data == data) {
+    if instance
+        .ready_list
+        .iter()
+        .any(|e| e.event.data == data && e.token == 0)
+    {
         return false;
     }
 
     // 入队
-    instance.ready_list.push(EpollEvent {
-        events: revents,
-        data,
+    instance.ready_list.push(ReadyEvent {
+        event: EpollEvent {
+            events: revents,
+            data,
+        },
+        token: 0,
     });
     true
+}
+
+/// 按对象 token 唤醒所有关注该对象的 epoll 兴趣.
+///
+/// 用于 timerfd 等匿名对象: 回调只带对象 token, 不依赖数值 fd. 同一 token
+/// 可被多个 epoll 实例、同一实例的多个 dup 兴趣同时登记; 每个兴趣各入队一次.
+pub fn epoll_pwake_token(token: u64) {
+    if token == 0 {
+        return;
+    }
+    let mut instances = EPOLL_INSTANCES.lock();
+    for instance in instances.iter_mut() {
+        let mut matched = false;
+        for pos in 0..instance.interest_list.len() {
+            if instance.interest_list[pos].wake_token == token {
+                matched = true;
+                let _ = enqueue_ready_for_item(instance, pos);
+            }
+        }
+        if matched {
+            while let Some(item) = instance.wait_queue.wake_one() {
+                crate::privileged::proc::scheduler_unblock(item.pid);
+            }
+        }
+    }
+}
+
+/// 对象销毁时移除它在所有 epoll 实例中的兴趣与就绪项.
+///
+/// 最后一个 fd 关闭时由 `TimerFdContext::release` 调用, 先于 context 内存
+/// 归零; 因此 token 不会在地址复用后误唤醒新对象.
+pub fn epoll_forget_token(token: u64) {
+    if token == 0 {
+        return;
+    }
+    let mut instances = EPOLL_INSTANCES.lock();
+    for instance in instances.iter_mut() {
+        instance.interest_list.retain(|i| i.wake_token != token);
+        instance.ready_list.retain(|e| e.token != token);
+    }
 }
 
 // ============================================================================
@@ -478,6 +580,16 @@ fn enqueue_ready_for_fd(instance: &mut EpollInstance, fd: i32) -> bool {
 ///   - VFS fd: 委托给 `VfsPollPolicy`
 ///
 /// 与 user 事件掩码做 AND 运算, 只报告 user 关心的位.
+fn check_item_ready(item: &EpollItem, events: u32) -> u32 {
+    if item.wake_token != 0
+        && let Some(raw) =
+            crate::privileged::fs::current_vfs_ops().open_file_poll(item.handle_id, events)
+    {
+        return raw & events;
+    }
+    check_fd_ready(item.fd, events)
+}
+
 fn check_fd_ready(fd: i32, events: u32) -> u32 {
     use crate::privileged::fs::VfsFileType;
     // 1. 非 inode 承载的特殊对象: 对象级 poll 快照
@@ -514,6 +626,51 @@ pub fn epoll_destroy(epfd: u64) {
     let mut instances = EPOLL_INSTANCES.lock();
     instances.retain(|i| i.id != epfd);
     crate::klog_debug!(Sync, "[epoll] Destroyed instance id={}", epfd);
+}
+
+// ============================================================================
+// host 测试辅助 (只构造对象 token 兴趣, 不依赖 fd 表)
+// ============================================================================
+
+#[cfg(test)]
+pub(crate) fn test_register_token(token: u64, events: u32, data: u64) -> i64 {
+    let id = NEXT_EPOLL_ID.fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+    EPOLL_INSTANCES.lock().push(EpollInstance {
+        interest_list: alloc::vec![EpollItem {
+            fd: -1,
+            handle_id: 0,
+            wake_token: token,
+            events: events & !EPOLLET & !EPOLLONESHOT,
+            data,
+            is_et: false,
+            is_oneshot: false,
+            ready: false,
+        }],
+        ready_list: Vec::new(),
+        wait_queue: WaitQueue::new(),
+        id,
+    });
+    id.cast_signed()
+}
+
+#[cfg(test)]
+pub(crate) fn test_token_registered(epfd: i64, token: u64) -> bool {
+    let epfd_id = epfd.cast_unsigned();
+    EPOLL_INSTANCES
+        .lock()
+        .iter()
+        .find(|i| i.id == epfd_id)
+        .is_some_and(|i| i.interest_list.iter().any(|item| item.wake_token == token))
+}
+
+#[cfg(test)]
+pub(crate) fn test_token_ready(epfd: i64, data: u64) -> bool {
+    let epfd_id = epfd.cast_unsigned();
+    EPOLL_INSTANCES
+        .lock()
+        .iter()
+        .find(|i| i.id == epfd_id)
+        .is_some_and(|i| i.ready_list.iter().any(|event| event.event.data == data))
 }
 
 // ============================================================================

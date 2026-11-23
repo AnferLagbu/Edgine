@@ -63,6 +63,14 @@ pub trait File: Send + Sync + 'static {
     /// 就绪查询: 输入请求位, 返回就绪位 (非阻塞, 可重复调用).
     fn poll(&self, events: PollEvents) -> PollEvents;
 
+    /// 稳定唤醒 token — 非 0 表示对象可作为 epoll 兴趣的唤醒键.
+    ///
+    /// 默认 `0`: 仅按 fd 唤醒. timerfd 等匿名对象返回对象级稳定令牌, 使
+    /// `dup` 别名与多个 epoll 兴趣共享同一唤醒源, 不依赖数值 fd 复用.
+    fn wake_token(&self) -> u64 {
+        0
+    }
+
     /// 对象控制 (ioctl / socket option 统一入口).
     ///
     /// # Errors

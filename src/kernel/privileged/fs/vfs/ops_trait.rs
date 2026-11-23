@@ -51,6 +51,23 @@ pub trait VfsOps: Send + Sync {
     /// `File::poll` 的原始就绪位 (Linux `POLL*` 编码).
     fn fd_poll_special(&self, fd: i32, events: u32) -> Option<u32>;
 
+    /// 查询 fd 的 `(OpenFile handle, 对象唤醒 token)`.
+    ///
+    /// 返回 `None` 表示 fd 非法; token 为 `0` 表示该对象没有对象级唤醒键.
+    /// epoll 在 ADD 时记录 handle 与 token, 后续按 token 唤醒、按 handle 求值,
+    /// 不依赖数值 fd 在 dup/close 后仍指向同一对象.
+    fn fd_watch_token(&self, _fd: i32) -> Option<(u32, u64)> {
+        None
+    }
+
+    /// 按 `OpenFile` handle 查询非 inode 承载对象的 poll 就绪位.
+    ///
+    /// 供 epoll 在 dup 别名或原 fd 已关闭但 `OpenFile` 仍存活时求值; 返回
+    /// `None` 表示 handle 非法或对象由 inode 承载.
+    fn open_file_poll(&self, _handle_id: u32, _events: u32) -> Option<u32> {
+        None
+    }
+
     /// 从 inode 读取数据到缓冲区 (mmap demand paging 路径).
     ///
     /// 返回实际读取字节数, 负数表示错误.
@@ -98,6 +115,14 @@ impl VfsOps for FallbackVfsOps {
     }
 
     fn fd_poll_special(&self, _fd: i32, _events: u32) -> Option<u32> {
+        None
+    }
+
+    fn fd_watch_token(&self, _fd: i32) -> Option<(u32, u64)> {
+        None
+    }
+
+    fn open_file_poll(&self, _handle_id: u32, _events: u32) -> Option<u32> {
         None
     }
 

@@ -741,8 +741,11 @@ fn eventfd_special_object_dispatch_sites() {
 
     let reexport = read_file("functions/fs/mod.rs");
     assert!(
-        reexport.contains("fn fd_poll_special") && reexport.contains("of.file().poll("),
-        "FunctionsVfsOps 必须把 fd_poll_special 接到 File::poll"
+        reexport.contains("fn fd_poll_special")
+            && reexport.contains("fn open_file_poll")
+            && reexport.contains("special_poll_bits")
+            && reexport.contains("file.poll("),
+        "FunctionsVfsOps 必须把 fd_poll_special/open_file_poll 接到 File::poll"
     );
 }
 
@@ -1381,6 +1384,53 @@ fn timerfd_dispatch_sites_use_vfs_object_path() {
     assert!(
         read_file("kernel_tests/mod.rs").contains("test_timerfd::register_timerfd_tests()"),
         "对象级内核测试必须注册到 glue 侧统一 runner"
+    );
+}
+
+#[test]
+fn timerfd_wake_token_replaces_numeric_fd() {
+    let mech = read_file("privileged/syscall/timerfd.rs");
+    for needle in [
+        "wake_fd",
+        "AtomicI32",
+        "set_wake_fd",
+        "epoll_pwake(",
+        "control_busy",
+    ] {
+        assert!(
+            !mech.contains(needle),
+            "timerfd 机制侧不得残留数值 fd 唤醒/旧控制占位: {needle}"
+        );
+    }
+    for needle in [
+        "pub fn wake_token",
+        "epoll_pwake_token",
+        "epoll_forget_token",
+        "TFD_CTX.tfd_ctx",
+    ] {
+        assert!(
+            mech.contains(needle),
+            "timerfd 机制侧必须提供对象 token 唤醒: {needle}"
+        );
+    }
+
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    for needle in [
+        "wake_token: u64",
+        "handle_id: u32",
+        "fd_watch_token",
+        "open_file_poll",
+        "pub fn epoll_pwake_token",
+        "pub fn epoll_forget_token",
+    ] {
+        assert!(
+            epoll.contains(needle),
+            "epoll 兴趣必须按对象 token/handle 登记与唤醒: {needle}"
+        );
+    }
+    assert!(
+        read_file("functions/fs/timerfd.rs").contains("fn wake_token(&self) -> u64"),
+        "TimerFdFile 必须把对象 token 暴露给 epoll 兴趣"
     );
 }
 
