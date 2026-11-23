@@ -1,0 +1,84 @@
+# 定时器终态架构落地
+
+> 来源：[timer-subsystem-design.md](../design/timer-subsystem-design.md)。本册把终态设计拆成可执行批次；设计主张以该册为准，本册只记录施工目标、验收与状态。
+
+## 一、问题与根因
+
+取消协议已经收口，但承载结构仍是中间态：
+
+- `HrTimer` 只有 `Inactive` / `Pending` / `Running`，`closed` 是独立旁路位，`init` 与 `shutdown` 的串行化依赖调用契约；
+- `hrtimer_start*` 用 `0` 同时表示“框架未就绪”“未 init”“已 shutdown”，调用方无法区分；
+- 全局 `HRTIMER_QUEUE: Mutex<Vec<TimerEntry>>` 让所有 CPU 串行，民用多核下不可作为终态；
+- `timerfd` 仍是 `TFD_SLOTS: [TimerFdSlot; 16]` + 全局 `TFD_LOCK`，回调线性反查，且周期重挂在回调内；
+- tickless 取全局最早到期，忽略 `cpu_id`；
+- CPU 上下线没有 timer 侧 quiesce/迁移协议。
+
+根因不是单点实现错误，而是“取消协议已终端化、载体仍按单队列/静态槽位/回调重挂组织”。本册按依赖顺序逐段替换载体，保持取消 API 不变。
+
+## 二、目标与边界
+
+目标：
+
+- 保持 `hrtimer_cancel` 返回即可释放、`try_cancel` 三态、`shutdown` 不复活三条契约；
+- 把 `HrTimer` 状态机、返回值和时钟中断接线收成终态形态；
+- 把队列换成每 CPU `TimerBase`，tickless 按 CPU 取下一次到期；
+- 把 timerfd 换成 per-context 对象，周期重挂移到 `read` 路径；
+- 给 CPU 上下线提供 timer 侧 quiesce/强制迁移/online 握手；
+- 锁序、静态审计、host 测试与民用多核验收同步。
+
+不在本册：
+
+- 平台级 CPU 上下线流程、ACPI/MP table、物理带电插拔；
+- `NO_HZ_FULL`、软定时器、deferrable/slack、CPU 热插拔策略；
+- 时钟基扩展（`CLOCK_REALTIME` 仍按设计册边界处理）；
+- epoll 全局表、fd 表、分配器等整机扩展性改造，除 timerfd 唤醒 token 化这一必要交叉项。
+
+## 三、条目
+
+### 条目 1・HrTimer 五态化与 closed 收口
+
+描述：把 `HrTimerState` 扩为 `Uninit` / `Inactive` / `Pending` / `Running` / `Shutdown`，删除独立 `closed: AtomicBool`；`init` 只允许在 `Uninit` / `Inactive` / `Shutdown` 上调用，`Pending` / `Running` 上调用在 debug 构建断言；`start` 拒绝 `Uninit` / `Shutdown`；`shutdown` 置 `Shutdown` 而不是覆盖回 `Inactive`。
+
+方案：状态编码按 `Uninit=0, Inactive=1, Pending=2, Running=3, Shutdown=4`；`dispatch_expired` 的关闭分支保留 `Shutdown`，迟到回调不得把 `Shutdown` 收敛成 `Inactive`；Periodic 重挂失败时同样不得覆盖 `Shutdown`。唯一会在活动期调 `init` 的网络 poll timer 改为仅 `Uninit`/`Shutdown` 时初始化，其余路径靠 `start` 替换激活。
+
+状态：[x] 已落地。`closed` 字段删除；状态编码与 `uninit`/`init`/`shutdown` 测试更新；新增“未 init 的 start 被拒绝”回归；hrtimer host 22 passed、kernel host 612 passed、host 测试通过、`ci/audit.sh quick` 全绿、`ci/audit.sh full` 全绿（17/17 腿，QEMU 2/2）。
+
+### 条目 2・StartOutcome 与 init 严格化
+
+描述：把 `hrtimer_start*` 的 `0` 哨兵改为显式 `StartOutcome`（`Started(seq)` / `NotReady` / `Shutdown`），让调用方区分“框架未就绪”“未 init”“已 shutdown”；同时把 `init` 的 debug 断言升级为可诊断的运行时拒绝或统一前置检查。
+
+方案：保留 `u64` 入队序号在 `Started` 内；`hrtimer_start_rel` / `periodic` 同步返回 `StartOutcome`；迁移期可加 `into_u64()` 适配层，但终态调用方必须消费枚举。`timerfd` 的 `set_time`、`itimer`、`posix_timer`、`net_poll` 调用点逐一改判，禁止继续用 `0` 当成功。
+
+状态：[]
+
+### 条目 3・每 CPU TimerBase 与 tickless
+
+描述：删除全局 `HRTIMER_QUEUE`，改为 `TIMER_BASES: [TimerBase; MAX_CPUS]`；每 base 一把锁、侵入式有序树、`Running` 计数；`hrtimer_start` 按当前 CPU/`base_id` 绑核；`hrtimer_run_queues(cpu)` 只处理本地 base；`hrtimer_next_expiry(cpu)` 供 tickless 按 CPU 装填。
+
+方案：`HrTimer` 增加内嵌链节点与 `base_id`；`start` 在 base 锁内摘旧条目、发新 `seq`、置 `Pending`；`try_cancel` 跨 CPU 只锁目标 base；`cancel` 锁外等待 `in_flight`。`hrtimer_run_queues` 采用“锁内摘一个、锁外回调、预算耗尽立即重装”的无分配分发。`tickless` 的 `get_next_timer_expiry(cpu_id)` 真实传参。
+
+状态：[]
+
+### 条目 4・timerfd per-context 对象与 read 路径重挂
+
+描述：删除 `TFD_SLOTS` / `TFD_LOCK`，改为 `Arc<TimerFdContext>`；回调用 `container_of` O(1) 定位，只累加 ticks、置 expired、唤醒，不再在回调内重挂；周期重挂移到 `read` 路径；动态对象替代固定 16 槽。
+
+方案：`TimerFdContext` 首字段放 `HrTimer`，其余用 `ticks/interval/armed/generation` 原子量；`set_time` 用控制面占位，等待在途回调前释放状态锁；`read` 消费 ticks 后按 `last_expiry + interval` 重挂；`release` 先 `shutdown`/`cancel` 再释放 `Arc`。回调与 `poll` 不取控制锁，避免 `epoll_pwake → timerfd poll` 回取。
+
+状态：[]
+
+### 条目 5・CPU 上下线 quiesce/迁移
+
+描述：给 `TimerBase` 增加 `Offline` / `Online` / `Quiescing` 生命周期；平台 offline 前调用 `hrtimer_cpu_quiesce(cpu, target)`，源 base 拒绝新回调、等待 `running` 归零、把 Pending timer 强制迁到目标 base；CPU online 后 `hrtimer_cpu_online(cpu)` 复位，不做反向迁移。
+
+方案：迁移用 `migrating` 瞬态；`try_cancel` 在迁移中返回 `Busy`，`cancel` 等待 `migrating` 清零；`start` 在迁移中返回 `NotReady`；迁移只锁一个 base，禁止源/目标双持。最后一个在线 CPU 不允许下线；`target` 在 quiesce 期间保持在线。
+
+状态：[]
+
+### 条目 6・唤醒 token 化、静态槽清理与审计
+
+描述：timerfd 不再保存裸 `wake_fd`，改为 epoll 兴趣/对象注册返回的 token；回调按注册集合唤醒；删除静态槽残余，锁序表登记 `TFD_CTX` / `TIMER_BASE`，静态锁序、形状锁、死锁矩阵和 full 审计同步。
+
+方案：与 epoll 子系统约定 `WakeRegistration` 接口；timerfd `poll` 走对象路径；锁序表以 `TFD_CTX`(11) / `TIMER_BASE`(14) 替换 `TFD_LOCK` / `HRTIMER_QUEUE`；新增“回调不取控制锁、迁移不双持 base 锁、timerfd 未读不风暴”的形状/行为测试。
+
+状态：[]

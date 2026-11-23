@@ -395,6 +395,6 @@ struct TimerFdFile {
 
 ## 十一、与现有计划的关系
 
-取消协议的可执行收口记录在 [hrtimer-cancel-protocol.md](../plan/hrtimer-cancel-protocol.md)；本文不重复其状态字段，也不把本文变成任务清单。锁序的人读表见 [ref-lock-order.md](../explain/ref-lock-order.md)，机器单源见 [lock_class_order.json](../../scripts/lock_class_order.json)。
+取消协议的可执行收口记录在 [hrtimer-cancel-protocol.md](../plan/hrtimer-cancel-protocol.md)；终态承载结构的施工分解见 [timer-terminal-architecture.md](../plan/timer-terminal-architecture.md)。本文不重复其状态字段，也不把本文变成任务清单。锁序的人读表见 [ref-lock-order.md](../explain/ref-lock-order.md)，机器单源见 [lock_class_order.json](../../scripts/lock_class_order.json)。
 
 本文描述的是目标形态。落地顺序、批次拆分、每批验收与回滚条件归 `plan/` 管理；本文只提供判断“某个实现是否仍在中间态”的标尺。
