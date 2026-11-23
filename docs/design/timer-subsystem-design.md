@@ -55,7 +55,7 @@
 | 部件 | 当前形态（条目 1–4 已落地） | 剩余差距 |
 |---|---|---|
 | 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化，不再改调用方语义 |
-| 队列 | `TIMER_BASES: [TimerBase; MAX_CPUS]`，每 CPU 一把 `IrqSpinLock`，绑定在首次 `start` 的 CPU | 条目 5 增加 `Quiescing` 与 offline 强制迁移 |
+| 队列 | `TIMER_BASES: [TimerBase; MAX_CPUS]`，每 CPU 一把 `IrqSpinLock`，绑定在首次 `start` 的 CPU | 已落地；`Quiescing`/offline 强制迁移见本节协议 |
 | 队列操作 | 侵入式红黑树 `RbNode` / `RbTree`，入队/出队/取最早 O(log n)，分发路径不分配 | 已落地 |
 | 定时器状态 | `Uninit` / `Inactive` / `Pending` / `Running` / `Shutdown` 五态，无独立 `closed` 旁路 | 已落地 |
 | 生命周期 | `in_flight` + `Arc<TimerFdContext>`；`release` 先 shutdown 等待在途回调，`Drop` 兜底 | 已落地；条目 5 只调整迁移期瞬态 |
@@ -63,7 +63,7 @@
 | timerfd 周期 | 回调只累计 ticks、置 `armed=false` 并唤醒；`read` 消费 ticks 后按 `last_expiry + interval` 重挂 | 已落地；未读不风暴 |
 | timerfd 唤醒 | 仍保存单个数值 `wake_fd`，`epoll_pwake(fd)`；仅登记创建时首个 fd | 条目 6 改为 epoll 兴趣/对象 token，覆盖 dup 与多 epoll |
 | tickless | `get_next_timer_expiry(cpu_id)` 只查该 CPU 的 `TimerBase` | 已落地 |
-| 多核可用性 | 每 CPU base 独立锁与树；`MAX_CPUS = 1024` 启动校验 | 条目 5 的 CPU 上下线协议仍缺 |
+| 多核可用性 | 每 CPU base 独立锁与树；`MAX_CPUS = 1024` 启动校验；CPU 上下线 quiesce/迁移/online | 已落地 timer 侧协议；平台级 offline 流程另计 |
 | 锁域 | 每 CPU `TIMER_BASE.base_lock`；timerfd 用 per-context 原子 `control_busy` 占位，不再有全局 `TFD_LOCK` | 条目 6 登记 `TFD_CTX` 锁类并完成唤醒 token 化 |
 
 当前代码事实来源：
@@ -166,13 +166,12 @@ enum BaseState { Offline, Online, Quiescing }
 TIMER_BASES: [TimerBase; MAX_CPUS]
   └── TimerBase
         ├── lock: IrqSpinLock<BaseInner>
-        └── BaseInner
+        └── BaseInner                         (24 字节预算, 见 K-08)
+              ├── tree: RbTree<(expiry_ns, seq)> (侵入式有序树)
               ├── state: BaseState
-              ├── quiesce_target: u32
-              ├── root: *mut HrTimer          (侵入式有序树根)
-              ├── active: usize
-              ├── running: usize
-              └── next_seq: u64
+              ├── running: u16                 (已摘树、回调在途的条目数)
+              ├── migrations: u16              (已摘源树、尚未插入目标的条目数)
+              └── quiesce_target: u16          (NO_CPU = 无)
 ```
 
 `HrTimer` 内嵌树节点：
@@ -263,24 +262,24 @@ pub fn hrtimer_cpu_quiesce(cpu: u32, target: u32) -> Result<(), CpuTimerError>;
 
 `hrtimer_cpu_quiesce` 的语义：
 
-1. 校验 `target` 是另一个在线 CPU；最后一个在线 CPU 不允许下线，返回 `LastOnlineCpu`。
+1. 先看在线 base 计数：若 `cpu` 是最后一个在线 CPU，返回 `LastOnlineCpu`；否则校验 `target` 是另一个在线 CPU，不满足返回 `NoOnlineTarget`。先拒绝“无承接者”，再做目标校验，避免把“目标离线且无其它承接者”误报成目标错误。
 2. 在源 base 锁内把状态置 `Quiescing`，记录 `quiesce_target`；此后源 base 不再收集新回调，当前 CPU 上新的 `start` 改绑 `target`。
-3. 等待源 base 的 `running` 归零；在途回调返回 `Periodic` 时，框架把它重挂到 `target`，不再回源 base。
-4. 逐个迁移源树中的 Pending timer：在源 base 锁内摘除、置 `migrating=true`，释放源锁；锁 `target` base 插入、更新 `base_id`、清 `migrating`。迁移保留原 `expiry_ns` 与 `seq`，不产生新的激活语义。
-5. 源树清空且 `running==0` 后，状态置 `Offline`，`hrtimer_next_expiry(cpu)` 返回 `None`；平台随后可以执行 CPU offline。
+3. 等待源 base 的 `running` 归零、`migrations` 归零；在途回调返回 `Periodic` 时，框架把它重挂到 `target`，不再回源 base。
+4. 逐个迁移源树中的 Pending timer：在源 base 锁内摘除、`migrations += 1`、置 `migrating=true`，释放源锁；锁 `target` base 插入、更新 `base_id`、清 `migrating`，再回落源 `migrations`。迁移保留原 `expiry_ns` 与 `seq`，不产生新的激活语义。
+5. 源树清空且 `running==0 && migrations==0` 后，状态置 `Offline`，`hrtimer_next_expiry(cpu)` 返回 `None`；平台随后可以执行 CPU offline。
 
-迁移期间 `try_cancel` 返回 `Busy`，`cancel` 等待 `migrating` 清零后重试；`start` 返回 `NotReady`，由调用方重试。这样不会出现“源 base 已摘除、目标 base 未插入”时被取消或重挂的窗口。
+迁移期间 `try_cancel` 返回 `Busy`，`cancel` 等待 `migrating` 清零后重试。`start` 分两种：timer 尚未进入迁移时，`Inactive` 直接绑 `target`，`Pending`/`Running` 由 `start_bound` 摘下并迁到 `target` 后返回 `Started`；只有 timer 已处于 `migrating` 瞬态时返回 `NotReady`。这样不会出现“源 base 已摘除、目标 base 未插入”时被取消或重挂的窗口；`migrations` 计数保证 quiesce 不会在外部 `start` 的半迁移窗口里宣告源 base 已空。
 
-`hrtimer_cpu_online` 在 CPU 启动、开始调度前调用：清空树、复位 `running`/`active`、状态置 `Online`。**不做反向迁移**：CPU 重新上线后，原先迁走的 timer 不会自动搬回；新 `start` 才按当前 CPU 绑定。
+`hrtimer_cpu_online` 在 CPU 启动、开始调度前调用：与 `hrtimer_init` 共用 `TIMER_INIT_LOCK` 串行，复位 `running`/`migrations`/`quiesce_target`、状态置 `Online`；树按协议应已空，非空只做 debug 断言（online 不是清理半迁移的入口）。boot 的 `hrtimer_init` 同样按实际在线 CPU 复位全部 base，而不是把 1024 个 base 一律置 `Online`。**不做反向迁移**：CPU 重新上线后，原先迁走的 timer 不会自动搬回；新 `start` 才按当前 CPU 绑定。
 
 平台必须保证：
 
 - 同一时刻只有一个 CPU 执行 offline quiesce，且 `target` 在 quiesce 期间保持在线；`quiesce` 只在状态变更前做校验并可能返回 `Busy`，进入迁移后不得失败。若平台中途把 `target` 下线，属于协议违约，timer 不做半迁移回滚。
-- CPU offline 流程先完成 task/IRQ 迁移，再调用 timer quiesce，最后才真正停核；timer quiesce 不替代平台的任务迁移。若 offline 中止，平台调用 `hrtimer_cpu_online(cpu)` 复位 base；已迁走的 timer 不自动迁回。
-- `hrtimer_cpu_quiesce` 只能由平台 offline 线程在进程上下文调用，不得在中断、回调或持锁上下文中调用；它会等待源 base 的 `running` 归零，期间不得阻塞目标 base 的回调。
+- CPU offline 流程先完成 task/IRQ 迁移，再调用 timer quiesce，最后才真正停核；timer quiesce 不替代平台的任务迁移。quiesce 会等待源 base 的在途迁移真正插入目标后才置 `Offline`，平台无需自己追迁移窗口。若 offline 中止，平台调用 `hrtimer_cpu_online(cpu)` 复位 base；已迁走的 timer 不自动迁回。
+- `hrtimer_cpu_quiesce` 只能由平台 offline 线程在进程上下文调用，不得在中断、回调或持锁上下文中调用；它会等待源 base 的 `running` 与 `migrations` 归零，期间不得阻塞目标 base 的回调。
 - 物理带电插拔 CPU、ACPI/MP table 的 CPU 枚举与 RAS 流程不在本文范围；本文只定义定时器侧的 base 状态与迁移语义。
 
-timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，迁移只改变其 `HrTimer` 的 base；回调在目标 CPU 执行，读取同一 context。若 quiesce 期间 `set_time` 到达，`start` 要么落到 `target`，要么返回 `NotReady` 让 syscall 重试，不会把 timer 留在即将下线的 CPU 上。
+timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，迁移只改变其 `HrTimer` 的 base；回调在目标 CPU 执行，读取同一 context。若 quiesce 期间 `set_time` 到达，`start` 要么落到 `target`，要么仅在 timer 已处 `migrating` 时返回 `NotReady` 让 syscall 重试，不会把 timer 留在即将下线的 CPU 上。
 
 ## 六、timerfd 终态
 

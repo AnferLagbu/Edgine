@@ -335,6 +335,8 @@ extern "C" fn ap_main(cpu_index: u64) -> ! {
     // 4. 登记本核上线: 以本核硬件 id (紧凑亲和, 见 `affinity_pack`) 入表; 登记的
     //    槽位由内部计数器决定, 应等于 BSP 经启动槽透传的 `idx`。
     crate::privileged::smp::register_cpu(crate::arch!(cpu_id()));
+    // timer 侧 base 上线: register 之后逻辑索引可反查, 本核调度前必须可用.
+    crate::privileged::timer::hrtimer_cpu_online(idx);
 
     // 4.1 绑定本核 KPTI 状态槽地址到 TPIDR_EL1: EL0 入口/出口汇编据此按核寻址
     //     (切表前无空闲 GPR 现算 MPIDR 索引, 故索引在上电路径一次算好)。

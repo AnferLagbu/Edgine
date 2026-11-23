@@ -456,6 +456,9 @@ extern "C" fn ap_entry(lapic_id: u32) -> ! {
     }
 
     crate::privileged::smp::register_cpu(lapic_id);
+    // timer 侧 base 上线: 必须在 register 之后 (逻辑索引已可反查)、本核 tick
+    // 装配之前; 未上线 base 会拒绝新激活, AP 上的 hrtimer 无法落点.
+    crate::privileged::timer::hrtimer_cpu_online(cpu_index);
 
     // 建立本核调度身份: 创建 (或复用) 本核 idle 并置 `current = idle`, 此后本核
     // `schedule()` 才会真正执行上下文切换 (BSP 的 idle 不属于本核)。失败则放弃

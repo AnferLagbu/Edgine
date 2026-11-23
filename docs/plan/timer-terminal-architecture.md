@@ -69,11 +69,11 @@
 
 ### 条目 5・CPU 上下线 quiesce/迁移
 
-描述：给 `TimerBase` 增加 `Offline` / `Online` / `Quiescing` 生命周期；平台 offline 前调用 `hrtimer_cpu_quiesce(cpu, target)`，源 base 拒绝新回调、等待 `running` 归零、把 Pending timer 强制迁到目标 base；CPU online 后 `hrtimer_cpu_online(cpu)` 复位，不做反向迁移。
+描述：给 `TimerBase` 增加 `Offline` / `Online` / `Quiescing` 生命周期；平台 offline 前调用 `hrtimer_cpu_quiesce(cpu, target)`，源 base 拒绝新回调、等待 `running` 与 `migrations` 归零、把 Pending timer 强制迁到目标 base；CPU online 后 `hrtimer_cpu_online(cpu)` 复位，不做反向迁移。
 
-方案：迁移用 `migrating` 瞬态；`try_cancel` 在迁移中返回 `Busy`，`cancel` 等待 `migrating` 清零；`start` 在迁移中返回 `NotReady`；迁移只锁一个 base，禁止源/目标双持。最后一个在线 CPU 不允许下线；`target` 在 quiesce 期间保持在线。
+方案：迁移用 `migrating` 瞬态；源 base 每摘下一个待迁条目就 `migrations += 1`，目标插入后才回落，`quiesce` 必须同时看到 `running==0 && migrations==0` 才置 `Offline`。`try_cancel` 在迁移中返回 `Busy`，`cancel` 等待 `migrating` 清零；`Inactive` timer 在 quiesce 期间直接绑 `target`，`Pending`/`Running` 由 `start_bound` 自迁移到 `target`，只有 timer 已处 `migrating` 时才返回 `NotReady`。迁移只锁一个 base，禁止源/目标双持。最后一个在线 CPU 不允许下线；`target` 在 quiesce 期间保持在线。`BaseInner` 的 `running/migrations/quiesce_target` 收为 `u16`，维持 24 字节预算（K-08）。`hrtimer_init` 按实际在线 CPU 复位 base，AP 在 `register_cpu` 后调用 `hrtimer_cpu_online`。
 
-状态：[]
+状态：[x] 已落地。`BaseState::Quiescing`、源 base `quiesce_target`、`HrTimer::migrating`、`ONLINE_BASE_COUNT` 与 `CpuTimerError` 已实现；Pending 迁移保留 `expiry_ns`/`seq`，不双持源/目标 base 锁；quiesce 等待 `running` + `migrations` 双归零；`hrtimer_try_cancel` 迁移期返回 `Busy` 并在 `base_id` 变化时要求重试；`hrtimer_shutdown` 等迁移瞬态后再摘链；`run_queues`/`next_expiry` 跳过 `migrating` 节点。x86_64/aarch64 AP 在 `register_cpu` 后接线 `hrtimer_cpu_online`，boot `hrtimer_init` 只把实际在线 CPU 置 `Online`。新增 quiesce/迁移/last-CPU/target 离线/并发 start/cancel/shutdown/周期重挂 10 例及 `BaseInner<=24` 预算断言。验证：hrtimer 36 passed、kernel host 1455 passed（kernel 632 / functions 811 / privileged 12）、host 1652 passed、`ci/audit.sh quick` 全绿、QEMU x86_64 + aarch64 2/2 通过（K-08 镜像未回退）、`ci/audit.sh full` 全绿（14/14 自测、17/17 审计腿 + 存量腿、QEMU 2/2）。
 
 ### 条目 6・唤醒 token 化、静态槽清理与审计
 

@@ -144,6 +144,8 @@ pub enum InitError {
     Running,
     /// 状态已收敛但 `in_flight` 尚未清零 (取消/重挂窗口)
     InFlight,
+    /// CPU offline 强制迁移在途 (节点已离源 base、尚未插入目标 base)
+    Migrating,
 }
 
 // ============================================================================
@@ -157,12 +159,12 @@ pub enum InitError {
 type TimerKey = (u64, u64);
 
 /// 一个 base 的生命周期状态。
-///
-/// 条目 3 只区分 `Online` / `Offline`；`Quiescing` 由条目 5 的 CPU 下线流程使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BaseState {
     /// base 可接收新定时器、参与本 CPU 分发
     Online,
+    /// CPU 正在下线：拒绝新分发，已有 Pending 迁移到 `quiesce_target`
+    Quiescing,
     /// CPU 尚未上线或已下线，拒绝新激活
     Offline,
 }
@@ -173,11 +175,16 @@ struct BaseInner {
     tree: RbTree<TimerKey>,
     /// base 生命周期状态
     state: BaseState,
-    /// 已摘树、回调尚未返回的条目数（条目 5 的 quiesce 判据）。
+    /// 已摘树、回调尚未返回的条目数（quiesce 判据）。
     ///
-    /// 用 `u32` 而不是 `usize`: `TIMER_BASES` 是 `MAX_CPUS` 个常驻 base，
-    /// 每 base 省 4 字节，避免 1024 核容量包络把内核镜像顶过 `USER_CODE_BASE`。
-    running: u32,
+    /// 全部用 `u16`: `TIMER_BASES` 是 `MAX_CPUS = 1024` 个常驻 base，字段收窄
+    /// 后 `BaseInner` 仍为 24 字节，避免 1024 核容量包络把内核镜像顶过
+    /// `USER_CODE_BASE`（K-08）。`running` 超过 65535 时饱和。
+    running: u16,
+    /// 从本 base 摘下、尚未插入目标的迁移数（quiesce 判据）
+    migrations: u16,
+    /// `Quiescing` 期间新激活的落点；仅 `Quiescing` 时有效 (`NO_CPU` = 无)
+    quiesce_target: u16,
 }
 
 impl BaseInner {
@@ -186,6 +193,8 @@ impl BaseInner {
             tree: RbTree::new(),
             state: BaseState::Offline,
             running: 0,
+            migrations: 0,
+            quiesce_target: NO_CPU,
         }
     }
 }
@@ -209,6 +218,9 @@ impl TimerBase {
 
 /// 每个 CPU 一个 base；无全局后备队列。
 static TIMER_BASES: [TimerBase; MAX_CPUS] = [const { TimerBase::new() }; MAX_CPUS];
+
+/// 当前处于 `Online` 的 base 数量；用于拒绝最后一个在线 CPU 下线。
+static ONLINE_BASE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// 串行化 `try_init` 与 `Inactive -> Pending` 首次绑定，消除回调/到期字段
 /// 写入与首次入队之间的 TOCTOU。锁序固定为 `TIMER_INIT_LOCK -> TIMER_BASE`。
@@ -282,6 +294,10 @@ pub struct HrTimer {
     queue_seq: AtomicU64,
     /// 是否已被收集/回调在途 (dispatch 退出前为 true; 取消方据此判定 Busy)
     in_flight: AtomicBool,
+    /// CPU offline 强制迁移的瞬态: 节点已离源 base、尚未插入目标 base.
+    /// `try_cancel` 见到 true 返回 `Busy`; `start` 返回 `NotReady`; `shutdown`
+    /// 先等待其清零, 避免锁到错误的 base.
+    migrating: AtomicBool,
 }
 
 // SAFETY: `HrTimer` 的标量字段全部是原子量或只在 base 锁内读写的节点; 节点地址
@@ -306,6 +322,7 @@ impl HrTimer {
             state: AtomicU64::new(HrTimerState::Uninit as u64),
             queue_seq: AtomicU64::new(0),
             in_flight: AtomicBool::new(false),
+            migrating: AtomicBool::new(false),
         }
     }
 
@@ -352,12 +369,16 @@ impl HrTimer {
         if self.in_flight.load(Ordering::Acquire) {
             return Err(InitError::InFlight);
         }
+        if self.migrating.load(Ordering::Acquire) {
+            return Err(InitError::Migrating);
+        }
 
         self.callback.store(callback as usize, Ordering::Release);
         self.expiry_ns.store(0, Ordering::Relaxed);
         self.interval_ns.store(0, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
         self.base_id.store(NO_BASE, Ordering::Relaxed);
+        self.migrating.store(false, Ordering::Relaxed);
         // `Uninit` 与 `Shutdown` 不可能在树中; 重置节点指针, 避免复用时带入旧链接.
         // SAFETY: 持 `TIMER_INIT_LOCK` 且定时器非 Pending/Running, 节点不在此刻的树中.
         unsafe { (*self.node.get()).reset() };
@@ -470,6 +491,9 @@ fn noop_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
 /// base 索引哨兵: 未绑定任何 CPU.
 const NO_BASE: u32 = u32::MAX;
 
+/// `BaseInner::quiesce_target` 的"无目标"哨兵 (`MAX_CPUS` 远小于 u16 上限).
+const NO_CPU: u16 = u16::MAX;
+
 /// 全局激活序号计数器
 static QUEUE_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -482,24 +506,215 @@ static HRTIMER_READY: AtomicBool = AtomicBool::new(false);
 
 /// 初始化 hrtimer 框架
 ///
-/// 在内核启动早期调用一次。清空所有 per-CPU 树并把 base 置为 `Online`。
+/// 在内核启动早期调用一次。按 `smp::is_cpu_online` (BSP 自身始终视为在线)
+/// 复位各 base：在线 CPU 置 `Online`，未上线 CPU 保持 `Offline`。AP 在本核
+/// 开始调度前调用 [`hrtimer_cpu_online`] 上线自己的 base。
 ///
-/// 条目 3 阶段除启动/测试初始化外没有 CPU 下线事件；条目 5 会按真实 CPU
-/// 上下线状态收紧 `state`。本函数只能在无活动定时器时调用。
+/// 本函数只能在无活动定时器时调用。
 pub fn hrtimer_init() {
     let _init = TIMER_INIT_LOCK.lock();
-    for base in &TIMER_BASES {
+    let current = current_cpu_for_timer();
+    let mut online_count = 0u32;
+    for (cpu, base) in TIMER_BASES.iter().enumerate() {
         let mut inner = base.base_lock.lock();
         inner.tree.clear();
-        inner.state = BaseState::Online;
         inner.running = 0;
+        inner.migrations = 0;
+        inner.quiesce_target = NO_CPU;
+        let cpu_id = u32::try_from(cpu).unwrap_or(NO_BASE);
+        let online = current == Some(cpu_id) || smp::is_cpu_online(cpu_id);
+        inner.state = if online {
+            online_count = online_count.saturating_add(1);
+            BaseState::Online
+        } else {
+            BaseState::Offline
+        };
     }
+    ONLINE_BASE_COUNT.store(online_count, Ordering::Release);
     HRTIMER_READY.store(true, Ordering::Release);
 }
 
 /// 检查 hrtimer 框架是否已初始化
 pub fn is_hrtimer_ready() -> bool {
     HRTIMER_READY.load(Ordering::Acquire)
+}
+
+/// timer 侧 CPU 上下线错误
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuTimerError {
+    /// 目标 CPU 不存在、等于源 CPU，或目标 base 不处于 `Online`
+    NoOnlineTarget,
+    /// 源 CPU 是最后一个在线 CPU，不允许下线
+    LastOnlineCpu,
+    /// 源 base 已在 quiesce，或迁移状态冲突
+    Busy,
+}
+
+/// CPU 上线时复位本核 base
+///
+/// 平台在本核开始调度前调用。若 base 已 `Online` 则幂等；`Offline` 则清空树、
+/// 复位 `running` 并置 `Online`。**不做反向迁移**：原先迁走的 timer 不自动搬回，
+/// 新 `start` 才按当前 CPU 绑定。
+pub fn hrtimer_cpu_online(cpu: u32) {
+    let Some(base) = base_for_cpu(cpu) else {
+        return;
+    };
+    // 与 `hrtimer_init` 的全 base 复位串行: AP 上线不能和 boot 的"按实际在线
+    // CPU 重置"交错, 否则在线计数会被两边各加一次. 锁序同 init: INIT -> BASE.
+    let _init = TIMER_INIT_LOCK.lock();
+    let mut inner = base.base_lock.lock();
+    if inner.state == BaseState::Online {
+        return;
+    }
+    debug_assert!(
+        inner.tree.is_empty(),
+        "CPU online 时 base 树非空: quiesce 未完成或平台协议违约"
+    );
+    inner.tree.clear();
+    inner.running = 0;
+    inner.migrations = 0;
+    inner.quiesce_target = NO_CPU;
+    inner.state = BaseState::Online;
+    ONLINE_BASE_COUNT.fetch_add(1, Ordering::AcqRel);
+}
+
+/// CPU 下线前 quiesce 本核 timer base，并把 Pending timer 迁到 `target`
+///
+/// 调用约束：必须由平台 offline 线程在进程上下文调用，且不得在源 CPU 上等待；
+/// `target` 在 quiesce 期间保持在线；同一时刻只有一个 CPU 执行 quiesce。
+///
+/// 流程：源 base 置 `Quiescing` 并记录 `quiesce_target` → 逐个把 Pending 节点
+/// 离源、插目标（迁移保留 `expiry_ns`/`seq`，置 `migrating` 瞬态）→ 等待源
+/// `running` 归零 → 置 `Offline`。迁移不双持源/目标 base 锁；`start` 在迁移中
+/// 返回 `NotReady`，`try_cancel` 返回 `Busy`，`cancel` 等待瞬态清零后重试。
+///
+/// # Errors
+///
+/// - [`CpuTimerError::NoOnlineTarget`]：目标非法/离线
+/// - [`CpuTimerError::LastOnlineCpu`]：源是最后一个在线 CPU
+/// - [`CpuTimerError::Busy`]：源 base 已在 quiesce 或不在 `Online`
+pub fn hrtimer_cpu_quiesce(cpu: u32, target: u32) -> Result<(), CpuTimerError> {
+    if cpu == target {
+        return Err(CpuTimerError::NoOnlineTarget);
+    }
+    let Some(source) = base_for_cpu(cpu) else {
+        return Err(CpuTimerError::NoOnlineTarget);
+    };
+    let Some(target_base) = base_for_cpu(target) else {
+        return Err(CpuTimerError::NoOnlineTarget);
+    };
+    if ONLINE_BASE_COUNT.load(Ordering::Acquire) <= 1 {
+        // 只剩当前 CPU: 没有其它在线 CPU 可承接, 先报"最后一个在线 CPU"
+        // (此时 target 即便索引有效也必然离线, 不把协议错误报成 NoOnlineTarget).
+        return Err(CpuTimerError::LastOnlineCpu);
+    }
+    if target_base.base_lock.lock().state != BaseState::Online {
+        return Err(CpuTimerError::NoOnlineTarget);
+    }
+    {
+        let mut inner = source.base_lock.lock();
+        if inner.state != BaseState::Online {
+            return Err(CpuTimerError::Busy);
+        }
+        inner.state = BaseState::Quiescing;
+        inner.quiesce_target = u16::try_from(target).unwrap_or(NO_CPU);
+    }
+
+    loop {
+        if migrate_one_pending(source, target_base, target) {
+            continue;
+        }
+        let done = {
+            let inner = source.base_lock.lock();
+            debug_assert!(
+                inner.tree.is_empty(),
+                "Quiescing base 树非空但没有可迁移的 Pending 节点"
+            );
+            inner.tree.is_empty() && inner.running == 0 && inner.migrations == 0
+        };
+        if done {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+
+    {
+        let mut inner = source.base_lock.lock();
+        debug_assert!(
+            inner.tree.is_empty() && inner.running == 0 && inner.migrations == 0,
+            "quiesce 收敛时源 base 仍有活动条目"
+        );
+        inner.state = BaseState::Offline;
+        inner.quiesce_target = NO_CPU;
+    }
+    ONLINE_BASE_COUNT.fetch_sub(1, Ordering::AcqRel);
+    Ok(())
+}
+
+/// 从源 base 摘一个 Pending timer，以原 `expiry_ns`/`seq` 插入目标 base.
+///
+/// 返回 `false` 表示当前没有可迁移节点（可能正有回调在途，由调用方继续等）。
+/// 源锁与目标锁不重叠：摘除并置 `migrating` 后释放源锁，再锁目标插入。
+fn migrate_one_pending(
+    source: &'static TimerBase,
+    target_base: &'static TimerBase,
+    target: u32,
+) -> bool {
+    let Some((timer_ptr, expiry_ns, seq)) = ({
+        let mut inner = source.base_lock.lock();
+        // SAFETY: 本处持源 base 锁, 树结构不会被并发修改.
+        let mut cursor = unsafe { inner.tree.first() };
+        let mut found = None;
+        while let Some(node) = cursor {
+            // SAFETY: 树中节点由存活 `HrTimer` 提供; node 是首字段.
+            let timer = unsafe { timer_from_node(node) };
+            // SAFETY: 节点在树中 ⇒ timer 存活; 只读原子字段.
+            let timer = unsafe { timer.as_ref() };
+            if timer.state() == HrTimerState::Pending && !timer.migrating.load(Ordering::Acquire) {
+                let expiry_ns = timer.expiry_ns();
+                let seq = timer.activation_seq();
+                found = Some((node, timer, expiry_ns, seq));
+                break;
+            }
+            // SAFETY: 同上.
+            cursor = unsafe { RbTree::<TimerKey>::next(node) };
+        }
+        if let Some((node, timer, expiry_ns, seq)) = found {
+            // SAFETY: node 刚由源树返回, 仍在树中; 摘除后由目标树重插.
+            unsafe { inner.tree.remove(node) };
+            inner.migrations = inner.migrations.saturating_add(1);
+            timer.migrating.store(true, Ordering::Release);
+            let timer_ptr = core::ptr::NonNull::from(timer);
+            Some((timer_ptr, expiry_ns, seq))
+        } else {
+            None
+        }
+    }) else {
+        return false;
+    };
+
+    // SAFETY: 摘除源树后 timer 尚未被释放 (hrtimer_cancel 返回/超时前保持其存活);
+    // migrating=true 阻止取消/重挂.
+    let timer = unsafe { timer_ptr.as_ref() };
+    let mut inner = target_base.base_lock.lock();
+    debug_assert_eq!(
+        inner.state,
+        BaseState::Online,
+        "quiesce_target 必须在迁移期间保持在线"
+    );
+    timer.base_id.store(target, Ordering::Release);
+    timer.expiry_ns.store(expiry_ns, Ordering::Release);
+    timer.queue_seq.store(seq, Ordering::Release);
+    timer.set_node_key(expiry_ns, seq);
+    timer.set_state(HrTimerState::Pending);
+    // SAFETY: 已离源树, timer 存活; 目标锁内插入, 不与源锁双持.
+    unsafe { inner.tree.insert(timer.node_ptr()) };
+    timer.migrating.store(false, Ordering::Release);
+    drop(inner);
+    // 目标插入完成后才回落源迁移计数; 期间 quiesce 不会宣告源 base Offline.
+    let mut source_inner = source.base_lock.lock();
+    source_inner.migrations = source_inner.migrations.saturating_sub(1);
+    true
 }
 
 /// 启动定时器 (绝对时间)
@@ -546,8 +761,38 @@ fn start_inactive(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
     start_inactive_on(timer, expiry_ns, cpu)
 }
 
+/// 解析 `Inactive` 定时器的实际落点：源 base `Quiescing`/`Offline` 时改绑
+/// `quiesce_target`；没有可用目标返回 `None`。只在源/目标 base 锁内各看一眼，
+/// 不双持两把 base 锁。
+fn resolve_start_cpu(cpu: u32) -> Option<u32> {
+    let base = base_for_cpu(cpu)?;
+    let (state, target) = {
+        let inner = base.base_lock.lock();
+        (inner.state, inner.quiesce_target)
+    };
+    match state {
+        BaseState::Online => Some(cpu),
+        BaseState::Quiescing => {
+            let target = u32::from(target);
+            if target == u32::from(NO_CPU) || target == cpu {
+                return None;
+            }
+            let target_base = base_for_cpu(target)?;
+            if target_base.base_lock.lock().state == BaseState::Online {
+                Some(target)
+            } else {
+                None
+            }
+        }
+        BaseState::Offline => None,
+    }
+}
+
 /// `start_inactive` 的显式 CPU 版本 (host 测试用它覆盖多 base 隔离).
 fn start_inactive_on(timer: &HrTimer, expiry_ns: u64, cpu: u32) -> StartOutcome {
+    let Some(cpu) = resolve_start_cpu(cpu) else {
+        return StartOutcome::NotReady;
+    };
     let _init = TIMER_INIT_LOCK.lock();
     match timer.state() {
         HrTimerState::Inactive => {}
@@ -576,6 +821,10 @@ fn start_inactive_on(timer: &HrTimer, expiry_ns: u64, cpu: u32) -> StartOutcome 
 }
 
 /// `Pending` / `Running` 的重挂: 只取已有 base 锁。
+///
+/// 源 base 处于 `Quiescing` 时（CPU offline 或回调内 Periodic 续期），把 timer
+/// 从源树摘下、置 `migrating`，释放源锁后再插 `quiesce_target`；全程不双持
+/// 两把 base 锁。`Pending` 的旧节点按原键摘除，新激活分配新 `seq`。
 fn start_bound(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
     let Some(base_id) = timer.base_id() else {
         return StartOutcome::NotReady;
@@ -591,23 +840,87 @@ fn start_bound(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
         HrTimerState::Inactive => return StartOutcome::NotReady,
         HrTimerState::Pending | HrTimerState::Running => {}
     }
-    if timer.base_id() != Some(base_id) || inner.state != BaseState::Online {
+    if timer.migrating.load(Ordering::Acquire) {
+        return StartOutcome::NotReady;
+    }
+    if timer.base_id() != Some(base_id) {
         return StartOutcome::NotReady;
     }
 
     let old_state = timer.state();
-    if old_state == HrTimerState::Pending {
-        // SAFETY: Pending 的节点必在该 base 树中; 移除后节点即将以新键重新插入.
-        unsafe { inner.tree.remove(timer.node_ptr()) };
+    match inner.state {
+        BaseState::Online => {
+            if old_state == HrTimerState::Pending {
+                // SAFETY: Pending 的节点必在该 base 树中; 移除后节点即将以新键重新插入.
+                unsafe { inner.tree.remove(timer.node_ptr()) };
+            }
+
+            let seq = next_activation_seq();
+            timer.expiry_ns.store(expiry_ns, Ordering::Release);
+            timer.queue_seq.store(seq, Ordering::Release);
+            timer.set_node_key(expiry_ns, seq);
+            timer.set_state(HrTimerState::Pending);
+            // SAFETY: 同上; 两种入口都保证 timer 内存在回调前有效.
+            unsafe { inner.tree.insert(timer.node_ptr()) };
+            StartOutcome::Started(seq)
+        }
+        BaseState::Quiescing => {
+            let target = u32::from(inner.quiesce_target);
+            if target == u32::from(NO_CPU) || target == base_id {
+                return StartOutcome::NotReady;
+            }
+            if old_state == HrTimerState::Pending {
+                // SAFETY: Pending 的节点必在该 base 树中; 本处摘下后由目标 base 重插.
+                unsafe { inner.tree.remove(timer.node_ptr()) };
+            }
+            inner.migrations = inner.migrations.saturating_add(1);
+            timer.migrating.store(true, Ordering::Release);
+            drop(inner);
+            start_bound_on_target(timer, expiry_ns, target, base)
+        }
+        BaseState::Offline => StartOutcome::NotReady,
     }
+}
+
+/// 把 `start_bound` 从 `Quiescing` 源 base 摘下的 timer 插入目标 base。
+///
+/// 目标 base 已由 quiesce 协议保证在线；本处只锁目标 base，不同时持源锁。
+fn start_bound_on_target(
+    timer: &HrTimer,
+    expiry_ns: u64,
+    target: u32,
+    source: &'static TimerBase,
+) -> StartOutcome {
+    let Some(base) = base_for_cpu(target) else {
+        // 协议上 quiesce_target 必为有效在线索引; 防御性回滚, 不把半迁移的
+        // timer 留在源 base 之外 (否则 quiesce 的 migrations 永远不归零).
+        timer.migrating.store(false, Ordering::Release);
+        timer.base_id.store(NO_BASE, Ordering::Release);
+        timer.set_state(HrTimerState::Inactive);
+        let mut source_inner = source.base_lock.lock();
+        source_inner.migrations = source_inner.migrations.saturating_sub(1);
+        return StartOutcome::NotReady;
+    };
+    let mut inner = base.base_lock.lock();
+    debug_assert_eq!(
+        inner.state,
+        BaseState::Online,
+        "quiesce_target 必须在迁移期间保持在线"
+    );
 
     let seq = next_activation_seq();
+    timer.base_id.store(target, Ordering::Release);
     timer.expiry_ns.store(expiry_ns, Ordering::Release);
     timer.queue_seq.store(seq, Ordering::Release);
     timer.set_node_key(expiry_ns, seq);
     timer.set_state(HrTimerState::Pending);
-    // SAFETY: 同上; 两种入口都保证 timer 内存在回调前有效.
+    // SAFETY: 节点已从源树摘下且 timer 存活; 目标树锁内插入, 不与源锁双持.
     unsafe { inner.tree.insert(timer.node_ptr()) };
+    timer.migrating.store(false, Ordering::Release);
+    drop(inner);
+    // 迁移计数在目标插入后回落: quiesce 只有看到它归零才会把源 base 置 Offline.
+    let mut source_inner = source.base_lock.lock();
+    source_inner.migrations = source_inner.migrations.saturating_sub(1);
     StartOutcome::Started(seq)
 }
 
@@ -640,7 +953,7 @@ pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) 
 /// 与 `hrtimer_run_queues` 的收集互斥: 取消成功后 base 树不再持有该 timer 的
 /// 节点地址, 调用方不会在下次 `run_queues` 时被踩到悬垂指针.
 pub fn hrtimer_try_cancel(timer: &HrTimer) -> CancelOutcome {
-    if timer.in_flight.load(Ordering::Acquire) {
+    if timer.in_flight.load(Ordering::Acquire) || timer.migrating.load(Ordering::Acquire) {
         return CancelOutcome::Busy;
     }
     match timer.state() {
@@ -659,11 +972,16 @@ pub fn hrtimer_try_cancel(timer: &HrTimer) -> CancelOutcome {
     };
     let mut inner = base.base_lock.lock();
 
-    if timer.in_flight.load(Ordering::Acquire) {
+    if timer.in_flight.load(Ordering::Acquire) || timer.migrating.load(Ordering::Acquire) {
         return CancelOutcome::Busy;
     }
-    if timer.state() != HrTimerState::Pending || timer.base_id() != Some(base_id) {
+    if timer.state() != HrTimerState::Pending {
         return CancelOutcome::NotPending;
+    }
+    if timer.base_id() != Some(base_id) {
+        // 迁移刚把 base_id 改到目标, 调用方必须重试目标 base; 不能误报 NotPending
+        // 让调用方释放仍挂在目标树中的 timer.
+        return CancelOutcome::Busy;
     }
     // SAFETY: Pending 节点的节点地址在所属 base 树中, Pending 状态隐含 timer 存活.
     unsafe { inner.tree.remove(timer.node_ptr()) };
@@ -673,11 +991,11 @@ pub fn hrtimer_try_cancel(timer: &HrTimer) -> CancelOutcome {
     CancelOutcome::Cancelled
 }
 
-/// 等待 `timer` 的在途回调退出.
+/// 等待 `timer` 的在途回调退出且强制迁移完成.
 ///
 /// 调用方必须保证当前上下文允许该回调推进 (不持有回调所需锁、中断已开启)。
 fn wait_in_flight(timer: &HrTimer) {
-    while timer.in_flight.load(Ordering::Acquire) {
+    while timer.in_flight.load(Ordering::Acquire) || timer.migrating.load(Ordering::Acquire) {
         core::hint::spin_loop();
     }
 }
@@ -709,14 +1027,24 @@ pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
 /// 可安全释放或复用 (`init` 会把它转回 `Inactive`)。与 `hrtimer_cancel` 相同的
 /// 锁域/上下文约束.
 pub fn hrtimer_shutdown(timer: &HrTimer) {
-    {
+    loop {
+        // 迁移先把节点离源、再插目标; 此时 base_id 不可信, 必须等瞬态结束.
+        wait_in_flight(timer);
         let _init = TIMER_INIT_LOCK.lock();
+        if timer.migrating.load(Ordering::Acquire) {
+            // 等待期间迁移被重新拉起: 放掉 init 锁后重来, 不在错误 base 上摘节点.
+            continue;
+        }
         let state = timer.state();
         match state {
             HrTimerState::Pending | HrTimerState::Running => {
                 if let Some(base_id) = timer.base_id() {
                     if let Some(base) = base_for_cpu(base_id) {
                         let mut inner = base.base_lock.lock();
+                        if timer.migrating.load(Ordering::Acquire) {
+                            drop(inner);
+                            continue;
+                        }
                         timer.set_state(HrTimerState::Shutdown);
                         timer.queue_seq.store(0, Ordering::Release);
                         if state == HrTimerState::Pending {
@@ -741,6 +1069,7 @@ pub fn hrtimer_shutdown(timer: &HrTimer) {
                 unsafe { (*timer.node.get()).reset() };
             }
         }
+        break;
     }
     wait_in_flight(timer);
     if timer.state() == HrTimerState::Shutdown {
@@ -787,6 +1116,7 @@ pub fn hrtimer_run_queues(cpu: u32) {
                 let state = timer.state();
                 if state == HrTimerState::Pending
                     && !timer.in_flight.load(Ordering::Acquire)
+                    && !timer.migrating.load(Ordering::Acquire)
                     && timer.expiry_ns() <= now_ns
                 {
                     let seq = timer.activation_seq();
@@ -844,7 +1174,10 @@ pub fn hrtimer_next_expiry(cpu: u32) -> Option<u64> {
         let timer = unsafe { timer_from_node(node) };
         // SAFETY: `node` 由 base 树返回 ⇒ timer 存活; 只读原子状态.
         let timer = unsafe { timer.as_ref() };
-        if timer.state() == HrTimerState::Pending && !timer.in_flight.load(Ordering::Acquire) {
+        if timer.state() == HrTimerState::Pending
+            && !timer.in_flight.load(Ordering::Acquire)
+            && !timer.migrating.load(Ordering::Acquire)
+        {
             return Some(timer.expiry_ns());
         }
         // SAFETY: 同上.
@@ -1118,6 +1451,17 @@ mod tests {
     }
 
     #[test]
+    fn test_base_inner_stays_within_image_budget() {
+        // K-08: `TIMER_BASES` 是 MAX_CPUS=1024 个常驻 base; `BaseInner` 超过
+        // 24 字节会把 x86 内核镜像重新顶过 `USER_CODE_BASE`. 本断言锁住预算.
+        assert!(
+            core::mem::size_of::<BaseInner>() <= 24,
+            "BaseInner 超预算: {} bytes",
+            core::mem::size_of::<BaseInner>()
+        );
+    }
+
+    #[test]
     fn test_hrtimer_state_encoding() {
         assert_eq!(HrTimerState::Uninit as u64, 0);
         assert_eq!(HrTimerState::Inactive as u64, 1);
@@ -1241,6 +1585,7 @@ mod tests {
     fn test_per_cpu_base_isolation() {
         let _serial = serialize_queue_tests();
         hrtimer_init();
+        hrtimer_cpu_online(1);
 
         let timer0 = HrTimer::uninit();
         timer0.init(noop_callback);
@@ -1264,6 +1609,7 @@ mod tests {
         hrtimer_run_queues(1);
         assert_eq!(timer1.state(), HrTimerState::Inactive);
         assert_eq!(hrtimer_pending_count(), 0);
+        hrtimer_init();
     }
 
     #[test]
@@ -1429,6 +1775,36 @@ mod tests {
             started.elapsed() >= Duration::from_millis(40),
             "cancel 必须等到在途回调退出, 不得提前返回"
         );
+        assert!(!queue_contains(&timer));
+    }
+
+    #[test]
+    fn test_shutdown_waits_for_migration_before_unlink() {
+        use std::time::{Duration, Instant};
+
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
+        timer.migrating.store(true, Ordering::Release);
+
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                timer.migrating.store(false, Ordering::Release);
+            });
+            hrtimer_shutdown(&timer);
+        });
+        assert!(
+            started.elapsed() >= Duration::from_millis(40),
+            "shutdown 必须等迁移瞬态结束, 不得在错误 base 上摘节点"
+        );
+        assert_eq!(timer.state(), HrTimerState::Shutdown);
         assert!(!queue_contains(&timer));
     }
 
@@ -1599,6 +1975,175 @@ mod tests {
             "取消后 Periodic 回调不得把定时器复活"
         );
         assert!(!queue_contains(&timer), "已取消的定时器不得被重新入队");
+    }
+
+    #[test]
+    fn test_init_rejects_migrating_timer() {
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        timer.migrating.store(true, Ordering::Release);
+        assert_eq!(timer.try_init(noop_callback), Err(InitError::Migrating));
+        timer.migrating.store(false, Ordering::Release);
+    }
+
+    #[test]
+    fn test_cpu_quiesce_migrates_pending_preserving_seq() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        hrtimer_cpu_online(1);
+
+        let timer0 = HrTimer::uninit();
+        timer0.init(noop_callback);
+        let timer1 = HrTimer::uninit();
+        timer1.init(noop_callback);
+        let expiry_ns = 42_000_000;
+        let seq0 = expect_started(start_inactive_on(&timer0, expiry_ns, 0));
+        let seq1 = expect_started(start_inactive_on(&timer1, expiry_ns, 0));
+        assert_eq!(timer0.base_id(), Some(0));
+        assert_eq!(timer1.base_id(), Some(0));
+
+        assert_eq!(hrtimer_cpu_quiesce(0, 1), Ok(()));
+
+        assert_eq!(timer0.base_id(), Some(1), "Pending 必须迁到目标 base");
+        assert_eq!(timer1.base_id(), Some(1));
+        assert_eq!(timer0.state(), HrTimerState::Pending);
+        assert_eq!(timer1.state(), HrTimerState::Pending);
+        assert_eq!(timer0.activation_seq(), seq0, "迁移保留激活序号");
+        assert_eq!(timer1.activation_seq(), seq1);
+        assert_eq!(hrtimer_next_expiry(0), None, "源 base 已 Offline");
+        assert_eq!(hrtimer_next_expiry(1), Some(expiry_ns));
+        assert_eq!(hrtimer_pending_count(), 2);
+
+        assert!(hrtimer_cancel(&timer0));
+        assert!(hrtimer_cancel(&timer1));
+        hrtimer_init();
+    }
+
+    #[test]
+    fn test_cpu_quiesce_rejects_last_online_cpu() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        assert_eq!(hrtimer_cpu_quiesce(0, 1), Err(CpuTimerError::LastOnlineCpu));
+    }
+
+    #[test]
+    fn test_cpu_quiesce_rejects_offline_target() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        hrtimer_cpu_online(1);
+        hrtimer_cpu_online(2);
+        assert_eq!(hrtimer_cpu_quiesce(2, 1), Ok(()));
+        // CPU2 已 Offline; CPU0 仍 Online, 但目标不在线.
+        assert_eq!(
+            hrtimer_cpu_quiesce(0, 2),
+            Err(CpuTimerError::NoOnlineTarget)
+        );
+        hrtimer_init();
+    }
+
+    #[test]
+    fn test_cpu_quiesce_rejects_busy_source() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        hrtimer_cpu_online(1);
+        {
+            let mut inner = base_for_cpu(0).expect("base0").base_lock.lock();
+            inner.state = BaseState::Quiescing;
+            inner.quiesce_target = 1;
+        }
+        assert_eq!(hrtimer_cpu_quiesce(0, 1), Err(CpuTimerError::Busy));
+        hrtimer_init();
+    }
+
+    #[test]
+    fn test_inactive_start_during_quiesce_uses_target() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        hrtimer_cpu_online(1);
+        {
+            let mut inner = base_for_cpu(0).expect("base0").base_lock.lock();
+            inner.state = BaseState::Quiescing;
+            inner.quiesce_target = 1;
+        }
+
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        expect_started(start_inactive_on(&timer, 7, 0));
+        assert_eq!(
+            timer.base_id(),
+            Some(1),
+            "Quiescing 源上的新激活改绑 target"
+        );
+        assert_eq!(timer.state(), HrTimerState::Pending);
+        assert_eq!(hrtimer_next_expiry(0), None);
+        assert_eq!(hrtimer_next_expiry(1), Some(7));
+        assert!(hrtimer_cancel(&timer));
+        hrtimer_init();
+    }
+
+    #[test]
+    fn test_migrating_timer_rejects_cancel_and_start() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        expect_started(start_inactive_on(&timer, 9, 0));
+
+        timer.migrating.store(true, Ordering::Release);
+        assert_eq!(
+            hrtimer_try_cancel(&timer),
+            CancelOutcome::Busy,
+            "迁移瞬态中的取消必须 Busy"
+        );
+        assert_eq!(
+            hrtimer_start(&timer, 11),
+            StartOutcome::NotReady,
+            "迁移瞬态中的 start 必须 NotReady"
+        );
+        assert_eq!(timer.base_id(), Some(0), "迁移未完成不得改 base_id");
+        timer.migrating.store(false, Ordering::Release);
+        assert!(hrtimer_cancel(&timer));
+        hrtimer_init();
+    }
+
+    fn periodic_rehang_callback(_timer: &HrTimer, _seq: u64) -> HrTimerRestart {
+        HrTimerRestart::Periodic
+    }
+
+    #[test]
+    fn test_periodic_callback_rehangs_to_quiesce_target() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        hrtimer_cpu_online(1);
+
+        let timer = HrTimer::uninit();
+        timer.init(periodic_rehang_callback);
+        timer.interval_ns.store(1_000_000, Ordering::Release);
+        let seq = expect_started(start_inactive_on(&timer, hrtimer_clock_read(), 0));
+        simulate_collected(&timer);
+        {
+            let mut inner = base_for_cpu(0).expect("base0").base_lock.lock();
+            inner.state = BaseState::Quiescing;
+            inner.quiesce_target = 1;
+        }
+
+        dispatch_expired(&timer, periodic_rehang_callback, seq, hrtimer_clock_read());
+
+        assert_eq!(
+            timer.base_id(),
+            Some(1),
+            "Periodic 续期必须落到 quiesce_target, 不回源 base"
+        );
+        assert_eq!(timer.state(), HrTimerState::Pending);
+        assert!(!timer.in_flight.load(Ordering::Acquire));
+        assert_eq!(hrtimer_next_expiry(0), None);
+        assert!(hrtimer_next_expiry(1).is_some());
+        {
+            let inner = base_for_cpu(0).expect("base0").base_lock.lock();
+            assert_eq!(inner.migrations, 0, "target 插入后迁移计数必须归零");
+        }
+        assert!(hrtimer_cancel(&timer));
+        hrtimer_init();
     }
 }
 

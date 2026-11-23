@@ -67,6 +67,11 @@ impl<K> RbTree<K> {
         self.len
     }
 
+    /// 树是否为空
+    pub(super) const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     /// 清空树 (不解引用节点; 调用方保证节点生命周期)
     pub(super) fn clear(&mut self) {
         self.root = None;
