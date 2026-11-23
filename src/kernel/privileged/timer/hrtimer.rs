@@ -40,7 +40,7 @@
 //! # Safety
 //!
 //! - HrTimer 必须在有效内存中 (通常嵌入其他结构体), 生命周期覆盖 `Pending` /
-//!   `Running` 两个状态. `hrtimer_try_cancel` 在队列锁内真出队后即可返回; 若回调
+//!   `Running` / `Shutdown` 状态. `hrtimer_try_cancel` 在队列锁内真出队后即可返回; 若回调
 //!   已被收集/正在执行, 它返回 `Busy`, 此时调用方仍须保活. `hrtimer_cancel`
 //!   会等到在途回调退出后返回, 返回即可释放 timer 内存.
 //! - **阻塞取消的锁域约束**: 等待期间 `hrtimer_cancel` 不持队列锁, 但调用方不得
@@ -83,12 +83,16 @@ pub type HrTimerCallback = fn(&HrTimer, u64) -> HrTimerRestart;
 /// 定时器状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HrTimerState {
-    /// 未初始化或已取消
+    /// 刚构造, 尚未 `init`
+    Uninit,
+    /// 已初始化或已取消, 未入队, 无在途回调
     Inactive,
     /// 已入队等待触发
     Pending,
     /// 回调正在执行
     Running,
+    /// 已 shutdown: 拒绝入队, 回调自重挂/Periodic 重挂失效
+    Shutdown,
 }
 
 /// 非阻塞取消结果
@@ -132,8 +136,6 @@ pub struct HrTimer {
     queue_seq: AtomicU64,
     /// 是否已被收集/回调在途 (dispatch 退出前为 true; 取消方据此判定 Busy)
     in_flight: AtomicBool,
-    /// shutdown 关闭位: 置位后 `start` 拒绝入队, 回调自重挂/Periodic 重挂失效
-    closed: AtomicBool,
 }
 
 impl HrTimer {
@@ -146,28 +148,31 @@ impl HrTimer {
             expiry_ns: AtomicU64::new(0),
             interval_ns: AtomicU64::new(0),
             callback: AtomicUsize::new(0),
-            state: AtomicU64::new(HrTimerState::Inactive as u64),
+            state: AtomicU64::new(HrTimerState::Uninit as u64),
             queue_seq: AtomicU64::new(0),
             in_flight: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
         }
     }
 
     /// 初始化定时器
     ///
-    /// 设置回调函数, 状态置为 Inactive。
-    /// 可重复调用以更换回调。
+    /// 设置回调函数, 状态置为 `Inactive`。可从 `Uninit`、`Inactive` 或
+    /// `Shutdown` 调用; `Pending`/`Running` 上调用是编程错误 (会在 debug 构建
+    /// 触发断言), 调用方应先 cancel 并等待在途回调退出.
     ///
     /// 只接收 `&self`: 回调指针经原子量写入, 与队列侧跨核读取构成 Release/Acquire
     /// 同步, 不再要求调用方持有独占引用 (`&mut`)。
     pub fn init(&self, callback: HrTimerCallback) {
+        debug_assert!(
+            !matches!(self.state(), HrTimerState::Pending | HrTimerState::Running),
+            "HrTimer::init called on active timer"
+        );
         self.callback.store(callback as usize, Ordering::Release);
         self.expiry_ns.store(0, Ordering::Relaxed);
         self.interval_ns.store(0, Ordering::Relaxed);
         self.state
             .store(HrTimerState::Inactive as u64, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
-        self.closed.store(false, Ordering::Release);
     }
 
     /// 读取当前回调 (0 = 未设置 ⇒ `noop_callback`)
@@ -202,9 +207,11 @@ impl HrTimer {
     /// 获取当前状态
     pub fn state(&self) -> HrTimerState {
         match self.state.load(Ordering::Acquire) {
-            1 => HrTimerState::Pending,
-            2 => HrTimerState::Running,
-            _ => HrTimerState::Inactive,
+            1 => HrTimerState::Inactive,
+            2 => HrTimerState::Pending,
+            3 => HrTimerState::Running,
+            4 => HrTimerState::Shutdown,
+            _ => HrTimerState::Uninit,
         }
     }
 
@@ -306,8 +313,8 @@ pub fn is_hrtimer_ready() -> bool {
 /// 启动定时器 (绝对时间)
 ///
 /// 将定时器以绝对到期时间 `expiry_ns` 入队。若定时器已在队列中, 先移除旧条目
-/// 再重新入队。返回本次激活的入队序号; `0` 表示框架未就绪或定时器已
-/// `hrtimer_shutdown` (未入队)。
+/// 再重新入队。返回本次激活的入队序号; `0` 表示框架未就绪、定时器未 `init`
+/// 或已 `hrtimer_shutdown` (未入队)。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象 (必须已 init)
@@ -327,9 +334,9 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> u64 {
 
     let mut queue = HRTIMER_QUEUE.lock();
 
-    // shutdown 与 start 的关闭位判定同在队列锁内: 要么 start 先入队、shutdown
-    // 随后摘除; 要么 shutdown 先置位、start 看到关闭位后不再入队.
-    if timer.closed.load(Ordering::Acquire) {
+    // shutdown / uninit 与 start 的判定同在队列锁内: 要么 start 先入队、shutdown
+    // 随后摘除; 要么 shutdown 先置状态、start 看到 Shutdown 后不再入队.
+    if matches!(timer.state(), HrTimerState::Shutdown | HrTimerState::Uninit) {
         return 0;
     }
 
@@ -446,16 +453,16 @@ pub fn hrtimer_cancel(timer: &HrTimer) -> bool {
     }
 }
 
-/// 关闭定时器: 置关闭位、摘除队列条目并等待在途回调退出.
+/// 关闭定时器: 置 `Shutdown` 状态、摘除队列条目并等待在途回调退出.
 ///
-/// 关闭位使回调内的自重挂与框架 `Periodic` 重挂都不再入队; 返回后 timer 可安全
-/// 释放或复用 (`init` 会清除关闭位)。与 `hrtimer_cancel` 相同的锁域/上下文约束.
+/// `Shutdown` 状态使回调内的自重挂与框架 `Periodic` 重挂都不再入队; 返回后 timer
+/// 可安全释放或复用 (`init` 会把它转回 `Inactive`)。与 `hrtimer_cancel` 相同的
+/// 锁域/上下文约束.
 pub fn hrtimer_shutdown(timer: &HrTimer) {
     {
         let mut queue = HRTIMER_QUEUE.lock();
-        timer.closed.store(true, Ordering::Release);
+        timer.set_state(HrTimerState::Shutdown);
         queue.retain(|entry| !core::ptr::eq(entry.timer.as_ptr(), timer));
-        timer.set_state(HrTimerState::Inactive);
         timer.queue_seq.store(0, Ordering::Release);
     }
     wait_in_flight(timer);
@@ -559,9 +566,8 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
         return;
     }
 
-    // shutdown 已置关闭位: 不再执行回调, 直接收敛并放行等待方.
-    if timer.closed.load(Ordering::Acquire) {
-        timer.set_state(HrTimerState::Inactive);
+    // shutdown 已置关闭状态: 不再执行回调, 保持 Shutdown 并放行等待方.
+    if timer.state() == HrTimerState::Shutdown {
         timer.queue_seq.store(0, Ordering::Release);
         timer.in_flight.store(false, Ordering::Release);
         return;
@@ -592,8 +598,11 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
                         new_expiry
                     };
                     if hrtimer_start(timer, next) == 0 {
-                        timer.set_state(HrTimerState::Inactive);
-                        timer.queue_seq.store(0, Ordering::Release);
+                        // shutdown 优先: 不得把 Shutdown 覆盖回 Inactive.
+                        if timer.state() != HrTimerState::Shutdown {
+                            timer.set_state(HrTimerState::Inactive);
+                            timer.queue_seq.store(0, Ordering::Release);
+                        }
                     }
                 } else {
                     timer.set_state(HrTimerState::Inactive);
@@ -767,15 +776,17 @@ mod tests {
 
     #[test]
     fn test_hrtimer_state_encoding() {
-        assert_eq!(HrTimerState::Inactive as u64, 0);
-        assert_eq!(HrTimerState::Pending as u64, 1);
-        assert_eq!(HrTimerState::Running as u64, 2);
+        assert_eq!(HrTimerState::Uninit as u64, 0);
+        assert_eq!(HrTimerState::Inactive as u64, 1);
+        assert_eq!(HrTimerState::Pending as u64, 2);
+        assert_eq!(HrTimerState::Running as u64, 3);
+        assert_eq!(HrTimerState::Shutdown as u64, 4);
     }
 
     #[test]
     fn test_hrtimer_uninit() {
         let timer = HrTimer::uninit();
-        assert_eq!(timer.state(), HrTimerState::Inactive);
+        assert_eq!(timer.state(), HrTimerState::Uninit);
         assert_eq!(timer.expiry_ns(), 0);
         assert_eq!(timer.interval_ns(), 0);
         assert!(!timer.is_pending());
@@ -786,6 +797,19 @@ mod tests {
         let timer = HrTimer::uninit();
         timer.init(noop_callback);
         assert_eq!(timer.state(), HrTimerState::Inactive);
+    }
+
+    #[test]
+    fn test_start_uninit_is_rejected() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        assert_eq!(
+            hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
+            0
+        );
+        assert!(!queue_contains(&timer));
+        assert_eq!(timer.state(), HrTimerState::Uninit);
     }
 
     #[test]
@@ -908,18 +932,19 @@ mod tests {
 
         hrtimer_shutdown(&timer);
         assert!(!queue_contains(&timer), "shutdown 后队列不得再持有该 timer");
-        assert_eq!(timer.state(), HrTimerState::Inactive);
+        assert_eq!(timer.state(), HrTimerState::Shutdown);
         assert_eq!(hrtimer_pending_count(), 0);
 
-        // 关闭位生效: 直接 start 不得复活.
+        // Shutdown 状态: 直接 start 不得复活.
         assert_eq!(
             hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
             0
         );
         assert_eq!(hrtimer_pending_count(), 0, "shutdown 后 start 必须被拒绝");
 
-        // init 清除关闭位后可重新使用.
+        // init 清除 Shutdown 后可重新使用.
         timer.init(noop_callback);
+        assert_eq!(timer.state(), HrTimerState::Inactive);
         assert_ne!(
             hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
             0

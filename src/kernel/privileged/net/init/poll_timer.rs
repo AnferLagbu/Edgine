@@ -50,7 +50,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::privileged::irq::{SoftirqVec, raise_softirq};
 use crate::privileged::sync::IrqSpinLock;
 use crate::privileged::timer::{
-    HrTimer, HrTimerRestart, hrtimer_clock_read, hrtimer_start, is_hrtimer_ready,
+    HrTimer, HrTimerRestart, HrTimerState, hrtimer_clock_read, hrtimer_start, is_hrtimer_ready,
 };
 
 /// 未登记状态 (`NET_POLL_DEADLINE_NS` 的哨兵值).
@@ -118,9 +118,12 @@ pub(crate) fn net_poll_deadline_update(next_ns: Option<u64>) {
     let deadline = effective_poll_deadline(next_ns, now_ns, NET_POLL_RX_FLOOR_NS);
 
     let timer = NET_POLL_TIMER.lock();
-    // `init` 只接收 `&self` (回调指针原子替换), 复位 expiry/interval/state 后入队;
+    // `init` 只接收 `&self`，但终态禁止在 Pending/Running 上重初始化；本 timer 的
+    // 回调在首次登记后不再更换，只有 Uninit/Shutdown 需要 init。
+    if matches!(timer.state(), HrTimerState::Uninit | HrTimerState::Shutdown) {
+        timer.init(net_poll_deadline_callback);
+    }
     // `hrtimer_start` 自身按 `queue_seq` 摘除同一 timer 的旧条目，重复登记幂等.
-    timer.init(net_poll_deadline_callback);
     NET_POLL_DEADLINE_NS.store(deadline, Ordering::Release);
     hrtimer_start(&timer, deadline);
 }
