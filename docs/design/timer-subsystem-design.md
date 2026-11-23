@@ -1,10 +1,19 @@
 # 定时器子系统终态架构
 
 > Edgine 定时器的终态不是 Linux hrtimer 的功能复制，而是：**保留两档取消协议，把载体换成 per-CPU、无分配、CPU 亲和、硬中断回调的定时器；timerfd 改为 per-context 对象、read 路径重挂、按对象注册唤醒。** 取消协议已经接近终态，本文主要设计其承载结构与 timerfd 语义。
+>
+> **项目级约束**：Edgine 是实验性内核，但实验性不降低硬件可用性要求。终态必须在民用 x86_64 / aarch64 多核 CPU 上可长期运行；因此 per-CPU 定时器、SMP 初始化、tickless 空闲管理是**硬约束**，不是规模变大后的优化。
 
 ## 一、终态的定义与边界
 
 **终态**指：在 Edgine 的目标规模与上下文模型下，不需要因为当前实现约束再改 API 语义、生命周期契约或锁域模型。它不意味着永远不再增加功能，也不意味着对齐 Linux 的全部定时器特性。
+
+### 项目级约束
+
+- **民用硬件可用性**：目标不是“单核实验板”，而是普通消费级 x86_64 / aarch64 多核 CPU；包括 SMP、SMT、异构大小核和不同逻辑核数量的机器。
+- **不依赖特殊定时器硬件**：只使用标配时钟事件源（x86_64 LAPIC timer、aarch64 `CNTP_CVAL` 等）；不引入专用定时器芯片、隔离核或实时扩展。
+- **空闲可用**：消费级 CPU 在空闲时不能靠全局周期 tick 维持；`NO_HZ_IDLE` 与每 CPU 下一次到期装填是可用性的一部分，不只是省电优化。
+- **不要求 Linux 全功能**：不因“民用硬件”就承诺 `NO_HZ_FULL`、CPU 热插拔、定时器迁移或全部 POSIX 时钟语义；这些是独立能力，不是硬件可用的前置条件。
 
 本文覆盖：
 
@@ -16,8 +25,8 @@
 本文不覆盖，且不纳入 Edgine 定时器终态：
 
 - 软中断定时器、deferrable timer、timer slack、信号驱动的 posix timer 全量语义。
-- CPU 热插拔、定时器跨 CPU 迁移、每 CPU 动态扩容。
-- `CLOCK_REALTIME` 时钟基。当前 `timerfd_create` 接受该 clockid 但按单调时基计时，这是需要消除的静默错语义；在时钟基抽象就位前，终态应显式返回 `ENOTSUP`，而不是继续假装支持。
+- CPU 热插拔、定时器跨 CPU 迁移、每 CPU 动态扩容。民用硬件可用不要求这些能力；若后续产品目标包含笔记本睡眠/CPU offline，需另立时钟恢复与迁移协议。
+- `CLOCK_REALTIME` 时钟基。它不属于 CPU 硬件可用性门槛；但当前 `timerfd_create` 接受该 clockid 却按单调时基计时，这是必须消除的静默错语义。时钟基抽象就位前，显式返回 `ENOTSUP` 是终态的一部分；若要对齐 Linux 用户态的 `CLOCK_REALTIME` timerfd，另立时钟基工程。
 - 以定时器回调承担长任务。回调仍要求短小、不可睡眠。
 
 ## 二、当前形态与差距
@@ -35,6 +44,7 @@
 | timerfd 周期 | 回调内直接 `hrtimer_start` 自重挂 | 回调只累加 ticks 并唤醒；周期重挂移到 `read` 路径 |
 | timerfd 唤醒 | 保存单个数值 `wake_fd`，`epoll_pwake(fd)` | 改为按 epoll 兴趣/对象注册唤醒，避免 fd 复用误唤醒；单一 fd 无法覆盖多 epoll 兴趣 |
 | tickless | `get_next_timer_expiry(_cpu_id)` 忽略 CPU，取全局最早到期 | 改为每 CPU 查询自己的 `TimerBase`，各自装填下一次中断 |
+| 多核可用性 | 所有 CPU 共用一把 `HRTIMER_QUEUE` 锁和一个最早到期读数 | 民用多核下必须 per-CPU；否则核间竞争、错核唤醒和空闲功耗都不可接受 |
 | 锁域 | `TFD_LOCK`（控制面）+ `HRTIMER_QUEUE`（全局队列） | `TFD_CTX` 控制面 + 每 CPU `TIMER_BASE`，不再有全局定时器锁 |
 
 当前代码事实来源：
@@ -145,6 +155,8 @@ struct HrTimer {
 
 具体有序结构选**侵入式红黑树**：无堆分配、最坏 O(log n)、支持 IRQ 内插入删除。排序键为 `(expiry_ns, seq)`，`seq` 用于同到期时间的稳定顺序。若后续因实现成本降级为有序侵入链表，那只是过渡实现，不改变本文的锁模型、状态机和 API 结论，也不把它称作终态。
 
+当前 `MAX_CPUS` 是 1024（见 [capacity.rs](../../src/kernel/privileged/config/capacity.rs)），`TimerBase` 静态数组按该上限留容量；单 base 只含锁、树根和计数，不随 timer 数量增长。消费级 CPU 的逻辑核数（含 SMT 线程）远低于该上限。启动时只初始化实际在线的 CPU base，未上线 CPU 的 base 保持空；没有“全局后备队列”作为降级路径，否则多核可用性会重新退化为单锁。
+
 ### 启动与绑核
 
 `hrtimer_start` 的绑核规则：
@@ -190,6 +202,8 @@ struct HrTimer {
 `tickless` 的 `get_next_timer_expiry(cpu_id)` 必须把 `cpu_id` 传给 `hrtimer_next_expiry(cpu)`，只查询该 CPU 的 base。当前实现忽略 CPU id、取全局最早到期，在 per-CPU 终态下会变成“CPU0 的定时器唤醒 CPU1”的错配。
 
 `on_timer_interrupt` 读取当前 CPU id 后调用 `hrtimer_run_queues(cpu)`；不再存在全局 `run_queues()`。
+
+消费级 CPU 的空闲功耗依赖这条 per-CPU 装填：如果仍用全局最早到期，一个 CPU 的 timer 会唤醒另一个空闲 CPU，笔电/桌面空载会出现无谓唤醒和错核延迟。终态不要求 `NO_HZ_FULL`，但 `NO_HZ_IDLE` 与每 CPU 下一次到期必须成立。
 
 ## 六、timerfd 终态
 
@@ -292,12 +306,13 @@ struct TimerFdFile {
 1. **取消契约**：任意非回调上下文调用 `hrtimer_cancel`，返回后立刻释放 timer，ASan/形状测试无 UAF；`try_cancel` 在回调在途时返回 `Busy`。
 2. **关闭契约**：`shutdown` 后 `start` 返回 `Shutdown`；回调自重挂与框架 Periodic 重挂都不复活；`init` 后可以重新启动。
 3. **每 CPU 隔离**：CPU0 的 timer 不会进入 CPU1 的队列；`hrtimer_next_expiry(cpu)` 只返回本 CPU 最早到期；tickless 的 `cpu_id` 参数被真实消费。
-4. **无分配**：入队、取消、分发、Periodic 重挂的路径没有堆分配；回调路径没有锁分配或动态容器增长。
-5. **timerfd 不风暴**：周期 timerfd 在无人 `read` 时只产生首次到期，不持续重挂；`read` 后按 interval 重挂。
-6. **timerfd 生命周期**：`dup`/`close`/`fork` 下对象引用正确；fd 复用不会误唤醒新的 timerfd；多个 epoll 兴趣都能被唤醒。
-7. **锁序**：`TFD_CTX` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
-8. **可扩展性**：多核并发 start/cancel/read 的基准不随全局锁串行；单 CPU 活跃 timer 增加时入队/取消保持对数级，不出现全队列扫描。
-9. **旧语义回归**：itimer、POSIX timer、网络 poll timer、`hrtimer_sleep` 在 per-CPU 队列上保持原有可观察行为。
+4. **民用 CPU 矩阵**：x86_64 4/8/16 逻辑核与 aarch64 4/8 逻辑核机器上完成 SMP 启动、每核 tickless idle、并发 start/cancel/read；`MAX_CPUS` 有足够余量，单 base 不随 timer 数增长。
+5. **无分配**：入队、取消、分发、Periodic 重挂的路径没有堆分配；回调路径没有锁分配或动态容器增长。
+6. **timerfd 不风暴**：周期 timerfd 在无人 `read` 时只产生首次到期，不持续重挂；`read` 后按 interval 重挂。
+7. **timerfd 生命周期**：`dup`/`close`/`fork` 下对象引用正确；fd 复用不会误唤醒新的 timerfd；多个 epoll 兴趣都能被唤醒。
+8. **锁序**：`TFD_CTX` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
+9. **可扩展性**：多核并发 start/cancel/read 的基准不随全局锁串行；单 CPU 活跃 timer 增加时入队/取消保持对数级，不出现全队列扫描。
+10. **旧语义回归**：itimer、POSIX timer、网络 poll timer、`hrtimer_sleep` 在 per-CPU 队列上保持原有可观察行为。
 
 ## 十、开放议题
 
@@ -305,7 +320,8 @@ struct TimerFdFile {
 - **回调预算值**：预算过小会拉长到期延迟，过大则硬中断占用上升；需用真实 timerfd/网络负载标定，不在设计文档里拍一个未经测量的数。
 - **epoll 唤醒 token 化**：timerfd 的多兴趣唤醒依赖 epoll 从“数值 fd 键”迁移到“对象/兴趣 token”。这是跨子系统前置条件，未完成前 timerfd 终态只能算“对象化完成、唤醒安全未完成”。
 - **阻塞 read 接入**：`File::read_at` 当前是非阻塞快路径；阻塞语义需要 syscall/fd 层与 `WaitQueue` 对接。若暂不接入，应明确保留 `WouldBlock` 行为，不能宣称 Linux 完整阻塞语义。
-- **`CLOCK_REALTIME`**：需要时钟基抽象与实时钟偏移维护；在此之前显式 `ENOTSUP` 是终态的一部分，不是临时缺陷。
+- **`CLOCK_REALTIME`**：需要时钟基抽象与实时钟偏移维护；在此之前显式 `ENOTSUP` 是终态的一部分，不是临时缺陷。它不是 CPU 硬件可用性门槛，但会影响 Linux 用户态兼容度。
+- **suspend/resume**：民用笔记本的睡眠/唤醒需要冻结并恢复每 CPU `TimerBase`、重新装填空闲到期、处理休眠期间错过的 monotonic 时间。本终态不承诺 suspend；若产品目标包含笔记本睡眠，必须另立时钟恢复协议。
 - **CPU 热插拔**：终态 v1 不支持 CPU offline。若未来支持，必须先定义“offline 前 cancel 所有本地 timer”或迁移协议；没有该协议就不应开启热插拔。
 - **`hrtimer_sleep` 的等待方式**：当前是自旋等待 tick；per-CPU 队列不改变这一点。若未来允许睡眠等待，需要单独的调度器接口，不与硬中断定时器终态混在一起。
 
