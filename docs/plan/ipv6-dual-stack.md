@@ -151,7 +151,7 @@
   - 调用 smoltcp socket.bind/connect (smoltcp 层已支持 V6)
 - **状态**: [X]
 
-### Phase 6: DHCPv6 / SLAAC (可选, 远期)
+### Phase 6: DHCPv6 / SLAAC (已实施, 2026-11-23 复核)
 
 #### P6a: SLAAC (无状态地址自动配置)
 
@@ -162,7 +162,7 @@
   - 由 `Interface::poll` 发 Router Solicitation / 处理 Router Advertisement, 内 `sync_slaac_state` 经 `update_ip_addrs` 自动完成地址派生 (无 Edgine 侧额外编解码)
   - `init_stack` 显式注入 IPv6 link-local (`fe80::/64`, EUI-64 派生) — 为 SLAAC 发 RS 提供源地址, 亦为 NDP 前提
 - **状态**: [X]
-- **验证**: 双架构 `./ci/build.sh all` 0 error / 0 warning + link ✅; clippy pedantic (x86_64 lib/bins/examples) + feature 维 (kernel_test / host-test) 全 0 warning ✅; `cargo fmt --check` 三 crate ✅; `audit_smoltcp_purity.py` 本地 hash ✅. 唯一红项 `test_no_uncommitted_local_patch_to_vendored_smoltcp` (vendored 改动待提交, 见「未决」).
+- **验证**: 双架构 `./ci/build.sh all` 0 error / 0 warning + link ✅; clippy pedantic (x86_64 lib/bins/examples) + feature 维 (kernel_test / host-test) 全 0 warning ✅; `cargo fmt --check` 三 crate ✅; `audit_smoltcp_purity.py` 本地 hash ✅（2026-11-23 复验通过）。`test_no_uncommitted_local_patch_to_vendored_smoltcp` 已随 `cb044381` 转绿。
 
 #### P6b: DHCPv6 (自研, 已实施)
 
@@ -172,8 +172,8 @@
 - **状态**: [X]
 - **详情**: 无污染约束由 `audit_smoltcp_purity.py` 机器化保证 (vendored `src/` SHA256 不变). **已实施 (Phase 1-6 全 [X])**: functions 自研 wire/state/policy/ra/driver (0 unsafe) + privileged UDP/raw 封装 + RA M/O 纯字节触发; host 集成 `dhcpv6_policy_test.rs` 23 用例绿; 内核 `DHCPv6 bound:` 一次性里程碑; QEMU e2e `MODE=dhcpv6` 扩展 (载波竞态已修, 运行维待用户复跑). 七门槛全绿 (详见 [dhcpv6-client.md](./dhcpv6-client.md) Phase 6). Ping6/TCP6 探针延后 (SIMPLIFIED, e2e 复用 UDP6 判据).
 - **详细计划**: [dhcpv6-client.md](./dhcpv6-client.md) — 实现路径已裁定 (相对完整 + 有状态/无状态双形态 + RA M/O 标准触发, 启用 `socket-raw`). 本条目为登记入口, 详细分阶段方案见该册.
-- **未决**:
-  - P6a 引入 vendored `src/iface/interface/ipv6.rs` 最小本地化调整 (恢复上游 `use crate::iface::Route;`, 因启用 SLAAC 后该 import 转为必需), 连带 `SMOLTCP_LOCAL_SRC_HASH` 更新. 该改动须提交后方可解除 host-tests 的 vendored 洁净门禁.
+- **未决（2026-11-23 已解除）**:
+  - P6a 引入 vendored `src/iface/interface/ipv6.rs` 最小本地化调整 (恢复上游 `use crate::iface::Route;`, 因启用 SLAAC 后该 import 转为必需), 连带 `SMOLTCP_LOCAL_SRC_HASH` 更新. 该改动已随 `cb044381` 提交并更新基线; host-tests 的 vendored 洁净门禁与 `audit_smoltcp_purity.py` 均通过.
 - **验证**:
   - **1 静态/编译期**: 双架构 `./ci/build.sh all` 0w0e; functions 层 `#![deny(unsafe_code)]` 编译通过即证 0 unsafe; `audit_functions_boundary.py` (F1/F2) + `audit_comment_language.py` (F7); `audit_smoltcp_purity.py` 证明 vendored 未污染
   - **2 纯逻辑单元 (host, `make test-kernel-host`)**: DHCPv6 报文 round-trip (IA_NA/ClientID/ServerID/DNS 选项); SARR 状态机转移表 (含 ServerID 匹配分支); 边界 (截断/畸形选项/重传上限/lease 到期); SLAAC 复用 smoltcp `slaac.rs` 自带用例
@@ -222,7 +222,7 @@
 ## 风险与约束
 
 - **破坏性改造**: Phase 2 会导致所有 `NetEndpoint.addr` 调用方编译失败, 需一次性迁移. 编译期暴露所有调用点, 无运行时风险.
-- **smoltcp vendored 不修改**: Phase 6 的 SLAAC 复用 smoltcp 内置实现 (仅启用 feature); DHCPv6 需 Edgine 侧自研, 但仅使用 smoltcp 公开 API, vendored 源码零修改 (由 `audit_smoltcp_purity.py` 保证). 当前不实施.
+- **smoltcp vendored 不修改**: Phase 6 的 SLAAC 复用 smoltcp 内置实现 (仅启用 feature + 恢复上游 `use crate::iface::Route;` 一处 import); DHCPv6 需 Edgine 侧自研, 仅使用 smoltcp 公开 API, P6b 源码零修改 (由 `audit_smoltcp_purity.py` 保证). P6a/P6b 均已实施并完成状态字段收口; P6b `MODE=dhcpv6` e2e 运行维待复跑 (2026-11-23 复核).
 - **C ABI 兼容**: SockaddrIn6 布局必须与 POSIX sockaddr_in6 一致 (28 字节, `#[repr(C)]`).
 - **双架构**: aarch64 无 AF_INET6 差异, 改动双架构通用.
 - **host-tests 覆盖**: 必须新增 V6 测试用例, 防止 V4/V6 路径混淆.
@@ -253,5 +253,6 @@
 ## 状态记录
 
 - 创建文档, 完成 DECISION-032 (D1-D4) 设计决策.
-- 实施完成 Phase 1-5 + 7-8 (D1-D4 + Phase 1/2/3/4/5/7/8 全部 `[X]`). Phase 6 (DHCPv6/SLAAC) 保持 `[]` 远期. 验证: 双架构编译 0 error/0 warning, 四项审计通过, host-tests 838 passed/0 failed (含新增 net_ipv6_addr_test / net_sockaddr_in6_test / net_dual_stack_socket_test 19 项).
-- 拆分 Phase 6 为 P6a (SLAAC) / P6b (DHCPv6 自研). P6a 简约实现完成并标 `[X]`: `Cargo.toml` 启用 `proto-ipv6-slaac`, `smoltcp_impl.rs` 置 `config.slaac = true` 并注入 link-local; 连带 vendored `ipv6.rs` 最小本地化调整 (恢复 `use crate::iface::Route;`, 同步 localization patch 与 `SMOLTCP_LOCAL_SRC_HASH`). 验证: 双架构 build + link 0w0e, clippy (pedantic + feature 维) 0 warning, fmt 三 crate 通过, purity 本地 hash 一致; host-tests 仅 `test_no_uncommitted_local_patch_to_vendored_smoltcp` 待 vendored 改动提交后转绿. P6b 保持 `[]`.
+- 实施完成 Phase 1-5 + 7-8 (D1-D4 + Phase 1/2/3/4/5/7/8 全部 `[X]`). Phase 6 (DHCPv6/SLAAC) 当时保持 `[]` 远期. 验证: 双架构编译 0 error/0 warning, 四项审计通过, host-tests 838 passed/0 failed (含新增 net_ipv6_addr_test / net_sockaddr_in6_test / net_dual_stack_socket_test 19 项).
+- 拆分 Phase 6 为 P6a (SLAAC) / P6b (DHCPv6 自研). P6a 简约实现完成并标 `[X]`: `Cargo.toml` 启用 `proto-ipv6-slaac`, `smoltcp_impl.rs` 置 `config.slaac = true` 并注入 link-local; 连带 vendored `ipv6.rs` 最小本地化调整 (恢复 `use crate::iface::Route;`, 同步 localization patch 与 `SMOLTCP_LOCAL_SRC_HASH`). 验证: 双架构 build + link 0w0e, clippy (pedantic + feature 维) 0 warning, fmt 三 crate 通过, purity 本地 hash 一致; host-tests 仅 `test_no_uncommitted_local_patch_to_vendored_smoltcp` 待 vendored 改动提交后转绿. P6b 当时保持 `[]`.
+- [2026-11-23] Phase 6 收口复核: P6a 的 vendored `use crate::iface::Route;` 恢复已随 `cb044381` 提交、`SMOLTCP_LOCAL_SRC_HASH` 同步，`test_no_uncommitted_local_patch_to_vendored_smoltcp` 转绿、`audit_smoltcp_purity.py` 通过；P6b DHCPv6 自研完成（functions `dhcpv6/` wire/state/policy/ra/driver 四模块 + privileged UDP/raw 封装，vendored `src/` 零改动），Phase 1–6 状态字段全 `[X]`，本册合计 15 `[X]` / 0 开放。残余验证形态：`MODE=dhcpv6` QEMU e2e 运行维待复跑（`dhcpv6-client.md` Phase 6 七门槛已绿；Ping6/TCP6 探针按 SIMPLIFIED 延后）。
