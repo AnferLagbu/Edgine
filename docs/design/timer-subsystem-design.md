@@ -13,7 +13,8 @@
 - **民用硬件可用性**：目标不是“单核实验板”，而是普通消费级 x86_64 / aarch64 多核 CPU；包括 SMP、SMT、异构大小核和不同逻辑核数量的机器。
 - **不依赖特殊定时器硬件**：只使用标配时钟事件源（x86_64 LAPIC timer、aarch64 `CNTP_CVAL` 等）；不引入专用定时器芯片、隔离核或实时扩展。
 - **空闲可用**：消费级 CPU 在空闲时不能靠全局周期 tick 维持；`NO_HZ_IDLE` 与每 CPU 下一次到期装填是可用性的一部分，不只是省电优化。
-- **不要求 Linux 全功能**：不因“民用硬件”就承诺 `NO_HZ_FULL`、CPU 上下线（online/offline）、定时器迁移或全部 POSIX 时钟语义；这些是独立能力，不是硬件可用的前置条件。
+- **不要求 Linux 全功能**：不因“民用硬件”就承诺 `NO_HZ_FULL`、平台级 CPU 上下线流程、定时器迁移或全部 POSIX 时钟语义；这些是独立能力，不是硬件可用的前置条件。
+- CPU 上下线（online/offline）的**定时器侧协议**纳入本文（见第五节）；平台级 ACPI/MP table 启动、物理带电插拔、CPU 上下线策略不在本文。正常运行时定时器不做跨 CPU 迁移/负载均衡；CPU offline 的强制迁移是唯一例外。
 
 本文覆盖：
 
@@ -25,7 +26,7 @@
 本文不覆盖，且不纳入 Edgine 定时器终态：
 
 - 软中断定时器、deferrable timer、timer slack、信号驱动的 posix timer 全量语义。
-- CPU 上下线（online/offline）、定时器跨 CPU 迁移、每 CPU 动态扩容。民用硬件可用不要求这些能力；若后续产品目标包含笔记本睡眠或 CPU offline，需另立时钟恢复与迁移协议。**物理带电插拔 CPU 不在本设计讨论范围**：它属于平台/RAS 能力，风险与逻辑上下线不同。
+- 平台级 CPU 上下线流程（ACPI/MP table 启动、offline 策略、RAS）、物理带电插拔、每 CPU 动态扩容。定时器侧只提供 `quiesce`/`migrate`/`online` 握手；平台级流程与物理插拔不在本设计范围。民用硬件可用不要求这些能力；若后续产品目标包含笔记本睡眠，需另立时钟恢复协议。
 - `CLOCK_REALTIME` 时钟基。它不属于 CPU 硬件可用性门槛；但当前 `timerfd_create` 接受该 clockid 却按单调时基计时，这是必须消除的静默错语义。时钟基抽象就位前，显式返回 `ENOTSUP` 是终态的一部分；若要对齐 Linux 用户态的 `CLOCK_REALTIME` timerfd，另立时钟基工程。
 - 以定时器回调承担长任务。回调仍要求短小、不可睡眠。
 
@@ -37,13 +38,13 @@
 |---|---|---|
 | 逻辑 CPU | `MAX_CPUS = 1024` 以内；启动时校验，超限明确拒绝 | 提高编译期上限或改动态 per-CPU base；队列 API 不用改 |
 | socket / NUMA | 不假设单 socket；per-CPU base 与 socket 解耦 | NUMA 主要影响对象放置和跨节点取消延迟，不改变队列正确性 |
-| CPU 上下线（online/offline） | 不支持 | 必须增加 base attach/detach、offline 前取消或迁移协议 |
+| CPU 上下线（online/offline） | timer 侧支持 quiesce/强制迁移/online；平台级 offline 流程另计 | 平台必须先调用 timer quiesce，再下线 CPU；物理带电插拔不在范围 |
 | suspend/resume | 不支持 | 必须增加每 CPU base 冻结/恢复与错过到期补偿 |
 | 每 CPU 活跃 timer | 不设硬上限，按内存增长 | 红黑树保持 O(log n)；内存与回调预算是真正的约束 |
 | timerfd 数量 | 按 fd 表和堆内存，不再有 16 槽硬上限 | 受 fd limit/内存限制，不回到固定槽位 |
 | 中断率 | 由回调预算限制 | 预算过小增加延迟，过大占用硬中断；需按机器标定 |
 
-结论是：**per-CPU + 每 CPU 有序树本身是规模中性的，4 核到数百核都成立；真正的硬边界是 `MAX_CPUS`、CPU 上下线和 suspend，而不是“民用/商用”标签。** 若未来要覆盖超过 `MAX_CPUS` 的逻辑 CPU，或要求 CPU offline，不能只调大队列；必须把 `TimerBase` 的生命周期从“启动时静态初始化”扩展为可挂接/可排空的 per-CPU 资源。
+结论是：**per-CPU + 每 CPU 有序树本身是规模中性的，4 核到数百核都成立；真正的硬边界是 `MAX_CPUS`、平台级 CPU 上下线和 suspend，而不是“民用/商用”标签。** 若未来要覆盖超过 `MAX_CPUS` 的逻辑 CPU，不能只调大队列；必须把 `TimerBase` 的生命周期从“启动时静态初始化”扩展为可挂接/可排空的 per-CPU 资源。
 
 超多核上还要防止把定时器设计当成整机可用的充分条件：即使每 CPU 队列无全局锁，epoll 的全局实例表、fd 表、分配器和调度器仍可能成为瓶颈。定时器终态只保证自己这一层的锁域与生命周期，不替其他子系统背书。
 
@@ -148,12 +149,17 @@ pub fn hrtimer_run_queues(cpu: u32);
 终态队列形状：
 
 ```text
+enum BaseState { Offline, Online, Quiescing }
+
 TIMER_BASES: [TimerBase; MAX_CPUS]
   └── TimerBase
         ├── lock: IrqSpinLock<BaseInner>
         └── BaseInner
+              ├── state: BaseState
+              ├── quiesce_target: u32
               ├── root: *mut HrTimer          (侵入式有序树根)
               ├── active: usize
+              ├── running: usize
               └── next_seq: u64
 ```
 
@@ -167,7 +173,8 @@ struct HrTimer {
     state: AtomicU8,
     base_id: AtomicU32,
     in_flight: AtomicBool,
-    links: UnsafeCell<TimerLinks>, // 只在对应 TimerBase 锁内访问
+    migrating: AtomicBool,          // CPU offline 强制迁移的瞬态
+    links: UnsafeCell<TimerLinks>,  // 只在对应 TimerBase 锁内访问
 }
 ```
 
@@ -179,28 +186,31 @@ struct HrTimer {
 
 `hrtimer_start` 的绑核规则：
 
-1. 读 `state`。`Shutdown` 直接返回；`Inactive` 选择当前 CPU 作为目标 base；`Pending/Running` 读 `base_id`，锁定原 base。
-2. 锁定目标 `TimerBase` 后复查 `base_id` 与状态；若期间已被别的 CPU 改变，释放锁重试。
+1. 读 `state`。`Shutdown` 直接返回；`Inactive` 选择当前 CPU 作为目标 base；若当前 base 处于 `Quiescing`/`Offline`，改用 `quiesce_target` 的在线 base；`Pending/Running` 读 `base_id`，锁定原 base。
+2. 锁定目标 `TimerBase` 后复查 `base_id`、`migrating` 与状态；若期间已被别的 CPU 改变，或 `base_id` 处于迁移中，释放锁并返回 `NotReady`，由调用方重试。
 3. 在 base 锁内摘除同一 timer 的旧树节点（若有），分配新 `seq`，写 `expiry_ns`，置 `Pending`，插入树。
 4. 若旧激活的回调仍在途，保留 `in_flight=true`；新条目在 `in_flight` 清零前不会被 `run_queues` 收集。
 
 这样 `start` 不需要等待旧回调，也不会让同一 timer 的两个回调并发；旧回调通过 `seq` 作废。
 
+`hrtimer_start` 不主动把已绑定 timer 搬到别的 CPU。唯一例外是 CPU offline 的强制迁移：当 base 进入 `Quiescing`，新 `start` 只能落到 `quiesce_target`；已有 Pending timer 由 quiesce 流程搬走。迁移中的 timer 对 `start` 表现为 `NotReady`，不出现“半在源 base、半在目标 base”的可见状态。
+
 ### 取消与关闭
 
 `hrtimer_try_cancel`：
 
-1. 若 `state` 为 `Shutdown` 或 `Inactive` 且 `in_flight=false`，返回 `NotPending`。
-2. 若 `in_flight=true`，返回 `Busy`，不改队列。
+1. 若 `state` 为 `Shutdown` 或 `Inactive` 且 `in_flight=false`、`migrating=false`，返回 `NotPending`。
+2. 若 `in_flight=true` 或 `migrating=true`，返回 `Busy`，不改队列。
 3. 否则锁定 `base_id` 对应 base，摘除树节点，置 `Inactive`，清 `seq`，返回 `Cancelled`。
 
-`hrtimer_cancel` 在 `Busy` 时释放所有 base 锁后自旋等待 `in_flight` 清零，再回环重试。等待方不得持有回调可能获取的锁；这条和当前协议一致。
+`hrtimer_cancel` 在 `Busy` 时释放所有 base 锁后自旋等待 `in_flight` 清零且 `migrating` 清零，再回环重试。等待方不得持有回调可能获取的锁；这条和当前协议一致。
 
 `hrtimer_shutdown`：
 
-1. 锁定 base，置 `Shutdown`，摘除树节点，释放锁。
-2. 等待 `in_flight` 清零。
-3. 返回后 timer 可释放；`init` 是唯一允许离开 `Shutdown` 的入口。
+1. 若 `migrating=true`，先等待迁移完成；否则可能锁到错误的 base。
+2. 锁定当前 `base_id`，置 `Shutdown`，摘除树节点，释放锁。
+3. 等待 `in_flight` 清零。
+4. 返回后 timer 可释放；`init` 是唯一允许离开 `Shutdown` 的入口。
 
 `shutdown` 与 `start` 的关闭位判定必须在同一个 base 锁内完成：要么 `start` 先入队、`shutdown` 随后摘除；要么 `shutdown` 先置状态、`start` 看到 `Shutdown` 后拒绝。
 
@@ -208,10 +218,11 @@ struct HrTimer {
 
 `hrtimer_run_queues(cpu)` 只处理当前 CPU 的 base：
 
-1. 锁定 base，找到最早到期且 `state==Pending && !in_flight` 的节点。
-2. 摘除节点，置 `Running`、`in_flight=true`，释放锁。
-3. 在锁外执行回调；回调返回 `Periodic` 时，框架在清 `in_flight` 前重新插入同一 base。
-4. 清 `in_flight`，继续下一项；单次中断设置回调预算，预算耗尽则把本 CPU 的下一次中断装填为“立即”，把剩余工作留给下一次中断。
+1. 若 base 不是 `Online`，不收集新回调；`Quiescing` 的剩余条目由 CPU offline 流程迁移，`Offline` 的 base 应为空。
+2. 锁定 base，找到最早到期且 `state==Pending && !in_flight && !migrating` 的节点。
+3. 摘除节点，置 `Running`、`in_flight=true`、`running += 1`，释放锁。
+4. 在锁外执行回调；回调返回 `Periodic` 时，框架在清 `in_flight` 前重新插入同一 base（若 base 已 `Quiescing`，改插 `quiesce_target`）。
+5. 清 `in_flight`、`running -= 1`，继续下一项；单次中断设置回调预算，预算耗尽则把本 CPU 的下一次中断装填为“立即”，把剩余工作留给下一次中断。
 
 预算的意义是避免短周期 timer 在硬中断里无限占用 CPU；它是终态的一部分，不是可选优化。
 
@@ -222,6 +233,42 @@ struct HrTimer {
 `on_timer_interrupt` 读取当前 CPU id 后调用 `hrtimer_run_queues(cpu)`；不再存在全局 `run_queues()`。
 
 消费级 CPU 的空闲功耗依赖这条 per-CPU 装填：如果仍用全局最早到期，一个 CPU 的 timer 会唤醒另一个空闲 CPU，笔电/桌面空载会出现无谓唤醒和错核延迟。终态不要求 `NO_HZ_FULL`，但 `NO_HZ_IDLE` 与每 CPU 下一次到期必须成立。
+
+### CPU 上下线协议（timer 侧）
+
+CPU 上下线是 `TimerBase` 生命周期事件，不是普通负载均衡。定时器终态向平台提供两个入口：
+
+```rust
+pub enum CpuTimerError {
+    NoOnlineTarget,
+    LastOnlineCpu,
+    Busy,
+}
+
+pub fn hrtimer_cpu_online(cpu: u32);
+pub fn hrtimer_cpu_quiesce(cpu: u32, target: u32) -> Result<(), CpuTimerError>;
+```
+
+`hrtimer_cpu_quiesce` 的语义：
+
+1. 校验 `target` 是另一个在线 CPU；最后一个在线 CPU 不允许下线，返回 `LastOnlineCpu`。
+2. 在源 base 锁内把状态置 `Quiescing`，记录 `quiesce_target`；此后源 base 不再收集新回调，当前 CPU 上新的 `start` 改绑 `target`。
+3. 等待源 base 的 `running` 归零；在途回调返回 `Periodic` 时，框架把它重挂到 `target`，不再回源 base。
+4. 逐个迁移源树中的 Pending timer：在源 base 锁内摘除、置 `migrating=true`，释放源锁；锁 `target` base 插入、更新 `base_id`、清 `migrating`。迁移保留原 `expiry_ns` 与 `seq`，不产生新的激活语义。
+5. 源树清空且 `running==0` 后，状态置 `Offline`，`hrtimer_next_expiry(cpu)` 返回 `None`；平台随后可以执行 CPU offline。
+
+迁移期间 `try_cancel` 返回 `Busy`，`cancel` 等待 `migrating` 清零后重试；`start` 返回 `NotReady`，由调用方重试。这样不会出现“源 base 已摘除、目标 base 未插入”时被取消或重挂的窗口。
+
+`hrtimer_cpu_online` 在 CPU 启动、开始调度前调用：清空树、复位 `running`/`active`、状态置 `Online`。**不做反向迁移**：CPU 重新上线后，原先迁走的 timer 不会自动搬回；新 `start` 才按当前 CPU 绑定。
+
+平台必须保证：
+
+- 同一时刻只有一个 CPU 执行 offline quiesce，且 `target` 在 quiesce 期间保持在线；`quiesce` 只在状态变更前做校验并可能返回 `Busy`，进入迁移后不得失败。若平台中途把 `target` 下线，属于协议违约，timer 不做半迁移回滚。
+- CPU offline 流程先完成 task/IRQ 迁移，再调用 timer quiesce，最后才真正停核；timer quiesce 不替代平台的任务迁移。若 offline 中止，平台调用 `hrtimer_cpu_online(cpu)` 复位 base；已迁走的 timer 不自动迁回。
+- `hrtimer_cpu_quiesce` 只能由平台 offline 线程在进程上下文调用，不得在中断、回调或持锁上下文中调用；它会等待源 base 的 `running` 归零，期间不得阻塞目标 base 的回调。
+- 物理带电插拔 CPU、ACPI/MP table 的 CPU 枚举与 RAS 流程不在本文范围；本文只定义定时器侧的 base 状态与迁移语义。
+
+timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，迁移只改变其 `HrTimer` 的 base；回调在目标 CPU 执行，读取同一 context。若 quiesce 期间 `set_time` 到达，`start` 要么落到 `target`，要么返回 `NotReady` 让 syscall 重试，不会把 timer 留在即将下线的 CPU 上。
 
 ## 六、timerfd 终态
 
@@ -296,7 +343,7 @@ struct TimerFdFile {
 
 约束：
 
-- 不存在 `TIMER_BASE(cpu0) → TIMER_BASE(cpu1)` 的嵌套。任何跨 CPU 操作都只锁目标 base，释放后再重试或等待。
+- 不存在 `TIMER_BASE(cpu0) → TIMER_BASE(cpu1)` 的嵌套。任何跨 CPU 操作都只锁目标 base，释放后再重试或等待。CPU offline 迁移也是“锁源 base 摘除 → 放锁 → 锁目标 base 插入”，不持两把 base 锁。
 - `TFD_CTX` 内可以短临界区调 `hrtimer_start`（11 → 14），但等待 `hrtimer_cancel` 前必须释放 `TFD_CTX` 状态锁，只保留 `control_busy` 占位。
 - timerfd 回调不取 `TFD_CTX`；`poll` 不取 `TFD_CTX`；否则 `epoll_pwake` 的间接 poll 会回取控制锁。
 - `hrtimer_run_queues` 在 `TIMER_BASE` 锁外执行回调；周期重挂在清 `in_flight` 前重新取 base 锁，允许回调内调用 `hrtimer_start`，但不允许回调假设自己仍持 base 锁。
@@ -332,6 +379,7 @@ struct TimerFdFile {
 9. **可扩展性**：多核并发 start/cancel/read 的基准不随全局锁串行；单 CPU 活跃 timer 增加时入队/取消保持对数级，不出现全队列扫描。
 10. **旧语义回归**：itimer、POSIX timer、网络 poll timer、`hrtimer_sleep` 在 per-CPU 队列上保持原有可观察行为。
 11. **容量边界**：`cpu_count > MAX_CPUS` 时启动明确拒绝并给出可诊断错误；不超过时每 CPU base 正常初始化；若未来提高上限，需重测静态 per-CPU 数组的内存与启动时间，不能静默截断 CPU。
+12. **CPU 上下线**：quiesce 时存在 Pending、Running、Periodic 回调与并发 cancel，迁移后源 base 为空、目标 base 可正常触发；timerfd 在迁移期间 set_time/read 不丢对象、不落回离线 base；online 后新 start 正常绑定；offline 中止时 `hrtimer_cpu_online` 可复位。
 
 ## 十、开放议题
 
@@ -341,7 +389,7 @@ struct TimerFdFile {
 - **阻塞 read 接入**：`File::read_at` 当前是非阻塞快路径；阻塞语义需要 syscall/fd 层与 `WaitQueue` 对接。若暂不接入，应明确保留 `WouldBlock` 行为，不能宣称 Linux 完整阻塞语义。
 - **`CLOCK_REALTIME`**：需要时钟基抽象与实时钟偏移维护；在此之前显式 `ENOTSUP` 是终态的一部分，不是临时缺陷。它不是 CPU 硬件可用性门槛，但会影响 Linux 用户态兼容度。
 - **suspend/resume**：民用笔记本的睡眠/唤醒需要冻结并恢复每 CPU `TimerBase`、重新装填空闲到期、处理休眠期间错过的 monotonic 时间。本终态不承诺 suspend；若产品目标包含笔记本睡眠，必须另立时钟恢复协议。
-- **CPU 上下线（online/offline）**：终态 v1 不支持 CPU offline。若未来支持，必须先定义“offline 前 cancel 所有本地 timer”或迁移协议；没有该协议就不应开启 CPU offline。这里的“上下线”指逻辑 CPU 资源管理，不是物理带电插拔；后者风险更高，且不在本设计范围内。
+- **CPU 上下线的平台接入**：timer 侧协议已定义（quiesce/强制迁移/online）；仍需平台在 offline 前调用 quiesce、保持 target 在线、串行化 offline。未接入前不能宣称整机支持 CPU offline。物理带电插拔不在本设计范围，其风险与逻辑上下线不同。
 - **超过 `MAX_CPUS` 的机器**：逻辑 CPU 超过 1024 时，静态 `[TimerBase; MAX_CPUS]` 不再成立。提高上限会放大 per-CPU 静态数组，改动态 base 则需要 per-CPU 分配器与启动顺序支持；两条路都不改队列 API，但都属于系统容量设计，不是定时器局部优化。
 - **`hrtimer_sleep` 的等待方式**：当前是自旋等待 tick；per-CPU 队列不改变这一点。若未来允许睡眠等待，需要单独的调度器接口，不与硬中断定时器终态混在一起。
 
