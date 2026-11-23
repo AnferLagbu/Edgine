@@ -13,7 +13,7 @@
 - **民用硬件可用性**：目标不是“单核实验板”，而是普通消费级 x86_64 / aarch64 多核 CPU；包括 SMP、SMT、异构大小核和不同逻辑核数量的机器。
 - **不依赖特殊定时器硬件**：只使用标配时钟事件源（x86_64 LAPIC timer、aarch64 `CNTP_CVAL` 等）；不引入专用定时器芯片、隔离核或实时扩展。
 - **空闲可用**：消费级 CPU 在空闲时不能靠全局周期 tick 维持；`NO_HZ_IDLE` 与每 CPU 下一次到期装填是可用性的一部分，不只是省电优化。
-- **不要求 Linux 全功能**：不因“民用硬件”就承诺 `NO_HZ_FULL`、CPU 热插拔、定时器迁移或全部 POSIX 时钟语义；这些是独立能力，不是硬件可用的前置条件。
+- **不要求 Linux 全功能**：不因“民用硬件”就承诺 `NO_HZ_FULL`、CPU 上下线（online/offline）、定时器迁移或全部 POSIX 时钟语义；这些是独立能力，不是硬件可用的前置条件。
 
 本文覆盖：
 
@@ -25,7 +25,7 @@
 本文不覆盖，且不纳入 Edgine 定时器终态：
 
 - 软中断定时器、deferrable timer、timer slack、信号驱动的 posix timer 全量语义。
-- CPU 热插拔、定时器跨 CPU 迁移、每 CPU 动态扩容。民用硬件可用不要求这些能力；若后续产品目标包含笔记本睡眠/CPU offline，需另立时钟恢复与迁移协议。
+- CPU 上下线（online/offline）、定时器跨 CPU 迁移、每 CPU 动态扩容。民用硬件可用不要求这些能力；若后续产品目标包含笔记本睡眠或 CPU offline，需另立时钟恢复与迁移协议。**物理带电插拔 CPU 不在本设计讨论范围**：它属于平台/RAS 能力，风险与逻辑上下线不同。
 - `CLOCK_REALTIME` 时钟基。它不属于 CPU 硬件可用性门槛；但当前 `timerfd_create` 接受该 clockid 却按单调时基计时，这是必须消除的静默错语义。时钟基抽象就位前，显式返回 `ENOTSUP` 是终态的一部分；若要对齐 Linux 用户态的 `CLOCK_REALTIME` timerfd，另立时钟基工程。
 - 以定时器回调承担长任务。回调仍要求短小、不可睡眠。
 
@@ -37,13 +37,13 @@
 |---|---|---|
 | 逻辑 CPU | `MAX_CPUS = 1024` 以内；启动时校验，超限明确拒绝 | 提高编译期上限或改动态 per-CPU base；队列 API 不用改 |
 | socket / NUMA | 不假设单 socket；per-CPU base 与 socket 解耦 | NUMA 主要影响对象放置和跨节点取消延迟，不改变队列正确性 |
-| CPU 热插拔 | 不支持 | 必须增加 base attach/detach、offline 前取消或迁移协议 |
+| CPU 上下线（online/offline） | 不支持 | 必须增加 base attach/detach、offline 前取消或迁移协议 |
 | suspend/resume | 不支持 | 必须增加每 CPU base 冻结/恢复与错过到期补偿 |
 | 每 CPU 活跃 timer | 不设硬上限，按内存增长 | 红黑树保持 O(log n)；内存与回调预算是真正的约束 |
 | timerfd 数量 | 按 fd 表和堆内存，不再有 16 槽硬上限 | 受 fd limit/内存限制，不回到固定槽位 |
 | 中断率 | 由回调预算限制 | 预算过小增加延迟，过大占用硬中断；需按机器标定 |
 
-结论是：**per-CPU + 每 CPU 有序树本身是规模中性的，4 核到数百核都成立；真正的硬边界是 `MAX_CPUS`、热插拔和 suspend，而不是“民用/商用”标签。** 若未来要覆盖超过 `MAX_CPUS` 的逻辑 CPU，或要求 CPU offline，不能只调大队列；必须把 `TimerBase` 的生命周期从“启动时静态初始化”扩展为可挂接/可排空的 per-CPU 资源。
+结论是：**per-CPU + 每 CPU 有序树本身是规模中性的，4 核到数百核都成立；真正的硬边界是 `MAX_CPUS`、CPU 上下线和 suspend，而不是“民用/商用”标签。** 若未来要覆盖超过 `MAX_CPUS` 的逻辑 CPU，或要求 CPU offline，不能只调大队列；必须把 `TimerBase` 的生命周期从“启动时静态初始化”扩展为可挂接/可排空的 per-CPU 资源。
 
 超多核上还要防止把定时器设计当成整机可用的充分条件：即使每 CPU 队列无全局锁，epoll 的全局实例表、fd 表、分配器和调度器仍可能成为瓶颈。定时器终态只保证自己这一层的锁域与生命周期，不替其他子系统背书。
 
@@ -341,7 +341,7 @@ struct TimerFdFile {
 - **阻塞 read 接入**：`File::read_at` 当前是非阻塞快路径；阻塞语义需要 syscall/fd 层与 `WaitQueue` 对接。若暂不接入，应明确保留 `WouldBlock` 行为，不能宣称 Linux 完整阻塞语义。
 - **`CLOCK_REALTIME`**：需要时钟基抽象与实时钟偏移维护；在此之前显式 `ENOTSUP` 是终态的一部分，不是临时缺陷。它不是 CPU 硬件可用性门槛，但会影响 Linux 用户态兼容度。
 - **suspend/resume**：民用笔记本的睡眠/唤醒需要冻结并恢复每 CPU `TimerBase`、重新装填空闲到期、处理休眠期间错过的 monotonic 时间。本终态不承诺 suspend；若产品目标包含笔记本睡眠，必须另立时钟恢复协议。
-- **CPU 热插拔**：终态 v1 不支持 CPU offline。若未来支持，必须先定义“offline 前 cancel 所有本地 timer”或迁移协议；没有该协议就不应开启热插拔。
+- **CPU 上下线（online/offline）**：终态 v1 不支持 CPU offline。若未来支持，必须先定义“offline 前 cancel 所有本地 timer”或迁移协议；没有该协议就不应开启 CPU offline。这里的“上下线”指逻辑 CPU 资源管理，不是物理带电插拔；后者风险更高，且不在本设计范围内。
 - **超过 `MAX_CPUS` 的机器**：逻辑 CPU 超过 1024 时，静态 `[TimerBase; MAX_CPUS]` 不再成立。提高上限会放大 per-CPU 静态数组，改动态 base 则需要 per-CPU 分配器与启动顺序支持；两条路都不改队列 API，但都属于系统容量设计，不是定时器局部优化。
 - **`hrtimer_sleep` 的等待方式**：当前是自旋等待 tick；per-CPU 队列不改变这一点。若未来允许睡眠等待，需要单独的调度器接口，不与硬中断定时器终态混在一起。
 
