@@ -305,7 +305,8 @@ pub fn setitimer_syscall(which: i32, new_ptr: u64, old_ptr: u64) -> Result<usize
         pid,
         new.it_value.to_ns(),
         new.it_interval.to_ns(),
-    );
+    )
+    .map_err(|_| Errno::Eio)?;
     if old_ptr != 0 {
         let old_iv = Itimerval {
             it_interval: Timeval::from_ns(prev_interval_ns),

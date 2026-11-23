@@ -34,7 +34,7 @@
 //!
 //! // 初始化并启动 (10ms 后触发)
 //! device.timer.init(my_timer_callback);
-//! hrtimer_start(&device.timer, 10_000_000);  // 10ms = 10_000_000 ns
+//! let _ = hrtimer_start(&device.timer, 10_000_000);  // 10ms = 10_000_000 ns
 //! ```
 //!
 //! # Safety
@@ -106,6 +106,42 @@ pub enum CancelOutcome {
     Busy,
 }
 
+/// 启动定时器的结果
+///
+/// 取代旧 API 的 `0` 哨兵: `0` 曾同时表示框架未就绪、未 init、已 shutdown,
+/// 调用方无法区分也无法据此诊断。`Started` 内保留入队序号 (恒非 0)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "启动结果必须被消费; 非 Started 表示定时器未入队"]
+pub enum StartOutcome {
+    /// 已入队; 携带本次激活的入队序号 (恒非 0)
+    Started(u64),
+    /// hrtimer 框架尚未 `hrtimer_init()`
+    NotReady,
+    /// 定时器尚未 `init` (`HrTimerState::Uninit`)
+    NotInitialized,
+    /// 定时器已 `hrtimer_shutdown`
+    Shutdown,
+}
+
+impl StartOutcome {
+    /// 是否成功入队
+    #[must_use]
+    pub fn is_started(self) -> bool {
+        matches!(self, Self::Started(_))
+    }
+}
+
+/// `init` 在活动定时器上的运行时拒绝原因
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitError {
+    /// 定时器仍在队列中 (`Pending`)
+    Pending,
+    /// 回调正在执行 (`Running`)
+    Running,
+    /// 状态已收敛但 `in_flight` 尚未清零 (取消/重挂窗口)
+    InFlight,
+}
+
 // ============================================================================
 // HrTimer — 定时器对象 (嵌入用户结构体)
 // ============================================================================
@@ -157,22 +193,55 @@ impl HrTimer {
     /// 初始化定时器
     ///
     /// 设置回调函数, 状态置为 `Inactive`。可从 `Uninit`、`Inactive` 或
-    /// `Shutdown` 调用; `Pending`/`Running` 上调用是编程错误 (会在 debug 构建
-    /// 触发断言), 调用方应先 cancel 并等待在途回调退出.
+    /// `Shutdown` 调用; `Pending`/`Running`/仍有在途回调时调用是编程错误。
+    ///
+    /// 运行时检查在队列锁内完成 (`try_init`)，不再依赖 debug 构建的断言；
+    /// [`init`](Self::init) 对活动定时器直接 panic，需要可恢复判定的调用方
+    /// 应使用 [`try_init`](Self::try_init)。
     ///
     /// 只接收 `&self`: 回调指针经原子量写入, 与队列侧跨核读取构成 Release/Acquire
     /// 同步, 不再要求调用方持有独占引用 (`&mut`)。
+    ///
+    /// # Panics
+    ///
+    /// 定时器仍 `Pending` / `Running`，或 `in_flight` 未清零时 panic。调用方若需
+    /// 可恢复判定应使用 [`try_init`](Self::try_init)。
     pub fn init(&self, callback: HrTimerCallback) {
-        debug_assert!(
-            !matches!(self.state(), HrTimerState::Pending | HrTimerState::Running),
-            "HrTimer::init called on active timer"
-        );
+        if let Err(err) = self.try_init(callback) {
+            panic!("HrTimer::init called on active timer: {err:?}");
+        }
+    }
+
+    /// 可诊断地初始化定时器
+    ///
+    /// 与 [`init`](Self::init) 相同，但活动定时器返回错误而不是 panic。
+    /// 队列锁同时串行化 `start` / `shutdown`，避免“检查后被并发入队”的 TOCTOU；
+    /// 字段写入全部在状态发布为 `Inactive` 之前完成。
+    ///
+    /// # Errors
+    ///
+    /// 定时器 `Pending` / `Running` 或 `in_flight` 非零时返回对应 [`InitError`]。
+    pub fn try_init(&self, callback: HrTimerCallback) -> Result<(), InitError> {
+        let _queue = HRTIMER_QUEUE.lock();
+
+        if self.in_flight.load(Ordering::Acquire) {
+            return Err(InitError::InFlight);
+        }
+        match self.state() {
+            HrTimerState::Pending => return Err(InitError::Pending),
+            HrTimerState::Running => return Err(InitError::Running),
+            HrTimerState::Uninit | HrTimerState::Inactive | HrTimerState::Shutdown => {}
+        }
+
         self.callback.store(callback as usize, Ordering::Release);
         self.expiry_ns.store(0, Ordering::Relaxed);
         self.interval_ns.store(0, Ordering::Relaxed);
-        self.state
-            .store(HrTimerState::Inactive as u64, Ordering::Relaxed);
         self.queue_seq.store(0, Ordering::Relaxed);
+        // 字段写完之后才发布 Inactive: 并发的 start 看到 Inactive 时，回调与
+        // expiry/interval 已就绪。
+        self.state
+            .store(HrTimerState::Inactive as u64, Ordering::Release);
+        Ok(())
     }
 
     /// 读取当前回调 (0 = 未设置 ⇒ `noop_callback`)
@@ -310,11 +379,22 @@ pub fn is_hrtimer_ready() -> bool {
     HRTIMER_READY.load(Ordering::Acquire)
 }
 
+/// 取下一个非零入队序号 (0 保留给"未入队/已取消")
+fn next_queue_seq() -> u64 {
+    loop {
+        let seq = QUEUE_SEQ.fetch_add(1, Ordering::Relaxed);
+        if seq != 0 {
+            return seq;
+        }
+        // 仅在 u64 回绕到 0 时发生; 跳过 0 以保持哨兵语义.
+    }
+}
+
 /// 启动定时器 (绝对时间)
 ///
 /// 将定时器以绝对到期时间 `expiry_ns` 入队。若定时器已在队列中, 先移除旧条目
-/// 再重新入队。返回本次激活的入队序号; `0` 表示框架未就绪、定时器未 `init`
-/// 或已 `hrtimer_shutdown` (未入队)。
+/// 再重新入队。成功返回 [`StartOutcome::Started`] 及本次激活的入队序号；
+/// 未入队时返回明确原因，不再用 `0` 混淆三种失败。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象 (必须已 init)
@@ -325,21 +405,30 @@ pub fn is_hrtimer_ready() -> bool {
 /// 调用方必须保证:
 /// - `timer` 在回调触发前保持有效内存
 /// - 回调在队列锁释放后执行, 允许在回调内调用本函数 (timerfd 周期路径)
-pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> u64 {
-    if !HRTIMER_READY.load(Ordering::Acquire) {
-        return 0;
-    }
+pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> StartOutcome {
+    start_with_ready(timer, expiry_ns, HRTIMER_READY.load(Ordering::Acquire))
+}
 
-    let seq = QUEUE_SEQ.fetch_add(1, Ordering::Relaxed);
+/// `hrtimer_start` 的框架就绪维单点实现
+///
+/// `ready` 显式传入，便于 host 测试覆盖 `NotReady` 而不改写全局就绪位
+/// (全局位被并行用例共享，翻转会误伤其它测试).
+fn start_with_ready(timer: &HrTimer, expiry_ns: u64, ready: bool) -> StartOutcome {
+    if !ready {
+        return StartOutcome::NotReady;
+    }
 
     let mut queue = HRTIMER_QUEUE.lock();
 
     // shutdown / uninit 与 start 的判定同在队列锁内: 要么 start 先入队、shutdown
     // 随后摘除; 要么 shutdown 先置状态、start 看到 Shutdown 后不再入队.
-    if matches!(timer.state(), HrTimerState::Shutdown | HrTimerState::Uninit) {
-        return 0;
+    match timer.state() {
+        HrTimerState::Uninit => return StartOutcome::NotInitialized,
+        HrTimerState::Shutdown => return StartOutcome::Shutdown,
+        HrTimerState::Inactive | HrTimerState::Pending | HrTimerState::Running => {}
     }
 
+    let seq = next_queue_seq();
     timer.expiry_ns.store(expiry_ns, Ordering::Release);
     timer.queue_seq.store(seq, Ordering::Release);
     timer.set_state(HrTimerState::Pending);
@@ -365,17 +454,18 @@ pub fn hrtimer_start(timer: &HrTimer, expiry_ns: u64) -> u64 {
     };
     queue.insert(insert_pos, TimerEntry { timer: ptr, seq });
 
-    seq
+    StartOutcome::Started(seq)
 }
 
 /// 启动定时器 (相对时间)
 ///
-/// 便捷接口: 从当前时间起延迟 `delay_ns` 纳秒后触发。返回入队序号, `0` = 未入队。
+/// 便捷接口: 从当前时间起延迟 `delay_ns` 纳秒后触发。
+/// 未入队时返回 [`StartOutcome`] 的失败原因。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象
 /// * `delay_ns` - 延迟时间 (纳秒)
-pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> u64 {
+pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> StartOutcome {
     let now = hrtimer_clock_read();
     hrtimer_start(timer, now.saturating_add(delay_ns))
 }
@@ -383,13 +473,13 @@ pub fn hrtimer_start_rel(timer: &HrTimer, delay_ns: u64) -> u64 {
 /// 启动周期定时器
 ///
 /// 首次在 `delay_ns` 纳秒后触发, 之后每 `interval_ns` 纳秒触发一次。
-/// 返回入队序号, `0` = 未入队。
+/// 未入队时返回 [`StartOutcome`] 的失败原因。
 ///
 /// # Arguments
 /// * `timer` - 定时器对象
 /// * `delay_ns` - 首次延迟 (纳秒)
 /// * `interval_ns` - 周期间隔 (纳秒)
-pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) -> u64 {
+pub fn hrtimer_start_periodic(timer: &HrTimer, delay_ns: u64, interval_ns: u64) -> StartOutcome {
     timer.interval_ns.store(interval_ns, Ordering::Release);
     hrtimer_start_rel(timer, delay_ns)
 }
@@ -597,9 +687,12 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
                     } else {
                         new_expiry
                     };
-                    if hrtimer_start(timer, next) == 0 {
-                        // shutdown 优先: 不得把 Shutdown 覆盖回 Inactive.
-                        if timer.state() != HrTimerState::Shutdown {
+                    match hrtimer_start(timer, next) {
+                        // Started: 已重挂. Shutdown: 保持 Shutdown，不得覆盖回 Inactive.
+                        StartOutcome::Started(_) | StartOutcome::Shutdown => {}
+                        // 框架未就绪/定时器未就绪: 本次重挂失败, 收敛回 Inactive;
+                        // 迟到的 queue_seq 清零, 避免等待方误判仍 Pending.
+                        StartOutcome::NotReady | StartOutcome::NotInitialized => {
                             timer.set_state(HrTimerState::Inactive);
                             timer.queue_seq.store(0, Ordering::Release);
                         }
@@ -709,7 +802,12 @@ pub fn hrtimer_sleep(delay_ns: u64) -> Result<(), KernelError> {
         HrTimerRestart::OneShot
     });
 
-    hrtimer_start_rel(&timer, delay_ns);
+    match hrtimer_start_rel(&timer, delay_ns) {
+        StartOutcome::Started(_) => {}
+        StartOutcome::NotReady => return Err(KernelError::NotReady),
+        StartOutcome::NotInitialized => return Err(KernelError::NotInitialized),
+        StartOutcome::Shutdown => return Err(KernelError::InvalidArgument),
+    }
 
     // 自旋等待. hrtimer_run_queues 会在下一个 tick (或下次硬件定时器中断)
     // 处理到期定时器, 触发回调 set SLEEP_FLAG=true.
@@ -774,6 +872,19 @@ mod tests {
             .any(|entry| core::ptr::eq(entry.timer.as_ptr(), timer))
     }
 
+    /// 断言启动成功并返回非零入队序号.
+    fn expect_started(outcome: StartOutcome) -> u64 {
+        match outcome {
+            StartOutcome::Started(seq) => {
+                assert_ne!(seq, 0, "Started 必须携带非零序号");
+                seq
+            }
+            StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
+                panic!("定时器未入队: {outcome:?}")
+            }
+        }
+    }
+
     #[test]
     fn test_hrtimer_state_encoding() {
         assert_eq!(HrTimerState::Uninit as u64, 0);
@@ -806,10 +917,48 @@ mod tests {
         let timer = HrTimer::uninit();
         assert_eq!(
             hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
-            0
+            StartOutcome::NotInitialized
         );
         assert!(!queue_contains(&timer));
         assert_eq!(timer.state(), HrTimerState::Uninit);
+    }
+
+    #[test]
+    fn test_start_outcome_reports_not_ready() {
+        let _serial = serialize_queue_tests();
+        let timer = HrTimer::uninit();
+        assert_eq!(
+            start_with_ready(
+                &timer,
+                hrtimer_clock_read().saturating_add(1_000_000_000),
+                false
+            ),
+            StartOutcome::NotReady
+        );
+    }
+
+    #[test]
+    fn test_init_rejects_active_timer() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(noop_callback);
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
+        assert_eq!(timer.try_init(noop_callback), Err(InitError::Pending));
+
+        // Running 也必须拒绝.
+        timer.set_state(HrTimerState::Running);
+        assert_eq!(timer.try_init(noop_callback), Err(InitError::Running));
+
+        // 模拟回调在途但状态已收敛: in_flight 非零也必须拒绝初始化.
+        timer.set_state(HrTimerState::Inactive);
+        timer.in_flight.store(true, Ordering::Release);
+        assert_eq!(timer.try_init(noop_callback), Err(InitError::InFlight));
+        timer.in_flight.store(false, Ordering::Release);
+        let _ = hrtimer_try_cancel(&timer);
     }
 
     #[test]
@@ -879,7 +1028,10 @@ mod tests {
         hrtimer_init();
         let timer = HrTimer::uninit();
         timer.init(noop_callback);
-        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
         assert!(queue_contains(&timer), "启动后队列必须持有该 timer");
 
         assert!(hrtimer_cancel(&timer));
@@ -895,7 +1047,10 @@ mod tests {
         hrtimer_init();
         let timer = HrTimer::uninit();
         timer.init(noop_callback);
-        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
 
         assert_eq!(
             hrtimer_try_cancel(&timer),
@@ -907,7 +1062,7 @@ mod tests {
 
         // 模拟 run_queues 已收集、回调在途: try_cancel 必须报 Busy 且不摘队列.
         timer.init(noop_callback);
-        hrtimer_start(&timer, 0);
+        expect_started(hrtimer_start(&timer, 0));
         timer.set_state(HrTimerState::Running);
         timer.in_flight.store(true, Ordering::Release);
         assert_eq!(
@@ -927,7 +1082,10 @@ mod tests {
         hrtimer_init();
         let timer = HrTimer::uninit();
         timer.init(noop_callback);
-        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
         assert!(queue_contains(&timer));
 
         hrtimer_shutdown(&timer);
@@ -938,17 +1096,17 @@ mod tests {
         // Shutdown 状态: 直接 start 不得复活.
         assert_eq!(
             hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
-            0
+            StartOutcome::Shutdown
         );
         assert_eq!(hrtimer_pending_count(), 0, "shutdown 后 start 必须被拒绝");
 
         // init 清除 Shutdown 后可重新使用.
         timer.init(noop_callback);
         assert_eq!(timer.state(), HrTimerState::Inactive);
-        assert_ne!(
-            hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000)),
-            0
-        );
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
         assert!(hrtimer_cancel(&timer));
         assert_eq!(hrtimer_pending_count(), 0);
     }
@@ -961,7 +1119,10 @@ mod tests {
         hrtimer_init();
         let timer = HrTimer::uninit();
         timer.init(noop_callback);
-        hrtimer_start(&timer, hrtimer_clock_read().saturating_add(1_000_000_000));
+        expect_started(hrtimer_start(
+            &timer,
+            hrtimer_clock_read().saturating_add(1_000_000_000),
+        ));
         // 模拟 run_queues 已收集、回调在途.
         timer.set_state(HrTimerState::Running);
         timer.in_flight.store(true, Ordering::Release);
@@ -991,7 +1152,7 @@ mod tests {
         let timer = Box::new(HrTimer::uninit());
         timer.init(cancelled_timer_callback);
         // 已到期: 若取消未出队, 下一次 run_queues 会踩释放后的内存.
-        hrtimer_start(&timer, 0);
+        expect_started(hrtimer_start(&timer, 0));
         assert!(hrtimer_cancel(&timer));
         assert!(!queue_contains(&timer), "取消后队列不得再持有该 timer");
         drop(timer);
@@ -1161,9 +1322,11 @@ mod tests {
 #[cfg(feature = "kernel_test")]
 fn test_state_encoding() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, assert_eq_test};
-    assert_eq_test!(HrTimerState::Inactive as u64, 0, "Inactive=0");
-    assert_eq_test!(HrTimerState::Pending as u64, 1, "Pending=1");
-    assert_eq_test!(HrTimerState::Running as u64, 2, "Running=2");
+    assert_eq_test!(HrTimerState::Uninit as u64, 0, "Uninit=0");
+    assert_eq_test!(HrTimerState::Inactive as u64, 1, "Inactive=1");
+    assert_eq_test!(HrTimerState::Pending as u64, 2, "Pending=2");
+    assert_eq_test!(HrTimerState::Running as u64, 3, "Running=3");
+    assert_eq_test!(HrTimerState::Shutdown as u64, 4, "Shutdown=4");
     TestResult::Pass
 }
 
@@ -1171,7 +1334,7 @@ fn test_state_encoding() -> crate::privileged::tests::TestResult {
 fn test_uninit_state() -> crate::privileged::tests::TestResult {
     use crate::privileged::tests::{TestResult, assert_eq_test, check};
     let timer = HrTimer::uninit();
-    assert_eq_test!(timer.state(), HrTimerState::Inactive, "state");
+    assert_eq_test!(timer.state(), HrTimerState::Uninit, "state");
     assert_eq_test!(timer.expiry_ns(), 0, "expiry");
     check!(!timer.is_pending(), "not pending");
     TestResult::Pass
@@ -1231,7 +1394,10 @@ fn test_queue_operations() -> crate::privileged::tests::TestResult {
     unsafe {
         let timer = &mut *core::ptr::addr_of_mut!(T1);
         timer.init(noop_callback);
-        hrtimer_start(timer, 1_000_000_000);
+        check!(
+            hrtimer_start(timer, 1_000_000_000).is_started(),
+            "start accepted"
+        );
     }
     assert_eq_test!(hrtimer_pending_count(), 1, "1 timer");
 
@@ -1256,7 +1422,10 @@ fn test_periodic_restart() -> crate::privileged::tests::TestResult {
         let timer = &mut *core::ptr::addr_of_mut!(T2);
         timer.init(periodic_test_callback);
         let now = hrtimer_clock_read();
-        hrtimer_start(timer, now + 1_000_000); // 1ms 后
+        check!(
+            hrtimer_start(timer, now + 1_000_000).is_started(), // 1ms 后
+            "periodic start accepted"
+        );
     }
     check!(
         // SAFETY: T2 是本测试独占的 static mut, 上方已经 `addr_of_mut!` 完成 init 与

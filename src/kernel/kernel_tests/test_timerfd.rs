@@ -69,7 +69,7 @@ fn test_timerfd_slot_lifecycle() -> TestResult {
     check!(poll_ready(idx) == Some(false), "新槽位无到期事件");
     check!(get_time(idx) == Some((0, 0)), "新槽位读数全零");
     check!(
-        matches!(set_time(idx, 1_000_000_000, 5_000_000, false), Some((0, 0))),
+        matches!(set_time(idx, 1_000_000_000, 5_000_000, false), Ok((0, 0))),
         "首次设时返回旧值全零"
     );
     check!(
@@ -77,7 +77,7 @@ fn test_timerfd_slot_lifecycle() -> TestResult {
         "周期值应可读回"
     );
     let old = set_time(idx, 0, 0, false);
-    check!(matches!(old, Some((5_000_000, _))), "disarm 返回旧周期");
+    check!(matches!(old, Ok((5_000_000, _))), "disarm 返回旧周期");
     check!(
         matches!(take_expiry(idx), TakeExpiry::Empty),
         "未到期槽位无到期计数"

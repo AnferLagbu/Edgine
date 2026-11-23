@@ -53,7 +53,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use crate::privileged::proc::{Pid, do_signal_send};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use crate::privileged::timer::{
-    HrTimer, HrTimerRestart, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
+    HrTimer, HrTimerRestart, StartOutcome, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
 };
 
 // ============================================================================
@@ -365,8 +365,13 @@ pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 
             slot.armed = AtomicBool::new(false);
             slot.flags = 0;
 
-            // 初始化 hrtimer, 回调 dispatch 通过 slot 内部指针
-            slot.timer.init(posix_timer_callback);
+            // 初始化 hrtimer, 回调 dispatch 通过 slot 内部指针.
+            // 槽位刚被占用且不可能有在途回调；若运行时仍拒绝初始化，立刻回滚
+            // used，避免把一个无法设防的槽位留给后续 timer_settime.
+            if slot.timer.try_init(posix_timer_callback).is_err() {
+                slot.used = false;
+                return Errno::Eio.as_ret();
+            }
 
             let timer_id = crate::privileged::glue::low_i32_from_usize(i + 1);
             if !crate::privileged::userptr::write_struct_to_user(timer_id_ptr, &timer_id) {
@@ -475,7 +480,17 @@ pub fn sys_timer_settime(timer_id: i32, flags: i32, new_value_ptr: u64, old_valu
     slot.expiry_ns = expiry_ns;
     slot.armed = AtomicBool::new(true);
 
-    hrtimer_start(&slot.timer, expiry_ns);
+    match hrtimer_start(&slot.timer, expiry_ns) {
+        StartOutcome::Started(_) => {}
+        StartOutcome::NotReady | StartOutcome::NotInitialized | StartOutcome::Shutdown => {
+            // 入队失败: 撤销刚置上的 armed，不能让 timer_gettime 继续报告一个
+            // 永远不会到期的剩余时间.
+            slot.armed.store(false, Ordering::Release);
+            slot.interval_ns = 0;
+            slot.expiry_count = AtomicU64::new(0);
+            return Errno::Eio.as_ret();
+        }
+    }
 
     crate::klog_debug!(
         Sync,

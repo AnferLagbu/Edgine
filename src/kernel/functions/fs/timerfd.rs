@@ -44,7 +44,8 @@ use crate::functions::fs::vfs_types::{KernelError, KernelResult, OpenFile, VfsFi
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api::{read_struct_from_user, write_struct_to_user};
 use crate::privileged::syscall::{
-    TakeExpiry, alloc_slot, free_slot, get_time, poll_ready, set_time, set_wake_fd, take_expiry,
+    SetTimeError, TakeExpiry, alloc_slot, free_slot, get_time, poll_ready, set_time, set_wake_fd,
+    take_expiry,
 };
 
 // ============================================================================
@@ -312,12 +313,14 @@ fn settime_on_slot(idx: usize, flags: i32, spec: &Itimerspec) -> Result<Itimersp
     }
     let value_ns = spec_ns(spec.value_sec, spec.value_nsec)?;
     let interval_ns = spec_ns(spec.interval_sec, spec.interval_nsec)?;
-    let Some((old_interval_ns, old_remaining_ns)) =
-        set_time(idx, value_ns, interval_ns, flags & TFD_TIMER_ABSTIME != 0)
-    else {
-        return Err(Errno::Ebadf);
-    };
-    Ok(Itimerspec::from_ns(old_interval_ns, old_remaining_ns))
+    match set_time(idx, value_ns, interval_ns, flags & TFD_TIMER_ABSTIME != 0) {
+        Ok((old_interval_ns, old_remaining_ns)) => {
+            Ok(Itimerspec::from_ns(old_interval_ns, old_remaining_ns))
+        }
+        Err(SetTimeError::InvalidSlot) => Err(Errno::Ebadf),
+        // 槽位存在但 timer 未就绪/已 shutdown：内部状态不可用，不冒充设时成功.
+        Err(SetTimeError::TimerUnavailable) => Err(Errno::Eio),
+    }
 }
 
 /// `timerfd_settime` 系统调用
@@ -392,6 +395,13 @@ mod tests {
         use crate::privileged::proc::PROCESS_TABLE;
         use crate::privileged::proc::raw;
         use crate::privileged::proc::scheduler::Scheduler;
+
+        // host 测试没有启动时基；timerfd 设时现在必须真正消费 StartOutcome，
+        // 框架未就绪会拒绝入队。仅在未就绪时初始化一次，避免清掉并行 hrtimer
+        // 用例正在使用的队列.
+        if !crate::privileged::timer::is_hrtimer_ready() {
+            crate::privileged::timer::hrtimer_init();
+        }
 
         let Some(pid) = PROCESS_TABLE.allocate_pid() else {
             panic!("临时进程: 无空闲 pid");
@@ -525,8 +535,8 @@ mod tests {
 
             let armed = timerfd_gettime_apply(fd_i64).expect("gettime armed");
             assert_eq!(armed.interval_nsec, 5_000_000, "周期值应可读回");
-            // host 测试无时基 (hrtimer 未 init, start 为空操作, expiry 保持初值):
-            // 剩余时间只校验上界, 到期推进由 kernel_test / QEMU 腿覆盖.
+            // host 测试无 tick 中断推进到期, 剩余时间只校验上界:
+            // timer 已真实入队, 到期推进由 kernel_test / QEMU 腿覆盖.
             assert!(
                 armed.value_sec == 0 && armed.value_nsec <= 10_000_000,
                 "剩余时间应在 [0, 10ms] 内"
@@ -664,7 +674,7 @@ mod tests {
             );
 
             // 经 dup 设时, 经原 fd 读周期 (共享同一槽位).
-            // host 测试无时基 (hrtimer 未 init), 剩余时间恒 0, 故以周期读回作共享判据.
+            // host 测试无 tick 中断推进到期, 剩余时间恒为原值, 故以周期读回作共享判据.
             let spec = Itimerspec {
                 interval_sec: 0,
                 interval_nsec: 5_000_000,

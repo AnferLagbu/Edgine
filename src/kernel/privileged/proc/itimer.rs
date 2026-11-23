@@ -30,10 +30,11 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::privileged::error::KernelError;
 use crate::privileged::proc::{MAX_PROCESSES, Pid, SIGALRM, do_signal_send};
 use crate::privileged::sync::IrqSpinLock;
 use crate::privileged::timer::{
-    HrTimer, HrTimerRestart, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
+    HrTimer, HrTimerRestart, StartOutcome, hrtimer_cancel, hrtimer_clock_read, hrtimer_start,
     hrtimer_start_periodic,
 };
 
@@ -113,9 +114,18 @@ fn slot_remaining(slot: &ItimerSlot) -> u64 {
 ///
 /// 返回**设防前**的 `(剩余纳秒, 周期间隔纳秒)` (未设防时为 `(0, 0)`), 供
 /// `alarm(2)` 与 `setitimer` 的 `old` 出参换算秒/微秒.
-pub fn itimer_real_set(pid: Pid, value_ns: u64, interval_ns: u64) -> (u64, u64) {
+///
+/// # Errors
+///
+/// pid 越界、定时器初始化被运行时拒绝、或底层框架未就绪/已 shutdown 时返回；
+/// 失败时槽位回滚为未使用，不留下 armed 的悬空 timer.
+pub fn itimer_real_set(
+    pid: Pid,
+    value_ns: u64,
+    interval_ns: u64,
+) -> Result<(u64, u64), KernelError> {
     if pid as usize >= MAX_PROCESSES {
-        return (0, 0);
+        return Err(KernelError::InvalidArgument);
     }
     let mut slots = ITIMER_SLOTS.lock();
     let slot = &mut slots[pid as usize];
@@ -132,23 +142,48 @@ pub fn itimer_real_set(pid: Pid, value_ns: u64, interval_ns: u64) -> (u64, u64) 
         slot.used = false;
         slot.pid = 0;
         slot.interval_ns = 0;
-        return (prev_remaining, prev_interval);
+        return Ok((prev_remaining, prev_interval));
     }
 
-    // `init` 复位 expiry/interval/state, 避免继承上一轮的周期配置.
-    slot.timer.init(itimer_real_callback);
+    // 取消后 state 为 Inactive；try_init 在队列锁内拒绝 Pending/Running，
+    // 失败必须回滚槽位，不能继续向活动 timer 写新的周期配置.
+    if slot.timer.try_init(itimer_real_callback).is_err() {
+        rollback_slot(slot);
+        return Err(KernelError::InvalidArgument);
+    }
     slot.used = true;
     slot.pid = pid;
     slot.interval_ns = interval_ns;
     slot.armed.store(true, Ordering::Release);
 
-    if interval_ns > 0 {
-        hrtimer_start_periodic(&slot.timer, value_ns, interval_ns);
+    let outcome = if interval_ns > 0 {
+        hrtimer_start_periodic(&slot.timer, value_ns, interval_ns)
     } else {
-        hrtimer_start(&slot.timer, hrtimer_clock_read().saturating_add(value_ns));
+        hrtimer_start(&slot.timer, hrtimer_clock_read().saturating_add(value_ns))
+    };
+    match outcome {
+        StartOutcome::Started(_) => Ok((prev_remaining, prev_interval)),
+        StartOutcome::NotReady => {
+            rollback_slot(slot);
+            Err(KernelError::NotReady)
+        }
+        StartOutcome::NotInitialized => {
+            rollback_slot(slot);
+            Err(KernelError::NotInitialized)
+        }
+        StartOutcome::Shutdown => {
+            rollback_slot(slot);
+            Err(KernelError::InvalidArgument)
+        }
     }
+}
 
-    (prev_remaining, prev_interval)
+/// 设防失败回滚: 清 armed/归属/周期，避免留下可被查询但不会到期的槽位.
+fn rollback_slot(slot: &mut ItimerSlot) {
+    slot.armed.store(false, Ordering::Release);
+    slot.used = false;
+    slot.pid = 0;
+    slot.interval_ns = 0;
 }
 
 /// 读取指定进程的 `ITIMER_REAL` 状态.
@@ -173,7 +208,8 @@ pub fn itimer_real_get(pid: Pid) -> Option<(u64, u64)> {
 #[must_use]
 pub fn itimer_alarm(pid: Pid, seconds: u32) -> u32 {
     let value_ns = u64::from(seconds).saturating_mul(NS_PER_SEC);
-    let (prev_ns, _) = itimer_real_set(pid, value_ns, 0);
+    // alarm(2) 无错误返回值；底层定时器不可用属于内核内部状态，按未设防返回 0.
+    let (prev_ns, _) = itimer_real_set(pid, value_ns, 0).unwrap_or((0, 0));
     // POSIX: alarm 返回剩余秒数, 非零剩余不足 1 秒时向上取整为 1 而非 0.
     crate::privileged::glue::low_u32_from_u64(prev_ns.div_ceil(NS_PER_SEC))
 }
@@ -232,7 +268,7 @@ mod tests {
     #[test]
     fn set_oneshot_reports_remaining() {
         prepare(PID_ONESHOT);
-        let (prev, prev_interval) = itimer_real_set(PID_ONESHOT, T_LONG, 0);
+        let (prev, prev_interval) = itimer_real_set(PID_ONESHOT, T_LONG, 0).expect("设防");
         assert_eq!(prev, 0, "首次设防无旧值");
         assert_eq!(prev_interval, 0);
 
@@ -247,7 +283,7 @@ mod tests {
     #[test]
     fn set_periodic_reports_interval() {
         prepare(PID_PERIODIC);
-        itimer_real_set(PID_PERIODIC, T_SHORT, T_LONG);
+        itimer_real_set(PID_PERIODIC, T_SHORT, T_LONG).expect("周期设防");
         let (remaining, interval) = itimer_real_get(PID_PERIODIC).expect("槽位已占用");
         assert!(remaining > 0);
         assert_eq!(interval, T_LONG, "getitimer 需回报 it_interval");
@@ -256,8 +292,8 @@ mod tests {
     #[test]
     fn value_zero_disarms() {
         prepare(PID_DISARM);
-        itimer_real_set(PID_DISARM, T_SHORT, 0);
-        let (prev, _) = itimer_real_set(PID_DISARM, 0, 0);
+        itimer_real_set(PID_DISARM, T_SHORT, 0).expect("设防");
+        let (prev, _) = itimer_real_set(PID_DISARM, 0, 0).expect("撤防");
         assert!(prev > 0, "撤防需回报撤防前的剩余");
         assert!(
             itimer_real_get(PID_DISARM).is_none(),
@@ -275,12 +311,12 @@ mod tests {
         assert_eq!(interval, 0, "alarm 不引入周期");
 
         // 旧剩余 1.9s → 向上取整报 2s, 不能截断为 1 (POSIX alarm(2))
-        itimer_real_set(PID_ALARM, 2 * NS_PER_SEC - NS_PER_SEC / 10, 0);
+        itimer_real_set(PID_ALARM, 2 * NS_PER_SEC - NS_PER_SEC / 10, 0).expect("设防");
         assert_eq!(itimer_alarm(PID_ALARM, 0), 2);
         assert!(itimer_real_get(PID_ALARM).is_none(), "alarm(0) 仅撤防");
 
         // alarm 必须覆盖已有的 ITIMER_REAL 设防 (双向覆盖)
-        itimer_real_set(PID_ALARM, T_SHORT, 5 * T_SHORT);
+        itimer_real_set(PID_ALARM, T_SHORT, 5 * T_SHORT).expect("设防");
         assert_eq!(
             itimer_alarm(PID_ALARM, 3),
             60,
@@ -294,14 +330,17 @@ mod tests {
     #[test]
     fn release_pid_clears_slot_and_unknown_pid_is_safe() {
         prepare(PID_RELEASE);
-        itimer_real_set(PID_RELEASE, T_SHORT, T_SHORT);
+        itimer_real_set(PID_RELEASE, T_SHORT, T_SHORT).expect("设防");
         assert!(itimer_real_get(PID_RELEASE).is_some());
         itimer_real_release_pid(PID_RELEASE);
         assert!(itimer_real_get(PID_RELEASE).is_none());
         // 重复释放幂等
         itimer_real_release_pid(PID_RELEASE);
         // pid 越界: 不设防, 不 panic
-        assert_eq!(itimer_real_set(PID_OUT_OF_RANGE, T_SHORT, 0), (0, 0));
+        assert_eq!(
+            itimer_real_set(PID_OUT_OF_RANGE, T_SHORT, 0),
+            Err(KernelError::InvalidArgument)
+        );
         assert!(itimer_real_get(PID_OUT_OF_RANGE).is_none());
         itimer_real_release_pid(PID_OUT_OF_RANGE);
     }
@@ -309,8 +348,9 @@ mod tests {
     #[test]
     fn set_overwrites_previous_periodic_config() {
         prepare(PID_OVERWRITE);
-        itimer_real_set(PID_OVERWRITE, T_SHORT, 3 * T_SHORT);
-        let (prev_remaining, prev_interval) = itimer_real_set(PID_OVERWRITE, T_LONG, 0);
+        itimer_real_set(PID_OVERWRITE, T_SHORT, 3 * T_SHORT).expect("设防");
+        let (prev_remaining, prev_interval) =
+            itimer_real_set(PID_OVERWRITE, T_LONG, 0).expect("覆盖设防");
         assert!(prev_remaining > 0);
         assert_eq!(prev_interval, 3 * T_SHORT, "需回报设防前的周期配置");
         let (_, interval) = itimer_real_get(PID_OVERWRITE).expect("槽位仍占用");
