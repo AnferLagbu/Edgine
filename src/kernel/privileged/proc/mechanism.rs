@@ -72,6 +72,7 @@ pub use super::proc_ops::proc_alloc_pid;
 // ==================== 进程信息查询 ====================
 
 pub use super::proc_ops::process_get_by_pid;
+pub use super::proc_ops::process_get_current_cr3;
 pub use super::proc_ops::process_get_current_pid;
 pub use super::proc_ops::process_get_current_pwm;
 pub use super::proc_ops::process_get_current_tgid;

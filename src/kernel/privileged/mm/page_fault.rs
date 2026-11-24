@@ -244,7 +244,15 @@ pub fn handle_page_fault(mm: &MmStruct, info: PageFaultInfo) -> PfResult {
 /// 从汇编层保存的 `USER_CR3_SAVE` 读取用户页表 PML4 物理地址.
 /// 汇编在 KPTI 切换前将硬件 CR3 写入此变量.
 pub fn handle_user_page_fault(info: PageFaultInfo) -> PfResult {
-    let user_cr3 = super::read_user_cr3_asm();
+    // 以当前进程 PCB 的 cr3 为准; 全局 USER_CR3_SAVE 是单槽, SMP 下会被
+    // 另一 CPU 覆盖, 导致页被映射进别的地址空间并反复缺页. 仅在调度器尚未
+    // 建立当前进程时回退到中断入口保存值 (早期/内核态路径).
+    let current_cr3 = crate::privileged::proc::process_get_current_cr3();
+    let user_cr3 = if current_cr3 != 0 {
+        current_cr3
+    } else {
+        super::read_user_cr3_asm()
+    };
     let addr = crate::privileged::glue::usize_from_u64(info.fault_addr);
 
     if info.page.reserved {

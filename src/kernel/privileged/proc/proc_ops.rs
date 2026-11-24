@@ -223,6 +223,21 @@ pub extern "C" fn process_get_current_pid() -> u32 {
     Scheduler::current().unwrap_or(0)
 }
 
+/// 返回当前调度进程的用户页表根 (CR3); 无进程或尚未装载时返回 0.
+///
+/// 页故障处理必须使用**当前进程**的页表根, 不能使用全局 `USER_CR3_SAVE`
+/// 单槽: SMP 下两个 CPU 会互相覆盖该槽, 把页映射写到另一张表, 用户返回后
+/// 继续在同一地址缺页, 形成逐页 TLB shootdown 风暴.
+#[must_use]
+pub fn process_get_current_cr3() -> u64 {
+    let Some(ptr) = Scheduler::get_current_process() else {
+        return 0;
+    };
+    // SAFETY: ptr 由 PROCESS_TABLE.get(当前 pid) 返回, 指向已注册且正在运行的
+    // 当前进程 PCB; 当前进程持有对自身的引用, 本次调用期间不会被释放.
+    unsafe { (*ptr).cr3.load(Ordering::Acquire) }
+}
+
 /// 返回当前调度进程的 TGID (线程组 ID, 无则返回 0).
 ///
 /// 单线程进程的 TGID 等于其 PID; 组内各线程返回同一值 (`getpid` 语义).
