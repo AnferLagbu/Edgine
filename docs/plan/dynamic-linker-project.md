@@ -114,9 +114,10 @@
 
 ### D2：双映像 ELF 装载（5–7 人日）
 
-- 解析 `PT_INTERP`，经 VFS 读取解释器（不修改原 ELF）。
-- 复用 `load_elf_segments`，增加“向指定 cr3/指定 load_bias 装载一个 ELF”的内部入口。
-- 主程序与解释器分别选 load_bias，保证不重叠；解释器按 ET_DYN 处理。
+- 已施工（未提交）：`elf::interp_path` 从 `PT_INTERP` 读绝对路径，不改写原映像；functions 层经 VFS 读解释器，`init` 与 `execve` 共用。
+- 已施工（未提交）：`load_elf_from_memory_with_interp` + `load_elf_images` 在同一 `cr3/mm` 装载主映像与解释器；解释器按 ET_DYN 选 mmap 区基址，入口改交解释器；`brk` 只跟主映像，解释器占用 mmap 基址后上抬 `mmap_base`。
+- 保留旧 `proc_exec_replace` / `user_proc_load_elf_from_memory` 为静态单映像包装，新增 `_with_interp` FFI 入口。
+- 仍未做：D3 的 auxv/初始栈；因此动态 musl 目前只完成映射与入口，尚不能真正启动。
 - 装载顺序：先主程序/解释器都成功，再切换；失败回滚，保持旧映像。
 - 设置 `entry = interp_entry`；记录 `main_entry`、`interp_base`、`phdr`。
 - 出口：两个 ELF 的 `PT_LOAD` 都落地，入口是解释器，旧 `PT_INTERP` 改写路径零调用。
