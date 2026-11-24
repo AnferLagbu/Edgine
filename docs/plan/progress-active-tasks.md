@@ -527,18 +527,18 @@
   - 方案: 统一按 §对账方法 **口径 C** 计数（状态字段行 + markdown 勾选 + 表格行级状态；镜像/汇总/证据/背景表逐册去重）。甲 12 行（2026-11-13 归档后；移出 8 册已闭行、原 19 行）合计 **307 完成 / 86 开放 / 3 部分**（其中 `unresolved-issues` 的 ≈25 为清单类定性读数，令牌开放为 63）；含乙 1 行共 **366 / 86 / 3**（**2026-11-13 说明**：该合计为历史快照，多册自此前已陆续收口且未逐项重算；当前以甲/乙表逐行状态为准）
   - 状态: [X]
 
-  **2026-11-24 关键路径重开裁定（用户授权，仅台账；本轮不动代码）**
+  **2026-11-24 关键路径重开裁定（用户授权；T7-a/T7-b 已施工，其余仍按重开形态）**
 
   | 项目 | 重开形态 | 前置 / 首步 | 边界 |
   |---|---|---|---|
-  | `syscall-followup` T7 | 已裁 Linux ABI 兼容，施工待开 | 首步 = T7-a 按架构编号表（x86_64 / aarch64 各一份）+ SGEG/EG 私有段迁到 `0x4000_0000` 高位基址；T7-b aarch64 `x8` 入口与用户库同步；T7-c 静态→动态 musl 外部程序验收 | 两侧统一“只承诺 Linux ABI”的规则，不统一编号；私有段旧号不做别名；dispatch 未开工前不动 |
+  | `syscall-followup` T7 | 已裁 Linux ABI 兼容；T7-a/b 已完成 | T7-a = canonical x86_64 编号 + aarch64 双向边界表 + SGEG/EG 私有段迁到 `0x4000_0000`；T7-b = aarch64 `x8` 入口与用户库同步，均完成。T7-c 静态 musl 外部 hello 双架构已通过（报告 `docs/report/t7-external-musl-hello.md`），动态 musl/glibc 待办 | 两侧统一“只承诺 Linux ABI”的规则，不统一编号；私有段旧号不做别名；未知号 `-ENOSYS` |
   | `unresolved-issues` ISSUE-RT-002 | 有界复现 | 首步 = QEMU aarch64 `-smp 2` 高负载 + IRQ 计数/GDB，确认是否仍命中 | 只重开 RT-002；真机 RT-003、F1-F5、刻意维持项继续冻结 |
   | `net-e2e` P-80 | 有界归因 | 首步 = i440fx 高负载多轮 + 完整串口/`-d int`，命中再改 | 未命中不改代码，不以时界改症状 |
   | `mm-lifecycle` M1 | 已裁 B，施工待开 | 首步 = 按 B 相对完整开工 M2（装载路径安装 mm） | M2–M5 已解除 M1 阻塞；B 一次收口 I2/I4 与裸页回退 |
   | `wasm-userspace-migration` P1 | active，blocked-by-mm-M2 | 首步 = 等 M2 装载面落地；随后恢复 stdio 端到端 | P1 未解除阻塞前不判绿，不提前接 `ci/audit.sh` |
   | `uefi-thread-exit-hang` U-2 | 有界复现 | 首步 = OVMF `-smp 1` 有界复现 + 与 U-1 同源裁定 | U-2 复现前不施工，不阻断 headline 门禁 |
 
-  > **2026-11-24 裁定结果**：syscall T7 = 承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有扩展段（不做双 ABI 并存）；mm M1 = **B 相对完整**。两项施工均另开，本节只记方向，不动代码。
+  > **2026-11-24 裁定与施工结果**：syscall T7 = 承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有高位扩展段（不做双 ABI 并存）；T7-a/T7-b 已施工并通过双架构构建、QEMU/UEFI 与全量审计，T7-c 静态 musl 外部 hello 双架构已通过，动态 musl/glibc 待办。mm M1 = **B 相对完整**，待施工。
 
   **甲・仍需跟踪的工程（22 份）**
 
@@ -552,7 +552,7 @@
   | dns-dual-stack.md | 双栈 DNS 解析（IPv6/AAAA + DHCPv6 DNS 喂入） | 9 / 2（口径 C＝A＝B：11 行首状态字段，无表格/勾选形态；D1-D4 + Phase 1-3 + E1/E2 全 `[X]`，E3/E4 延后独立立项） | E3 缓存/search domain、E4 多服务器冗余延后独立立项（2026-11-15 用户裁定本工程仅核心 + E1/E2） | 一致：核心 Phase 1-3 + E1/E2 落地，§2.3 七门槛全绿（build 6/6 / audit full 19/19+10/10 / test-host 1545 passed 0 failed / test-kernel-host 12+796+529 / ci-rustdoc 双架构 exit 0） | 真实 AAAA e2e 已并入 E1（init `dns_getaddrinfo_probe` + `qemu_slaac_test.sh` dhcpv6 模式 dnsmasq DNS/AAAA/选项23，sudo 腿待用户跑）；vendored smoltcp 零修改。**2026-11-14 E1 收口 + 2026-11-15 E2 收口**（核心 Phase 1-3 + E1/E2 `[X]`；E1-d 补 2 内联单测使 privileged 527→529） |
   | framekernel-paradigm-enforcement.md | F/S 分层范式落实 | 37（31 状态字段 + 6 阶段目标勾选）/ 0（另 2 项长期趋势跟踪，非令牌） | 无令牌级开放项：两项阶段目标已按 2026-10-26 用户裁定收口（TCB < 30% 改软指标、文件数 200 改趋势跟踪，见 §3 目标 1/4 与 DECISION-AA） | 一致：本轮实测 effective TCB 占比 **57.78%**（HEAD 57.80%，S-7 净减 55 行） | 长期演化目标，无固定工期；§6.4/§7.5 处置表属背景记录，不计令牌 |
   | stage-engineering-master.md | 静态检查工程总览 | 37（+5 勾选）/ 2（+4 勾选，2 `[~]`；口径 C：§现状 7 行汇总表为 rollup，不计） | 长期：QEMU 运行时验证 / 真实硬件启动；流程项：每轮门槛复跑（已改指 §2.3 单源）；中期：kernel `#[test]` 迁移（DECISION-046 维持原状）（**2026-11-13 订正**：原列「cast 1700+ 保留（DECISION-041）」已由 P-64 cast 清零工程关闭，该册 cast 待办行已 `[X]`、DECISION-041 保留模型作废 ⇒ 移出开放面；本行 `2 [~]` 计数不变，原即 `#[test]` + 常设流程约束、不含 cast） | 已订正：漂移清单第 2 条的「5 条门槛」项本批已修（改指 `AGENTS.md` §2.3 且不复制条数）；「QEMU 实际验证」长期项按 §6 保留为执行当时记录 | 长期项仍属「永久保留」清单 |
-  | syscall-followup.md | syscall 编号治理后的剩余任务 | 7 / 1 | T7（Linux syscall ABI 兼容；2026-11-24 已裁方向：两侧均只承诺 Linux ABI，各自 per-arch 编号表，SGEG/EG 私有统一迁 `0x4000_0000` 高位段，不做双 ABI；施工拆 T7-a 编号表 + 私有段迁移 / T7-b aarch64 `x8` 入口与用户库 / T7-c 外部程序验收，dispatch 未开工前不动；2026-11-13 复核 T6 已转 `[X]`，eg 自有代码 0 活跃 TODO） | 一致：T1-T5 全部 `[X]`，host 链接占位收尾项 `[X]`，eg 自有代码活跃 TODO 已清零 | T7 已由预存登记升 P1；SGEG 400–423/453–463 与 Linux aarch64/x86_64 现代号冲突，必须随 T7-a 迁出；条件/验收表属证据，不计令牌 |
+  | syscall-followup.md | syscall 编号治理后的剩余任务 | 7 / 1 | T7（Linux syscall ABI 兼容；2026-11-24 已裁方向：两侧均只承诺 Linux ABI，各自 per-arch 编号表，SGEG/EG 私有统一迁 `0x4000_0000` 高位段，不做双 ABI；T7-a 双架构编号表 + 私有段迁移与 T7-b aarch64 `x8` 入口/用户库已完成；T7-c 静态 musl 外部 hello 已在 x86_64/aarch64 实测通过（`[EXEC] PASS` + 外部输出），动态 musl/glibc 待办；2026-11-13 复核 T6 已转 `[X]`，eg 自有代码 0 活跃 TODO） | 一致：T1-T5 全部 `[X]`，host 链接占位收尾项 `[X]`，eg 自有代码活跃 TODO 已清零 | T7 已由预存登记升 P1；SGEG 400–423/453–463 与 Linux aarch64/x86_64 现代号冲突，已随 T7-a 全部迁到 `0x4000_0000`；条件/验收表属证据，不计令牌 |
   | sgeg-capability-constants-plan.md | SGEG 能力位常量治理 | 3 / 7（口径 C：A 类 3 行处置列 ✅；B 类 5 + C 类 2 状态列 `[]`；2026-11-10 用户裁定整体休眠/阻塞） | B1-B5（reboot / open_by_handle_at / sethostname 魔法数 / mmap 无命名位 / `required=0` 可疑）、C1-C2（storage 域号冲突 / 裸数字域号） | 本轮未逐项复验源码（仅归集文档口径） | 休眠态：B/C 类不施工，作为日后改版增强的铺路输入保留；解除须另行裁定（与 FREG 同面） |
   | future-roadmap.md | 远期工程规划 | 2 / 4（口径 C：WASM WASI + F5 IPv6 已闭；F1-F4 取本册 6 项详情表的行级 `[]`，该表是本册唯一状态台账） | F1 mdBook、F2 RISC-V、F3 TDX、F4 NFS | 一致：无 mdBook 配置、无 `arch/riscv64/`、无 tdx 模块、无 `functions/fs/nfs/` | 远期未启动 |
   | unresolved-issues-2026-08-09.md | 未修复问题追踪清单 | 0 / ≈2 硬件阻塞 + 1 维持（2026-11-13 结合源码复核订正；原「≈25+3」系 2026-08-09 登记快照） | RT-002（aarch64 GICv3 偶发挂起；2026-11-24 重开为 `[~]` 有界复现，仅 QEMU SMP）、RT-003（真实硬件启动验证，待真机，仍冻结）、DEC-005（brittle 潜在风险，维持）；MIG/B03/B06/TOOL/BASELINE/TODO 均已闭 | 一致（清单类文档，非执行 plan） | 作为后续 plan 制定的输入 |

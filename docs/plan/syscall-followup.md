@@ -82,14 +82,14 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 2. **陷入约定**：x86_64 走 `rax` 编号 + `rdi/rsi/rdx/r10/r8/r9` 参数；aarch64 现为 `x0` 编号 + `x1-x6` 参数，而 Linux aarch64 是 `x8` 编号 + `x0-x5` 参数。只换编号表仍是错 ABI。
 3. **布局与语义**：errno/flag、`stat/statx`、`sigaction`、`timespec`、`epoll_event`、`sockaddr` 等结构布局与对齐按架构有别；当前多处按 x86_64 尺寸/偏移实现，aarch64 外部二进制不能直接复用。
 
-**2026-11-24 用户裁定**：Edgine 承诺 Linux 用户态 ABI 兼容，作为“外部程序证明 Edgine 可用”的主验收面；采用**单一 Linux ABI + EG 私有扩展段**（500+ 保持 EG 自有），不采用“双 ABI 按 personality 选表”。理由：双 ABI 会把 loader、测试矩阵与支持面翻倍；EG 自有扩展不与 Linux 0-299 冲突，无需第二套基础 ABI。
+**2026-11-24 用户裁定**：Edgine 承诺 Linux 用户态 ABI 兼容，作为“外部程序证明 Edgine 可用”的主验收面；采用**单一 Linux ABI + EG 私有高位扩展段**（私有号全部在 `0x4000_0000` 起），不采用“双 ABI 按 personality 选表”。理由：双 ABI 会把 loader、测试矩阵与支持面翻倍；EG 自有扩展不与 Linux 0-499 冲突，无需第二套基础 ABI。
 
 **落地拆分（施工另开，未开工前不动 dispatch）**：
-- **T7-a 编号表**：按 arch 单源 `SYS_*` 编号（x86_64 / aarch64 各一份），与 Linux UAPI 头对表，未知号一律 `-ENOSYS`。`MAX_SYSCALLS = 900` 的数组式上界判断作废，改 `is_linux_nr(nr)` / `is_private_nr(nr)` 两段判断。
-- **T7-b 入口与用户库**：aarch64 切 `x8` 编号 + `x0-x5` 参数；`src/user` 汇编、`rt_sigreturn` trampoline（现硬编码 `x0=139`）同步迁移；x86_64 保持 Linux 入口。
-- **T7-c 外部程序验收**：先静态 musl 二进制（hello / busybox），再动态 musl；每条腿断言退出码与输出，不以“能启动”代替“ABI 正确”。glibc/vDSO 面后置。
+- **T7-a 编号表（已完成 2026-11-24）**：内核 internal canonical 统一为 x86_64 Linux 编号；`edgine-abi::linux_syscall` 提供 aarch64 边界翻译（公开号双向表 + 遗留号私有段）。`MAX_SYSCALLS = 900` 已删除，改 `is_linux_nr(nr)` / `is_private_nr(nr)` 两段判断，未知号一律 `-ENOSYS`。
+- **T7-b 入口与用户库（已完成 2026-11-24）**：aarch64 切 `x8` 编号 + `x0-x5` 参数；`src/user/lib/src/sys.rs` 的 `sys0..sys6`、`clone_thread`、`rt_sigreturn` trampoline（`movz x8,#139`）同步迁移；x86_64 保持 Linux 入口。
+- **T7-c 外部程序验收（静态腿已完成 2026-11-24，动态待办）**：用 Zig 0.13 `zig cc -target <arch>-linux-musl -static` 生成外部 hello，替换 `/bin/exectest` 后由既有 `exec_probe` 两条腿真实 `execve`；x86_64 与 aarch64 均实测输出 `hello from external musl` 且 `[EXEC] PASS`。证据与边界见 [t7-external-musl-hello.md](../report/t7-external-musl-hello.md)。动态 musl（`PT_INTERP` + `ld-musl`）、glibc/vDSO 面仍未覆盖；`busybox_ECHO` 同批未通过，单独归因，不作为 T7-c 全绿依据。
 
-**私有段边界（与 T7-a 同批，不能拖）**：承诺 Linux ABI 意味着 Linux 公开编号空间全部让给 Linux（当前 0–466，预留到 499 及未来增长段）；EG 私有不再借用 400–899 的任何 Linux 可能扩展号。现状里 SGEG 的 **400–423 / 453–463** 已与 Linux 冲突：aarch64 400=`sched_setattr`、x86_64 453=`map_shadow_stack`，继续占用就会让 Linux 程序调错函数。SGEG 与 EG 500–899 统一迁到高位私有基址（建议 `0x4000_0000` 起，按旧号偏移保留相对布局），旧号不做兼容别名——保留别名等于把“双 ABI”换个名字留下。这是一次显式 ABI 断代，SGEG 冻结面正好可同批迁移，不另开兼容层。
+**私有段边界（与 T7-a 同批，不能拖）**：承诺 Linux ABI 意味着 Linux 公开编号空间全部让给 Linux（当前 0–466，预留到 499 及未来增长段）；EG 私有不再借用 400–899 的任何 Linux 可能扩展号。迁移前 SGEG 的 **400–423 / 453–463** 与 Linux 冲突：aarch64 400=`sched_setattr`、x86_64 453=`map_shadow_stack`，继续占用就会让 Linux 程序调错函数。T7-a 已把 SGEG 与 EG 500–899 统一迁到高位私有基址 `0x4000_0000` 起（按旧号偏移保留相对布局），旧号不做兼容别名——保留别名等于把“双 ABI”换个名字留下。这是一次显式 ABI 断代，SGEG 冻结面正好可同批迁移，不另开兼容层。
 
 ## 优先级与依赖
 
@@ -122,7 +122,7 @@ T7 (Linux ABI 兼容, P1)
   - 丙批审查整改（分册 9 **D-8** 余项 7 项）：**7 项已落地**——A1 用户页表遍历持 `VMM_LOCK`（`41003e87`，原案「`MmStruct.rss_pages` 记账」因 `MmStruct` 无 per-process 归属不可达，经用户裁定改走方案 A：保留 cr3 遍历语义 + 同持 VMM_LOCK；公共 API 面未删）/ A3 OOMD victim 过滤僵尸（`93568c05`）/ A4 `terminated_count` 仅送达才累加（`4614e707`）/ B2 ext2 `i_ctime` 独立取值（`1b852e5d`）/ B4 换行（`3541b63c`）/ exfat 删静默成功覆写（`7079a94e`）/ F9 豁免残留清除（`29bee0a5`）。
   - exFAT 正式任务（D-5 ③）**维持登记**：删除静默成功覆写仅恢复「不支持」语义，三项前置（目录项定位 / 时间戳编解码 / 验证载体）仍缺。
   - R1 台账数字**未变动**（`CRITICAL=7 / HIGH=0 / WARN=0 / INFO=436`）：本批改动为 trait 覆写删除与 import 分组，未增减已分类的零引用 `pub fn`，清单算术保持闭合。
-- [~] T7：Linux syscall ABI 兼容 — **方向已裁，施工未开**（2026-11-24 用户裁定：承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有扩展段，不做双 ABI 并存；落地拆 T7-a 按架构编号表 / T7-b aarch64 `x8` 入口与用户库 / T7-c 静态→动态 musl 外部程序验收。当前 dispatch 仍单表、aarch64 仍 `x0` 入口，未开工前不动；T7 由 P2 预存登记升 P1）
+- [~] T7：Linux syscall ABI 兼容 — **T7-a/T7-b 已完成，T7-c 静态腿已完成（动态待办）**（2026-11-24 用户裁定：承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有高位扩展段，不做双 ABI 并存。T7-a：canonical x86_64 编号 + `edgine-abi::linux_syscall` aarch64 双向翻译表，私有号全部迁 `0x4000_0000`，删除 `MAX_SYSCALLS`；T7-b：aarch64 `x8` 入口 + `x0-x5` 参数、用户库门、`clone_thread`、`rt_sigreturn` trampoline 全部迁移。验证：`./ci/build.sh all` 6/6、`make test-host`、`make test-kernel-host`、`bash ci/audit.sh full`、双架构 QEMU 启动、UEFI `-smp 2` 均通过。T7-c 静态 musl 双架构腿已通过（证据见 `docs/report/t7-external-musl-hello.md`），动态 musl/glibc 仍待；T7 由 P2 预存登记升 P1）
 
 ### T3 实施记录（2026-09-15）
 
