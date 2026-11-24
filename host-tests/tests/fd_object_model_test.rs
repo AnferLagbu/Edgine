@@ -1407,6 +1407,10 @@ fn timerfd_wake_token_replaces_numeric_fd() {
         "epoll_pwake_token",
         "epoll_forget_token",
         "TFD_CTX.tfd_ctx",
+        "TFD_WAIT.waiters",
+        "pub fn wait_for_ticks",
+        "drain_waiters",
+        "closed: AtomicBool",
     ] {
         assert!(
             mech.contains(needle),
@@ -1428,9 +1432,26 @@ fn timerfd_wake_token_replaces_numeric_fd() {
             "epoll 兴趣必须按对象 token/handle 登记与唤醒: {needle}"
         );
     }
+    let functions = read_file("functions/fs/timerfd.rs");
     assert!(
-        read_file("functions/fs/timerfd.rs").contains("fn wake_token(&self) -> u64"),
+        functions.contains("fn wake_token(&self) -> u64"),
         "TimerFdFile 必须把对象 token 暴露给 epoll 兴趣"
+    );
+    assert!(
+        functions.contains("fn wait_readable(fd: i32) -> bool")
+            && functions.contains("ctx.wait_for_ticks()"),
+        "TimerFdFile 必须把阻塞 read 接到 context 等待队列"
+    );
+    let io = read_file("functions/fs/io.rs");
+    assert!(
+        io.contains("TimerFdFile::wait_readable(fd)"),
+        "read_syscall 必须在 timerfd EAGAIN 时进入阻塞等待"
+    );
+    let epoll = read_file("privileged/syscall/epoll.rs");
+    assert!(
+        epoll.contains("if instance.interest_list.len() != before")
+            && epoll.contains("instance.wait_queue.wake_one()"),
+        "epoll_forget_token 必须在移除兴趣后唤醒等待者"
     );
 }
 

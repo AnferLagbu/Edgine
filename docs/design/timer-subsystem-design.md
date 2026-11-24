@@ -52,7 +52,7 @@
 
 当前实现已经完成了取消协议的语义收口，但承载结构仍是单队列 + 静态槽位的中间态：
 
-| 部件 | 当前形态（条目 1–6 已落地） | 剩余差距 |
+| 部件 | 当前形态（条目 1–7 已落地） | 剩余差距 |
 |---|---|---|
 | 取消/启动协议 | `try_cancel` 三态、阻塞 `cancel` 锁外等待、`shutdown` 状态；`hrtimer_start*` 返回 `StartOutcome`，`init` 有运行时拒绝 | 协议已终态化，不再改调用方语义 |
 | 队列 | `TIMER_BASES: [TimerBase; MAX_CPUS]`，每 CPU 一把 `IrqSpinLock`，绑定在首次 `start` 的 CPU | 已落地；`Quiescing`/offline 强制迁移见本节协议 |
@@ -288,7 +288,7 @@ timerfd 不受 CPU 上下线影响：`TimerFdContext` 仍由 fd 引用持有，�
 timerfd 不再有全局槽位表和槽位下标。终态对象：
 
 ```rust
-struct TimerFdContext {             // 条目 6 落地形态
+struct TimerFdContext {             // 条目 6/7 落地形态
     timer: HrTimer,                 // 必须是首字段，便于 container_of
     ticks: AtomicU64,
     interval_ns: AtomicU64,
@@ -296,6 +296,8 @@ struct TimerFdContext {             // 条目 6 落地形态
     generation: AtomicU64,
     last_expiry_ns: AtomicU64,       // read 重挂基准
     tfd_ctx: IrqSpinLock<()>,        // `TFD_CTX.tfd_ctx` 控制面锁，回调与 poll 不取
+    waiters: IrqSpinLock<WaitQueue>, // `TFD_WAIT.waiters` 阻塞 read 等待队列
+    closed: AtomicBool,              // 最后一个 fd 关闭后拒绝新等待者
 }
 
 struct TimerFdFile {
@@ -303,7 +305,7 @@ struct TimerFdFile {
 }
 ```
 
-`TimerFdFile` 挂在 `OpenFileTable`，fd 由 per-process `FdTable` 分配；对象生命周期由 `Arc` 与 fd 引用计数承担。`release` 只在最后一个 fd 引用关闭时调用，先 `hrtimer_shutdown`，确认回调退出后再释放 `Arc`。
+`TimerFdFile` 挂在 `OpenFileTable`，fd 由 per-process `FdTable` 分配；对象生命周期由 `Arc` 与 fd 引用计数承担。`release` 只在最后一个 fd 引用关闭时调用：持 `TFD_CTX` 执行 `hrtimer_shutdown`、置 `closed`、清状态并取走全部 read 等待者，释放控制锁后 `epoll_forget_token`、唤醒 read 等待者，最后才允许 `Arc` 归零。
 
 回调通过 `container_of` 从 `HrTimer` 指针定位 `TimerFdContext`，不再线性扫描静态数组。`HrTimer` 在 `TimerFdContext` 中地址稳定；`TimerFdContext` 一旦发布到 fd 表，不允许移动。
 
@@ -319,11 +321,11 @@ struct TimerFdFile {
 
 ### read / poll / gettime
 
-- `read_at` 保持非阻塞快路径：缓冲区小于 8 字节返回 `EINVAL`；无 tick 返回 `WouldBlock`。阻塞 `read` 由 fd/syscall 层的等待队列承担：在 `!nonblock` 时检查 `ticks`，为 0 则挂入 `waiters`，回调唤醒后重试。
+- `read_at` 保持非阻塞快路径：缓冲区小于 8 字节返回 `EINVAL`；无 tick 返回 `WouldBlock`。阻塞 `read` 由 fd/syscall 层承担：`read_syscall` 捕获 `EAGAIN` 后按 `OpenFile::nonblock` 短路，否则取 context `Arc` 并释放 `OpenFileTable` 锁，再进 `wait_for_ticks`。`wait_for_ticks` 在 `TFD_WAIT` 内检查 `closed`/`ticks`、入队，并在同一临界区 `process_block_prepare` 置 Blocked，锁外 `process_block_finish` 切换；被回调/关闭唤醒后重查，无 tick 则重新入队，禁止丢唤醒与持表锁睡眠。
 - `poll` 只读 `ticks > 0`，不取 `TFD_CTX` 控制锁；否则回调持控制锁唤醒 epoll 时，epoll 的 `check_fd_ready → timerfd::poll` 会回取同一把锁，重新制造自死锁。
 - `gettime` 返回 `(interval, remaining)`；`armed=false` 时 remaining 为 0，对应“已到期但尚未 read 重挂”的 Linux 语义。
-- `set_time` 先在控制面占位，取状态快照，**释放状态锁后再 `hrtimer_cancel`**；等待返回后重新取状态锁，清 ticks、写 interval、启动一次到期。控制面占位保证等待期间对象不被释放。
-- `release` 先 `shutdown` 或 `cancel`，再清 `waker`、ticks、armed；回调退出后才允许 `Arc` 归零。
+- `set_time` 持 `TFD_CTX` 取状态快照并在锁内 `hrtimer_cancel`；回调不取该锁，故等待在途回调不会形成 AB-BA。随后清 ticks、写 interval、启动一次到期，全程由该锁串行化。
+- `release` 持 `TFD_CTX` 先 `hrtimer_shutdown`、置 `closed`、清 ticks/armed，再取走 read 等待者；控制锁释放后 `epoll_forget_token` 并唤醒等待者，回调退出后才允许 `Arc` 归零。
 
 ### 唤醒注册
 
@@ -348,6 +350,7 @@ struct TimerFdFile {
 | 锁类 | 层级 | 作用 | 约束 |
 |---|---:|---|---|
 | `TFD_CTX.tfd_ctx` | 11 | timerfd 控制面：set_time/release 的复合状态 | 回调与 poll 不取；持锁可等待在途回调，不会与回调形成 ABBA |
+| `TFD_WAIT.waiters` | 11 | timerfd 阻塞 read 等待队列 | 入队与置 Blocked 同锁域；锁外切换；回调只取队列不取 `TFD_CTX` |
 | `TIMER_BASE` | 14 | 每 CPU 定时器队列 | 只允许持有一个 base 锁；锁内不执行回调、不等待 |
 | `EPOLL` | 既有层级 | epoll 实例与等待队列 | 回调唤醒时取；不得在持 `TIMER_BASE` 时取 |
 
@@ -355,6 +358,7 @@ struct TimerFdFile {
 
 - 不存在 `TIMER_BASE(cpu0) → TIMER_BASE(cpu1)` 的嵌套。任何跨 CPU 操作都只锁目标 base，释放后再重试或等待。CPU offline 迁移也是“锁源 base 摘除 → 放锁 → 锁目标 base 插入”，不持两把 base 锁。
 - `TFD_CTX.tfd_ctx` 内可以调 `hrtimer_start`/`hrtimer_cancel`（11 → 14）；回调与 `poll` 都不取该锁，因此持锁等待在途回调不会形成 ABBA。该锁是 `IrqSpinLock`，等待窗口内本核中断关闭，`set_time`/`release` 不应被放在中断上下文。
+- `TFD_WAIT.waiters` 只与调度器阻塞原语嵌套：`wait_for_ticks` 在锁内置 Blocked，锁外切换；回调在锁内只取等待项，锁外 `scheduler_unblock`。`release` 在 `TFD_CTX` 之后取 `TFD_WAIT`，不存在反向路径。
 - timerfd 回调不取 `TFD_CTX.tfd_ctx`；`poll` 不取；否则 `epoll_pwake_token` 的间接 poll 会回取控制锁。
 - `hrtimer_run_queues` 在 `TIMER_BASE` 锁外执行回调；周期重挂在清 `in_flight` 前重新取 base 锁，允许回调内调用 `hrtimer_start`，但不允许回调假设自己仍持 base 锁。
 

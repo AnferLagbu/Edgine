@@ -559,8 +559,16 @@ pub fn epoll_forget_token(token: u64) {
     }
     let mut instances = EPOLL_INSTANCES.lock();
     for instance in instances.iter_mut() {
+        let before = instance.interest_list.len();
         instance.interest_list.retain(|i| i.wake_token != token);
         instance.ready_list.retain(|e| e.token != token);
+        if instance.interest_list.len() != before {
+            // 对象关闭后兴趣已消失: 让阻塞在 epoll_wait(-1) 的等待者重扫一次,
+            // 避免最后一个 timerfd 关闭后永远等不到事件.
+            while let Some(item) = instance.wait_queue.wake_one() {
+                crate::privileged::proc::scheduler_unblock(item.pid);
+            }
+        }
     }
 }
 

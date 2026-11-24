@@ -24,6 +24,8 @@
 //!   ├── generation: AtomicU64       (当前激活序号)
 //!   ├── last_expiry_ns: AtomicU64   (上次计划到期时刻, read 重挂基准)
 //!   ├── tfd_ctx: IrqSpinLock<()>    (TFD_CTX 控制面锁; 回调与 poll 不取)
+//!   ├── waiters: IrqSpinLock<WaitQueue> (TFD_WAIT 阻塞 read 等待队列)
+//!   ├── closed: AtomicBool          (最后一个 fd 关闭后拒绝新等待)
 //!   └── wake_token(): 对象地址令牌    (方法而非字段; epoll 兴趣按此唤醒, 不存裸 fd)
 //! ```
 //!
@@ -36,8 +38,9 @@
 //!
 //! # Safety
 //!
-//! - 回调在中断上下文执行 (不可睡眠), 只做原子读写与 `epoll_pwake_token`; 不取
-//!   `TFD_CTX`, 避免 `epoll_pwake_token → 对象 poll` 回取控制锁.
+//! - 回调在中断上下文执行 (不可睡眠), 只做原子读写、取走 read 等待者并
+//!   `scheduler_unblock`、`epoll_pwake_token`; 不取 `TFD_CTX`, 避免
+//!   `epoll_pwake_token → 对象 poll` 回取控制锁.
 //! - 控制面锁在等待 `hrtimer_cancel`/`hrtimer_shutdown` 期间保护 context 不被
 //!   并发 `release`; `Arc` 保证对象本身存活, 锁保证状态操作串行.
 //! - `container_of` 依赖 `timer` 为 `#[repr(C)]` 结构的首字段, 且 context 在
@@ -48,7 +51,14 @@
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crate::privileged::sync::{IrqSpinLock, IrqSpinLockGuard};
+use crate::privileged::ipc::{WaitQueue, WaitQueueItem};
+use crate::privileged::proc::{
+    BlockReason, process_block_finish, process_block_prepare, process_get_current_pid,
+    scheduler_unblock,
+};
+use crate::privileged::sync::{
+    IrqSpinLock, IrqSpinLockGuard, disable_interrupts, restore_interrupts,
+};
 use crate::privileged::timer::{
     HrTimer, HrTimerRestart, StartOutcome, hrtimer_cancel, hrtimer_clock_read, hrtimer_shutdown,
     hrtimer_start,
@@ -103,6 +113,10 @@ pub struct TimerFdContext {
     /// 控制面锁 (`TFD_CTX`；`set_time`/`take_expiry`/`get_time`/`release` 串行;
     /// 回调与 `poll` 不取)
     tfd_ctx: IrqSpinLock<()>,
+    /// 阻塞 `read` 等待队列 (`TFD_WAIT`；回调与 `release` 取出 pid 后唤醒)
+    waiters: IrqSpinLock<WaitQueue>,
+    /// 最后一个 fd 引用关闭; 阻止关闭后新等待者入队
+    closed: AtomicBool,
 }
 
 impl TimerFdContext {
@@ -121,6 +135,8 @@ impl TimerFdContext {
             generation: AtomicU64::new(0),
             last_expiry_ns: AtomicU64::new(0),
             tfd_ctx: IrqSpinLock::named("TFD_CTX.tfd_ctx", ()),
+            waiters: IrqSpinLock::named("TFD_WAIT.waiters", WaitQueue::new()),
+            closed: AtomicBool::new(false),
         });
         if ctx.timer.try_init(timerfd_callback).is_err() {
             debug_assert!(false, "新建 timerfd 上下文的 HrTimer 初始化被拒绝");
@@ -137,6 +153,61 @@ impl TimerFdContext {
     #[must_use]
     pub fn wake_token(&self) -> u64 {
         core::ptr::from_ref(self) as usize as u64
+    }
+
+    /// 阻塞等待至少一个到期计数.
+    ///
+    /// 在 `TFD_WAIT` 内完成"检查 ticks → 入队 → 置 Blocked"三步, 再把锁外
+    /// `process_block_finish` 切换, 与 futex 的锁域顺序一致: 唤醒方在
+    /// `TFD_WAIT` 内看到 Blocked 后才投递, 不会丢唤醒. 被关闭或队列满时返回
+    /// `false`, 调用方保持 `EAGAIN`; 被信号/伪唤醒且无 ticks 时重新入队.
+    pub fn wait_for_ticks(&self) -> bool {
+        let pid = process_get_current_pid();
+        if pid == 0 {
+            return false;
+        }
+        loop {
+            let mut waiters = self.waiters.lock();
+            if self.closed.load(Ordering::Acquire) {
+                return false;
+            }
+            if self.ticks.load(Ordering::Acquire) > 0 {
+                return true;
+            }
+            if waiters.count() >= 4 {
+                return false;
+            }
+            let flags = disable_interrupts();
+            if !process_block_prepare(pid, BlockReason::WaitingForIo, 0) {
+                drop(waiters);
+                restore_interrupts(flags);
+                return false;
+            }
+            if !waiters.add(WaitQueueItem { pid }) {
+                drop(waiters);
+                restore_interrupts(flags);
+                scheduler_unblock(pid);
+                return false;
+            }
+            drop(waiters);
+            restore_interrupts(flags);
+            process_block_finish(pid);
+        }
+    }
+
+    /// 取出全部阻塞 read 等待者 (最多队列容量), 不调用调度器.
+    fn drain_waiters(&self) -> ([u32; 4], usize) {
+        let mut pids = [0u32; 4];
+        let mut count = 0;
+        let mut waiters = self.waiters.lock();
+        while count < pids.len() {
+            let Some(item) = waiters.wake_one() else {
+                break;
+            };
+            pids[count] = item.pid;
+            count += 1;
+        }
+        (pids, count)
     }
 
     /// 设置定时器, 返回设置前的 `(interval_ns, remaining_ns)`
@@ -280,14 +351,21 @@ impl TimerFdContext {
     /// 由对象层在最后一个 fd 引用关闭时调用. 返回后不再有本 context 的回调,
     /// `Arc` 可以安全归零.
     pub fn release(&self) {
-        let _control = ControlGuard::acquire(self);
-        hrtimer_shutdown(&self.timer);
-        self.armed.store(false, Ordering::Release);
-        self.generation.store(0, Ordering::Release);
-        self.ticks.store(0, Ordering::Release);
-        self.interval_ns.store(0, Ordering::Release);
-        self.last_expiry_ns.store(0, Ordering::Release);
+        let (pids, count) = {
+            let _control = ControlGuard::acquire(self);
+            hrtimer_shutdown(&self.timer);
+            self.closed.store(true, Ordering::Release);
+            self.armed.store(false, Ordering::Release);
+            self.generation.store(0, Ordering::Release);
+            self.ticks.store(0, Ordering::Release);
+            self.interval_ns.store(0, Ordering::Release);
+            self.last_expiry_ns.store(0, Ordering::Release);
+            self.drain_waiters()
+        };
         crate::privileged::syscall::epoll::epoll_forget_token(self.wake_token());
+        for pid in &pids[..count] {
+            scheduler_unblock(*pid);
+        }
     }
 }
 
@@ -296,7 +374,12 @@ impl Drop for TimerFdContext {
         // 兜底: 即使对象层漏掉 release, 也不能在仍有 Pending/Running 激活时释放
         // context 内存, 否则回调的 container_of 会悬垂. shutdown 会等待在途回调.
         hrtimer_shutdown(&self.timer);
+        self.closed.store(true, Ordering::Release);
+        let (pids, count) = self.drain_waiters();
         crate::privileged::syscall::epoll::epoll_forget_token(self.wake_token());
+        for pid in &pids[..count] {
+            scheduler_unblock(*pid);
+        }
     }
 }
 
@@ -356,6 +439,11 @@ fn timerfd_callback(timer: &HrTimer, seq: u64) -> HrTimerRestart {
     ctx.generation.store(0, Ordering::Release);
     ctx.ticks.fetch_add(1, Ordering::Release);
 
+    let (pids, count) = ctx.drain_waiters();
+    for pid in &pids[..count] {
+        scheduler_unblock(*pid);
+    }
+
     let wake_token = ctx.wake_token();
     crate::privileged::syscall::epoll::epoll_pwake_token(wake_token);
 
@@ -397,6 +485,28 @@ mod tests {
         let _ = timerfd_callback(&ctx.timer, 9);
         assert!(ctx.poll_ready(), "当前激活回调应计入");
         ctx.release();
+    }
+
+    #[test]
+    fn drain_waiters_returns_all_pids_without_scheduling() {
+        let ctx = TimerFdContext::create();
+        {
+            let mut waiters = ctx.waiters.lock();
+            assert!(waiters.add(WaitQueueItem { pid: 0x1111 }));
+            assert!(waiters.add(WaitQueueItem { pid: 0x2222 }));
+        }
+        let (pids, count) = ctx.drain_waiters();
+        assert_eq!(count, 2, "drain 必须取出全部等待者");
+        assert_eq!((pids[0], pids[1]), (0x1111, 0x2222), "pid 顺序必须保持");
+        assert_eq!(ctx.waiters.lock().count(), 0, "drain 后队列必须为空");
+    }
+
+    #[test]
+    fn closed_context_rejects_new_waiters() {
+        let ctx = TimerFdContext::create();
+        ctx.release();
+        assert!(!ctx.wait_for_ticks(), "关闭后的 context 不得再阻塞");
+        assert_eq!(ctx.waiters.lock().count(), 0, "关闭后不得残留等待者");
     }
 
     #[test]

@@ -6,7 +6,7 @@
   },
   "totals": {
     "pairs": 4,
-    "refs": 17,
+    "refs": 18,
     "privileged": 3,
     "functions": 1
   },
@@ -37,7 +37,7 @@
       "proc",
       "syscall",
       7,
-      2
+      3
     ]
   ]
 }

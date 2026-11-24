@@ -56,7 +56,8 @@
 
 层级 11: VFS / FS（文件系统）
   DCACHE, ICACHE, RAMFS_DATA（文件系统特定锁的代表条目；EGFS / devfs 走各自对象锁）,
-  TFD_CTX.tfd_ctx（timerfd per-context 控制面锁；`timerfd` 回调与 `poll` 不取）
+  TFD_CTX.tfd_ctx（timerfd per-context 控制面锁；`timerfd` 回调与 `poll` 不取）,
+  TFD_WAIT.waiters（timerfd 阻塞 read 等待队列；入队与置 Blocked 同锁域，锁外切换）
 
 层级 12: Network（网络）
   NET_STATE（原 NET_LOCK 与 12 个 static mut 的替代单源）, NET_SNAPSHOT_LOCK,

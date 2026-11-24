@@ -114,7 +114,9 @@ pub fn read_syscall(fd: i32, buf: u64, count: u64) -> Result<usize, Errno> {
             return Ok(crate::functions::intcast::usize_from_i64(ret));
         }
         let errno = Errno::from_ret(ret);
-        if errno == Errno::Eagain && wait_pipe_eagain(fd, true) {
+        if errno == Errno::Eagain
+            && (wait_pipe_eagain(fd, true) || super::timerfd::TimerFdFile::wait_readable(fd))
+        {
             continue;
         }
         return Err(errno);

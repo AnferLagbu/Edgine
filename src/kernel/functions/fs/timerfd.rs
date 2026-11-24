@@ -34,7 +34,8 @@
 //! - settime: `it_value` 全零 = disarm; `TFD_TIMER_ABSTIME` 按绝对时刻解释;
 //!   周期定时器首次到期后由 read 按 `last_expiry + interval` 重挂
 //! - gettime: 返回 `(interval, remaining)`
-//! - read: 返回到期次数 (u64) 并清零; 无到期事件 → `EAGAIN`
+//! - read: 返回到期次数 (u64) 并清零; 无到期事件时 `O_NONBLOCK` 返回
+//!   `EAGAIN`, 阻塞 fd 经 `wait_readable` 睡到下一次到期或关闭
 //! - poll: 到期计数非空 → `IN`
 
 use alloc::sync::Arc;
@@ -143,6 +144,39 @@ impl TimerFdFile {
     #[must_use]
     pub fn new(ctx: Arc<TimerFdContext>) -> Self {
         Self { ctx }
+    }
+
+    /// 取得 context 的独立引用 (调用方须在释放 `OpenFileTable` 锁后再阻塞).
+    fn context(&self) -> Arc<TimerFdContext> {
+        Arc::clone(&self.ctx)
+    }
+
+    /// 阻塞 `read` 遇到 `EAGAIN` 时的等待入口.
+    ///
+    /// 返回 `false` = 非 timerfd / `O_NONBLOCK` / fd 非法 / 关闭 / 队列满,
+    /// 调用方保持 `EAGAIN`. 取到 context 的 `Arc` 后立即离开
+    /// `OpenFileTable` 锁, 再进 `wait_for_ticks`, 禁止持表锁睡眠.
+    pub fn wait_readable(fd: i32) -> bool {
+        let Some(handle_id) =
+            crate::functions::fs::vfs_get_fd_handle(crate::functions::intcast::usize_from_i32(fd))
+        else {
+            return false;
+        };
+        let Some(ctx) = OPEN_FILE_TABLE
+            .with_file(handle_id, |of| {
+                if of.is_nonblock() {
+                    return None;
+                }
+                of.file()
+                    .as_any()
+                    .downcast_ref::<Self>()
+                    .map(TimerFdFile::context)
+            })
+            .flatten()
+        else {
+            return false;
+        };
+        ctx.wait_for_ticks()
     }
 
     /// 对象 → `OpenFileTable` → per-process fd 表; 任一步失败释放 context
@@ -481,6 +515,10 @@ mod tests {
                         .is_some())
                     .unwrap_or(false),
                 "fd 应指向 TimerFdFile 对象"
+            );
+            assert!(
+                !TimerFdFile::wait_readable(crate::functions::intcast::low_i32_from_usize(fd)),
+                "O_NONBLOCK 的 timerfd 不得进入阻塞等待"
             );
             close_fd(fd);
         });
