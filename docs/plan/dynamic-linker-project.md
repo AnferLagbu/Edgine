@@ -117,20 +117,18 @@
 - 已施工（未提交）：`elf::interp_path` 从 `PT_INTERP` 读绝对路径，不改写原映像；functions 层经 VFS 读解释器，`init` 与 `execve` 共用。
 - 已施工（未提交）：`load_elf_from_memory_with_interp` + `load_elf_images` 在同一 `cr3/mm` 装载主映像与解释器；解释器按 ET_DYN 选 mmap 区基址，入口改交解释器；`brk` 只跟主映像，解释器占用 mmap 基址后上抬 `mmap_base`。
 - 保留旧 `proc_exec_replace` / `user_proc_load_elf_from_memory` 为静态单映像包装，新增 `_with_interp` FFI 入口。
-- 仍未做：D3 的 auxv/初始栈；因此动态 musl 目前只完成映射与入口，尚不能真正启动。
+- D3 已施工（未提交）：初始栈写 `argc/argv/envp/auxv`；`AT_PHDR` 由包含 `e_phoff` 的 `PT_LOAD` 反推；`init` 也建立带 auxv 的空参数栈。
 - 装载顺序：先主程序/解释器都成功，再切换；失败回滚，保持旧映像。
 - 设置 `entry = interp_entry`；记录 `main_entry`、`interp_base`、`phdr`。
 - 出口：两个 ELF 的 `PT_LOAD` 都落地，入口是解释器，旧 `PT_INTERP` 改写路径零调用。
 
 ### D3：初始栈与 auxv（3–5 人日）
 
-- 扩展 `setup_user_stack_in_table`：`argc/argv/envp` 之后写 `auxv`，按 16 字节对对齐。
-- 计算 `AT_PHDR`（主程序 phdr 在内存中的地址，不能直接用文件偏移）。
-- `AT_PHENT/AT_PHNUM/AT_BASE/AT_ENTRY/AT_PAGESZ/AT_EXECFN`。
-- `AT_RANDOM`：16 字节随机数写到栈，指针进 auxv；`getrandom` 失败时 fail-closed。
-- `AT_UID/EUID/GID/EGID/AT_SECURE/AT_PLATFORM/AT_HWCAP/AT_CLKTCK`。
-- `AT_SYSINFO_EHDR = 0`（第一波无 VDSO）。
-- 出口：解释器能读到完整 auxv 并定位主程序 phdr。
+- 已施工（未提交）：`setup_user_stack_in_table` 在 `argc/argv/envp` 之后写 auxv 两字对，再放字符串与 16 字节 `AT_RANDOM` 区；`exec` 即使 argv/envp 为空也建栈。
+- 已施工（未提交）：`AT_PHDR` 由包含 `e_phoff` 的 `PT_LOAD` 反推；`AT_PHENT/AT_PHNUM/AT_BASE/AT_ENTRY/AT_PAGESZ/AT_EXECFN/AT_RANDOM` 已写入。
+- 已施工（未提交）：`AT_UID/EUID/GID/EGID/AT_SECURE/AT_HWCAP/AT_CLKTCK/AT_HWCAP2/AT_SYSINFO_EHDR=0` 已写入；`AT_PLATFORM` 尚未写，musl hello 不依赖，glibc 前补。
+- `AT_RANDOM` 当前由 ASLR 栈址 / `cr3` 派生（不在装载期调用时钟或 canary CAS 熵池）；D7 再接 `getrandom`/硬件熵源。
+- 出口：解释器能读到完整 auxv 并定位主程序 phdr；D3 的静态 init/exec 栈已通过 aarch64 验收，x86 仍受既有观测/超时噪声影响。
 
 ### D4：mmap/VFS/syscall 缺口（5–8 人日，可与 D2/D3 并行）
 
