@@ -75,10 +75,19 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 **范围**：TRACK- 23 + 普通 10（分册 9 D-5）。
 **方案**：实现治理（实装对应功能）；过期/无价值 TODO 直接删。独立工程。
 
-### T7：aarch64 syscall 编号空间（P2，预存登记）
+### T7：Linux syscall ABI 兼容（P1，2026-11-24 已裁方向）
 
-**问题**：Linux aarch64 编号 ≠ x86_64（如 aarch64 read=63 vs x86_64 read=0、bpf aarch64=280 vs x86_64=321）；dispatch 当前单编号表（x86_64 基准）。
-**处置**：登记预存——若 aarch64 需跑 Linux 用户态二进制，需架构相关编号表（dispatch 按 target_arch 分派）。当前 aarch64 无用户态 syscall 场景（QEMU 冒烟仅内核），暂不阻塞。
+**问题（三层，不是一张编号表）**：
+1. **编号空间**：dispatch 现为单表（x86_64 基准）；aarch64 Linux 编号 ≠ x86_64（read 63 vs 0、openat 56 vs 257、bpf 280 vs 321）。当前 aarch64 若直接跑 Linux ELF，`openat(56)` 会落进 `SYS_CLONE`、`read(63)` 会落进 `SYS_UNAME`——不是 ENOSYS，而是调错函数。
+2. **陷入约定**：x86_64 走 `rax` 编号 + `rdi/rsi/rdx/r10/r8/r9` 参数；aarch64 现为 `x0` 编号 + `x1-x6` 参数，而 Linux aarch64 是 `x8` 编号 + `x0-x5` 参数。只换编号表仍是错 ABI。
+3. **布局与语义**：errno/flag、`stat/statx`、`sigaction`、`timespec`、`epoll_event`、`sockaddr` 等结构布局与对齐按架构有别；当前多处按 x86_64 尺寸/偏移实现，aarch64 外部二进制不能直接复用。
+
+**2026-11-24 用户裁定**：Edgine 承诺 Linux 用户态 ABI 兼容，作为“外部程序证明 Edgine 可用”的主验收面；采用**单一 Linux ABI + EG 私有扩展段**（500+ 保持 EG 自有），不采用“双 ABI 按 personality 选表”。理由：双 ABI 会把 loader、测试矩阵与支持面翻倍；EG 自有扩展不与 Linux 0-299 冲突，无需第二套基础 ABI。
+
+**落地拆分（施工另开，未开工前不动 dispatch）**：
+- **T7-a 编号表**：按 arch 单源 `SYS_*` 编号（x86_64 / aarch64 各一份），与 Linux UAPI 头对表，未知号一律 `-ENOSYS`。
+- **T7-b 入口与用户库**：aarch64 切 `x8` 编号 + `x0-x5` 参数；`src/user` 汇编、`rt_sigreturn` trampoline（现硬编码 `x0=139`）同步迁移；x86_64 保持 Linux 入口。
+- **T7-c 外部程序验收**：先静态 musl 二进制（hello / busybox），再动态 musl；每条腿断言退出码与输出，不以“能启动”代替“ABI 正确”。glibc/vDSO 面后置。
 
 ## 优先级与依赖
 
@@ -87,11 +96,11 @@ T3 (audit 前置) → T2 (回退层收敛) ─┐
                                    ├→ 完成后 privileged 回退层 = 机制 27 + 哨兵 14（分层收尾）
 T1 (功能实装, 独立并行) ───────────┘
 T4/T5/T6 (审计核实, 低优先)
-T7 (预存登记)
+T7 (Linux ABI 兼容, P1)
 ```
 
 - **依赖**：T3 audit 是 T2 迁移范围的前置筛除；T1 独立可并行。
-- **建议执行序**：T3 audit → T2 批 1-2 → T1 G1-G2（核心组）并行；T4-T6 排后；T7 仅登记。
+- **建议执行序**：T3 audit → T2 批 1-2 → T1 G1-G2（核心组）并行；T4-T6 排后；T7 由预存登记升 P1，与 mm M1 并行起手（T7-a 编号表先做，T7-b 入口随 aarch64 用户库切换）。
 
 ## 验证门槛（每任务）
 
@@ -111,7 +120,7 @@ T7 (预存登记)
   - 丙批审查整改（分册 9 **D-8** 余项 7 项）：**7 项已落地**——A1 用户页表遍历持 `VMM_LOCK`（`41003e87`，原案「`MmStruct.rss_pages` 记账」因 `MmStruct` 无 per-process 归属不可达，经用户裁定改走方案 A：保留 cr3 遍历语义 + 同持 VMM_LOCK；公共 API 面未删）/ A3 OOMD victim 过滤僵尸（`93568c05`）/ A4 `terminated_count` 仅送达才累加（`4614e707`）/ B2 ext2 `i_ctime` 独立取值（`1b852e5d`）/ B4 换行（`3541b63c`）/ exfat 删静默成功覆写（`7079a94e`）/ F9 豁免残留清除（`29bee0a5`）。
   - exFAT 正式任务（D-5 ③）**维持登记**：删除静默成功覆写仅恢复「不支持」语义，三项前置（目录项定位 / 时间戳编解码 / 验证载体）仍缺。
   - R1 台账数字**未变动**（`CRITICAL=7 / HIGH=0 / WARN=0 / INFO=436`）：本批改动为 trait 覆写删除与 import 分组，未增减已分类的零引用 `pub fn`，清单算术保持闭合。
-- [~] T7：aarch64 syscall 编号空间 — **仅登记、不阻塞**（Linux aarch64 编号 ≠ x86_64，如 read 63 vs 0、bpf 280 vs 321；dispatch 现为单编号表 / x86_64 基准，`#[cfg(target_arch="x86_64")]` 分支在 dispatch 内但 `SYS_*` 编号常量仍单源；aarch64 当前无用户态跑 Linux ELF 场景 ⇒ 属架构扩展项、非缺陷。**2026-11-24 重开：先裁 Edgine 是否承诺 aarch64 Linux syscall 编号兼容；若承诺，再设计 per-arch 编号表，未裁定前不改 dispatch**）
+- [~] T7：Linux syscall ABI 兼容 — **方向已裁，施工未开**（2026-11-24 用户裁定：承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有扩展段，不做双 ABI 并存；落地拆 T7-a 按架构编号表 / T7-b aarch64 `x8` 入口与用户库 / T7-c 静态→动态 musl 外部程序验收。当前 dispatch 仍单表、aarch64 仍 `x0` 入口，未开工前不动；T7 由 P2 预存登记升 P1）
 
 ### T3 实施记录（2026-09-15）
 

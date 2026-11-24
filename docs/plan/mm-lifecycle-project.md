@@ -111,8 +111,8 @@
   - **推荐**: B. 理由: 缺口本质是安全面 (I4) 而非功能缺失, A 留下的物理地址回退支路
     仍是可被命中的越权通道 (只要将来任何路径又不装 mm), 与 §4.2「违反不变式 = 重新设计,
     不允许补丁式补救」相悖; 且 A 的死支路在 F9 下迟早要删, 等于把 B 的一半推迟并多付一次回归.
-- **状态**: [~] (2026-11-24 重开：先裁 A/B；M2–M5 仍阻塞于本裁定，未裁前不动 privileged，不提前施工)
-- **详情**: 裁定前不动 privileged. 业界参照: Linux `mm_struct` 由 `exec` 建立
+- **状态**: [X] (2026-11-24 用户裁定 **B 相对完整**；M2–M5 解除 M1 阻塞，按 B 施工)
+- **详情**: 用户选 B；裁定前「不动 privileged」的限制随裁定解除，M2 起按 B 的装载建 mm / exec 换 mm / fork-clone 继承 / 删裸页回退 / 退出释放五段推进。业界参照: Linux `mm_struct` 由 `exec` 建立
   (`begin_new_exec` → `exec_mmap`), fork 走 `dup_mm`, 退出走 `exit_mmap`;
   Asterinas 的 framekernel 把页表机制留 privileged、VMA 策略放 safe 侧 ——
   Edgine 已有同形分层 (`privileged/mm/vma.rs` 机制 + `functions/mm/mmap.rs` 策略),
@@ -123,7 +123,7 @@
 - **描述**: 让每个用户进程自装载起就持有有效 `MmStruct`.
 - **方案**: 按 M1 裁定选 A 或 B 的装载面; 复用既有 `elf_load(mm, …)` 而非另写一套;
   `Process::mm` 的写入点单点化 (与 A-16「CURRENT_MM 改当前任务取」口径一致).
-- **状态**: [] (阻塞于 M1)
+- **状态**: [] (M1 已裁 B，待施工)
 - **详情**: 必须同时决定「段/栈映射由谁建」—— 现装载器直接改页表, 若改走 VMA 面则
   按需分页与 COW 的既有真跑腿 ([aarch64_cow_boot_test.sh](../../scripts/aarch64_cow_boot_test.sh))
   判据须复跑, 不得只靠 host 形状锁.
@@ -132,7 +132,7 @@
 
 - **描述**: 消除「返物理地址给用户态」这条支路.
 - **方案**: B 路径下真删 (无 mm → `Enomem`); A 路径下需给出该支路的合法消费者或同批删.
-- **状态**: [] (阻塞于 M1)
+- **状态**: [] (M1 已裁 B，待施工)
 - **详情**: F9 死代码零容忍 —— 不允许以 `allow(dead_code)` 留置; `munmap_free_pages`
   ([syscall/api.rs:176](../../src/kernel/privileged/syscall/api.rs#L176)) 与
   `mmap_get_mm_or_alloc` 是一对, 必须同批处置, 否则留下「能分配不能释放」的半截链.
