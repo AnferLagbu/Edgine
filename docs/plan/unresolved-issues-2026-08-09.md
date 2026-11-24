@@ -41,6 +41,8 @@
 | **总计** | **~82 项 (2026-08-09 原登记)** | — | **复验订正: 真正仍开放 ≈ 25 项 + 3 项刻意维持** |
 
 > **🔄 2026-11-13 复核订正（结合源码）**: 总览「≈25 开放」为 2026-08-09 登记快照。按本册后续「本轮修复（修遗留工程）」记录 + 源码核验（`boost_priority` 死代码已删、5 项 `SYS_*` 已 dispatch、MIG-003 pl011 已迁 `functions/driver/char/pl011.rs`、B03-LEGACY-001 `cow_handle_fault_locked` 锁变体在位、B06-PRE-002 `FS_CAP_CHOWN` 校验在 `functions/fs/misc.rs`、eg 自有 `TODO/FIXME` 0 处），**实际仍开放收敛为：ISSUE-RT-002（aarch64 GICv3 偶发挂起，代码侧根因 ARE 已显式置位、仅真机复验待硬件）+ ISSUE-RT-003（真实硬件启动验证，待真机）+ 刻意维持 DEC-005（brittle 测试潜在风险，维持现状）**；DEC-041（cast 保留）已由 P-64 清零关闭；F1-F5 归 future-roadmap。
+>
+> **🔄 2026-11-24 重开裁定（仅 ISSUE-RT-002）**: 用户裁定按“内核演进关键路径”重开。范围只含 **ISSUE-RT-002（aarch64 GICv3 挂起）**: 首步 = QEMU `-smp 2` 有界高负载复现 + IRQ 计数/GDB，确认是否仍命中；命中再归因。ISSUE-RT-003（真实硬件）与 F1-F5、刻意维持项继续冻结，不随本条重开。
 > **【本轮复验订正】** 按当前源码状态逐类复核 (原登记数保留上表, 不涂改):
 > - **源码未实现 (TODO)**: 原 ~43 项 → 实测**仅剩 1 项**真实 TODO ([privileged/net/init.rs:601](file:///home/anfer/Code/Edgine/src/kernel/privileged/net/init.rs#L601), 即原 ISSUE-SRC-008, 行号由 `:822` 漂移); 另 1 项 ISSUE-SRC-028 所在文件 `functions/fs/vfs/api.rs` 已不存在 (拆分迁至 `handle.rs`). 其余 41 项全部消除 (源码仅残留 `TRACK-xxxxxx 消除` 说明注释).
 > - **【本轮修复（修遗留工程）】** 上条所述**唯一**真实 TODO **ISSUE-SRC-008 已修复** → 第 2 类源码未实现项**全部清零** (eg 自有代码 0 活跃 TODO).
@@ -846,7 +848,7 @@
 
 ### P0 — 立即关注 (1 项)
 
-- **ISSUE-RT-002** (aarch64 GICv3 挂起) — 用户当前 GDB 调试中
+- **ISSUE-RT-002** (aarch64 GICv3 挂起) — 用户当前 GDB 调试中；**2026-11-24 `[~]` 重开为有界复现（仅 QEMU SMP；真机 RT-003 仍冻结）**
 
 ### P1 — 本季度修复 (5 项)
 

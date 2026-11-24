@@ -111,7 +111,7 @@ T7 (预存登记)
   - 丙批审查整改（分册 9 **D-8** 余项 7 项）：**7 项已落地**——A1 用户页表遍历持 `VMM_LOCK`（`41003e87`，原案「`MmStruct.rss_pages` 记账」因 `MmStruct` 无 per-process 归属不可达，经用户裁定改走方案 A：保留 cr3 遍历语义 + 同持 VMM_LOCK；公共 API 面未删）/ A3 OOMD victim 过滤僵尸（`93568c05`）/ A4 `terminated_count` 仅送达才累加（`4614e707`）/ B2 ext2 `i_ctime` 独立取值（`1b852e5d`）/ B4 换行（`3541b63c`）/ exfat 删静默成功覆写（`7079a94e`）/ F9 豁免残留清除（`29bee0a5`）。
   - exFAT 正式任务（D-5 ③）**维持登记**：删除静默成功覆写仅恢复「不支持」语义，三项前置（目录项定位 / 时间戳编解码 / 验证载体）仍缺。
   - R1 台账数字**未变动**（`CRITICAL=7 / HIGH=0 / WARN=0 / INFO=436`）：本批改动为 trait 覆写删除与 import 分组，未增减已分类的零引用 `pub fn`，清单算术保持闭合。
-- [ ] T7：aarch64 syscall 编号空间 — **仅登记、不阻塞**（Linux aarch64 编号 ≠ x86_64，如 read 63 vs 0、bpf 280 vs 321；dispatch 现为单编号表 / x86_64 基准，`#[cfg(target_arch="x86_64")]` 分支在 dispatch 内但 `SYS_*` 编号常量仍单源；aarch64 当前无用户态跑 Linux ELF 场景 ⇒ 属架构扩展项、非缺陷）
+- [~] T7：aarch64 syscall 编号空间 — **仅登记、不阻塞**（Linux aarch64 编号 ≠ x86_64，如 read 63 vs 0、bpf 280 vs 321；dispatch 现为单编号表 / x86_64 基准，`#[cfg(target_arch="x86_64")]` 分支在 dispatch 内但 `SYS_*` 编号常量仍单源；aarch64 当前无用户态跑 Linux ELF 场景 ⇒ 属架构扩展项、非缺陷。**2026-11-24 重开：先裁 Edgine 是否承诺 aarch64 Linux syscall 编号兼容；若承诺，再设计 per-arch 编号表，未裁定前不改 dispatch**）
 
 ### T3 实施记录（2026-09-15）
 

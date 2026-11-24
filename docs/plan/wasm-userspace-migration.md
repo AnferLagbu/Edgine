@@ -120,7 +120,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - 最小 WASI 子集（proc_exit / fd_write / args_get / environ_get）→ 既有 syscall 翻译。
   - exec 魔数 `\0asm` 派发改指用户态 wasmi 运行时（过渡期与内核解释器共存）。
   - QEMU 双架构跑通 stdio demo。
-- **状态**: [] (载体接线已在新载体上重做; stdio 端到端**暂停**, 阻塞于 mm 生命周期工程)
+- **状态**: [~] (2026-11-24 重开为 active，blocked-by-mm-M1；载体已重做，stdio 端到端在 mm M1 裁定前不提前施工、不判绿)
 - **详情**: 首阶段只最小 WASI，de-risk 优先；全量 WASI 在 P2。
   验收 = 一个 wasi-sdk 编译的 hello 模块在用户态 wasmi 下 stdio 输出正确。
   载体变更注记: P1 的 x86_64 载体腿受 K-08 (< 4 MiB 内核镜像) 阻塞——wasmrun 桩 + 载荷叠在

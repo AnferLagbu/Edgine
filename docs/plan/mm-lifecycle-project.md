@@ -111,7 +111,7 @@
   - **推荐**: B. 理由: 缺口本质是安全面 (I4) 而非功能缺失, A 留下的物理地址回退支路
     仍是可被命中的越权通道 (只要将来任何路径又不装 mm), 与 §4.2「违反不变式 = 重新设计,
     不允许补丁式补救」相悖; 且 A 的死支路在 F9 下迟早要删, 等于把 B 的一半推迟并多付一次回归.
-- **状态**: [] (待用户裁定)
+- **状态**: [~] (2026-11-24 重开：先裁 A/B；M2–M5 仍阻塞于本裁定，未裁前不动 privileged，不提前施工)
 - **详情**: 裁定前不动 privileged. 业界参照: Linux `mm_struct` 由 `exec` 建立
   (`begin_new_exec` → `exec_mmap`), fork 走 `dup_mm`, 退出走 `exit_mmap`;
   Asterinas 的 framekernel 把页表机制留 privileged、VMA 策略放 safe 侧 ——
