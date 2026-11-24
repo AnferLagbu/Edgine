@@ -110,7 +110,7 @@
 - M5（未开始）：exec/fork/exit 生命周期回归、`MmStruct` 释放/refcount、七门槛。
 - 出口：动态链接器能拿到合法 `mmap` 返回值，`mprotect/brk` 不因无 mm 失败。
 
-> M2/M3 的 x86 QEMU 腿仍有既有 `[SCHED] SNAP END` 缺失与 e2e 超时噪声；aarch64 全绿。该噪声不构成本轮 mm 改动的直接证据，也不能据此声称 x86 全绿。
+> M2/M3 的 x86 QEMU 腿曾出现既有 `[SCHED] SNAP END` 缺失与 e2e 超时噪声；2026-11-25 已定位为 x86 信号返回跳板落在 NX 用户栈导致的 `instruction-fetch #PF` 风暴，并改为固定只读可执行跳板页。当前 x86 `[SIG] PASS`、`[tcp] Listening`、TCP/UDP e2e 通过；aarch64 全绿。
 
 ### D2：双映像 ELF 装载（5–7 人日）
 
@@ -124,9 +124,10 @@
 
 ### D3：初始栈与 auxv（3–5 人日）
 
-- 已施工（未提交）：`setup_user_stack_in_table` 在 `argc/argv/envp` 之后写 auxv 两字对，再放字符串与 16 字节 `AT_RANDOM` 区；`exec` 即使 argv/envp 为空也建栈。
-- 已施工（未提交）：`AT_PHDR` 由包含 `e_phoff` 的 `PT_LOAD` 反推；`AT_PHENT/AT_PHNUM/AT_BASE/AT_ENTRY/AT_PAGESZ/AT_EXECFN/AT_RANDOM` 已写入。
-- 已施工（未提交）：`AT_UID/EUID/GID/EGID/AT_SECURE/AT_HWCAP/AT_CLKTCK/AT_HWCAP2/AT_SYSINFO_EHDR=0` 已写入；`AT_PLATFORM` 尚未写，musl hello 不依赖，glibc 前补。
+- 已提交（`adc6903c`）：`setup_user_stack_in_table` 在 `argc/argv/envp` 之后写 auxv 两字对，再放字符串与 16 字节 `AT_RANDOM` 区；`exec` 即使 argv/envp 为空也建栈。
+- 已提交（`adc6903c`）：`AT_PHDR` 由包含 `e_phoff` 的 `PT_LOAD` 反推；`AT_PHENT/AT_PHNUM/AT_BASE/AT_ENTRY/AT_PAGESZ/AT_EXECFN/AT_RANDOM` 已写入。
+- 已提交（`adc6903c`）：`AT_UID/EUID/GID/EGID/AT_SECURE/AT_HWCAP/AT_CLKTCK/AT_HWCAP2/AT_SYSINFO_EHDR=0` 已写入；`AT_PLATFORM` 尚未写，musl hello 不依赖，glibc 前补。
+- 验证（2026-11-25）：x86 e2e 超时真因不是 auxv/栈布局，而是 x86 `rt_sigreturn` 跳板被复制到用户 BSS 栈页；该页 NX，执行跳板触发 instruction-fetch #PF，页故障处理器把它当数据缺页反复映射，制造逐页 TLB shootdown 风暴。修复为固定只读可执行跳板页 `0x500000`（`PRESENT|USER`，不带 NX/WRITABLE），信号返回不再执行栈上代码。
 - `AT_RANDOM` 当前由 ASLR 栈址 / `cr3` 派生（不在装载期调用时钟或 canary CAS 熵池）；D7 再接 `getrandom`/硬件熵源。
 - 出口：解释器能读到完整 auxv 并定位主程序 phdr；D3 的静态 init/exec 栈已通过 aarch64 验收，x86 仍受既有观测/超时噪声影响。
 
