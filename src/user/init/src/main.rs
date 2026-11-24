@@ -8,13 +8,14 @@ use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use userlib::sys::{
     AF_INET, ARCH_GET_FS, ARCH_SET_FS, CLOCK_MONOTONIC, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
     CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID, CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD,
-    CLONE_VM, IPPROTO_TCP, InAddr, O_RDONLY, POLLIN, PollFd, SHUT_WR, SO_REUSEADDR, SOCK_STREAM,
-    SOL_SOCKET, SockaddrIn, TCP_NODELAY, Timespec, accept, arch_prctl, bind, clock_gettime,
-    clone_thread, close_socket, env_chdir, env_chroot, env_pivot_root, exit_group, fork, fs_close,
-    fs_mkdir, fs_open, fs_read, fs_write, futex_wait, futex_wait_bitset, futex_wake, getpid,
-    getsockopt, gettid, kill, listen, nanosleep, pipe_create, poll, proc_exec, proc_exit, recv,
-    rt_sigaction, sched_snapshot, sched_yield, send, setsockopt, shutdown, socket, tgkill,
-    wait_pid, wait_pid_status, wait_pid_status_nohang,
+    CLONE_VM, EAGAIN, IPPROTO_TCP, InAddr, Itimerspec, O_RDONLY, POLLIN, PollFd, SHUT_WR,
+    SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, SockaddrIn, TCP_NODELAY, TFD_NONBLOCK, Timespec, accept,
+    arch_prctl, bind, clock_gettime, clone_thread, close_socket, env_chdir, env_chroot,
+    env_pivot_root, exit_group, fork, fs_close, fs_mkdir, fs_open, fs_read, fs_write, futex_wait,
+    futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep,
+    pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot, sched_yield, send,
+    setsockopt, shutdown, socket, tgkill, timerfd_create, timerfd_settime, wait_pid,
+    wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -66,6 +67,9 @@ pub extern "C" fn _start() -> ! {
     // `pipe()` 会按 0..IPC_MAX_PIPES 索引空 Vec 而越界 panic). 须在 fork 前
     // 同步完成, 避免与 echo 子进程的 fd 分配交错.
     pipe_probe();
+    // timerfd 阻塞 read e2e: 真 syscall 路径走 wait_for_ticks → 调度器阻塞 →
+    // hrtimer 回调唤醒; host 单测覆盖队列语义, 此处覆盖真实睡眠与唤醒.
+    timerfd_probe();
     // 第一次 fork：子进程立即退出，父进程 wait4 收割 —— 收割路径 `remove_and_free`
     // 使 `Process::drop` 运行并销毁其地址空间 (走 destroy_page_table)，该批待释放帧
     // 必然滞留 pending 链（远程核尚未追平代），父进程继续执行
@@ -323,6 +327,78 @@ fn pipe_probe() {
         print_dec(i64::from(close_r));
         print_char(b'/');
         print_dec(i64::from(close_w));
+        print_char(b'\n');
+    }
+}
+
+// ============================================================
+// timerfd 阻塞 read e2e
+// ============================================================
+
+/// 阻塞 read 的到期时间与最小耗时判据 (留足 tick 与调度粒度余量).
+const TIMERFD_DELAY_MS: u64 = 50;
+const TIMERFD_MIN_ELAPSED_MS: u64 = 25;
+
+/// 真 syscall 路径验证 timerfd: 阻塞 read 睡到到期并返回 1 tick,
+/// 非阻塞 fd 在未到期时返回 `EAGAIN`. 失败只打印不退出, 由启动断言判红.
+fn timerfd_probe() {
+    let fd = timerfd_create(CLOCK_MONOTONIC, 0);
+    if fd < 0 {
+        print("[TIMERFD] FAIL: create fd=");
+        print_dec(i64::from(fd));
+        print_char(b'\n');
+        return;
+    }
+    let spec = Itimerspec {
+        interval_sec: 0,
+        interval_nsec: 0,
+        value_sec: i64::try_from(TIMERFD_DELAY_MS / 1_000).unwrap_or(0),
+        value_nsec: i64::try_from((TIMERFD_DELAY_MS % 1_000) * 1_000_000).unwrap_or(0),
+    };
+    let start = monotonic_ms();
+    let set_rc = timerfd_settime(fd, 0, &spec, None);
+    let mut buf = [0u8; 8];
+    let n = fs_read(fd, &mut buf);
+    let elapsed_ms = start
+        .and_then(|start| monotonic_ms().map(|now| now.saturating_sub(start)))
+        .unwrap_or(0);
+    let close_rc = fs_close(fd);
+    let ticks = u64::from_le_bytes(buf);
+    let blocking_ok = set_rc == 0
+        && n == i32::try_from(buf.len()).unwrap_or(i32::MAX)
+        && ticks == 1
+        && elapsed_ms >= TIMERFD_MIN_ELAPSED_MS
+        && close_rc == 0;
+
+    let nonblock_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    let nonblock_rc = if nonblock_fd >= 0 {
+        let rc = fs_read(nonblock_fd, &mut buf);
+        let close = fs_close(nonblock_fd);
+        if close == 0 { rc } else { i32::MIN }
+    } else {
+        i32::MIN
+    };
+    let nonblock_ok = nonblock_rc == -EAGAIN;
+
+    if blocking_ok && nonblock_ok {
+        print("[TIMERFD] PASS: blocking read ticks=1 elapsed_ms=");
+        print_dec(i64::try_from(elapsed_ms).unwrap_or(i64::MAX));
+        print(" nonblock=EAGAIN fd=");
+        print_dec(i64::from(fd));
+        print_char(b'\n');
+    } else {
+        print("[TIMERFD] FAIL: set=");
+        print_dec(i64::from(set_rc));
+        print(" read=");
+        print_dec(i64::from(n));
+        print(" ticks=");
+        print_dec(i64::try_from(ticks).unwrap_or(i64::MAX));
+        print(" elapsed_ms=");
+        print_dec(i64::try_from(elapsed_ms).unwrap_or(i64::MAX));
+        print(" close=");
+        print_dec(i64::from(close_rc));
+        print(" nonblock_rc=");
+        print_dec(i64::from(nonblock_rc));
         print_char(b'\n');
     }
 }

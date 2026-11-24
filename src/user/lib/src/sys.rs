@@ -79,6 +79,8 @@ pub const SYS_PIVOT_ROOT: u64 = 155;
 pub const SYS_CHROOT: u64 = 161;
 pub const SYS_SYNC: u64 = 162;
 pub const SYS_MOUNT: u64 = 165;
+pub const SYS_TIMERFD_CREATE: u64 = 283;
+pub const SYS_TIMERFD_SETTIME: u64 = 286;
 
 // Edgine 私有 syscall (SGEG 400-499, 与内核 syscall/types.rs 权威源对齐)
 pub const SYS_SGEG_LOGIN: u64 = 400;
@@ -113,6 +115,11 @@ pub const O_WRONLY: i32 = 1;
 pub const O_RDWR: i32 = 2;
 pub const O_CREAT: i32 = 0o100;
 pub const O_TRUNC: i32 = 0o1000;
+pub const TFD_NONBLOCK: i32 = 0o4000;
+pub const TFD_CLOEXEC: i32 = 0o200_0000;
+pub const TFD_TIMER_ABSTIME: i32 = 1;
+/// `EAGAIN` (Linux 11): 非阻塞读无数据.
+pub const EAGAIN: i32 = 11;
 
 pub const FT_FILE: u8 = 0;
 pub const FT_DIR: u8 = 1;
@@ -888,6 +895,15 @@ pub struct Timespec {
     pub tv_nsec: i64,
 }
 
+/// `itimerspec` — 与内核 `functions::fs::timerfd::Itimerspec` 同布局.
+#[repr(C)]
+pub struct Itimerspec {
+    pub interval_sec: i64,
+    pub interval_nsec: i64,
+    pub value_sec: i64,
+    pub value_nsec: i64,
+}
+
 #[must_use]
 pub fn truncate(path: &[u8], length: i64) -> i32 {
     // SAFETY: P 类 + 标量 — 路径串取自活借用且 NUL 结尾由调用方保证, 内核
@@ -945,6 +961,38 @@ pub fn nanosleep(req: &Timespec) -> i32 {
             SYS_NANOSLEEP,
             core::ptr::from_ref::<Timespec>(req) as u64,
             0,
+        ))
+    }
+}
+
+/// `timerfd_create(clockid, flags)` — 创建 timerfd.
+#[must_use]
+pub fn timerfd_create(clockid: i32, flags: i32) -> i32 {
+    // SAFETY: S 类 — clockid/flags 均为数值, 内核只创建自己的 timerfd 对象.
+    unsafe {
+        ret_i32(sys2(
+            SYS_TIMERFD_CREATE,
+            arg_bits(i64::from(clockid)),
+            arg_bits(i64::from(flags)),
+        ))
+    }
+}
+
+/// `timerfd_settime(fd, flags, new, old)` — 设置 timerfd 到期.
+///
+/// `old` 为 `None` 时传空指针, 内核不写回旧值.
+#[must_use]
+pub fn timerfd_settime(fd: i32, flags: i32, new: &Itimerspec, old: Option<&mut Itimerspec>) -> i32 {
+    let old_ptr = old.map_or(0, |value| core::ptr::from_mut(value) as u64);
+    // SAFETY: T 类 — new/old 指针分别取自活借用与可选活借用; 内核
+    // timerfd_settime_syscall 先校验用户区间再读 new、按需写 old, 不越界.
+    unsafe {
+        ret_i32(sys4(
+            SYS_TIMERFD_SETTIME,
+            arg_bits(i64::from(fd)),
+            arg_bits(i64::from(flags)),
+            core::ptr::from_ref(new) as u64,
+            old_ptr,
         ))
     }
 }

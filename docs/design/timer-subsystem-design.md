@@ -389,7 +389,7 @@ struct TimerFdFile {
 5. **无分配**：入队、取消、分发、Periodic 重挂的路径没有堆分配；回调路径没有锁分配或动态容器增长。
 6. **timerfd 不风暴**：周期 timerfd 在无人 `read` 时只产生首次到期，不持续重挂；`read` 后按 interval 重挂。
 7. **timerfd 生命周期**：`dup`/`close`/`fork` 下对象引用正确；fd 复用不会误唤醒新的 timerfd；多个 epoll 兴趣都能被唤醒。
-8. **锁序**：`TFD_CTX.tfd_ctx` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
+8. **锁序**：`TFD_CTX.tfd_ctx` / `TFD_WAIT.waiters` / `TIMER_BASE` 进入锁序表；回调不直接取控制锁；死锁矩阵 0 问题；锁序文档与实际一致。
 9. **可扩展性**：多核并发 start/cancel/read 的基准不随全局锁串行；单 CPU 活跃 timer 增加时入队/取消保持对数级，不出现全队列扫描。
 10. **旧语义回归**：itimer、POSIX timer、网络 poll timer、`hrtimer_sleep` 在 per-CPU 队列上保持原有可观察行为。
 11. **容量边界**：`cpu_count > MAX_CPUS` 时启动明确拒绝并给出可诊断错误；不超过时每 CPU base 正常初始化；若未来提高上限，需重测静态 per-CPU 数组的内存与启动时间，不能静默截断 CPU。
@@ -399,8 +399,6 @@ struct TimerFdFile {
 
 - **有序结构实现成本**：侵入式红黑树是无分配 O(log n) 的正解，但 Rust 侵入式树的安全边界与调试成本高。若首轮实现降级为有序侵入链表，只能作为过渡，不得把 O(n) 链表写成终态。
 - **回调预算值**：预算过小会拉长到期延迟，过大则硬中断占用上升；需用真实 timerfd/网络负载标定，不在设计文档里拍一个未经测量的数。
-- **epoll 唤醒 token 化**：timerfd 的多兴趣唤醒依赖 epoll 从“数值 fd 键”迁移到“对象/兴趣 token”。这是跨子系统前置条件，未完成前 timerfd 终态只能算“对象化完成、唤醒安全未完成”。
-- **阻塞 read 接入**：`File::read_at` 当前是非阻塞快路径；阻塞语义需要 syscall/fd 层与 `WaitQueue` 对接。若暂不接入，应明确保留 `WouldBlock` 行为，不能宣称 Linux 完整阻塞语义。
 - **`CLOCK_REALTIME`**：需要时钟基抽象与实时钟偏移维护；在此之前显式 `ENOTSUP` 是终态的一部分，不是临时缺陷。它不是 CPU 硬件可用性门槛，但会影响 Linux 用户态兼容度。
 - **suspend/resume**：民用笔记本的睡眠/唤醒需要冻结并恢复每 CPU `TimerBase`、重新装填空闲到期、处理休眠期间错过的 monotonic 时间。本终态不承诺 suspend；若产品目标包含笔记本睡眠，必须另立时钟恢复协议。
 - **CPU 上下线的平台接入**：timer 侧协议已定义（quiesce/强制迁移/online）；仍需平台在 offline 前调用 quiesce、保持 target 在线、串行化 offline。未接入前不能宣称整机支持 CPU offline。物理带电插拔不在本设计范围，其风险与逻辑上下线不同。
