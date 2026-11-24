@@ -204,6 +204,10 @@ pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x68, 0x11, 0x80, 0xD2, 0x01, 0x00, 0
 /// sigreturn trampoline 大小
 pub const SIGRETURN_TRAMPOLINE_SIZE: usize = SIGRETURN_TRAMPOLINE.len();
 
+/// x86_64 固定跳板页虚拟地址 (USER_CODE_BASE 之后、heap base 0x600000 之前).
+#[cfg(target_arch = "x86_64")]
+pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x500000;
+
 /// 信号栈帧总大小 (含帧头与 trampoline)
 pub const SIGNAL_FRAME_TOTAL_SIZE: usize = <ArchUserFrame as UserFrame>::FRAME_HEADER_SIZE
     + core::mem::size_of::<ArchSignalFrame>()
@@ -965,12 +969,20 @@ fn install_user_signal_frame<F: UserFrame>(
     frame_rsp: u64,
     sigframe: &ArchSignalFrame,
     handler_addr: u64,
+    user_cr3: u64,
 ) -> bool {
     // P0-I-38 修复: 信号栈帧写入走异常表保护版 copy_to_user,
     // 用户栈任意一页失效 (munmap/越界) 时回滚信号投递
     // (恢复原始栈指针 + 不修改异常帧), 进程继续运行.
     let sigframe_addr = frame_rsp + F::FRAME_HEADER_SIZE as u64;
+    #[cfg(target_arch = "x86_64")]
+    let trampoline_addr = SIGRETURN_TRAMPOLINE_ADDR;
+    #[cfg(not(target_arch = "x86_64"))]
     let trampoline_addr = sigframe_addr + core::mem::size_of::<ArchSignalFrame>() as u64;
+    #[cfg(target_arch = "x86_64")]
+    if !super::user_proc::map_sigreturn_trampoline(user_cr3) {
+        return false;
+    }
     // SAFETY: 入口契约要求 `sigframe` 指向本函数可读的信号帧 (`ArchSignalFrame`),
     // 长度恰为 `size_of::<ArchSignalFrame>()`; `from_raw_parts` 只借用该字节视图
     // 供 copy_to_user 读取, 不写.
@@ -981,30 +993,32 @@ fn install_user_signal_frame<F: UserFrame>(
         )
     };
 
-    let mut ok = true;
+    let mut header_ok = true;
     if F::FRAME_HEADER_SIZE > 0 {
         let ret_addr_bytes = trampoline_addr.to_ne_bytes();
-        ok = crate::privileged::mm::copy_to_user(
+        header_ok = crate::privileged::mm::copy_to_user(
             frame_rsp,
             &ret_addr_bytes[..F::FRAME_HEADER_SIZE],
             F::FRAME_HEADER_SIZE,
         )
         .is_ok();
     }
-    ok &= crate::privileged::mm::copy_to_user(
+    let frame_ok = crate::privileged::mm::copy_to_user(
         sigframe_addr,
         sigframe_bytes,
         core::mem::size_of::<ArchSignalFrame>(),
     )
     .is_ok();
-    ok &= crate::privileged::mm::copy_to_user(
+    #[cfg(target_arch = "x86_64")]
+    let tramp_ok = true;
+    #[cfg(not(target_arch = "x86_64"))]
+    let tramp_ok = crate::privileged::mm::copy_to_user(
         trampoline_addr,
         &SIGRETURN_TRAMPOLINE,
         SIGRETURN_TRAMPOLINE_SIZE,
     )
     .is_ok();
-
-    if !ok {
+    if !(header_ok && frame_ok && tramp_ok) {
         // 栈帧写入失败 (用户栈 munmap/越界): 不修改异常帧,
         // 也不投递信号, 进程继续运行等待下次信号投递窗口.
         return false;
@@ -1038,7 +1052,8 @@ fn deliver_user_handler<F: UserFrame>(
     };
 
     let sigframe = frame.snapshot(sig);
-    install_user_signal_frame::<F>(frame, frame_rsp, &sigframe, handler_addr)
+    let user_cr3 = proc.cr3.load(Ordering::Acquire);
+    install_user_signal_frame::<F>(frame, frame_rsp, &sigframe, handler_addr, user_cr3)
 }
 
 /// 从用户栈上的信号栈帧恢复异常帧 (`rt_sigreturn` 的两架构共享实现).
