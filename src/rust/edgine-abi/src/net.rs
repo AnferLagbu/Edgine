@@ -2,7 +2,7 @@
 //!
 //! 值域为 Edgine 私有功能段 `812-814`：Linux 的 `getaddrinfo` 是 libc 函数
 //! (经 socket/sendto/recvfrom 访问 DNS, 并读 resolv.conf / hosts / NSS), 并无
-//! 对应的系统调用号. 占用 0-299 的 Linux 号位既无兼容收益, 又破坏"0-299 ==
+//! 对应的系统调用号. 占用 Linux 公开号位既无兼容收益, 又破坏"Linux 公开段 ==
 //! Linux"的承重不变式, 故按私有段取值 (与 `edgine_abi::wasm` 同构).
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`privileged::net::syscall`
@@ -15,7 +15,7 @@
 /// `out_ptr`: u64 指向 [`EgAddrInfo`]). 成功返 0 并写出结果; 名字无法解析
 /// 返 `-ENOENT`; 用户缓冲非法返 `-EFAULT`; 名字非 UTF-8 返 `-EINVAL`.
 /// 解析采 IPv6 优先 (AAAA 成功返 V6, 否则 A 返 V4), 与内核 `dns_resolve` 同源.
-pub const EG_GETADDRINFO: u64 = 812;
+pub const EG_GETADDRINFO: u64 = crate::linux_syscall::PRIVATE_BASE + 812;
 
 /// 地址族标签: IPv4 (`AF_INET`), 与 Linux `asm-generic` 值域一致.
 pub const EG_AF_INET: u32 = 2;

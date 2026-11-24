@@ -364,16 +364,23 @@ fn test_thread_leg_is_judged_after_u1_fix() {
         "[UACCESS] EFAULT 回归锁未接门禁 —— 只读 TID 回写必须由 UEFI 真跑钉住"
     );
     // 登记册: U-1 已闭, U-2 仍开放 (不因 U-1 修复自动关闭).
+    // U-2 可处于 `[]` (开放) 或 `[~]` (2026-11-24 重开的有界复现中), 但不得 `[x]`.
     let doc = read(REGISTER_DOC);
-    for (entry, want) in [("## U-1", "[x]"), ("## U-2", "[]")] {
-        let start = doc.find(entry).unwrap();
-        let body = &doc[start + entry.len()..];
-        let end = body.find("\n## ").unwrap_or(body.len());
-        assert!(
-            body[..end].contains(&format!("- **状态**: {want}")),
-            "登记册 {entry} 的状态不是 {want:?} —— 与门禁判据口径不一致"
-        );
-    }
+    let u1_start = doc.find("## U-1").unwrap();
+    let u1_body = &doc[u1_start + "## U-1".len()..];
+    let u1_end = u1_body.find("\n## ").unwrap_or(u1_body.len());
+    assert!(
+        u1_body[..u1_end].contains("- **状态**: [x]"),
+        "登记册 U-1 的状态不是 \"[x]\" —— 与门禁判据口径不一致"
+    );
+    let u2_start = doc.find("## U-2").unwrap();
+    let u2_body = &doc[u2_start + "## U-2".len()..];
+    let u2_end = u2_body.find("\n## ").unwrap_or(u2_body.len());
+    let u2_block = &u2_body[..u2_end];
+    assert!(
+        u2_block.contains("- **状态**: []") || u2_block.contains("- **状态**: [~]"),
+        "登记册 U-2 的状态不是 \"[]\"/\"[~]\" —— 不得因 U-1 修复自动关闭"
+    );
     assert!(
         doc.contains("group_exit_leg") && doc.contains("reap-timeout"),
         "登记册须点名落点与签名, 否则日后无从对账是否同一缺陷"

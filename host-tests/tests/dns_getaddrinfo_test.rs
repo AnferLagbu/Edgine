@@ -29,7 +29,10 @@ const USER_SYS: &str = "../src/user/lib/src/sys.rs";
 /// ABI 单源: 编号 812 内核/ABI 同源, 地址族常量与 Linux `AF_INET`/`AF_INET6` 一致.
 #[test]
 fn abi_numbers_are_single_source() {
-    assert_eq!(ktypes::EG_GETADDRINFO, 812);
+    assert_eq!(
+        ktypes::EG_GETADDRINFO,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 812
+    );
     assert_eq!(abi::EG_GETADDRINFO, ktypes::EG_GETADDRINFO);
     assert_eq!(abi::EG_AF_INET, 2);
     assert_eq!(abi::EG_AF_INET6, 10);

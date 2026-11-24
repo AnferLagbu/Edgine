@@ -27,7 +27,7 @@ pub const SYS_SCHED_GETATTR: u64 = 315;
 /// 以及每线程组的可运行成员 lag 汇总. procfs 尚未接 VFS, 观测面走内核串口
 /// 输出; 系统调用返回本次上报的在线 CPU 数, 用于用户态确认导出已发生.
 /// 该调用只读调度账目, 不改变任何调度状态.
-pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = 464;
+pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = crate::linux_syscall::PRIVATE_BASE + 464;
 
 /// 普通分时调度策略（Linux `SCHED_NORMAL` 的同义名）.
 pub const SCHED_OTHER: u32 = 0;

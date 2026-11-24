@@ -345,8 +345,14 @@ fn eevdf_observation_counters_accumulate() {
 /// ABI 单源: 观测 syscall 编号 464 由 `edgine-abi` 定义, 内核出口同值.
 #[test]
 fn sched_snapshot_syscall_number_is_single_sourced() {
-    assert_eq!(abi::SYS_SGEG_SCHED_SNAPSHOT, 464);
-    assert_eq!(ktypes::SYS_SGEG_SCHED_SNAPSHOT, 464);
+    assert_eq!(
+        abi::SYS_SGEG_SCHED_SNAPSHOT,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 464
+    );
+    assert_eq!(
+        ktypes::SYS_SGEG_SCHED_SNAPSHOT,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 464
+    );
     assert_eq!(
         ktypes::SYS_SGEG_SCHED_SNAPSHOT,
         abi::SYS_SGEG_SCHED_SNAPSHOT,

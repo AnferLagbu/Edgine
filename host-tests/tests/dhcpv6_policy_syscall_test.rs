@@ -30,11 +30,12 @@ use edgine_abi::dhcpv6 as abi;
 
 const USER_SYS: &str = "../src/user/lib/src/sys.rs";
 
-/// ABI 单源: 编号 816/817 内核/ABI 同源 (私有段, 紧邻 DNS 812-814 / `io_uring` 815).
+/// ABI 单源: 旧号 816/817 已平移到 `PRIVATE_BASE`, 内核/ABI 同源.
 #[test]
 fn abi_numbers_are_single_source() {
-    assert_eq!(ktypes::EG_DHCPV6_SET_POLICY, 816);
-    assert_eq!(ktypes::EG_DHCPV6_GET_POLICY, 817);
+    let base = edgine_abi::linux_syscall::PRIVATE_BASE;
+    assert_eq!(ktypes::EG_DHCPV6_SET_POLICY, base + 816);
+    assert_eq!(ktypes::EG_DHCPV6_GET_POLICY, base + 817);
     assert_eq!(abi::EG_DHCPV6_SET_POLICY, ktypes::EG_DHCPV6_SET_POLICY);
     assert_eq!(abi::EG_DHCPV6_GET_POLICY, ktypes::EG_DHCPV6_GET_POLICY);
 }

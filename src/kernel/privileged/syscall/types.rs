@@ -18,20 +18,28 @@
 /// Syscall 类型定义和常量
 ///
 /// 编号空间分配 (DECISION-037 + edgine-naming-standpoint.md):
-///   0-299   : Linux 兼容编号 (SYS_*), 直接使用 Linux 标准编号
-///   300-399 : 保留
-///   400-499 : SGEG 私有 syscall (避开 424-452 的 Linux 现代扩展区)
-///   500-599 : 进程 / 内存 / 文件基础
-///   600-699 : 网络 / IPC
-///   700-799 : 设备 / 系统
-///   800-899 : 扩展
+///   0-499   : Linux 公开编号 (按各架构 Linux UAPI 使用; 0-466 已分配,
+///             499 与之后预留给 Linux 增长)
+///   0x4000_0000-0x4000_1FFF : EG/SGEG 私有 (含 aarch64 遗留兼容段)
+///
+/// 双架构只统一"规则", 不统一"编号": x86_64 与 aarch64 各自使用本架构
+/// Linux UAPI 编号; 内核内部 canonical 统一为 x86_64 编号, 由 `edgine-abi`
+/// 的边界表在 aarch64 入口/用户库门翻译。
 pub const SYSCALL_INT: u8 = 0x80;
 
-/// syscall 编号空间上界 (非 dispatch 数组边界 — dispatch 全为 match, 无 `SYSCALL_TABLE`).
-///
-/// 覆盖全部 EG_* 扩展区 (0-899), 与 `EG_FTRACE_ENABLE = 800` 等 800 段常量错开,
-/// 避免编号常量语义误导.
-pub const MAX_SYSCALLS: u64 = 900;
+/// 是否为 Linux 公开编号 (预留私有基址以下全部空间给 Linux 增长).
+#[inline]
+#[must_use]
+pub const fn is_linux_nr(nr: u64) -> bool {
+    nr < edgine_abi::linux_syscall::PRIVATE_BASE
+}
+
+/// 是否为 EG/SGEG 私有编号 (高位私有段, 含 aarch64 遗留兼容段).
+#[inline]
+#[must_use]
+pub const fn is_private_nr(nr: u64) -> bool {
+    nr >= edgine_abi::linux_syscall::PRIVATE_BASE && nr < edgine_abi::linux_syscall::PRIVATE_END
+}
 
 /// functions 层未处理 syscall 的返回码 (=-ENOSYS), 供 privileged 回退处理.
 ///
@@ -269,9 +277,9 @@ pub const SYS_GETEUID: u64 = 107;
 pub const SYS_GETEGID: u64 = 108;
 
 /// `SYS_SETEUID` — 设置有效用户 ID (EG 私有编号)
-pub const SYS_SETEUID: u64 = 597; // EG 私有 (x86_64 无独立 seteuid syscall, 与 EG_SETEUID 同值)
+pub const SYS_SETEUID: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 597; // EG 私有 (x86_64 无独立 seteuid syscall, 与 EG_SETEUID 同值)
 /// `SYS_SETEGID` — 设置有效组 ID (EG 私有编号)
-pub const SYS_SETEGID: u64 = 598; // EG 私有 (x86_64 无独立 setegid syscall, 与 EG_SETEGID 同值)
+pub const SYS_SETEGID: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 598; // EG 私有 (x86_64 无独立 setegid syscall, 与 EG_SETEGID 同值)
 /// `SYS_SETREUID` — 设置真实与有效用户 ID
 pub const SYS_SETREUID: u64 = 113;
 /// `SYS_SETREGID` — 设置真实与有效组 ID
@@ -600,105 +608,105 @@ pub const SYS_SETHOSTNAME: u64 = 170;
 /// `SYS_SETDOMAINNAME` — 设置域名
 pub const SYS_SETDOMAINNAME: u64 = 171;
 
-// ==================== SGEG 私有 syscall (400-499, 避开 Linux 424-452) ====================
+// ==================== SGEG 私有 syscall (旧号 400-499, 已平移到高位段) ====================
 //
-// 编号空间: 400-423 + 453-499. 424-452 保留给 Linux 现代扩展 syscall
-// (pidfd_send_signal/io_uring/clone3/close_range/openat2/faccessat2/fchmodat2 等),
-// 避免 Edgine 私有编号与未来 Linux ABI 冲突 (DECISION-037: 500+ 与 Linux 错开).
+// 编号空间: `PRIVATE_BASE + 400..=499` (旧 SGEG 400-499 整体平移).
+// Linux 公开编号空间全部让给 Linux; 旧号不再作为 ABI, 不提供别名.
+// (DECISION-037: 私有调用统一走 `0x4000_0000` 起的高位段).
 
 // ---------- 400-413: 认证 / 身份 ----------
 /// `SYS_SGEG_LOGIN` — SGEG 私有: 用户登录
-pub const SYS_SGEG_LOGIN: u64 = 400;
+pub const SYS_SGEG_LOGIN: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 400;
 /// `SYS_SGEG_LOGOUT` — SGEG 私有: 用户登出
-pub const SYS_SGEG_LOGOUT: u64 = 401;
+pub const SYS_SGEG_LOGOUT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 401;
 /// `SYS_SGEG_CREATE_IDENTITY` — SGEG 私有: 创建身份
-pub const SYS_SGEG_CREATE_IDENTITY: u64 = 402;
+pub const SYS_SGEG_CREATE_IDENTITY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 402;
 /// `SYS_SGEG_DELETE_IDENTITY` — SGEG 私有: 删除身份
-pub const SYS_SGEG_DELETE_IDENTITY: u64 = 403;
+pub const SYS_SGEG_DELETE_IDENTITY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 403;
 /// `SYS_SGEG_IDENTITY_INFO` — SGEG 私有: 查询身份信息
-pub const SYS_SGEG_IDENTITY_INFO: u64 = 404;
+pub const SYS_SGEG_IDENTITY_INFO: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 404;
 /// `SYS_SGEG_CHANGE_PASSWORD` — SGEG 私有: 修改身份密码
-pub const SYS_SGEG_CHANGE_PASSWORD: u64 = 405;
+pub const SYS_SGEG_CHANGE_PASSWORD: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 405;
 /// `SYS_SGEG_VERIFY_PASSWORD` — SGEG 私有: 校验身份密码
-pub const SYS_SGEG_VERIFY_PASSWORD: u64 = 406;
+pub const SYS_SGEG_VERIFY_PASSWORD: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 406;
 /// `SYS_SGEG_CREATE_FIRST` — SGEG 私有: 创建首个身份 (系统初始化)
-pub const SYS_SGEG_CREATE_FIRST: u64 = 407;
+pub const SYS_SGEG_CREATE_FIRST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 407;
 /// `SYS_SGEG_GRANT` — SGEG 私有: 授予能力
-pub const SYS_SGEG_GRANT: u64 = 408;
+pub const SYS_SGEG_GRANT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 408;
 /// `SYS_SGEG_REVOKE` — SGEG 私有: 撤销能力
-pub const SYS_SGEG_REVOKE: u64 = 409;
+pub const SYS_SGEG_REVOKE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 409;
 /// `SYS_SGEG_CHECK_CAP` — SGEG 私有: 检查单项能力
-pub const SYS_SGEG_CHECK_CAP: u64 = 410;
+pub const SYS_SGEG_CHECK_CAP: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 410;
 /// `SYS_SGEG_GET_CAPS` — SGEG 私有: 获取能力集
-pub const SYS_SGEG_GET_CAPS: u64 = 411;
+pub const SYS_SGEG_GET_CAPS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 411;
 /// `SYS_SGEG_GET_PWM` — SGEG 私有: 获取当前登录身份的 PWM 标识
-pub const SYS_SGEG_GET_PWM: u64 = 412;
+pub const SYS_SGEG_GET_PWM: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 412;
 /// `SYS_SGEG_SET_PWM` — SGEG 私有: 设置当前登录身份的 PWM 标识
-pub const SYS_SGEG_SET_PWM: u64 = 413;
+pub const SYS_SGEG_SET_PWM: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 413;
 // 分册 9 批次 4: 域级行为门控 (DomainFlags) 查询 / 设置
 /// `SYS_SGEG_GET_DOMAIN_FLAGS` — SGEG 私有: 读取域级行为门控标志
-pub const SYS_SGEG_GET_DOMAIN_FLAGS: u64 = 414;
+pub const SYS_SGEG_GET_DOMAIN_FLAGS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 414;
 /// `SYS_SGEG_SET_DOMAIN_FLAGS` — SGEG 私有: 设置域级行为门控标志
-pub const SYS_SGEG_SET_DOMAIN_FLAGS: u64 = 415;
+pub const SYS_SGEG_SET_DOMAIN_FLAGS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 415;
 // 416-419: 保留
 
 // ---------- 420-423: 存储设备 ----------
 /// `SYS_SGEG_DISK_LIST` — SGEG 私有: 列出存储设备
-pub const SYS_SGEG_DISK_LIST: u64 = 420;
+pub const SYS_SGEG_DISK_LIST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 420;
 /// `SYS_SGEG_DISK_INFO` — SGEG 私有: 查询存储设备信息
-pub const SYS_SGEG_DISK_INFO: u64 = 421;
+pub const SYS_SGEG_DISK_INFO: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 421;
 /// `SYS_SGEG_DISK_FORMAT` — SGEG 私有: 格式化存储设备
-pub const SYS_SGEG_DISK_FORMAT: u64 = 422;
+pub const SYS_SGEG_DISK_FORMAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 422;
 /// `SYS_SGEG_DISK_PARTITION` — SGEG 私有: 对存储设备分区
-pub const SYS_SGEG_DISK_PARTITION: u64 = 423;
+pub const SYS_SGEG_DISK_PARTITION: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 423;
 
 // ---------- 453-463: 存储扩展 + 进程管理 + 系统信息 (避开 424-452) ----------
 /// `SYS_SGEG_DISK_INSTALL` — SGEG 私有: 将系统安装到存储设备
-pub const SYS_SGEG_DISK_INSTALL: u64 = 453;
+pub const SYS_SGEG_DISK_INSTALL: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 453;
 /// `SYS_SGEG_FAT_FORMAT` — SGEG 私有: 以 FAT 格式化存储设备
-pub const SYS_SGEG_FAT_FORMAT: u64 = 454;
+pub const SYS_SGEG_FAT_FORMAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 454;
 /// `SYS_SGEG_PROC_LIST` — SGEG 私有: 列出进程
-pub const SYS_SGEG_PROC_LIST: u64 = 455;
+pub const SYS_SGEG_PROC_LIST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 455;
 /// `SYS_SGEG_PROC_SETPRI` — SGEG 私有: 设置进程优先级
-pub const SYS_SGEG_PROC_SETPRI: u64 = 456;
+pub const SYS_SGEG_PROC_SETPRI: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 456;
 /// `SYS_SGEG_PROC_SLEEP` — SGEG 私有: 让指定进程休眠
-pub const SYS_SGEG_PROC_SLEEP: u64 = 457;
+pub const SYS_SGEG_PROC_SLEEP: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 457;
 /// `SYS_SGEG_PROC_CPUTIME` — SGEG 私有: 查询进程 CPU 时间
-pub const SYS_SGEG_PROC_CPUTIME: u64 = 458;
+pub const SYS_SGEG_PROC_CPUTIME: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 458;
 /// `SYS_SGEG_GETHOSTNAME` — SGEG 私有: 获取主机名
-pub const SYS_SGEG_GETHOSTNAME: u64 = 459;
+pub const SYS_SGEG_GETHOSTNAME: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 459;
 /// `SYS_SGEG_SETHOSTNAME` — SGEG 私有: 设置主机名
-pub const SYS_SGEG_SETHOSTNAME: u64 = 460;
+pub const SYS_SGEG_SETHOSTNAME: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 460;
 /// `SYS_SGEG_BOOT_CHECK` — SGEG 私有: 检查启动完整性
-pub const SYS_SGEG_BOOT_CHECK: u64 = 461;
+pub const SYS_SGEG_BOOT_CHECK: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 461;
 /// `SYS_SGEG_REBOOT` — SGEG 私有: 重启系统
-pub const SYS_SGEG_REBOOT: u64 = 462;
+pub const SYS_SGEG_REBOOT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 462;
 /// `SYS_SGEG_HOTPLUG_STATUS` — SGEG 私有: 查询热插拔状态
-pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
+pub const SYS_SGEG_HOTPLUG_STATUS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 463;
 /// `SYS_SGEG_SCHED_SNAPSHOT` — SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3)
 pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = edgine_abi::sched::SYS_SGEG_SCHED_SNAPSHOT;
 
 // ==================== 帧缓冲设备 (Edgine 私有, 与 EG_FB_* 同值) ====================
 /// `SYS_FB_OPEN` — 打开帧缓冲设备
-pub const SYS_FB_OPEN: u64 = 720;
+pub const SYS_FB_OPEN: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 720;
 /// `SYS_FB_MMAP` — 将帧缓冲映射到用户态
-pub const SYS_FB_MMAP: u64 = 721;
+pub const SYS_FB_MMAP: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 721;
 /// `SYS_FB_RELEASE` — 释放帧缓冲设备
-pub const SYS_FB_RELEASE: u64 = 722;
+pub const SYS_FB_RELEASE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 722;
 
 // ============================================================================
-// Edgine 原生 syscall 编号 (500+)
+// Edgine 原生 syscall 编号 (旧号 500-899, 已平移到高位段)
 //
 // 遵循 edgine-naming-standpoint.md:
-//   500-599 : 进程 / 内存 / 文件基础
-//   600-699 : 网络 / IPC
-//   700-799 : 设备 / 系统
-//   800-899 : 扩展
+//   旧 500-599 : 进程 / 内存 / 文件基础
+//   旧 600-699 : 网络 / IPC
+//   旧 700-799 : 设备 / 系统
+//   旧 800-899 : 扩展
 //
 // 编号原则:
 //   - 不抄任何 OS 编号
 //   - 按功能分区, 每区留扩展空间
-//   - 0-299 直接使用 Linux 标准编号 (SYS_*)
+//   - Linux 公开编号 (0-499) 按各架构 Linux UAPI 使用, 私有号不再占公开段
 // ============================================================================
 
 // ---------- 500-509: Core I/O ----------
@@ -749,13 +757,13 @@ pub const SYS_REMOVEXATTR: u64 = 197;
 
 // ---------- 730-739: 设备固件加载 ----------
 /// `EG_FW_LOAD` — 从用户态路径加载固件并附着到设备树节点
-pub const EG_FW_LOAD: u64 = 730;
+pub const EG_FW_LOAD: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 730;
 /// `EG_FW_GET` — 按偏移拷贝固件内容到用户态缓冲
-pub const EG_FW_GET: u64 = 731;
+pub const EG_FW_GET: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 731;
 /// `EG_FW_GET_INFO` — 拷贝固件信息到用户态
-pub const EG_FW_GET_INFO: u64 = 732;
+pub const EG_FW_GET_INFO: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 732;
 /// `EG_FW_DETACH` — 移除设备树节点上的固件
-pub const EG_FW_DETACH: u64 = 733;
+pub const EG_FW_DETACH: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 733;
 
 // ---------- 740-745: POSIX Timer ----------
 // 创建 per-process 定时器 (`timer_create`)
@@ -768,7 +776,7 @@ pub const EG_FW_DETACH: u64 = 733;
 // ---------- 746-747: 熵源 / Stack Canary (P1 #14) ----------
 /// 从内核熵源填充用户 buffer (Linux getrandom 兼容)
 /// 读取当前进程 8 字节 stack canary (低字节恒为 0)
-pub const EG_GET_CANARY: u64 = 747;
+pub const EG_GET_CANARY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 747;
 
 // ---------- 760-765: 内存建议与锁定 (madvise / mlock, P1 #15) ----------
 // 设置内存区域访问模式建议 (madvise)
@@ -780,7 +788,7 @@ pub const EG_GET_CANARY: u64 = 747;
 
 // ---------- 766-779: WASM 运行时 (Edgine 私有段) ----------
 // 加载 wasm 模块到当前进程 / 运行 / 查询实例信息 / 卸载.
-// Linux 无对应语义, 故不占 0-299 段; 单一权威源 `edgine_abi::wasm`.
+// Linux 无对应语义, 故不占 Linux 公开段; 单一权威源 `edgine_abi::wasm`.
 /// `EG_WASM_LOAD` — 加载 wasm 模块到当前进程 (返回非 0 句柄)
 pub const EG_WASM_LOAD: u64 = edgine_abi::wasm::EG_WASM_LOAD;
 /// `EG_WASM_RUN` — 运行已加载实例 (按 gas 上限执行到结束)
@@ -792,15 +800,15 @@ pub const EG_WASM_UNLOAD: u64 = edgine_abi::wasm::EG_WASM_UNLOAD;
 
 // ---------- 800-809: 内核调试 / 跟踪 (ftrace / KGDB) ----------
 /// 启用 ftrace 全局开关
-pub const EG_FTRACE_ENABLE: u64 = 800;
+pub const EG_FTRACE_ENABLE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 800;
 /// 禁用 ftrace 全局开关
-pub const EG_FTRACE_DISABLE: u64 = 801;
+pub const EG_FTRACE_DISABLE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 801;
 /// 从 ftrace ring buffer 读取一条事件到用户缓冲
-pub const EG_FTRACE_READ: u64 = 802;
+pub const EG_FTRACE_READ: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 802;
 /// 查询 ftrace 状态 (`event_count` / `overflow_count`)
-pub const EG_FTRACE_STAT: u64 = 803;
+pub const EG_FTRACE_STAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 803;
 /// KGDB 主动断点 (用户态调试器触发)
-pub const EG_KGDB_ENTER: u64 = 804;
+pub const EG_KGDB_ENTER: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 804;
 
 // ==================== C7: Seccomp / prctl ====================
 
@@ -810,29 +818,29 @@ pub const EG_KGDB_ENTER: u64 = 804;
 // ==================== C5: 路由表 ====================
 
 /// `route_add` — 添加路由条目
-pub const EG_ROUTE_ADD: u64 = 807;
+pub const EG_ROUTE_ADD: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 807;
 /// `route_del` — 删除路由条目
-pub const EG_ROUTE_DEL: u64 = 808;
+pub const EG_ROUTE_DEL: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 808;
 /// `route_query` — 查询路由 (最长前缀匹配)
-pub const EG_ROUTE_QUERY: u64 = 809;
+pub const EG_ROUTE_QUERY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 809;
 
 // ==================== C5: Netfilter ====================
 
 /// `nf_add_rule` — 添加 Netfilter 规则
-pub const EG_NF_ADD_RULE: u64 = 810;
+pub const EG_NF_ADD_RULE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 810;
 /// `nf_del_rule` — 删除 Netfilter 规则
-pub const EG_NF_DEL_RULE: u64 = 811;
+pub const EG_NF_DEL_RULE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 811;
 
 // ==================== C5: 网络地址解析 (DNS, 812-814 私有段) ====================
 
-// Linux 无 getaddrinfo 系统调用 (libc 函数), 故不占 0-299 段; 单一权威源
+// Linux 无 getaddrinfo 系统调用 (libc 函数), 故不占 Linux 公开段; 单一权威源
 // `edgine_abi::net` (编号 + EgAddrInfo 结果结构, 内核与 userlib 共享).
 /// `EG_GETADDRINFO` — 双栈 DNS 解析 (返回单个 `EgAddrInfo`, IPv6 优先)
 pub const EG_GETADDRINFO: u64 = edgine_abi::net::EG_GETADDRINFO;
 
 // ==================== C5: DHCPv6 运行时策略 (816-817 私有段) ====================
 
-// Linux 无 DHCPv6 客户端配置系统调用 (客户端在用户态守护), 故不占 0-299 段;
+// Linux 无 DHCPv6 客户端配置系统调用 (客户端在用户态守护), 故不占 Linux 公开段;
 // 单一权威源 `edgine_abi::dhcpv6` (编号 + EgDhcpv6Policy 配置结构, 内核与 userlib 共享).
 /// `EG_DHCPV6_SET_POLICY` — 设置 `DHCPv6` 运行时策略配置 + 启用开关
 pub const EG_DHCPV6_SET_POLICY: u64 = edgine_abi::dhcpv6::EG_DHCPV6_SET_POLICY;
@@ -854,15 +862,15 @@ pub const EG_DHCPV6_GET_POLICY: u64 = edgine_abi::dhcpv6::EG_DHCPV6_GET_POLICY;
 // ==================== D2: cgroup ====================
 
 /// `cgroup_create` — 创建子 cgroup
-pub const EG_CGROUP_CREATE: u64 = 830;
+pub const EG_CGROUP_CREATE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 830;
 /// `cgroup_destroy` — 删除 cgroup
-pub const EG_CGROUP_DESTROY: u64 = 831;
+pub const EG_CGROUP_DESTROY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 831;
 /// `cgroup_attach` — 将进程迁移到 cgroup
-pub const EG_CGROUP_ATTACH: u64 = 832;
+pub const EG_CGROUP_ATTACH: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 832;
 /// `cgroup_set_limit` — 设置 cgroup 资源限制
-pub const EG_CGROUP_SET_LIMIT: u64 = 833;
+pub const EG_CGROUP_SET_LIMIT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 833;
 /// `cgroup_get_stat` — 获取 cgroup 统计信息
-pub const EG_CGROUP_GET_STAT: u64 = 834;
+pub const EG_CGROUP_GET_STAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 834;
 
 // ==================== D3: NUMA ====================
 
@@ -878,30 +886,30 @@ pub const EG_CGROUP_GET_STAT: u64 = 834;
 // ==================== D5: 电源管理 ====================
 
 /// pm — 电源管理系统调用
-pub const EG_PM: u64 = 860;
+pub const EG_PM: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 860;
 
 // ==================== D6: 安全启动 + TPM ====================
 
 /// `secure_boot` — 安全启动系统调用
-pub const EG_SECURE_BOOT: u64 = 870;
+pub const EG_SECURE_BOOT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 870;
 
 /// tpm — TPM 系统调用
-pub const EG_TPM: u64 = 871;
+pub const EG_TPM: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 871;
 
 // ==================== D7: Shadow Stack (CET) ====================
 
 /// cet — CET/Shadow Stack 系统调用
-pub const EG_CET: u64 = 880;
+pub const EG_CET: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 880;
 
 // ==================== D8: Tickless (NO_HZ) ====================  // 动态时钟节拍模式
 
 /// tickless — Tickless 系统调用
-pub const EG_TICKLESS: u64 = 881;
+pub const EG_TICKLESS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 881;
 
 // ==================== D9: NTP/PTP 时钟同步 ====================
 
 /// timesync — 时间同步系统调用
-pub const EG_TIMESYNC: u64 = 882;
+pub const EG_TIMESYNC: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 882;
 
 // ==================== D10: kexec ====================
 
@@ -910,7 +918,7 @@ pub const EG_TIMESYNC: u64 = 882;
 // ==================== D11: UEFI ====================
 
 /// uefi — UEFI 运行时服务系统调用
-pub const EG_UEFI: u64 = 884;
+pub const EG_UEFI: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 884;
 
 // ==================== D12: 扩展属性 (xattr) ====================
 
@@ -922,16 +930,16 @@ pub const EG_UEFI: u64 = 884;
 // ==================== D13: 快照 (snapshot) ====================
 
 /// `io_uring_submit_sqe` — 提交单个 SQE (简化版)
-pub const EG_IO_URING_SUBMIT: u64 = 815;
+pub const EG_IO_URING_SUBMIT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 815;
 
 /// `snapshot_create` — 创建快照
-pub const EG_SNAPSHOT_CREATE: u64 = 895;
+pub const EG_SNAPSHOT_CREATE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 895;
 /// `snapshot_destroy` — 销毁快照
-pub const EG_SNAPSHOT_DESTROY: u64 = 896;
+pub const EG_SNAPSHOT_DESTROY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 896;
 /// `snapshot_rollback` — 回滚快照
-pub const EG_SNAPSHOT_ROLLBACK: u64 = 897;
+pub const EG_SNAPSHOT_ROLLBACK: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 897;
 /// `snapshot_clone` — 从快照创建克隆
-pub const EG_SNAPSHOT_CLONE: u64 = 898;
+pub const EG_SNAPSHOT_CLONE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 898;
 
 // ==================== POSIX errno (使用 Linux 风格: 返回值 = -errno) ====================
 //
@@ -951,9 +959,9 @@ pub type SyscallResult<T> = Result<T, Errno>;
 // 若新增编号命中下方任一断言, 说明与现有 Linux 或私有编号冲突, 须重新分配.
 // ============================================================================
 
-/// 编译期断言: Linux 兼容编号 (0-299) 内部无重复
+/// 编译期断言: Linux 公开编号 (0-499) 内部无重复
 const _: () = {
-    // 所有 Linux 标准编号 (0-299 区段)
+    // 所有 Linux 标准编号 (0-499 公开区段)
     const LINUX_NUMS: &[u64] = &[
         SYS_READ,
         SYS_WRITE,
@@ -1172,7 +1180,7 @@ const _: () = {
     }
 };
 
-/// 编译期断言: 私有编号区 (400+, 不含 Linux 兼容区) 内部无重复
+/// 编译期断言: 私有编号区 (`PRIVATE_BASE` 以上, 不含 Linux 公开区) 内部无重复
 ///
 /// 每个逻辑 syscall 只列一个代表值; 下列设计别名 (同编号, 由 dispatch 区分语义)
 /// 已从断言中剔除, 避免误判:

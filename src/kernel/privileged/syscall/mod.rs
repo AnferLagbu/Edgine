@@ -9,16 +9,12 @@ pub mod timerfd;
 
 /// Syscall 模块 — `Edgine` 原生系统调用分发
 ///
-/// 编号空间 (DECISION-037, 2026-08-03):
-///   0-299   : 直接使用 Linux 标准 syscall 编号 (POSIX/syscall 透明兼容)
-///   300-399 : 保留
-///   400-499 : SGEG 私有 syscall
-///   500-599 : Edgine 自由 syscall (EG_*) — 进程 / 内存 / 文件基础
-///   600-699 : Edgine 自由 syscall (EG_*) — 网络 / IPC
-///   700-799 : Edgine 自由 syscall (EG_*) — 设备 / 系统
-///   800-899 : Edgine 自由 syscall (EG_*) — 扩展
+/// 编号空间 (DECISION-037, 2026-11-24 T7 统一 Linux ABI):
+///   0-499            : Linux 公开编号 (按各架构 Linux UAPI 使用; 0-466 已分配)
+///   `0x4000_0000` 起 : EG/SGEG 私有 (旧 400-899 整体平移, 含 aarch64 遗留兼容段)
 ///
-/// 0-299 直接走 Linux ABI, 无翻译层. 500+ 与 Linux 错开, 避免与未来 Linux 新增 syscall 冲突.
+/// 内核内 canonical 统一为 `x86_64 Linux` 编号; aarch64 入口/用户库门经
+/// `edgine-abi::linux_syscall` 边界表翻译. 私有号不再占用任何 Linux 公开号.
 ///
 /// # 双层分发契约 (B09-18, docs/plan/archive/syscall-dispatch-cleanup.md)
 ///

@@ -311,7 +311,7 @@ handle_el0_sync:
     b    el0_return
 
 handle_svc:
-    // SVC #0: x0 = 系统调用号, x1-x6 = 参数 (6 个实参, 与下方 `svc_handler` 的读取一致)
+    // SVC #0: x8 = Linux syscall 号, x0-x5 = 参数 (与下方 `svc_handler` 的读取一致)
     mov  x0, sp             // x0 = ExceptionFrame*
     bl   svc_handler
 
@@ -591,14 +591,18 @@ pub fn kpti_enter_user_trampoline_high() -> u64 {
 ///
 /// EL0 SVC 系统调用处理器。
 /// 从 EL0 通过 `svc #0` 进入。
-/// Edgine aarch64 系统调用约定: `x0=syscall_num`, x1-x6=args (6 个参数), 返回 x0。
+/// 入口遵循 Linux aarch64 ABI: `x8=syscall_num`, `x0-x5=args`, 返回 x0。
+/// 内核内部 canonical 编号统一为 x86_64 Linux 编号; 入口先经 `edgine-abi`
+/// 的边界表把公开 aarch64 号翻译为 canonical, 再进入统一分发。EG 私有调用
+/// 使用 `0x4000_0000` 高位段, 翻译层原样透传。
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     // APS-05: 双核并发 EL0 观测 (有界诊断, 每核前若干次) —— EL0 syscall 入口.
     crate::privileged::syscall::observe_el0_syscall();
 
-    let syscall_num = frame.x0;
+    let public_nr = frame.x8;
+    let syscall_num = edgine_abi::linux_syscall::aarch64_to_canonical(public_nr);
 
     // KPTI-17 D1: 把 EL0 用户寄存器快照写入当前进程 Process.context.
     // aarch64 的 syscall 路径不经 `syscall_dispatch_from_frame` (x86_64 B05-55
@@ -611,10 +615,9 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
     }
 
     // rt_sigreturn 特殊处理: 需要直接修改 frame, 不走正常 dispatch.
-    // aarch64: SYS_RT_SIGRETURN = 139 (由 trampoline 以 `movz x0, #139` 发起).
-    // 恢复流程与 x86_64 共用 `restore_user_signal_frame`: 从用户 SP 指向的
-    // Aarch64SignalFrame 恢复 x0-x30/elr/spsr/sp 并清除 SS_ONSTACK.
-    if syscall_num == 139 {
+    // aarch64: Linux 公开号 139 (由 trampoline 以 `movz x8, #139` 发起);
+    // 经边界表翻译后 canonical 为 15, 与 x86_64 共用恢复流程.
+    if syscall_num == 15 {
         // 用户栈信号帧不可读 (munmap/越界) 时按 SIGSEGV 终止线程组,
         // 不带着未恢复的帧返回用户态.
         if !crate::privileged::proc::restore_user_signal_frame(frame) {
@@ -624,20 +627,36 @@ pub extern "C" fn svc_handler(frame: &mut ExceptionFrame) -> u64 {
         return frame.x0;
     }
 
-    let arg0 = frame.x1;
-    let arg1 = frame.x2;
-    let arg2 = frame.x3;
-    let arg3 = frame.x4;
-    let arg4 = frame.x5;
-    let arg5 = frame.x6;
+    let arg0 = frame.x0;
+    let arg1 = frame.x1;
+    let arg2 = frame.x2;
+    let arg3 = frame.x3;
+    let arg4 = frame.x4;
+    let arg5 = frame.x5;
 
-    // 调用通用 syscall 分发器 (syscall 模块已全局化)
-    let result =
+    // 调用通用 syscall 分发器 (syscall 模块已全局化); 未落入 Linux 公开区
+    // 或私有区的编号按 Linux 语义返回 ENOSYS, 不进入私有分发.
+    let result = if crate::privileged::syscall::types::is_linux_nr(syscall_num)
+        || crate::privileged::syscall::types::is_private_nr(syscall_num)
+    {
         // SAFETY: `syscall_dispatch` 的契约 (见 `syscall/dispatch.rs` 的 `# Safety`) 是
         // 「从中断上下文调用, 全部寄存器值来自被打断的用户上下文」. 本处在 EL1 异常入口
-        // (EL0 `svc #0`) 内调用, 六个实参逐字取自 `ExceptionFrame` 的 x0..x6 —— 即硬件在
+        // (EL0 `svc #0`) 内调用, 六个实参逐字取自 `ExceptionFrame` 的 x0..x5 —— 即硬件在
         // 陷入瞬间保存的 EL0 现场; 函数只收标量, 没有裸指针形参.
-        unsafe { crate::privileged::syscall::syscall_dispatch(syscall_num, arg0, arg1, arg2, arg3, arg4, arg5) };
+        unsafe {
+            crate::privileged::syscall::syscall_dispatch(
+                syscall_num,
+                arg0,
+                arg1,
+                arg2,
+                arg3,
+                arg4,
+                arg5,
+            )
+        }
+    } else {
+        -38i64
+    };
 
     // 返回值写入 x0 后再做返回用户态前的信号投递: 投递会快照当前帧
     // (含此返回值), `rt_sigreturn` 恢复后 x0 即系统调用结果.

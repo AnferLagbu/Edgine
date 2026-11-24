@@ -1,6 +1,6 @@
 //! Edgine 用户态运行时 — POSIX 原生系统调用层
 //! x86_64: syscall, rax=num, rdi=a1, rsi=a2, rdx=a3, r10=a4, r8=a5, r9=a6, rax=ret
-//! aarch64: svc #0, x0=num, x1-x6=args, x0=返回
+//! aarch64: svc #0, x8=num, x0-x5=args, x0=返回 (Linux UAPI 编号)
 //!
 //! ## unsafe 依据单源 (逐处 `// SAFETY:` 引用本节, 不重复抄写)
 //!
@@ -12,7 +12,7 @@
 //! 内核入口 `privileged/boot/isr.asm` 的 `syscall_entry` 压入全部 15 个通用
 //! 寄存器, 返回前逐一弹回再 `iretq`, 故其余用户寄存器逐位保全. aarch64 的
 //! `svc #0` 不破坏通用寄存器, 内核 `arch/aarch64/exception.rs` 的 `svc_handler`
-//! 取帧 `x0` 为编号、`x1..x6` 为六个参数, 结果写回帧 `x0`; 陷入帧在入口全量
+//! 取帧 `x8` 为编号、`x0..x5` 为六个参数, 结果写回帧 `x0`; 陷入帧在入口全量
 //! 保存 `x0..x30`、返回 EL0 前全量弹回, 故门只声明 `x0` 为 `lateout` 即与内核
 //! 保全范围一致 (`proc/proc_ops.rs` 与 `arch/aarch64/context.rs` 的注释据此把
 //! `x8..x18` 全量快照, 供 fork/clone 子进程首次进入 EL0 时恢复).
@@ -82,24 +82,24 @@ pub const SYS_MOUNT: u64 = 165;
 pub const SYS_TIMERFD_CREATE: u64 = 283;
 pub const SYS_TIMERFD_SETTIME: u64 = 286;
 
-// Edgine 私有 syscall (SGEG 400-499, 与内核 syscall/types.rs 权威源对齐)
-pub const SYS_SGEG_LOGIN: u64 = 400;
-pub const SYS_SGEG_LOGOUT: u64 = 401;
-pub const SYS_SGEG_CREATE_IDENTITY: u64 = 402;
-pub const SYS_SGEG_CHANGE_PASSWORD: u64 = 405;
-pub const SYS_SGEG_CREATE_FIRST: u64 = 407;
-pub const SYS_SGEG_GET_PWM: u64 = 412;
-pub const SYS_SGEG_DISK_LIST: u64 = 420;
-pub const SYS_SGEG_DISK_INFO: u64 = 421;
-pub const SYS_SGEG_DISK_FORMAT: u64 = 422;
-pub const SYS_SGEG_DISK_PARTITION: u64 = 423;
-pub const SYS_SGEG_DISK_INSTALL: u64 = 453;
-pub const SYS_SGEG_FAT_FORMAT: u64 = 454;
-pub const SYS_SGEG_PROC_LIST: u64 = 455;
-pub const SYS_SGEG_GETHOSTNAME: u64 = 459;
-pub const SYS_SGEG_SETHOSTNAME: u64 = 460;
-pub const SYS_SGEG_REBOOT: u64 = 462;
-pub const SYS_SGEG_HOTPLUG_STATUS: u64 = 463;
+// Edgine 私有 syscall (旧 SGEG 400-499, 已平移到 0x4000_0000 高位段)
+pub const SYS_SGEG_LOGIN: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 400;
+pub const SYS_SGEG_LOGOUT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 401;
+pub const SYS_SGEG_CREATE_IDENTITY: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 402;
+pub const SYS_SGEG_CHANGE_PASSWORD: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 405;
+pub const SYS_SGEG_CREATE_FIRST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 407;
+pub const SYS_SGEG_GET_PWM: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 412;
+pub const SYS_SGEG_DISK_LIST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 420;
+pub const SYS_SGEG_DISK_INFO: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 421;
+pub const SYS_SGEG_DISK_FORMAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 422;
+pub const SYS_SGEG_DISK_PARTITION: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 423;
+pub const SYS_SGEG_DISK_INSTALL: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 453;
+pub const SYS_SGEG_FAT_FORMAT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 454;
+pub const SYS_SGEG_PROC_LIST: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 455;
+pub const SYS_SGEG_GETHOSTNAME: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 459;
+pub const SYS_SGEG_SETHOSTNAME: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 460;
+pub const SYS_SGEG_REBOOT: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 462;
+pub const SYS_SGEG_HOTPLUG_STATUS: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 463;
 /// SGEG 私有: 导出 EEVDF 运行期观测快照 (K-07b 批3, 单一权威源 `edgine-abi`)
 pub const SYS_SGEG_SCHED_SNAPSHOT: u64 = edgine_abi::sched::SYS_SGEG_SCHED_SNAPSHOT;
 
@@ -234,66 +234,79 @@ unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -
 }
 
 #[cfg(target_arch = "aarch64")]
+#[inline]
+fn abi_nr(canonical: u64) -> u64 {
+    edgine_abi::linux_syscall::canonical_to_aarch64(canonical)
+}
+
+#[cfg(target_arch = "aarch64")]
 unsafe fn sys0(num: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G (见模块级"unsafe 依据单源"): 仅 x0 载编号, 无参数寄存器;
-    // svc #0 不破坏通用寄存器, 内核只把结果写回帧 x0, 故 lateout("x0") 已足.
-    unsafe { asm!("svc #0", in("x0") num, lateout("x0") ret) };
+    let num = abi_nr(num);
+    // SAFETY: 门 G (见模块级"unsafe 依据单源"): Linux aarch64 约定 x8 载编号,
+    // 无参数寄存器; svc #0 不破坏通用寄存器, 内核只把结果写回帧 x0.
+    unsafe { asm!("svc #0", in("x8") num, lateout("x0") ret) };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys1(num: u64, a1: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1=a1, 与内核取帧 x1 为 arg0 一致; 门只搬运值
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0=a1, 与 Linux aarch64 入口一致; 门只搬运值
     // 不访存, a1 若为指针则其有效性由包装层承担 (分类见模块级说明).
-    unsafe { asm!("svc #0", in("x0") num, in("x1") a1, lateout("x0") ret) };
+    unsafe { asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret) };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys2(num: u64, a1: u64, a2: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1/x2=a1/a2; 门只搬运值不访存, 指针参数的有效性
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0/x1=a1/a2; 门只搬运值不访存, 指针参数的有效性
     // 由包装层按分类承担 (见模块级说明).
-    unsafe { asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, lateout("x0") ret) };
+    unsafe { asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret, in("x1") a2) };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys3(num: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1/x2/x3=a1/a2/a3; 门只搬运值不访存, 指针参数的
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0/x1/x2=a1/a2/a3; 门只搬运值不访存, 指针参数的
     // 有效性由包装层按分类承担 (见模块级说明).
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, lateout("x0") ret);
+        asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret, in("x1") a2, in("x2") a3);
     };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys4(num: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1..x4=a1..a4; 门只搬运值不访存, 指针参数的
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0..x3=a1..a4; 门只搬运值不访存, 指针参数的
     // 有效性由包装层按分类承担 (见模块级说明).
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, lateout("x0") ret);
+        asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret, in("x1") a2, in("x2") a3, in("x3") a4);
     };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys5(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1..x5=a1..a5 (内核取帧 x5 为 arg4); 门只搬运值
-    // 不访存, 指针参数的有效性由包装层按分类承担 (见模块级说明).
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0..x4=a1..a5; 门只搬运值不访存, 指针参数的有效性
+    // 由包装层按分类承担 (见模块级说明).
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, lateout("x0") ret);
+        asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret, in("x1") a2, in("x2") a3, in("x3") a4, in("x4") a5);
     };
     ret
 }
 #[cfg(target_arch = "aarch64")]
 unsafe fn sys6(num: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64, a6: u64) -> i64 {
     let ret: i64;
-    // SAFETY: 门 G: x0=编号, x1..x6=a1..a6 (内核取帧 x6 为 arg5, 六参全显式
-    // 布置); 门只搬运值不访存, 指针参数的有效性由包装层承担 (见模块级说明).
+    let num = abi_nr(num);
+    // SAFETY: 门 G: x8=编号, x0..x5=a1..a6 (六参全显式布置); 门只搬运值不访存,
+    // 指针参数的有效性由包装层承担 (见模块级说明).
     unsafe {
-        asm!("svc #0", in("x0") num, in("x1") a1, in("x2") a2, in("x3") a3, in("x4") a4, in("x5") a5, in("x6") a6, lateout("x0") ret);
+        asm!("svc #0", in("x8") num, inlateout("x0") a1 => ret, in("x1") a2, in("x2") a3, in("x3") a4, in("x4") a5, in("x5") a6);
     };
     ret
 }
@@ -1055,9 +1068,9 @@ pub fn kill(pid: i32, sig: i32) -> i32 {
 // 帧缓冲设备 (FB syscalls — Edgine 私有, 与内核 720-722 对齐)
 // ============================================================
 
-pub const SYS_FB_OPEN: u64 = 720;
-pub const SYS_FB_MMAP: u64 = 721;
-pub const SYS_FB_RELEASE: u64 = 722;
+pub const SYS_FB_OPEN: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 720;
+pub const SYS_FB_MMAP: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 721;
+pub const SYS_FB_RELEASE: u64 = edgine_abi::linux_syscall::PRIVATE_BASE + 722;
 
 #[repr(C)]
 pub struct FbInfo {
@@ -1670,8 +1683,8 @@ pub unsafe extern "C" fn thread_trampoline(entry: ThreadEntry, arg: u64) -> ! {
 ///
 /// ## 入口与参数如何送到子线程
 ///
-/// syscall 入参寄存器 (x86_64 `rdi/rsi/rdx/r10/r8`, aarch64 `x1..x5`) 在子线程
-/// 里装的是 clone 自己的参数, 不能用来带 `entry`. 被调用者保存寄存器
+/// syscall 入参寄存器 (x86_64 `rdi/rsi/rdx/r10/r8`, aarch64 `x0..x4`, 编号在
+/// aarch64 `x8`) 在子线程里装的是 clone 自己的参数, 不能用来带 `entry`. 被调用者保存寄存器
 /// (x86_64 `r12/r13`, aarch64 `x21/x22`) 由 `proc_save_user_regs*` 写入进程
 /// 上下文并随 clone 整体复制, 故用它们偷渡.
 ///
@@ -1747,9 +1760,10 @@ pub unsafe fn clone_thread(
     arg: u64,
 ) -> i64 {
     let ret: i64;
-    // SAFETY: svc #0 的编号在 x0, 参数在 x1..x5 (Edgine aarch64 syscall ABI);
-    // 子分支把 entry/arg 搬到 x0/x1 后跳入 trampoline, 不回落到父路径.
-    // AAPCS64 要求 SP 16 字节对齐: child_stack 已由内核校验, 无需再调整.
+    let nr = abi_nr(SYS_CLONE);
+    // SAFETY: Linux aarch64 ABI: 编号在 x8, 参数在 x0..x4; 子分支把 entry/arg
+    // 搬到 x0/x1 后跳入 trampoline, 不回落到父路径. AAPCS64 要求 SP 16 字节
+    // 对齐: child_stack 已由内核校验, 无需再调整.
     unsafe {
         asm!(
             "svc #0",
@@ -1759,15 +1773,14 @@ pub unsafe fn clone_thread(
             "b {tramp}",
             "2:",
             tramp = sym thread_trampoline,
-            in("x0") SYS_CLONE,
-            in("x1") flags,
-            in("x2") child_stack,
-            in("x3") parent_tid as u64,
-            in("x4") child_tid as u64,
-            in("x5") tls,
+            in("x8") nr,
+            inlateout("x0") flags => ret,
+            in("x1") child_stack,
+            in("x2") parent_tid as u64,
+            in("x3") child_tid as u64,
+            in("x4") tls,
             inlateout("x21") entry => _,
             inlateout("x22") arg => _,
-            lateout("x0") ret,
         );
     }
     ret

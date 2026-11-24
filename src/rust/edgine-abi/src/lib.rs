@@ -16,6 +16,7 @@
 
 pub mod arch_prctl;
 pub mod dhcpv6;
+pub mod linux_syscall;
 pub mod net;
 pub mod reboot;
 pub mod sched;

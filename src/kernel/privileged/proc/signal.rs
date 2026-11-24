@@ -52,7 +52,7 @@
 //! ┌────────────────────┐ ← 新 SP (16 字节对齐)
 //! │ Aarch64SignalFrame  │  x0-x30 / sp / elr / spsr / signum
 //! ├────────────────────┤
-//! │ sigreturn trampoline│  movz x0,#139 + svc #0
+//! │ sigreturn trampoline│  movz x8,#139 + svc #0
 //! └────────────────────┘ ← handler 的 LR (x30)
 //! ```
 //!
@@ -184,20 +184,22 @@ pub type ArchUserFrame = crate::privileged::arch::aarch64::exception::ExceptionF
 ///   0F 05              syscall
 ///
 /// # aarch64 机器码 (8 字节)
-/// `movz x0, #139` (`SYS_RT_SIGRETURN` = 139) + `svc #0`:
-///   60 11 80 D2        movz x0, #139
+/// `movz x8, #139` (Linux `SYS_RT_SIGRETURN` = 139) + `svc #0`:
+///   68 11 80 D2        movz x8, #139
 ///   01 00 00 D4        svc #0
 ///
 /// P1-I-40 修复: 之前硬编码 `x86_64` 字节序, aarch64 上是随机指令
 /// (illegal instruction), 致所有 ARM 板信号投递失败. 改为 cfg 分发.
-/// A-10 修正: aarch64 字面量原按大端书写且落在 x8 (Linux ABI), 与 Edgine
-/// `x0=syscall_num` 约定不符; 现改为小端编码的 `movz x0, #139`.
+/// A-10 记录: 曾因 Edgine 私有入口 `x0=syscall_num` 把 trampoline 改为
+/// `movz x0, #139`; T7 统一 Linux ABI 后回到 `movz x8, #139`.
+/// 2026-11-24 T7: Edgine aarch64 入口已统一为 Linux ABI (`x8=编号`), 故
+/// trampoline 也回到 Linux 原生 `movz x8, #139`.
 #[cfg(target_arch = "x86_64")]
 pub const SIGRETURN_TRAMPOLINE: [u8; 7] = [0xB8, 0x0F, 0x00, 0x00, 0x00, 0x0F, 0x05];
 
 /// sigreturn trampoline 代码 (aarch64 8 字节分支, 机器码与语义见上方两架构说明)
 #[cfg(target_arch = "aarch64")]
-pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x60, 0x11, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4];
+pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x68, 0x11, 0x80, 0xD2, 0x01, 0x00, 0x00, 0xD4];
 
 /// sigreturn trampoline 大小
 pub const SIGRETURN_TRAMPOLINE_SIZE: usize = SIGRETURN_TRAMPOLINE.len();

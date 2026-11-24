@@ -2,8 +2,8 @@
 //!
 //! 值域取 Edgine 私有功能段 `816-817` (紧邻 DNS `812-814` 与 `io_uring` `815`,
 //! 落在 cgroup `830` 前的空闲段): Linux 无 `DHCPv6` 客户端配置系统调用 (客户端
-//! 在用户态守护进程, 经 rtnetlink / 配置文件管理), 占用 0-299 的 Linux 号位既无
-//! 兼容收益, 又破坏 "0-299 == Linux" 的承重不变式, 故按私有段取值 (与
+//! 在用户态守护进程, 经 rtnetlink / 配置文件管理), 占用 Linux 公开号位既无
+//! 兼容收益, 又破坏 "Linux 公开段 == Linux" 的承重不变式, 故按私有段取值 (与
 //! `edgine_abi::net` / `edgine_abi::wasm` 同构).
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`functions::net::syscall`
@@ -18,13 +18,13 @@
 /// 参数: (`policy_ptr`: u64 指向 [`EgDhcpv6Policy`]). 成功返 0; 配置字段非法
 /// 返 `-EINVAL`; 用户缓冲非法返 `-EFAULT`. 校验由内核 `dhcpv6::policy` 纯函数
 /// 承担 (重传间隔正性 / 上限不小于基值 / 重试次数有界 / `T1`/`T2` 万分比序).
-pub const EG_DHCPV6_SET_POLICY: u64 = 816;
+pub const EG_DHCPV6_SET_POLICY: u64 = crate::linux_syscall::PRIVATE_BASE + 816;
 
 /// `EG_DHCPV6_GET_POLICY` — 读取当前 `DHCPv6` 运行时策略配置 + 启用开关.
 ///
 /// 参数: (`policy_ptr`: u64 指向 [`EgDhcpv6Policy`]). 成功返 0 并写出当前配置
 /// (客户端未构造时返待生效配置或默认值); 用户缓冲非法返 `-EFAULT`.
-pub const EG_DHCPV6_GET_POLICY: u64 = 817;
+pub const EG_DHCPV6_GET_POLICY: u64 = crate::linux_syscall::PRIVATE_BASE + 817;
 
 /// `DHCPv6` 运行时策略配置 (`EG_DHCPV6_SET_POLICY` / `EG_DHCPV6_GET_POLICY`
 /// 的读写结构).

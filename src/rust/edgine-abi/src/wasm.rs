@@ -1,7 +1,7 @@
 //! 进程级 wasm 运行时私有 syscall ABI 常量与实例信息结构.
 //!
 //! 值域为 Edgine 私有功能段 `766-779`：Linux 没有"进程内加载并执行 wasm"
-//! 的系统调用，占用 0-299 的 Linux 号位既无兼容收益，又破坏"0-299 == Linux"
+//! 的系统调用，占用 Linux 公开号位既无兼容收益，又破坏"Linux 公开段 == Linux"
 //! 的承重不变式，故按 `docs/plan/archive/wasm-runtime-wiring.md` §3 丁 取私有段。
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`functions::wasm::registry`
@@ -12,22 +12,22 @@
 ///
 /// 参数: (`path_ptr`: u64, `argv_ptr`: u64, `envp_ptr`: u64).
 /// `argv_ptr` / `envp_ptr` 为 `NULL` 结尾的字符串指针数组, 可为 0 表示空.
-pub const EG_WASM_LOAD: u64 = 766;
+pub const EG_WASM_LOAD: u64 = crate::linux_syscall::PRIVATE_BASE + 766;
 
 /// 运行当前进程已加载的 wasm 模块 (按 gas 上限执行到结束).
 ///
 /// 参数: (`handle`: u64). 返回 0 表示模块已结束, 负值为 -errno.
-pub const EG_WASM_RUN: u64 = 767;
+pub const EG_WASM_RUN: u64 = crate::linux_syscall::PRIVATE_BASE + 767;
 
 /// 查询实例信息 (状态 / 退出码 / gas 消耗).
 ///
 /// 参数: (`handle`: u64, `out_ptr`: u64 指向 [`EgWasmInfo`]).
-pub const EG_WASM_GET_INFO: u64 = 768;
+pub const EG_WASM_GET_INFO: u64 = crate::linux_syscall::PRIVATE_BASE + 768;
 
 /// 卸载当前进程已加载的 wasm 实例.
 ///
 /// 参数: (`handle`: u64).
-pub const EG_WASM_UNLOAD: u64 = 769;
+pub const EG_WASM_UNLOAD: u64 = crate::linux_syscall::PRIVATE_BASE + 769;
 
 /// 实例状态: 已加载, 尚未运行.
 pub const EG_WASM_STATUS_READY: u32 = 0;

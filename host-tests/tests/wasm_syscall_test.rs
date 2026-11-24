@@ -90,10 +90,22 @@ fn init_fs_once() {
 
 #[test]
 fn abi_numbers_are_single_source() {
-    assert_eq!(ktypes::EG_WASM_LOAD, 766);
-    assert_eq!(ktypes::EG_WASM_RUN, 767);
-    assert_eq!(ktypes::EG_WASM_GET_INFO, 768);
-    assert_eq!(ktypes::EG_WASM_UNLOAD, 769);
+    assert_eq!(
+        ktypes::EG_WASM_LOAD,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 766
+    );
+    assert_eq!(
+        ktypes::EG_WASM_RUN,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 767
+    );
+    assert_eq!(
+        ktypes::EG_WASM_GET_INFO,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 768
+    );
+    assert_eq!(
+        ktypes::EG_WASM_UNLOAD,
+        edgine_abi::linux_syscall::PRIVATE_BASE + 769
+    );
     assert_eq!(abi::EG_WASM_LOAD, ktypes::EG_WASM_LOAD);
     assert_eq!(abi::EG_WASM_RUN, ktypes::EG_WASM_RUN);
     assert_eq!(abi::EG_WASM_GET_INFO, ktypes::EG_WASM_GET_INFO);
