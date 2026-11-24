@@ -1,9 +1,9 @@
 #![deny(missing_docs)]
-use super::process::{PROCESS_TABLE, Process};
+use super::process::{Process, PROCESS_TABLE};
 use super::types::{ProcessId, ProcessState};
 use crate::klog_error;
 use crate::privileged::mm::KERNEL_BASE;
-use crate::privileged::mm::{pmm_alloc_page_phys, pmm_alloc_pages_phys};
+use crate::privileged::mm::{pmm_alloc_page_phys, pmm_alloc_pages_phys, MmStruct, Vma, VmaType};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -104,10 +104,10 @@ pub struct UserProcInfo {
 // 才能被 `static USER_PROC_MANAGER` 使用。
 pub(crate) mod raw {
     use super::{
-        AtomicU32, AtomicU64, KERNEL_BASE, NonNull, Ordering, PAGE_SIZE, PageFlags, Process,
-        ProcessId, ProcessState, USER_KSTACK_SIZE, UserProcess, kmalloc, memcpy, memset,
-        pmm_alloc_page_phys, pmm_alloc_pages_phys, raw, vmm_create_user_page_table,
-        vmm_destroy_page_table, vmm_get_physical_in_table, vmm_map_page_in_table,
+        kmalloc, memcpy, memset, pmm_alloc_page_phys, pmm_alloc_pages_phys, raw,
+        vmm_create_user_page_table, vmm_destroy_page_table, vmm_get_physical_in_table,
+        vmm_map_page_in_table, AtomicU32, AtomicU64, MmStruct, NonNull, Ordering, PageFlags,
+        Process, ProcessId, ProcessState, UserProcess, KERNEL_BASE, PAGE_SIZE, USER_KSTACK_SIZE,
     };
 
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
@@ -208,6 +208,16 @@ pub(crate) mod raw {
             // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
             unsafe {
                 (*self.0).process().cr3.store(v, Ordering::SeqCst);
+            }
+        }
+
+        /// 挂接地址空间描述符 (委托到 `Process::mm`)
+        #[inline]
+        pub fn store_mm(&self, mm: *mut MmStruct) {
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处写入其 `process` 指针指向的权威 Process.
+            unsafe {
+                (*self.0).process().mm.store(mm, Ordering::Release);
             }
         }
 
@@ -560,7 +570,11 @@ pub(crate) mod raw {
         // SAFETY: layout 由 `Process` 类型决定且非零; KernelAllocator 契约返回
         // null 或一块满足该 layout 的可写内存.
         let ptr = unsafe { alloc::alloc::alloc(layout) } as usize as *mut Process;
-        if ptr.is_null() { None } else { Some(ptr) }
+        if ptr.is_null() {
+            None
+        } else {
+            Some(ptr)
+        }
     }
 
     /// 释放 `alloc_kernel_process` 分配的 `Process` 内存 (回滚路径专用).
@@ -1993,10 +2007,32 @@ impl UserProcManager {
             let proc_ref = UserProcRef::new_unchecked(proc);
             let cr3 = proc_ref.load_cr3();
 
-            if Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3).is_none() {
+            // M2: 新地址空间从装载首日就带 `MmStruct`；VMA 描述由
+            // `load_elf_segments` 按 PT_LOAD 同源建立，后续 mmap/mprotect/brk
+            // 不再依赖“无 mm 裸页”旁路。
+            let mut mm = alloc::boxed::Box::new(MmStruct::new());
+            let Some(max_vaddr) =
+                Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3, &mm)
+            else {
                 Self::discard_unrun_process(proc_ref);
                 return -1;
-            }
+            };
+
+            mm.start_stack = crate::privileged::glue::usize_from_u64(proc_ref.load_user_stack());
+            mm.mmap_base = crate::privileged::glue::usize_from_u64(
+                crate::privileged::config::aslr_mmap_base(),
+            );
+            mm.start_brk.store(
+                crate::privileged::glue::usize_from_u64(max_vaddr),
+                Ordering::SeqCst,
+            );
+            mm.brk.store(
+                crate::privileged::glue::usize_from_u64(max_vaddr),
+                Ordering::SeqCst,
+            );
+            // M2: 指针所有权移交 `Process::mm`；释放/refcount 属 M5 收口，
+            // 当前随进程生命周期常驻，不在装载路径重复释放。
+            proc_ref.store_mm(alloc::boxed::Box::into_raw(mm));
 
             proc_ref.set_entry(entry);
 
@@ -2017,7 +2053,8 @@ impl UserProcManager {
         header: &ElfHeader,
         load_bias: u64,
         cr3: u64,
-    ) -> Option<()> {
+        mm: &MmStruct,
+    ) -> Option<u64> {
         // P1-I-32 修复: 改用栈上局部数组, 消除 RacyCell 静态分配器在 SMP 下
         // 多核 execve 并发的数据竞争. 8KB 临时缓冲 (1024×u64) 在调用方栈上
         // 分配. launch_first_user_process 路径运行在 boot 栈 (128KB) 上,
@@ -2031,6 +2068,8 @@ impl UserProcManager {
         if phnum > 256 {
             return None;
         }
+
+        let mut max_vaddr: u64 = 0;
 
         for i in 0..phnum {
             let phdr_size = core::mem::size_of::<ElfPhdr>() as u64;
@@ -2052,6 +2091,11 @@ impl UserProcManager {
 
             let vaddr_start = (phdr.vaddr + load_bias) & !(PAGE_SIZE - 1);
 
+            // 零长度段不建 VMA，也不占页；PT_LOAD 的 memsz 为 0 没有可映射对象.
+            if phdr.memsz == 0 {
+                continue;
+            }
+
             // K-08: 与 `elf::elf_load_segment` 同一下界判据 — 低于用户 VA 下界
             // 的段落会映射进 kview 恒等窗口, 内核态经 kview 访问该地址将命中
             // 恒等物理页而非用户帧 (I4 代理面失真), 装载期 fail-closed 拒绝.
@@ -2063,14 +2107,20 @@ impl UserProcManager {
                 (phdr.vaddr + phdr.memsz + load_bias + (PAGE_SIZE - 1)) & !(PAGE_SIZE - 1);
             let num_pages = (vaddr_end - vaddr_start) / PAGE_SIZE;
 
+            let executable = phdr.flags & 0x01 != 0;
+            let writable = phdr.flags & 0x02 != 0;
+            let mut vma_flags = PageFlags::PRESENT | PageFlags::USER;
+            if writable {
+                vma_flags |= PageFlags::WRITABLE;
+            }
+            if !executable {
+                vma_flags |= PageFlags::NX;
+            }
+
             for j in 0..num_pages {
                 let vaddr = vaddr_start + j * PAGE_SIZE;
 
-                let mut flags = PageFlags::PRESENT | PageFlags::USER;
-                if phdr.flags & 0x02 != 0 {
-                    flags |= PageFlags::WRITABLE;
-                }
-                let flags = flags.bits();
+                let flags = vma_flags.bits();
 
                 // 在 aarch64 上, L2_DEVICE 中的 2MB BLOCK 描述符
                 // 会让 vmm_get_physical_in_table 对未映射的用户地址
@@ -2114,9 +2164,25 @@ impl UserProcManager {
                     num_pages,
                 );
             }
+
+            // M2: PT_LOAD 与 VMA 同源建立；页表里已有的页不再由 #PF 首次创建，
+            // 但 mprotect/RELRO/brk/munmap 必须以 VMA 为权威描述。
+            mm.insert_vma(Vma::new(
+                crate::privileged::glue::usize_from_u64(vaddr_start),
+                crate::privileged::glue::usize_from_u64(vaddr_end),
+                vma_flags,
+                VmaType::Anonymous,
+            ))
+            .ok()?;
+            if vaddr_end > max_vaddr {
+                max_vaddr = vaddr_end;
+            }
         }
 
-        Some(())
+        if max_vaddr == 0 {
+            return None;
+        }
+        Some(max_vaddr)
     }
 
     /// 从扁平二进制映像创建用户进程, 返回新 pid (失败为负值)

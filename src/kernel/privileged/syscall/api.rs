@@ -164,19 +164,5 @@ pub fn reboot_mechanism(cmd: i32) -> i64 {
     }
 }
 
-/// mmap 机制: 获取当前进程 mm 或分配裸页 (TCB: 操作页分配器)
-#[must_use]
-pub fn mmap_get_mm_or_alloc(size: u64) -> Option<*mut u8> {
-    if crate::privileged::mm::vma_get_current_mm().is_some() {
-        return None; // 有 mm, 走 VMA 路径
-    }
-    let pages = size.div_ceil(crate::privileged::mm::PAGE_SIZE);
-    let ptr = super::raw::alloc_pages(pages);
-    if ptr.is_null() { None } else { Some(ptr) }
-}
-
-/// munmap 机制: 无 mm 时释放裸页 (TCB: 操作页分配器)
-pub fn munmap_free_pages(addr: u64, size: u64) {
-    let pages = size.div_ceil(crate::privileged::mm::PAGE_SIZE);
-    super::raw::free_pages(addr as *mut u8, pages);
-}
+// mmap 机制: 无 mm 时由 functions 层 fail-closed 返回 ENOMEM；此处只保留
+// 有 mm 的 VMA 路径，不再提供“裸页分配返物理地址”的旁路。

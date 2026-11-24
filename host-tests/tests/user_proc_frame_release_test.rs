@@ -274,6 +274,26 @@ fn unrun_rollback_marks_zombie_then_uses_authoritative_teardown() {
 }
 
 #[test]
+fn elf_load_installs_mm_and_vma_per_pt_load() {
+    let src = read(USER_PROC_RS);
+    let prod = prod_code(&src);
+    let body = item_from(&prod, "pub fn load_elf_from_memory(");
+    let segments = item_from(&prod, "unsafe fn load_elf_segments(");
+    assert!(
+        body.contains("Box::new(MmStruct::new())")
+            && body.contains("proc_ref.store_mm(")
+            && body.contains("mm.start_brk.store("),
+        "M2: 装载路径必须创建 MmStruct、初始化 brk、并挂到新进程"
+    );
+    assert!(
+        segments.contains("mm.insert_vma(")
+            && segments.contains("VmaType::Anonymous")
+            && segments.contains("PageFlags::NX"),
+        "M2: PT_LOAD 必须同源建立 VMA，并按 PF_X 设置 NX"
+    );
+}
+
+#[test]
 fn elf_load_rollback_routes_every_failure_site_to_single_source() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
@@ -287,17 +307,18 @@ fn elf_load_rollback_routes_every_failure_site_to_single_source() {
         "load_elf_from_memory 必须把装载失败统一路由到回滚入口"
     );
     assert!(
-        body.contains(
-            "Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3).is_none()"
-        ),
-        "回滚必须挂在装载失败的判据上 (装载成功不得回滚)"
+        body.contains("let Some(max_vaddr) =")
+            && body.contains(
+                "Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3, &mm)"
+            ),
+        "回滚必须挂在装载失败的判据上 (装载成功不得回滚; M2 起同时要求 mm 参与装载)"
     );
-    // phnum 超限 / phdr 越界 / 用户 VA 下界 / 装配页 OOM 四个失败点逐个返回 None,
-    // 不接受部分接线.
+    // phnum 超限 / phdr 越界 / 用户 VA 下界 / 装配页 OOM / 无 PT_LOAD 五个失败点
+    // 逐个返回 None, 不接受部分接线.
     assert_eq!(
         count(&segments, "return None;"),
-        4,
-        "load_elf_segments 的四个装载失败点必须各自返回 None (逐个计数, 防漏接)"
+        5,
+        "load_elf_segments 的五个装载失败点必须各自返回 None (逐个计数, 防漏接)"
     );
     // K-08: 装载器必须与 elf::elf_load_segment 共用同一下界判据, 否则 init 路径
     // 仍可把 PT_LOAD 映射进 kview 恒等窗口 (内核态访问命中恒等物理页, I4 失真).

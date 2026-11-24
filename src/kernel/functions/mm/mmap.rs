@@ -17,7 +17,7 @@
 
 use crate::functions::fs::MmapBacking;
 use crate::privileged::mm::{FileBackedVma, MmStruct, Vma, VmaType};
-use crate::privileged::mm::{PAGE_SIZE, PageFlags as VmaFlags};
+use crate::privileged::mm::{PageFlags as VmaFlags, PAGE_SIZE};
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
@@ -347,12 +347,8 @@ pub fn mmap_syscall_entry(
         return Errno::Eacces.as_ret();
     }
 
-    // 无 mm 时走裸页分配路径
-    if let Some(ptr) = crate::privileged::syscall::api::mmap_get_mm_or_alloc(size) {
-        return ptr as i64;
-    }
-
-    // 有 mm 时走 VMA 路径
+    // M3: 无 mm 一律 ENOMEM，不再回退到裸页分配。裸页返回值是物理地址，
+    // 用户态把它当虚拟地址用会绕过 VMA/页表，动态链接器的 mmap 首步即失真。
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
         return Errno::Enomem.as_ret();
     };
@@ -381,12 +377,8 @@ pub fn munmap_syscall_entry(addr: u64, size: u64) -> i64 {
         return Errno::Einval.as_ret();
     }
 
-    // 无 mm 时走裸页释放路径
-    if crate::privileged::mm::vma_get_current_mm().is_none() {
-        crate::privileged::syscall::api::munmap_free_pages(addr, size);
-        return 0;
-    }
-
+    // M3: 无 mm 不再走裸页释放；没有 VMA/页表归属就无法判断该地址是否属于本进程，
+    // 静默 free 会把别的地址空间帧抽走。
     let Some(mm) = crate::privileged::mm::vma_get_current_mm() else {
         return Errno::Enomem.as_ret();
     };
