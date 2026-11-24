@@ -1,8 +1,10 @@
 # UEFI 引导下 init 线程探针挂死（独立工程）
 
 > 立项依据: [userspace-decoupling.md](./userspace-decoupling.md) D4-i 丙的 UEFI 真跑腿归因轮发现,
-> 用户裁定 **「登记独立工程 + 腿按可达面接线」** —— 本册只登记与取证待授权, **本轮不施工**;
+> 用户裁定 **「登记独立工程 + 腿按可达面接线」** —— 立项批只登记与取证待授权, 当轮不施工;
 > 解耦批按原计划收口, `scripts/uefi_boot_test.sh` 按实测可达面断言, 挂死腿以**显式横幅**声明不判.
+> **2026-11-24 进展**: 用户授权 U-1 进入修复队列（P1），当前仅开取证阶段；不改 5s 预算、
+> 不改 `[THREAD]` 判据，修复完成后才把 `[THREAD] PASS` 加回 UEFI 硬断言并删横幅。
 > 关联登记: [init-probe-fault-branches.md](./init-probe-fault-branches.md) F-1/F-2 (同属 init 探针故障家族,
 > 但那是 aarch64 跳零 / x86_64 NULL 拷贝的**偶发**分支, 本册是 UEFI 引导下的**确定性**分支);
 > [aarch64-reap-timeout-rootcause.md](./archive/aarch64-reap-timeout-rootcause.md) (H1/H2 已修, 签名同为
@@ -101,9 +103,9 @@ UEFI 稳定性（有预留时 5/5 都能跑到 `group_exit_leg`）。
 ## U-1 UEFI 双核下 `group_exit_leg` 确定性挂死
 
 - **描述**: OVMF + GRUB2 multiboot2 + `-smp 2` 引导时, init 线程探针的最后一条腿 `group_exit_leg` 确定性失败（5/5）, 签名 `[THREAD] FAIL: reap-timeout code=0`; 组长与 helper 两个 TCB 永不退出, `exit_requested` 从未置位（`[REAP]` 缺席）, cpu1 出现 4050 次唤醒 churn。同镜像同内核在 SeaBIOS 下 5/5 通过, 其余探针逐项同形。落点收窄在「clone 返回后、`exit_group` 登记前」, 首要疑点是带截止时刻的 `futex_wait_until(&GROUP_HELPER_READY, …)` 既不放行也不吐 `code=3`。
-- **方案**: 待授权取证后再钉。候选取证面（均需改装授权）: 甲、QEMU gdbstub 挂死时 dump 两个 TCB 的 `ProcessState` / `BlockReason` / `sleep_until` 与用户态 RIP（判「睡死」还是「自旋」, 直接分开 `futex_wait_until` 与 `exit_group` 两个候选）; 乙、`group_child_body` 三个出口前各加一行无条件取证打印（clone 返回码 / READY 字面值 / 进入 `exit_group` 前）, 一次判死落点; 丙、`diag_unreaped_group` 的 `exit_requested` 判据旁增一条「组长非 Zombie 且超预算」的取证发射面（只取证, 不改收割语义）。**不放宽 5 s 预算、不改 `[THREAD]` 判据**。
-- **状态**: []
-- **详情**: 对照读数与负控制见上「背景与已验证事实」「归因」两节。证据日志留存 `/tmp/uefi_attr/`（`bios_r{1..5}.log` / `uefi_r{1..5}.log` / `nc_r{1..3}.log` / `bios_full.log`）与 `/tmp/uefi_d4i/boot.log`; 这些是临时取证目录, 不入库。本条目只登记, 不施工。
+- **方案**: 待授权取证后再钉。候选取证面（均需改装授权）: 甲、QEMU gdbstub 挂死时 dump 两个 TCB 的 `ProcessState` / `BlockReason` / `sleep_until` 与用户态 RIP（判「睡死」还是「自旋」, 直接分开 `futex_wait_until` 与 `exit_group` 两个候选）; 乙、`group_child_body` 三个出口前各加一行无条件取证打印（clone 返回码 / READY 字面值 / 进入 `exit_group` 前）, 一次判死落点; 丙、`diag_unreaped_group` 的 `exit_requested` 判据旁增一条「组长非 Zombie 且超预算」的取证发射面（只取证, 不改收割语义）。**不放宽 5 s 预算、不改 `[THREAD]` 判据**。**2026-11-24 排期**: 先走乙（三出口无条件打印）定位；若仍不吐出口行，再上甲 gdbstub。取证改动单独提交、可整体回滚，出数后即复原，不与修复提交混合。
+- **状态**: [~] 已入修复队列（P1，2026-11-24 用户授权取证；施工范围=取证，不改断言/预算，未直接改代码）
+- **详情**: 对照读数与负控制见上「背景与已验证事实」「归因」两节。证据日志留存 `/tmp/uefi_attr/`（`bios_r{1..5}.log` / `uefi_r{1..5}.log` / `nc_r{1..3}.log` / `bios_full.log`）与 `/tmp/uefi_d4i/boot.log`; 这些是临时取证目录, 不入库。U-1 已入修复队列；当前仅取证阶段, 修复代码待取证出数后再施工。
 
 ## U-2 UEFI 单核下更早的静默挂死
 
