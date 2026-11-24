@@ -110,6 +110,51 @@ pub(crate) mod raw {
         vmm_destroy_page_table, vmm_get_physical_in_table, vmm_map_page_in_table,
     };
 
+    // Linux auxv 类型（D3 初始栈）
+    pub(crate) const AT_NULL: u64 = 0;
+    pub(crate) const AT_PHDR: u64 = 3;
+    pub(crate) const AT_PHENT: u64 = 4;
+    pub(crate) const AT_PHNUM: u64 = 5;
+    pub(crate) const AT_PAGESZ: u64 = 6;
+    pub(crate) const AT_BASE: u64 = 7;
+    pub(crate) const AT_ENTRY: u64 = 9;
+    pub(crate) const AT_UID: u64 = 11;
+    pub(crate) const AT_EUID: u64 = 12;
+    pub(crate) const AT_GID: u64 = 13;
+    pub(crate) const AT_EGID: u64 = 14;
+    pub(crate) const AT_HWCAP: u64 = 16;
+    pub(crate) const AT_CLKTCK: u64 = 17;
+    pub(crate) const AT_SECURE: u64 = 23;
+    pub(crate) const AT_RANDOM: u64 = 25;
+    pub(crate) const AT_HWCAP2: u64 = 26;
+    pub(crate) const AT_EXECFN: u64 = 31;
+    pub(crate) const AT_SYSINFO_EHDR: u64 = 33;
+    pub(crate) const AUXV_ENTRIES: usize = 18;
+
+    /// 构造本进程的 auxv 静态部分；`AT_EXECFN` / `AT_RANDOM` 由栈构造器填实际地址.
+    pub(crate) fn auxv_for(proc_ref: &UserProcRef) -> [(u64, u64); AUXV_ENTRIES] {
+        let mut auxv = [(0u64, 0u64); AUXV_ENTRIES];
+        auxv[0] = (AT_PHDR, proc_ref.load_elf_phdr());
+        auxv[1] = (AT_PHENT, proc_ref.load_elf_phentsize());
+        auxv[2] = (AT_PHNUM, proc_ref.load_elf_phnum());
+        auxv[3] = (AT_PAGESZ, PAGE_SIZE);
+        auxv[4] = (AT_BASE, proc_ref.load_elf_interp_base());
+        auxv[5] = (AT_ENTRY, proc_ref.load_elf_entry());
+        auxv[6] = (AT_UID, 0);
+        auxv[7] = (AT_EUID, 0);
+        auxv[8] = (AT_GID, 0);
+        auxv[9] = (AT_EGID, 0);
+        auxv[10] = (AT_HWCAP, 0);
+        auxv[11] = (AT_CLKTCK, 100);
+        auxv[12] = (AT_SECURE, 0);
+        auxv[13] = (AT_RANDOM, 0);
+        auxv[14] = (AT_HWCAP2, 0);
+        auxv[15] = (AT_EXECFN, 0);
+        auxv[16] = (AT_SYSINFO_EHDR, 0);
+        auxv[17] = (AT_NULL, 0);
+        auxv
+    }
+
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
     //
     // `*mut UserProcess` 在用户进程管理中作为索引句柄使用。将其封装为 `UserProcRef`
@@ -166,6 +211,62 @@ pub(crate) mod raw {
             unsafe {
                 (*self.0).entry = v;
             }
+        }
+
+        /// 写入 D3 初始栈所需的 ELF 静态事实.
+        #[inline]
+        pub fn store_elf_meta(
+            &self,
+            phdr: u64,
+            phnum: u64,
+            phentsize: u64,
+            entry: u64,
+            interp_base: u64,
+        ) {
+            // SAFETY: `UserProcRef` 不变式保证分配有效；字段只在装载期写入。
+            unsafe {
+                let proc = &mut *self.0;
+                proc.elf_phdr = phdr;
+                proc.elf_phnum = phnum;
+                proc.elf_phentsize = phentsize;
+                proc.elf_entry = entry;
+                proc.elf_interp_base = interp_base;
+            }
+        }
+
+        /// 主映像 `AT_PHDR`.
+        #[inline]
+        pub fn load_elf_phdr(&self) -> u64 {
+            // SAFETY: 同 store_elf_meta；只读.
+            unsafe { (*self.0).elf_phdr }
+        }
+
+        /// 主映像 `AT_PHNUM`.
+        #[inline]
+        pub fn load_elf_phnum(&self) -> u64 {
+            // SAFETY: 同 store_elf_meta；只读.
+            unsafe { (*self.0).elf_phnum }
+        }
+
+        /// 主映像 `AT_PHENT`.
+        #[inline]
+        pub fn load_elf_phentsize(&self) -> u64 {
+            // SAFETY: 同 store_elf_meta；只读.
+            unsafe { (*self.0).elf_phentsize }
+        }
+
+        /// 主映像 `AT_ENTRY`.
+        #[inline]
+        pub fn load_elf_entry(&self) -> u64 {
+            // SAFETY: 同 store_elf_meta；只读.
+            unsafe { (*self.0).elf_entry }
+        }
+
+        /// 解释器 `AT_BASE`；静态为 0.
+        #[inline]
+        pub fn load_elf_interp_base(&self) -> u64 {
+            // SAFETY: 同 store_elf_meta；只读.
+            unsafe { (*self.0).elf_interp_base }
         }
 
         #[inline]
@@ -737,6 +838,18 @@ pub struct UserProcess {
     pub stack_bottom: AtomicU64,
     /// 进程创建时间戳 (ticks). 调度/审计用, 不属于 Process 状态.
     pub create_time: u64,
+
+    // === D3 初始栈 auxv 的静态事实 (装载时写入, exec 后不再变化) ===
+    /// 主映像程序头表在用户地址空间中的地址 (`AT_PHDR`).
+    pub elf_phdr: u64,
+    /// 主映像程序头表项数 (`AT_PHNUM`).
+    pub elf_phnum: u64,
+    /// 主映像程序头表项大小 (`AT_PHENT`).
+    pub elf_phentsize: u64,
+    /// 主映像入口 (`AT_ENTRY`).
+    pub elf_entry: u64,
+    /// 解释器装载基址 (`AT_BASE`); 静态映像为 0.
+    pub elf_interp_base: u64,
 }
 
 impl UserProcess {
@@ -869,6 +982,17 @@ impl UserProcManager {
     /// 内部存储为 `NonNull`, 转为 *mut 供外部调用。
     pub fn get(&self, pid: u32) -> Option<*mut UserProcess> {
         self.processes.lock().get(&pid).map(|n| n.as_ptr())
+    }
+
+    /// 取指定进程的 auxv 静态部分；进程不存在时返回全零（调用方随后会失败）.
+    pub fn auxv_for_pid(&self, pid: u32) -> [(u64, u64); raw::AUXV_ENTRIES] {
+        let Some(proc) = self.get(pid) else {
+            return [(0, 0); raw::AUXV_ENTRIES];
+        };
+        // SAFETY: proc 来自 manager 的 BTreeMap，在 `get` 返回后到本函数结束前
+        // 调用方未销毁该进程；只读元数据.
+        let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc) };
+        raw::auxv_for(&proc_ref)
     }
 
     /// 通过闭包安全访问进程
@@ -1737,6 +1861,7 @@ impl UserProcManager {
         arg_count: usize,
         envp: *const *const u8,
         env_count: usize,
+        auxv: &[(u64, u64)],
     ) -> u64 {
         // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(env_count+1)) + 字符串
         let mut string_bytes: usize = 0;
@@ -1783,8 +1908,9 @@ impl UserProcManager {
             }
         }
 
-        let ptr_count = 1 + (arg_count + 1) + (env_count + 1); // 指针数: argc(1) + argv(n+1) + envp(m+1)
-        let total = ptr_count * 8 + string_bytes;
+        let ptr_count = 1 + (arg_count + 1) + (env_count + 1) + auxv.len() * 2;
+        // AT_RANDOM 的 16 字节也必须落在栈内.
+        let total = ptr_count * 8 + string_bytes + 16;
         // 确保 16 字节对齐
         let total = (total + 15) & !15;
 
@@ -1804,8 +1930,12 @@ impl UserProcManager {
         // 跳过 envp 指针
         let envp_start_off = pos;
         pos += (env_count + 1) * 8;
+        // auxv 区: 每项 (type, value) 两个 u64
+        let auxv_start_off = pos;
+        pos += auxv.len() * 2 * 8;
         // 字符串区起始
         let strings_off = pos;
+        let random_off = strings_off + string_bytes;
 
         // Write argc
         raw::write_user_u64(cr3, arg_count_off, arg_count as u64);
@@ -1859,6 +1989,36 @@ impl UserProcManager {
         // envp 末尾 NULL 哨兵
         raw::write_user_u64(cr3, envp_start_off + env_count * 8, 0u64);
 
+        // auxv: AT_EXECFN / AT_RANDOM 需要实际栈地址，其余来自装载期事实.
+        let execfn = if arg_count > 0 { strings_off as u64 } else { 0 };
+        for (i, (kind, value)) in auxv.iter().enumerate() {
+            let actual = match *kind {
+                raw::AT_EXECFN => execfn,
+                raw::AT_RANDOM => random_off as u64,
+                _ => *value,
+            };
+            raw::write_user_u64(cr3, auxv_start_off + i * 16, *kind);
+            raw::write_user_u64(cr3, auxv_start_off + i * 16 + 8, actual);
+        }
+
+        // D3 先用 ASLR 栈址 / cr3 / AT_RANDOM 地址派生 16 字节；不在装载期
+        // 调时钟或 canary CAS 熵池（x86 上实测会卡住 exec 探针）。D7 再接
+        // getrandom/硬件熵源.
+        let seed = stack_top
+            ^ (random_off as u64).rotate_left(7)
+            ^ cr3.rotate_left(29)
+            ^ 0xA5A5_5A5A_1234_5678;
+        let r0 = seed;
+        let r1 = seed.rotate_left(17) ^ 0x5A5A_A5A5_8765_4321;
+        for i in 0..16 {
+            let byte = if i < 8 {
+                (r0 >> (8 * i)) as u8
+            } else {
+                (r1 >> (8 * (i - 8))) as u8
+            };
+            raw::write_user_byte(cr3, random_off + i, byte);
+        }
+
         new_sp
     }
 
@@ -1885,10 +2045,11 @@ impl UserProcManager {
         let stack_top = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
 
+        let auxv = raw::auxv_for(&proc_ref);
         // SAFETY: argv/envp 由入口 `# Safety` 段约束; cr3 / stack_top 取自本进程镜像
         // 的原子字段 (load_cr3 / load_user_stack).
         let new_sp = unsafe {
-            Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envp, env_count)
+            Self::setup_user_stack_in_table(cr3, stack_top, argv, arg_count, envp, env_count, &auxv)
         };
 
         if new_sp != 0 {
@@ -2038,10 +2199,14 @@ impl UserProcManager {
                 0
             }
         });
+        let main_entry = verified.entry + load_bias;
         let entry = match interp_verified {
             Some(v) => v.entry + interp_bias,
-            None => verified.entry + load_bias,
+            None => main_entry,
         };
+        // D3: `AT_PHDR` 必须从“包含 e_phoff 的 PT_LOAD”反推；e_phoff 本身不是 VA.
+        let main_elf = unsafe { core::slice::from_raw_parts(elf_data, elf_size as usize) };
+        let main_phdr = super::elf::phdr_addr(main_elf, load_bias).unwrap_or(0);
 
         // SAFETY: verify_elf 已通过校验, 后续 raw 指针访问 (header / phdr / 物理页) 集中此块
         unsafe {
@@ -2064,6 +2229,15 @@ impl UserProcManager {
             // SAFETY: proc 由 create 返回, 生命周期由 UserProcManager 管理。
             let proc_ref = UserProcRef::new_unchecked(proc);
             let cr3 = proc_ref.load_cr3();
+            // D3: 把主/解释器静态事实挂在进程上；栈构造时只消费这些事实，
+            // 不再回读已经被替换的 ELF 缓冲.
+            proc_ref.store_elf_meta(
+                main_phdr,
+                header.phnum as u64,
+                header.phentsize as u64,
+                main_entry,
+                interp_bias,
+            );
 
             // M2: 新地址空间从装载首日就带 `MmStruct`；VMA 描述由
             // `load_elf_segments` 按 PT_LOAD 同源建立，后续 mmap/mprotect/brk

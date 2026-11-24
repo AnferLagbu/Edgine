@@ -101,13 +101,19 @@ fn load_init_from_initramfs() -> i32 {
     let (interp_ptr, interp_len) = interp.as_ref().map_or((core::ptr::null(), 0), |bytes| {
         (bytes.as_ptr(), bytes.len() as u64)
     });
-    crate::privileged::proc::mechanism::user_proc_load_elf_from_memory_with_interp(
+    let pid = crate::privileged::proc::mechanism::user_proc_load_elf_from_memory_with_interp(
         elf.as_ptr(),
         elf.len() as u64,
         interp_ptr,
         interp_len,
         0,
-    )
+    );
+    if pid > 0 {
+        // PID 1 没有 execve 参数；仍必须建立带 auxv 的 Linux 初始栈，
+        // 否则动态解释器拿不到 AT_PHDR/AT_BASE/AT_ENTRY.
+        let _ = crate::privileged::proc::mechanism::user_proc_setup_empty_argv(pid.cast_unsigned());
+    }
+    pid
 }
 
 // ============================================================================

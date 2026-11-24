@@ -66,6 +66,7 @@ pub use super::api::user_proc_enter_by_pid;
 pub use super::api::user_proc_load_elf_from_memory;
 pub use super::api::user_proc_load_elf_from_memory_with_interp;
 pub use super::api::user_proc_setup_argv;
+pub use super::api::user_proc_setup_empty_argv;
 pub use super::proc_ops::proc_alloc_pid;
 
 // ==================== 进程信息查询 ====================

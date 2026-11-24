@@ -73,6 +73,32 @@ fn dual_loader_selects_interp_entry_and_separate_bias() {
 }
 
 #[test]
+fn d3_initial_stack_carries_auxv() {
+    assert!(
+        ELF_MOD.contains("pub fn phdr_addr(elf_data: &[u8], load_bias: u64) -> Option<u64>"),
+        "AT_PHDR 必须由包含 e_phoff 的 PT_LOAD 反推"
+    );
+    assert!(
+        USER_PROC.contains("setup_user_stack_in_table(")
+            && USER_PROC.contains("auxv: &[(u64, u64)]")
+            && USER_PROC.contains("AT_PHDR")
+            && USER_PROC.contains("AT_RANDOM")
+            && USER_PROC.contains("AT_EXECFN"),
+        "初始栈必须写 argc/argv/envp/auxv 四段"
+    );
+    assert!(
+        USER_PROC.contains("let main_phdr = super::elf::phdr_addr")
+            && USER_PROC.contains("store_elf_meta("),
+        "装载期必须把 AT_PHDR/AT_ENTRY/AT_BASE 存到进程"
+    );
+    assert!(
+        PROC_OPS.contains("USER_PROC_MANAGER.auxv_for_pid(new_pid_u32)")
+            && INIT.contains("user_proc_setup_empty_argv"),
+        "exec 与 init 都必须建立带 auxv 的栈"
+    );
+}
+
+#[test]
 fn ffi_surfaces_keep_static_wrapper() {
     assert!(
         PROC_API.contains("user_proc_load_elf_from_memory_with_interp")

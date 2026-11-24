@@ -274,13 +274,13 @@ fn test_proc_exec_replace_copies_envp_before_switch() {
     let flat = norm(&replace);
     assert_contains(
         &flat,
-        "if (argv_addr != 0 && arg_count > 0) || (envp_addr != 0 && env_count > 0) {",
-        "仅传 envp 的 exec 也必须触发栈写入",
+        "let auxv = USER_PROC_MANAGER.auxv_for_pid(new_pid_u32);",
+        "D3: 即使 argv/envp 为空，exec 也必须建立带 auxv 的初始栈",
     );
     assert_contains(
         &flat,
-        "envp_addr as *const *const u8, env_count as usize,",
-        "envp 指针与计数必须传给栈布置原语",
+        "envp_addr as *const *const u8, env_count as usize, &auxv,",
+        "envp 指针、计数与 auxv 必须传给栈布置原语",
     );
     // 阶段 2c 必须在 replace_user_space / exec_de_thread 之前 —— 字符串源在旧地址空间.
     let stage2c = replace
@@ -313,8 +313,18 @@ fn test_user_stack_writes_envp_strings_and_sentinel() {
     );
     assert_contains(
         &setup,
-        "let ptr_count = 1 + (arg_count + 1) + (env_count + 1);",
-        "栈空间必须计入 envp 指针数组 + 哨兵",
+        "let ptr_count = 1 + (arg_count + 1) + (env_count + 1) + auxv.len() * 2;",
+        "栈空间必须计入 envp 指针数组 + 哨兵 + auxv 两字对",
+    );
+    assert_contains(
+        &setup,
+        "let auxv_start_off = pos;",
+        "auxv 区必须位于 envp 与字符串之间",
+    );
+    assert_contains(
+        &setup,
+        "raw::write_user_u64(cr3, auxv_start_off + i * 16, *kind);",
+        "auxv type 必须写入用户栈",
     );
     assert_contains(
         &setup,

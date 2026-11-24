@@ -366,6 +366,44 @@ fn elf_load_segment(
     Ok(vaddr_end as u64)
 }
 
+/// 计算 `AT_PHDR`：程序头表在用户地址空间中的实际地址。
+///
+/// 用包含 `e_phoff` 的 `PT_LOAD` 反推 `p_vaddr + (e_phoff - p_offset)`，
+/// 再叠加 `load_bias`；不能直接拿 `e_phoff` 当虚拟地址（PIE/非零 p_offset 都会错）。
+#[must_use]
+pub fn phdr_addr(elf_data: &[u8], load_bias: u64) -> Option<u64> {
+    let header = elf_validate(elf_data)?;
+    if header.phoff == 0 || header.phnum == 0 {
+        return None;
+    }
+    let phoff = crate::privileged::glue::usize_from_u64(header.phoff);
+    // SAFETY: verify_elf 已校验 phdr 表在 `elf_data` 内；按值读取，不构造对齐引用.
+    let phdr_base = unsafe { elf_data.as_ptr().add(phoff) };
+    for i in 0..header.phnum {
+        // SAFETY: 同 interp_path；i < phnum，phentsize 已由 verify 固定.
+        let phdr = unsafe {
+            phdr_base
+                .add(i as usize * core::mem::size_of::<Elf64Phdr>())
+                .cast::<Elf64Phdr>()
+                .read_unaligned()
+        };
+        if phdr.ty != PT_LOAD || phdr.filesz == 0 {
+            continue;
+        }
+        let offset = crate::privileged::glue::usize_from_u64(phdr.offset);
+        let filesz = crate::privileged::glue::usize_from_u64(phdr.filesz);
+        let Some(end) = offset.checked_add(filesz) else {
+            continue;
+        };
+        if phoff < offset || phoff >= end {
+            continue;
+        }
+        let delta = (phoff - offset) as u64;
+        return load_bias.checked_add(phdr.vaddr)?.checked_add(delta);
+    }
+    None
+}
+
 /// 读取 ELF 的 `PT_INTERP` 路径（不修改原映像）。
 ///
 /// Linux `execve` 的契约是“内核读出解释器路径并装载第二个 ELF”，不是把路径
@@ -648,6 +686,37 @@ mod tests {
             core::ptr::copy_nonoverlapping(path.as_ptr(), buf.0.as_mut_ptr().add(128), path.len());
         }
         buf
+    }
+
+    #[repr(align(8))]
+    struct AlignedLoadElf([u8; 160]);
+
+    fn elf_with_first_load() -> AlignedLoadElf {
+        let mut buf = AlignedLoadElf([0u8; 160]);
+        // SAFETY: 160B 缓冲足够容纳头、一条 phdr 与路径；按值写入字段.
+        unsafe {
+            let hdr = buf.0.as_mut_ptr().cast::<Elf64Header>();
+            let mut ident = [0u8; 16];
+            ident[0..4].copy_from_slice(b"\x7FELF");
+            ident[4] = 2;
+            (*hdr).ident = ident;
+            (*hdr).machine = 0x3E;
+            (*hdr).phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+            (*hdr).phoff = 64;
+            (*hdr).phnum = 1;
+            let phdr = buf.0.as_mut_ptr().add(64).cast::<Elf64Phdr>();
+            (*phdr).ty = PT_LOAD;
+            (*phdr).offset = 0;
+            (*phdr).filesz = 128;
+            (*phdr).vaddr = 0x1000;
+        }
+        buf
+    }
+
+    #[test]
+    fn phdr_addr_uses_containing_pt_load_not_e_phoff() {
+        let elf = elf_with_first_load();
+        assert_eq!(phdr_addr(&elf.0, 0x10_000), Some(0x11_040));
     }
 
     #[test]

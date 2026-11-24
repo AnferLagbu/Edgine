@@ -760,7 +760,10 @@ pub extern "C" fn proc_exec_replace_with_interp(
     // 调用进程的旧用户内存, 换表/销毁后再读即 UAF (旧实现把该步放在
     // `replace_user_space` 之后). 写侧按 new_cr3 寻址, 与旧空间无耦合;
     // 失败保持镜像原栈指针, 与原"忽略失败"语义一致.
-    if (argv_addr != 0 && arg_count > 0) || (envp_addr != 0 && env_count > 0) {
+    // Linux 的初始栈始终带 auxv，即使 argv/envp 为空；D3 起不能再用
+    // “参数非空”作为是否建栈的条件.
+    {
+        let auxv = USER_PROC_MANAGER.auxv_for_pid(new_pid_u32);
         // SAFETY: 入口 `# Safety` 段要求 argv/envp 指针数组与字符串位于当前仍在用的
         // 地址空间; 本步在旧空间销毁前执行 (见上方阶段 2c), new_cr3 是刚加载完成的
         // 新用户页表, 写侧只按 new_cr3 寻址.
@@ -772,6 +775,7 @@ pub extern "C" fn proc_exec_replace_with_interp(
                 arg_count as usize,
                 envp_addr as *const *const u8,
                 env_count as usize,
+                &auxv,
             )
         };
         if sp != 0 {
