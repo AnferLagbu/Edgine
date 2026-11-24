@@ -85,9 +85,11 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 **2026-11-24 用户裁定**：Edgine 承诺 Linux 用户态 ABI 兼容，作为“外部程序证明 Edgine 可用”的主验收面；采用**单一 Linux ABI + EG 私有扩展段**（500+ 保持 EG 自有），不采用“双 ABI 按 personality 选表”。理由：双 ABI 会把 loader、测试矩阵与支持面翻倍；EG 自有扩展不与 Linux 0-299 冲突，无需第二套基础 ABI。
 
 **落地拆分（施工另开，未开工前不动 dispatch）**：
-- **T7-a 编号表**：按 arch 单源 `SYS_*` 编号（x86_64 / aarch64 各一份），与 Linux UAPI 头对表，未知号一律 `-ENOSYS`。
+- **T7-a 编号表**：按 arch 单源 `SYS_*` 编号（x86_64 / aarch64 各一份），与 Linux UAPI 头对表，未知号一律 `-ENOSYS`。`MAX_SYSCALLS = 900` 的数组式上界判断作废，改 `is_linux_nr(nr)` / `is_private_nr(nr)` 两段判断。
 - **T7-b 入口与用户库**：aarch64 切 `x8` 编号 + `x0-x5` 参数；`src/user` 汇编、`rt_sigreturn` trampoline（现硬编码 `x0=139`）同步迁移；x86_64 保持 Linux 入口。
 - **T7-c 外部程序验收**：先静态 musl 二进制（hello / busybox），再动态 musl；每条腿断言退出码与输出，不以“能启动”代替“ABI 正确”。glibc/vDSO 面后置。
+
+**私有段边界（与 T7-a 同批，不能拖）**：承诺 Linux ABI 意味着 Linux 公开编号空间全部让给 Linux（当前 0–466，预留到 499 及未来增长段）；EG 私有不再借用 400–899 的任何 Linux 可能扩展号。现状里 SGEG 的 **400–423 / 453–463** 已与 Linux 冲突：aarch64 400=`sched_setattr`、x86_64 453=`map_shadow_stack`，继续占用就会让 Linux 程序调错函数。SGEG 与 EG 500–899 统一迁到高位私有基址（建议 `0x4000_0000` 起，按旧号偏移保留相对布局），旧号不做兼容别名——保留别名等于把“双 ABI”换个名字留下。这是一次显式 ABI 断代，SGEG 冻结面正好可同批迁移，不另开兼容层。
 
 ## 优先级与依赖
 
