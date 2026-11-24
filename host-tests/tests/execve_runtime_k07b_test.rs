@@ -197,8 +197,8 @@ fn test_execve_passes_envp_to_privileged() {
     let flat = norm(&code);
     assert_contains(
         &flat,
-        "crate::privileged::proc::proc_exec_replace( image_ptr, image_len, argv, arg_count, envp, env_count,",
-        "functions 必须把 envp/env_count 一并下传 (6 参 FFI)",
+        "crate::privileged::proc::proc_exec_replace_with_interp( image_ptr, image_len, interp_ptr, interp_len, argv, arg_count, envp, env_count,",
+        "functions 必须把解释器与 envp/env_count 一并下传 (8 参 FFI)",
     );
     // W-7 批次 B: 单点按 magic 分派 —— wasm 装载用户态桩, ELF 走既有路径.
     assert_contains(
@@ -266,9 +266,11 @@ fn test_wasm_stub_is_selected_by_path_and_outlives_exec() {
 #[test]
 fn test_proc_exec_replace_copies_envp_before_switch() {
     let code = code_only(&read_src(PROC_OPS_RS));
-    let replace = fn_body(&code, "pub extern \"C\" fn proc_exec_replace");
-    assert_contains(&replace, "envp_addr: u64,", "FFI 第 5 参: 旧空间 envp 基址");
-    assert_contains(&replace, "env_count: u32,", "FFI 第 6 参: envp 计数");
+    let replace = fn_body(&code, "pub extern \"C\" fn proc_exec_replace_with_interp");
+    assert_contains(&replace, "interp_addr: u64,", "FFI 第 3 参: 解释器缓冲地址");
+    assert_contains(&replace, "interp_size: u64,", "FFI 第 4 参: 解释器长度");
+    assert_contains(&replace, "envp_addr: u64,", "FFI 第 7 参: 旧空间 envp 基址");
+    assert_contains(&replace, "env_count: u32,", "FFI 第 8 参: envp 计数");
     let flat = norm(&replace);
     assert_contains(
         &flat,

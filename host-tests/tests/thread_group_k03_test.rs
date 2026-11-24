@@ -331,7 +331,7 @@ fn exec_swaps_signal_table_before_reset() {
     );
 
     let proc_ops = code_only(&read_src(PROC_OPS_SRC));
-    let replace = fn_body(&proc_ops, "fn proc_exec_replace");
+    let replace = fn_body(&proc_ops, "fn proc_exec_replace_with_interp");
     let fresh_arc_at = index_of(
         &replace,
         "p.sigaction_table =

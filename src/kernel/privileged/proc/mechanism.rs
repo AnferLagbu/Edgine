@@ -64,6 +64,7 @@ pub use super::sched_ops::scheduler_yield_ex;
 pub use super::api::enter_user_process;
 pub use super::api::user_proc_enter_by_pid;
 pub use super::api::user_proc_load_elf_from_memory;
+pub use super::api::user_proc_load_elf_from_memory_with_interp;
 pub use super::api::user_proc_setup_argv;
 pub use super::proc_ops::proc_alloc_pid;
 

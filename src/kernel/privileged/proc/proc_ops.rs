@@ -684,6 +684,28 @@ pub extern "C" fn proc_exec_replace(
     envp_addr: u64,
     env_count: u32,
 ) -> i32 {
+    proc_exec_replace_with_interp(
+        elf_addr, elf_size, 0, 0, argv_addr, arg_count, envp_addr, env_count,
+    )
+}
+
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+#[unsafe(no_mangle)]
+/// 用主 ELF + 可选解释器替换当前进程映像（D2 双映像 exec 入口）。
+///
+/// 旧 `proc_exec_replace` 是静态单映像包装；动态映像由 functions 层读入
+/// `PT_INTERP` 对应的解释器后走本入口。`interp_addr == 0 && interp_size == 0`
+/// 表示静态；半对参数由 loader 拒绝。
+pub extern "C" fn proc_exec_replace_with_interp(
+    elf_addr: u64,
+    elf_size: u64,
+    interp_addr: u64,
+    interp_size: u64,
+    argv_addr: u64,
+    arg_count: u32,
+    envp_addr: u64,
+    env_count: u32,
+) -> i32 {
     if elf_addr == 0 {
         return -1;
     }
@@ -700,7 +722,13 @@ pub extern "C" fn proc_exec_replace(
     // P0-I-31 修复: transactional execve — 先在临时进程中加载并验证新 ELF,
     // 验证通过后将新地址空间转移到当前 PID, 保持 POSIX execve 语义 (PID 不变).
     // 阶段 4b: ELF 文件 I/O 下沉 functions, privileged 仅收字节并加载 (纯机制).
-    let new_pid = super::api::user_proc_load_elf_from_memory(elf_data, elf_size, pwm);
+    let new_pid = super::api::user_proc_load_elf_from_memory_with_interp(
+        elf_data,
+        elf_size,
+        interp_addr as *const u8,
+        interp_size,
+        pwm,
+    );
     if new_pid < 0 {
         return -1;
     }

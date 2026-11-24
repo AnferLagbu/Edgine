@@ -366,6 +366,63 @@ fn elf_load_segment(
     Ok(vaddr_end as u64)
 }
 
+/// 读取 ELF 的 `PT_INTERP` 路径（不修改原映像）。
+///
+/// Linux `execve` 的契约是“内核读出解释器路径并装载第二个 ELF”，不是把路径
+/// 改写成一个内核自带的桩。返回的 `&str` 借用 `elf_data`，调用方需在读取
+/// 解释器文件期间保持该缓冲有效。
+///
+/// 只接受绝对路径、NUL 结尾且为 ASCII 的 `PT_INTERP`；畸形段一律跳过。
+#[must_use]
+pub fn interp_path(elf_data: &[u8]) -> Option<&str> {
+    let header = elf_validate(elf_data)?;
+    if header.phoff == 0 || header.phnum == 0 {
+        return None;
+    }
+
+    // SAFETY: `verify_elf` 已校验 program header table 落在 `elf_data` 内；
+    // `i < phnum` 且 phentsize 已由 verify 固定为 `size_of::<Elf64Phdr>()`.
+    let phdr_base = unsafe {
+        elf_data
+            .as_ptr()
+            .add(crate::privileged::glue::usize_from_u64(header.phoff))
+    };
+    for i in 0..header.phnum {
+        // SAFETY: 同上方；按值读取，不构造对齐引用，也不越出已校验的 phdr 表.
+        let phdr = unsafe {
+            phdr_base
+                .add(i as usize * core::mem::size_of::<Elf64Phdr>())
+                .cast::<Elf64Phdr>()
+                .read_unaligned()
+        };
+        if phdr.ty != PT_INTERP || phdr.filesz == 0 {
+            continue;
+        }
+
+        let offset = crate::privileged::glue::usize_from_u64(phdr.offset);
+        let len = crate::privileged::glue::usize_from_u64(phdr.filesz);
+        let Some(end) = offset.checked_add(len) else {
+            continue;
+        };
+        if end > elf_data.len() {
+            continue;
+        }
+
+        let raw = &elf_data[offset..end];
+        let Some(nul) = raw.iter().position(|b| *b == 0) else {
+            continue;
+        };
+        let path = &raw[..nul];
+        if path.is_empty() || path[0] != b'/' || !path.is_ascii() {
+            continue;
+        }
+        if let Ok(path) = core::str::from_utf8(path) {
+            return Some(path);
+        }
+    }
+    None
+}
+
 /// edgine 动态链接器路径 (替代 Linux ld-linux-*.so.2)
 const EDGINE_INTERP: &[u8] = b"/usr/libexec/elfld.so\0";
 
@@ -562,6 +619,49 @@ mod tests {
     fn test_elf64_header_sizes() {
         assert_eq!(core::mem::size_of::<Elf64Header>(), 64);
         assert_eq!(core::mem::size_of::<Elf64Phdr>(), 56);
+    }
+
+    /// 8 字节对齐的 ELF 缓冲区，含一条 PT_INTERP + 路径字符串。
+    #[repr(align(8))]
+    struct AlignedElfWithPath([u8; 160]);
+
+    fn elf_with_interp_path(path: &[u8]) -> AlignedElfWithPath {
+        let mut buf = AlignedElfWithPath([0u8; 160]);
+        // SAFETY: 160B 对齐缓冲足够容纳头 (64B)、一条 phdr (56B) 与 32B 路径；
+        // 所有写入均落在缓冲区内，按值读写，不构造对齐引用.
+        unsafe {
+            let hdr = buf.0.as_mut_ptr().cast::<Elf64Header>();
+            let mut ident = [0u8; 16];
+            ident[0..4].copy_from_slice(b"\x7FELF");
+            ident[4] = 2;
+            (*hdr).ident = ident;
+            (*hdr).machine = 0x3E;
+            (*hdr).phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+            (*hdr).phoff = 64;
+            (*hdr).phnum = 1;
+
+            let phdr = buf.0.as_mut_ptr().add(64).cast::<Elf64Phdr>();
+            (*phdr).ty = PT_INTERP;
+            (*phdr).offset = 128;
+            (*phdr).filesz = path.len() as u64;
+
+            core::ptr::copy_nonoverlapping(path.as_ptr(), buf.0.as_mut_ptr().add(128), path.len());
+        }
+        buf
+    }
+
+    #[test]
+    fn interp_path_reads_absolute_path_without_rewriting() {
+        let elf = elf_with_interp_path(b"/lib/ld-musl-x86_64.so.1\0");
+        assert_eq!(interp_path(&elf.0), Some("/lib/ld-musl-x86_64.so.1"));
+    }
+
+    #[test]
+    fn interp_path_rejects_relative_or_unterminated() {
+        let relative = elf_with_interp_path(b"lib/ld-musl-x86_64.so.1\0");
+        assert_eq!(interp_path(&relative.0), None);
+        let unterminated = elf_with_interp_path(b"/lib/ld-musl-x86_64.so.1");
+        assert_eq!(interp_path(&unterminated.0), None);
     }
 
     /// 8 字节对齐的 ELF 缓冲区 (测试用构造器; `elf_validate` 本身按值读取, 不要求对齐).

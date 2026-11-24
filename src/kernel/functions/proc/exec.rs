@@ -95,16 +95,16 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
         crate::privileged::sgeg::elevate_for_suid(st.owner_pwm);
     }
 
-    // 阶段 4b: ELF 文件 I/O 下沉 functions — 读取字节 + PT_INTERP 改写,
-    // 再交 privileged 纯机制 (进程替换/页表切换).
-    let Some(mut image) =
+    // 阶段 4b: ELF 文件 I/O 下沉 functions — 读取主映像与 PT_INTERP 指向的
+    // 解释器；不修改主映像。解释器读取失败按 Linux 语义返回 ENOENT。
+    let Some(image) =
         crate::functions::fs::api::read_file_to_vec(path as *const u8, current_pwm, ELF_MAX_SIZE)
     else {
         return Err(Errno::Enoent);
     };
 
     // §3 丙 裁定: 单点按 magic 的 match, 不抽 ImageLoader trait.
-    // - ELF: 走既有 PT_INTERP 改写 + 进程替换;
+    // - ELF: 主映像 + 可选解释器双缓冲区交 privileged；
     // - wasm (`\0asm`): 从 VFS 读用户态入口桩 (D4 严格零嵌入, 不再编译期嵌入),
     //   模块路径随 argv[0] 交给桩, 桩再经 `EG_WASM_LOAD` 让内核读模块 (W-7).
     let stub = if crate::functions::wasm::stub::is_wasm_image(&image) {
@@ -119,16 +119,30 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     } else {
         None
     };
+    let interp = if stub.is_some() {
+        None
+    } else if let Some(path) = crate::privileged::proc::elf::interp_path(&image) {
+        let Some(bytes) =
+            crate::functions::fs::api::read_file_kernel(path, current_pwm, ELF_MAX_SIZE)
+        else {
+            return Err(Errno::Enoent);
+        };
+        Some(bytes)
+    } else {
+        None
+    };
     let (image_ptr, image_len) = if let Some(stub) = &stub {
         (stub.as_ptr() as u64, stub.len() as u64)
     } else {
-        crate::privileged::proc::elf::prepare_elf_image(&mut image);
         (image.as_ptr() as u64, image.len() as u64)
     };
+    let (interp_ptr, interp_len) = interp
+        .as_ref()
+        .map_or((0, 0), |bytes| (bytes.as_ptr() as u64, bytes.len() as u64));
 
     // 进程替换 (privileged 机制: ELF 加载 + 地址空间切换 + 新栈 argv/envp)
-    let result = crate::privileged::proc::proc_exec_replace(
-        image_ptr, image_len, argv, arg_count, envp, env_count,
+    let result = crate::privileged::proc::proc_exec_replace_with_interp(
+        image_ptr, image_len, interp_ptr, interp_len, argv, arg_count, envp, env_count,
     );
     if result < 0 {
         Err(Errno::Enoent)

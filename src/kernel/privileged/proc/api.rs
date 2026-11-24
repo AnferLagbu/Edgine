@@ -108,6 +108,28 @@ pub extern "C" fn user_proc_load_elf_from_memory(
     USER_PROC_MANAGER.load_elf_from_memory(elf_data as usize, elf_size, pwm)
 }
 
+// SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
+/// 从内存中的主 ELF + 可选解释器加载用户进程（D2 双映像入口）。
+///
+/// `interp_data == null && interp_size == 0` 等价于静态单映像；两个参数只给
+/// 一个时由 loader 拒绝。解释器缓冲由 functions 层读入，调用期间必须有效。
+#[unsafe(no_mangle)]
+pub extern "C" fn user_proc_load_elf_from_memory_with_interp(
+    elf_data: *const u8,
+    elf_size: u64,
+    interp_data: *const u8,
+    interp_size: u64,
+    pwm: u64,
+) -> i32 {
+    USER_PROC_MANAGER.load_elf_from_memory_with_interp(
+        elf_data as usize,
+        elf_size,
+        interp_data as usize,
+        interp_size,
+        pwm,
+    )
+}
+
 /// 在 ELF 加载完成后, 在用户栈上建立 argv/envp (供 exec 系统调用使用)
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]

@@ -1,9 +1,9 @@
 #![deny(missing_docs)]
-use super::process::{Process, PROCESS_TABLE};
+use super::process::{PROCESS_TABLE, Process};
 use super::types::{ProcessId, ProcessState};
 use crate::klog_error;
 use crate::privileged::mm::KERNEL_BASE;
-use crate::privileged::mm::{pmm_alloc_page_phys, pmm_alloc_pages_phys, MmStruct, Vma, VmaType};
+use crate::privileged::mm::{MmStruct, Vma, VmaType, pmm_alloc_page_phys, pmm_alloc_pages_phys};
 use crate::privileged::sync::IrqSpinLock as Mutex;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -104,10 +104,10 @@ pub struct UserProcInfo {
 // 才能被 `static USER_PROC_MANAGER` 使用。
 pub(crate) mod raw {
     use super::{
-        kmalloc, memcpy, memset, pmm_alloc_page_phys, pmm_alloc_pages_phys, raw,
-        vmm_create_user_page_table, vmm_destroy_page_table, vmm_get_physical_in_table,
-        vmm_map_page_in_table, AtomicU32, AtomicU64, MmStruct, NonNull, Ordering, PageFlags,
-        Process, ProcessId, ProcessState, UserProcess, KERNEL_BASE, PAGE_SIZE, USER_KSTACK_SIZE,
+        AtomicU32, AtomicU64, KERNEL_BASE, MmStruct, NonNull, Ordering, PAGE_SIZE, PageFlags,
+        Process, ProcessId, ProcessState, USER_KSTACK_SIZE, UserProcess, kmalloc, memcpy, memset,
+        pmm_alloc_page_phys, pmm_alloc_pages_phys, raw, vmm_create_user_page_table,
+        vmm_destroy_page_table, vmm_get_physical_in_table, vmm_map_page_in_table,
     };
 
     // === UserProcess 安全访问封装 (Framekernel privilege wrapper) ===
@@ -570,11 +570,7 @@ pub(crate) mod raw {
         // SAFETY: layout 由 `Process` 类型决定且非零; KernelAllocator 契约返回
         // null 或一块满足该 layout 的可写内存.
         let ptr = unsafe { alloc::alloc::alloc(layout) } as usize as *mut Process;
-        if ptr.is_null() {
-            None
-        } else {
-            Some(ptr)
-        }
+        if ptr.is_null() { None } else { Some(ptr) }
     }
 
     /// 释放 `alloc_kernel_process` 分配的 `Process` 内存 (回滚路径专用).
@@ -1946,16 +1942,50 @@ impl UserProcManager {
 
     /// 从内存中的 ELF 映像加载用户进程, 返回新 pid (失败为负值)
     ///
-    /// `elf_addr` 为内核地址空间中的 ELF 映像起始地址 (`usize` 地址值中转,
-    /// 避免以裸指针参数越层传递); `[elf_addr, elf_addr + elf_size)` 的可读性由
-    /// 调用方保证 (现树两个调用点都传入内核缓冲: init 走 `read_file_kernel` 的
-    /// `Vec`, exec 走 functions 层读入的 ELF 缓冲). 本函数首部只校验非空与
-    /// `elf_size >= size_of::<ElfHeader>()`.
+    /// 无 `PT_INTERP` 的静态映像走本入口；动态映像由 functions 层先读解释器，
+    /// 再走 [`Self::load_elf_from_memory_with_interp`]。
     pub fn load_elf_from_memory(&self, elf_addr: usize, elf_size: u64, pwm: u64) -> i32 {
+        self.load_elf_from_memory_with_interp(elf_addr, elf_size, 0, 0, pwm)
+    }
+
+    /// 从内存中的主 ELF + 可选解释器 ELF 加载用户进程, 返回新 pid (失败为负值).
+    ///
+    /// Linux `execve` 的动态装载契约：主映像的 `PT_INTERP` 由 functions 层读出
+    /// 并作为第二个 ELF 缓冲传入；本函数只负责双映像映射与入口选择，不解析
+    /// `.dynsym` / `.rela`，也不修改主映像。
+    ///
+    /// `interp_addr == 0 && interp_size == 0` 表示静态映像；二者只给一个即拒绝。
+    /// 主映像与解释器各自选 `load_bias`；解释器按 ET_DYN 装载到 mmap 区，
+    /// 入口交给解释器。auxv / 初始栈属 D3，本入口暂只建立 argv/envp 可用的栈。
+    ///
+    /// # Panics
+    /// 无；畸形解释器/主映像一律以负返回值失败。
+    pub fn load_elf_from_memory_with_interp(
+        &self,
+        elf_addr: usize,
+        elf_size: u64,
+        interp_addr: usize,
+        interp_size: u64,
+        pwm: u64,
+    ) -> i32 {
         let elf_data = elf_addr as *const u8;
         crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
         if elf_data.is_null() || elf_size < core::mem::size_of::<ElfHeader>() as u64 {
             crate::klog_boot_info!("[ELF] load_elf_from_memory: null or too small");
+            return -1;
+        }
+
+        // D2: 解释器存在性必须成对给出；半对参数视为调用方装配错误，不猜测.
+        if (interp_addr == 0) != (interp_size == 0) {
+            crate::klog_boot_info!("[ELF] interp addr/size mismatch");
+            return -1;
+        }
+        let interp_present = interp_addr != 0;
+        let interp_data = interp_addr as *const u8;
+        if interp_present
+            && (interp_data.is_null() || interp_size < core::mem::size_of::<ElfHeader>() as u64)
+        {
+            crate::klog_boot_info!("[ELF] interp null or too small");
             return -1;
         }
 
@@ -1976,14 +2006,42 @@ impl UserProcManager {
         // SAFETY: verify_elf 已通过校验, header 按值读取安全
         let header = unsafe { elf_data.cast::<ElfHeader>().read_unaligned() };
 
-        // PIE (ET_DYN) 支持: 检测 ELF 类型并计算 load_bias
-        let is_pie = verified.is_pie;
-        let load_bias: u64 = if is_pie {
+        let interp_verified = if interp_present {
+            // SAFETY: 同上；解释器缓冲由 functions 层读入并在本调用期间保持有效.
+            let Ok(v) = (unsafe { super::elf::verify::verify_elf(interp_data, interp_size) })
+            else {
+                crate::klog_boot_info!("[ELF] interp verify_elf failed");
+                return -1;
+            };
+            Some(v)
+        } else {
+            None
+        };
+        let interp_header = if interp_present {
+            // SAFETY: interp_verified 已通过同一 verify_elf 校验，头按值读取安全.
+            Some(unsafe { interp_data.cast::<ElfHeader>().read_unaligned() })
+        } else {
+            None
+        };
+
+        // PIE (ET_DYN) 支持: 主映像按 PIE 基址, 解释器按 mmap 区基址; ET_EXEC
+        // 保持固定地址. 主/解释器偏移差远大于映像尺寸, 由 VMA 插入做最后拒绝.
+        let load_bias: u64 = if verified.is_pie {
             crate::privileged::config::aslr_pie_base()
         } else {
             0
         };
-        let entry = verified.entry + load_bias;
+        let interp_bias: u64 = interp_verified.map_or(0, |v| {
+            if v.is_pie {
+                crate::privileged::config::aslr_mmap_base()
+            } else {
+                0
+            }
+        });
+        let entry = match interp_verified {
+            Some(v) => v.entry + interp_bias,
+            None => verified.entry + load_bias,
+        };
 
         // SAFETY: verify_elf 已通过校验, 后续 raw 指针访问 (header / phdr / 物理页) 集中此块
         unsafe {
@@ -2011,23 +2069,38 @@ impl UserProcManager {
             // `load_elf_segments` 按 PT_LOAD 同源建立，后续 mmap/mprotect/brk
             // 不再依赖“无 mm 裸页”旁路。
             let mut mm = alloc::boxed::Box::new(MmStruct::new());
-            let Some(max_vaddr) =
-                Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3, &mm)
-            else {
+            let interp_image = match (interp_verified, interp_header) {
+                (Some(_), Some(header)) => Some((interp_data, interp_size, header, interp_bias)),
+                _ => None,
+            };
+            let Some((main_end, interp_end)) = Self::load_elf_images(
+                elf_data,
+                elf_size,
+                &header,
+                load_bias,
+                interp_image,
+                cr3,
+                &mm,
+            ) else {
                 Self::discard_unrun_process(proc_ref);
                 return -1;
             };
 
             mm.start_stack = crate::privileged::glue::usize_from_u64(proc_ref.load_user_stack());
-            mm.mmap_base = crate::privileged::glue::usize_from_u64(
-                crate::privileged::config::aslr_mmap_base(),
-            );
+            let mut mmap_base = crate::privileged::config::aslr_mmap_base();
+            if interp_end > mmap_base {
+                // 解释器占用了原 mmap 基址起始段；把后续 mmap 区抬到映像之后，
+                // 避免动态链接器第一次 mmap 撞上自己.
+                mmap_base = interp_end.saturating_add(PAGE_SIZE);
+            }
+            mm.mmap_base = crate::privileged::glue::usize_from_u64(mmap_base);
+            // brk 只跟主映像走；解释器在 mmap 区，不应把堆顶抬到 0x7fff...
             mm.start_brk.store(
-                crate::privileged::glue::usize_from_u64(max_vaddr),
+                crate::privileged::glue::usize_from_u64(main_end),
                 Ordering::SeqCst,
             );
             mm.brk.store(
-                crate::privileged::glue::usize_from_u64(max_vaddr),
+                crate::privileged::glue::usize_from_u64(main_end),
                 Ordering::SeqCst,
             );
             // M2: 指针所有权移交 `Process::mm`；释放/refcount 属 M5 收口，
@@ -2038,6 +2111,37 @@ impl UserProcManager {
 
             proc_ref.pid().cast_signed()
         }
+    }
+
+    /// 装载主映像与可选解释器，返回 `(主映像末页, 解释器末页)`.
+    ///
+    /// 两段共用调用方新建的 `mm`；任一段失败都返回 `None`，由唯一调用点
+    /// 统一走 `discard_unrun_process` 回滚，避免双映像路径出现两套归还顺序.
+    ///
+    /// # Safety
+    /// - 两个 ELF 指针均须指向已通过 `verify_elf` 的可读缓冲
+    /// - `cr3` 必须是本进程的有效用户页表
+    unsafe fn load_elf_images(
+        elf_data: *const u8,
+        elf_size: u64,
+        header: &ElfHeader,
+        load_bias: u64,
+        interp: Option<(*const u8, u64, ElfHeader, u64)>,
+        cr3: u64,
+        mm: &MmStruct,
+    ) -> Option<(u64, u64)> {
+        // SAFETY: 调用方已按本函数 `# Safety` 段保证两个 ELF 缓冲可读且
+        // 已通过 verify_elf；load_elf_segments 只读 ELF 并写入 cr3 对应的用户页.
+        let main_end =
+            unsafe { Self::load_elf_segments(elf_data, elf_size, header, load_bias, cr3, mm) }?;
+        let interp_end = match interp {
+            // SAFETY: 同上；解释器 header 来自同一 verify_elf 校验的缓冲.
+            Some((data, size, header, bias)) => {
+                unsafe { Self::load_elf_segments(data, size, &header, bias, cr3, mm) }?
+            }
+            None => 0,
+        };
+        Some((main_end, interp_end))
     }
 
     /// 装载 ELF 的 `PT_LOAD` 段: 逐页分配 (或复用) 用户页并复制文件数据.

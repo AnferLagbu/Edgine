@@ -815,7 +815,7 @@ fn exec_de_thread_terminates_siblings_and_anchors_leader() {
         "K-06: de_thread 完成后撤销标记, 恢复入组"
     );
 
-    let exec = fn_body(&ops, "pub extern \"C\" fn proc_exec_replace(");
+    let exec = fn_body(&ops, "pub extern \"C\" fn proc_exec_replace_with_interp(");
     let de_at = index_of(&exec, "if !exec_de_thread(current_pid) {");
     let replace_at = index_of(&exec, "if !USER_PROC_MANAGER.replace_user_space(");
     assert!(de_at < replace_at, "K-06: 必须先结束兄弟线程再更换地址空间");

@@ -230,7 +230,10 @@ fn arch_prctl_uses_unified_tls_setter() {
 #[test]
 fn exec_clears_tls_and_fork_clone_inherit() {
     let proc_ops = code_only(&read_src(PROC_OPS));
-    let exec = fn_body(&proc_ops, "pub extern \"C\" fn proc_exec_replace(");
+    let exec = fn_body(
+        &proc_ops,
+        "pub extern \"C\" fn proc_exec_replace_with_interp(",
+    );
     assert!(
         has(&exec, "tls_base.store(0") && has(&exec, "set_user_tls_base(0)"),
         "proc_exec_replace: execve 必须清零 TLS 基址 (进程字段 + 硬件寄存器)"

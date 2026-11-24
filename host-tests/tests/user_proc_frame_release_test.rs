@@ -241,7 +241,7 @@ fn create_rollback_releases_only_the_unmapped_guard_page() {
 fn elf_load_rollback_has_no_per_page_release() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
-    let body = item_from(&prod, "pub fn load_elf_from_memory(");
+    let body = item_from(&prod, "pub fn load_elf_from_memory_with_interp(");
     assert_eq!(
         count(&body, "free_phys_page"),
         0,
@@ -277,7 +277,7 @@ fn unrun_rollback_marks_zombie_then_uses_authoritative_teardown() {
 fn elf_load_installs_mm_and_vma_per_pt_load() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
-    let body = item_from(&prod, "pub fn load_elf_from_memory(");
+    let body = item_from(&prod, "pub fn load_elf_from_memory_with_interp(");
     let segments = item_from(&prod, "unsafe fn load_elf_segments(");
     assert!(
         body.contains("Box::new(MmStruct::new())")
@@ -297,7 +297,7 @@ fn elf_load_installs_mm_and_vma_per_pt_load() {
 fn elf_load_rollback_routes_every_failure_site_to_single_source() {
     let src = read(USER_PROC_RS);
     let prod = prod_code(&src);
-    let body = item_from(&prod, "pub fn load_elf_from_memory(");
+    let body = item_from(&prod, "pub fn load_elf_from_memory_with_interp(");
     let segments = item_from(&prod, "unsafe fn load_elf_segments(");
     // 装载失败点已收口为 `load_elf_segments` 的 `None` 返回, 由调用方唯一一处判据统一
     // 路由到回滚入口 —— 单路由 + 失败点逐个 `return None` 比逐点重复调用更强.
@@ -307,11 +307,9 @@ fn elf_load_rollback_routes_every_failure_site_to_single_source() {
         "load_elf_from_memory 必须把装载失败统一路由到回滚入口"
     );
     assert!(
-        body.contains("let Some(max_vaddr) =")
-            && body.contains(
-                "Self::load_elf_segments(elf_data, elf_size, &header, load_bias, cr3, &mm)"
-            ),
-        "回滚必须挂在装载失败的判据上 (装载成功不得回滚; M2 起同时要求 mm 参与装载)"
+        body.contains("let Some((main_end, interp_end)) = Self::load_elf_images(")
+            && body.contains("interp_image"),
+        "回滚必须挂在双映像装载失败的判据上 (装载成功不得回滚)"
     );
     // phnum 超限 / phdr 越界 / 用户 VA 下界 / 装配页 OOM / 无 PT_LOAD 五个失败点
     // 逐个返回 None, 不接受部分接线.

@@ -60,8 +60,8 @@ pub fn is_init_running() -> bool {
 /// 失败). 严格零嵌入 (D4): 无内嵌 `init.bin` 回退, 调用方按失败处理 (报错 + 停机 /
 /// `qemu_exit`). 本函数**不**切入用户态: 进入方式与失败兜底按架构不同, 由调用方决定.
 ///
-/// 取镜像链路: PID 1 经 VFS 读出 → `prepare_elf_image` → 纯机制装载, 即 `execve`
-/// 同款路径, 是 K-07b 用户态运行射程的入口.
+/// 取镜像链路: PID 1 经 VFS 读出 → 读 `PT_INTERP` 并读入解释器 → 纯机制双映像
+/// 装载, 即 `execve` 同款路径, 是 K-07b 用户态运行射程的入口.
 fn load_init_from_initramfs() -> i32 {
     // 严格零嵌入 (裁定 A): cpio 只来自引导器 boot-module; 无模块无 cpio → -1 (上层按失败停机).
     let Some(blob) = crate::privileged::boot::initrd_blob() else {
@@ -79,17 +79,33 @@ fn load_init_from_initramfs() -> i32 {
     crate::klog_boot_info!("[USER] initramfs: {} files unpacked", count);
     crate::privileged::proc::set_init_status(INIT_STATUS_LOADING);
 
-    let Some(mut elf) = crate::functions::fs::api::read_file_kernel(
+    let Some(elf) = crate::functions::fs::api::read_file_kernel(
         "/init",
         0,
         crate::functions::proc::exec::ELF_MAX_SIZE,
     ) else {
         return -3;
     };
-    crate::privileged::proc::elf::prepare_elf_image(&mut elf);
-    crate::privileged::proc::mechanism::user_proc_load_elf_from_memory(
+    let interp = if let Some(path) = crate::privileged::proc::elf::interp_path(&elf) {
+        let Some(bytes) = crate::functions::fs::api::read_file_kernel(
+            path,
+            0,
+            crate::functions::proc::exec::ELF_MAX_SIZE,
+        ) else {
+            return -4;
+        };
+        Some(bytes)
+    } else {
+        None
+    };
+    let (interp_ptr, interp_len) = interp.as_ref().map_or((core::ptr::null(), 0), |bytes| {
+        (bytes.as_ptr(), bytes.len() as u64)
+    });
+    crate::privileged::proc::mechanism::user_proc_load_elf_from_memory_with_interp(
         elf.as_ptr(),
         elf.len() as u64,
+        interp_ptr,
+        interp_len,
         0,
     )
 }
