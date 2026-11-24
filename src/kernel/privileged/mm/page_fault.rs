@@ -349,6 +349,16 @@ fn handle_vma_fault_with_mm(
     let aligned = crate::privileged::glue::usize_from_u64(info.fault_addr)
         & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
+    // 取指故障落在 NX VMA: 没有合法恢复动作. 若继续按匿名页分配, 会反复
+    // 映射同一 NX 页并重试, 每轮进入 VMM 临界区并广播 TLB shootdown, 最终
+    // 变成取指缺页风暴. 数据 VMA 上的取指必须按 SIGSEGV 终止.
+    //
+    // 可执行 VMA 的 not-present 取指仍走下方按需分配 (JIT/匿名 PROT_EXEC
+    // 语义); 这里只拦 VMA 明确标记 NX 的情形.
+    if info.access.instruction && vma.flags.contains(PageFlags::NX) {
+        return PfResult::SignalSegv;
+    }
+
     // ── userfaultfd (T1 G4): 已注册区间的匿名页缺页交由用户态处理 ──
     // 仅拦截 not-present 的用户态缺页 (MISSING 模式); COW/文件映射不受影响.
     if info.access.user && !info.page.present {
