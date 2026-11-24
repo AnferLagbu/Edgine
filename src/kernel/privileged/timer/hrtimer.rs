@@ -1204,6 +1204,34 @@ pub fn hrtimer_pending_count() -> usize {
 /// 此时条目的激活序号已失效 — 不得执行回调, 否则迟到回调会触碰已被复用/
 /// 重新编排的状态 (timerfd 槽位复用场景下的真实缺陷). 回调内自行 `hrtimer_start`
 /// 重挂时, 保留回调写入的 Pending 状态, 不被 `OneShot` 收敛覆盖.
+/// 把仍属本次激活的 `Running` 收敛回 `Inactive`; 必须与 `hrtimer_start` 的
+/// 「Pending 插入」在同一把 base 锁下互斥.
+///
+/// 锁外裸写的问题见 [`dispatch_expired`] 的 `OneShot` 分支: 另一 CPU 可能已把同一
+/// timer 重挂为 Pending 并插入树, 此时再把状态覆盖为 Inactive 会留下"树中有节点、
+/// 状态说未入队"的分裂态, 下一次 start 就会把同一节点插第二次。
+fn collapse_running_to_inactive(timer: &HrTimer, seq: u64) {
+    let Some(base_id) = timer.base_id() else {
+        // 无 base 时 start 恒 NotReady, 不存在并发插入; 直接按 seq 复核后收敛.
+        if timer.state() == HrTimerState::Running && timer.activation_seq() == seq {
+            timer.set_state(HrTimerState::Inactive);
+            timer.queue_seq.store(0, Ordering::Release);
+        }
+        return;
+    };
+    let Some(base) = base_for_cpu(base_id) else {
+        return;
+    };
+    let _inner = base.base_lock.lock();
+    if timer.base_id() != Some(base_id) {
+        return;
+    }
+    if timer.state() == HrTimerState::Running && timer.activation_seq() == seq {
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+    }
+}
+
 fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns: u64) {
     if timer.activation_seq() != seq {
         // 迟到激活. 若因取消而失效 (序号为 0), 把收集阶段置上的 Running 收敛回
@@ -1227,10 +1255,13 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
     match restart {
         HrTimerRestart::OneShot => {
             // 回调内可能已自行重挂: 仅收敛仍处于 Running 的定时器.
-            if timer.state() == HrTimerState::Running {
-                timer.set_state(HrTimerState::Inactive);
-                timer.queue_seq.store(0, Ordering::Release);
-            }
+            //
+            // 收敛必须在 base 锁内按 `(Running, seq)` 复核: 回调返回后到本处之间,
+            // 另一 CPU 可经 `hrtimer_start` 把同一 timer 重新置为 Pending 并**已插入**
+            // 对应 base 树。锁外无条件写 Inactive 会把新激活覆盖成"未入队", 但节点
+            // 仍在树中; 下一次 start 走 Inactive 路径再插同一节点 ⇒ 树内自环
+            // (`rb insert fixup cycle`, UEFI 线程压力下实测)。
+            collapse_running_to_inactive(timer, seq);
         }
         HrTimerRestart::Periodic => {
             // 取消可能恰在回调执行期间发生 (置 Inactive): 此时不得重挂, 否则已取消
@@ -1252,13 +1283,11 @@ fn dispatch_expired(timer: &HrTimer, callback: HrTimerCallback, seq: u64, now_ns
                         // 框架未就绪/定时器未就绪: 本次重挂失败, 收敛回 Inactive;
                         // 迟到的 queue_seq 清零, 避免等待方误判仍 Pending.
                         StartOutcome::NotReady | StartOutcome::NotInitialized => {
-                            timer.set_state(HrTimerState::Inactive);
-                            timer.queue_seq.store(0, Ordering::Release);
+                            collapse_running_to_inactive(timer, seq);
                         }
                     }
                 } else {
-                    timer.set_state(HrTimerState::Inactive);
-                    timer.queue_seq.store(0, Ordering::Release);
+                    collapse_running_to_inactive(timer, seq);
                 }
             }
         }
@@ -1925,6 +1954,40 @@ mod tests {
             "回调内重挂的 Pending 不得被覆盖"
         );
         assert_eq!(timer.activation_seq(), 99);
+    }
+
+    /// OneShot 收尾不得覆盖"回调返回后由另一 CPU 重挂"的新激活.
+    ///
+    /// 旧实现在 base 锁外直接 `if state == Running { set Inactive; queue_seq=0 }`:
+    /// 外部 start 已把状态置 Pending 并插入树后, 这次覆盖会留下"树中有节点、状态
+    /// 说未入队"的分裂态; 下一次 start 走 Inactive 路径二次插入同一节点 ⇒
+    /// `rb insert fixup cycle` (UEFI 线程压力下实测). 收敛必须持 base 锁并按
+    /// `(Running, seq)` 复核.
+    #[test]
+    fn test_one_shot_collapse_preserves_external_rearm() {
+        let _serial = serialize_queue_tests();
+        hrtimer_init();
+        let timer = HrTimer::uninit();
+        timer.init(stale_guard_callback);
+        let seq = expect_started(start_inactive_on(&timer, hrtimer_clock_read(), 0));
+        simulate_collected(&timer);
+
+        // 回调返回后、框架收尾前, 外部 start 已重挂: 状态 Pending + 新序号.
+        timer.queue_seq.store(99, Ordering::Release);
+        timer.set_state(HrTimerState::Pending);
+        collapse_running_to_inactive(&timer, seq);
+
+        assert_eq!(
+            timer.state(),
+            HrTimerState::Pending,
+            "外部重挂的新激活不得被 OneShot 收尾覆盖成 Inactive"
+        );
+        assert_eq!(timer.activation_seq(), 99);
+        // 该用例中的新激活未真插入树 (只模拟状态互斥), 清干净后重建框架.
+        timer.set_state(HrTimerState::Inactive);
+        timer.queue_seq.store(0, Ordering::Release);
+        timer.base_id.store(NO_BASE, Ordering::Release);
+        hrtimer_init();
     }
 
     #[test]
