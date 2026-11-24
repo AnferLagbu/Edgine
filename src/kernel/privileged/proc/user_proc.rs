@@ -890,12 +890,10 @@ impl Default for UserProcManager {
 
 /// 为进程映射固定的 `rt_sigreturn` 跳板页 (只读可执行).
 ///
-/// x86_64 的信号返回不能把 `mov eax,15; syscall` 写在用户栈上: BSS/线程栈
-/// 是 NX 数据页, 执行跳板会触发 instruction-fetch #PF, 页故障处理器再把它
-/// 当数据缺页反复"修复", 形成逐页 TLB shootdown 风暴 (2026-11-25 e2e 根因).
-/// 固定页放在 0x500000 (`USER_CODE_BASE` 与 heap base 0x600000 之间), 只读可执行,
-/// fork 走 COW 克隆的 frame_inc/frame_dec 正常共享.
-#[cfg(target_arch = "x86_64")]
+/// 两架构的信号返回都不能把跳板代码写在用户栈上: 线程栈/BSS 是 NX 数据页,
+/// 执行跳板会触发取指异常. 固定页放在 0x500000 (`USER_CODE_BASE` 与 heap
+/// base 0x600000 之间), 只读可执行, fork 走 COW 克隆的 frame_inc/frame_dec
+/// 正常共享.
 pub fn map_sigreturn_trampoline(cr3: u64) -> bool {
     use crate::privileged::config::memory::PAGE_SIZE;
     use crate::privileged::mm::{PageFlags, VirtAddr, Vmm};
@@ -913,17 +911,18 @@ pub fn map_sigreturn_trampoline(cr3: u64) -> bool {
         return false;
     }
     let phys = page as u64;
-    // SAFETY: page 是 PMM 刚分配的单页物理帧; KERNEL_BASE 高半区直接映射
-    // 使其在内核可写; 写入范围严格一页. 清零点保证未使用的页尾不含旧数据.
+    // SAFETY: page 是 PMM 刚分配的单页物理帧; phys_to_kern_mut 走 PHYSMAP
+    // 高半区别名, 在 aarch64 KPTI EL1 视图下同样可达; 写入范围严格一页.
     unsafe {
+        let dst = raw::phys_to_kern_mut(phys, 0);
         core::ptr::write_bytes(
-            (phys + KERNEL_BASE) as *mut u8,
+            dst,
             0,
             crate::privileged::glue::usize_from_u64(PAGE_SIZE),
         );
         core::ptr::copy_nonoverlapping(
             super::signal::SIGRETURN_TRAMPOLINE.as_ptr(),
-            (phys + KERNEL_BASE) as *mut u8,
+            dst,
             super::signal::SIGRETURN_TRAMPOLINE_SIZE,
         );
     }

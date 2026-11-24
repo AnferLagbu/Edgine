@@ -1,4 +1,4 @@
-//! x86_64 `rt_sigreturn` 跳板页形状锁。
+//! `rt_sigreturn` 固定跳板页形状锁（x86_64 / aarch64）。
 //!
 //! 根因：信号返回跳板曾被写到用户栈（`thread_stack`/BSS 数据页）。BSS 是 NX，
 //! 执行跳板触发 instruction-fetch #PF；页故障处理器把它当数据缺页反复“修复”，
@@ -10,10 +10,10 @@ const SIGNAL: &str = include_str!("../../src/kernel/privileged/proc/signal.rs");
 const USER_PROC: &str = include_str!("../../src/kernel/privileged/proc/user_proc.rs");
 
 #[test]
-fn x86_sigreturn_trampoline_has_fixed_executable_page() {
+fn sigreturn_trampoline_has_fixed_executable_page() {
     assert!(
         SIGNAL.contains("pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x500000;"),
-        "x86_64 跳板必须固定在 0x500000（USER_CODE_BASE 与 heap base 之间的独立页）"
+        "跳板必须固定在 0x500000（USER_CODE_BASE 与 heap base 之间的独立页）"
     );
     assert!(
         USER_PROC.contains("pub fn map_sigreturn_trampoline(cr3: u64) -> bool"),
@@ -30,13 +30,13 @@ fn x86_sigreturn_trampoline_has_fixed_executable_page() {
 }
 
 #[test]
-fn x86_signal_return_does_not_copy_trampoline_to_stack() {
+fn signal_return_does_not_copy_trampoline_to_stack() {
     assert!(
         SIGNAL.contains("let trampoline_addr = SIGRETURN_TRAMPOLINE_ADDR;"),
-        "x86_64 的 handler 返回地址必须指向固定跳板页"
+        "两架构的 handler 返回地址都必须指向固定跳板页"
     );
     assert!(
-        SIGNAL.contains("#[cfg(not(target_arch = \"x86_64\"))]\n    let tramp_ok = crate::privileged::mm::copy_to_user("),
-        "只有非 x86 架构允许把跳板复制到用户栈"
+        !SIGNAL.contains("copy_to_user(\n        trampoline_addr,"),
+        "信号投递不得再把跳板代码复制到用户栈"
     );
 }

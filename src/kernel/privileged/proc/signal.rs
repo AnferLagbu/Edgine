@@ -204,8 +204,7 @@ pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x68, 0x11, 0x80, 0xD2, 0x01, 0x00, 0
 /// sigreturn trampoline 大小
 pub const SIGRETURN_TRAMPOLINE_SIZE: usize = SIGRETURN_TRAMPOLINE.len();
 
-/// x86_64 固定跳板页虚拟地址 (USER_CODE_BASE 之后、heap base 0x600000 之前).
-#[cfg(target_arch = "x86_64")]
+/// 固定跳板页虚拟地址 (USER_CODE_BASE 之后、heap base 0x600000 之前).
 pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x500000;
 
 /// 信号栈帧总大小 (含帧头与 trampoline)
@@ -958,8 +957,9 @@ fn signal_frame_base<F: UserFrame>(
     Some(frame_rsp)
 }
 
-/// 把 [帧头 | `ArchSignalFrame` | trampoline] 写到用户栈, 并改写异常帧跳转 handler.
+/// 把 [帧头 | `ArchSignalFrame`] 写到用户栈, 并改写异常帧跳转 handler.
 ///
+/// 跳板代码位于进程地址空间固定的只读可执行页, 不再复制到用户栈.
 /// 帧头仅 x86_64 存在 (handler 的返回地址槽 = trampoline 地址); aarch64 以 LR
 /// 承载返回地址, 帧头长度为 0.
 ///
@@ -975,11 +975,7 @@ fn install_user_signal_frame<F: UserFrame>(
     // 用户栈任意一页失效 (munmap/越界) 时回滚信号投递
     // (恢复原始栈指针 + 不修改异常帧), 进程继续运行.
     let sigframe_addr = frame_rsp + F::FRAME_HEADER_SIZE as u64;
-    #[cfg(target_arch = "x86_64")]
     let trampoline_addr = SIGRETURN_TRAMPOLINE_ADDR;
-    #[cfg(not(target_arch = "x86_64"))]
-    let trampoline_addr = sigframe_addr + core::mem::size_of::<ArchSignalFrame>() as u64;
-    #[cfg(target_arch = "x86_64")]
     if !super::user_proc::map_sigreturn_trampoline(user_cr3) {
         return false;
     }
@@ -1009,16 +1005,7 @@ fn install_user_signal_frame<F: UserFrame>(
         core::mem::size_of::<ArchSignalFrame>(),
     )
     .is_ok();
-    #[cfg(target_arch = "x86_64")]
-    let tramp_ok = true;
-    #[cfg(not(target_arch = "x86_64"))]
-    let tramp_ok = crate::privileged::mm::copy_to_user(
-        trampoline_addr,
-        &SIGRETURN_TRAMPOLINE,
-        SIGRETURN_TRAMPOLINE_SIZE,
-    )
-    .is_ok();
-    if !(header_ok && frame_ok && tramp_ok) {
+    if !(header_ok && frame_ok) {
         // 栈帧写入失败 (用户栈 munmap/越界): 不修改异常帧,
         // 也不投递信号, 进程继续运行等待下次信号投递窗口.
         return false;
@@ -1032,9 +1019,9 @@ fn install_user_signal_frame<F: UserFrame>(
 /// 针对"用户 handler"分支: 装配信号帧并改写异常帧, 返回是否已投递.
 ///
 /// 栈帧布局 (帧头仅 x86_64 存在):
-///   `frame_rsp+0`: 返回地址 (指向 trampoline, handler ret 时弹出)
+///   `frame_rsp+0`: x86_64 返回地址 (指向固定 trampoline, handler ret 时弹出)
 ///   `frame_rsp+8`: `ArchSignalFrame` (保存原始寄存器)
-///   `frame_rsp+8+sizeof(ArchSignalFrame)`: 跳板代码 (`rt_sigreturn` 桩)
+///   aarch64: `x30` 指向同一固定 trampoline, 不占栈帧字节
 fn deliver_user_handler<F: UserFrame>(
     pid: Pid,
     sig: u8,
