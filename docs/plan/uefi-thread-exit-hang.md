@@ -59,11 +59,76 @@ exec/wasm/观测面的问题。
 「组已退出但成员收不齐」。这与 H2 的现场（`exit: pid=15 code=7` 已打印 + `[REAP] … state=Blocked`）
 **形态相反**。
 
-子进程侧三个可能出口（[main.rs:911-920](../../src/user/init/src/main.rs#L911-L920)）
-`proc_exit(2)`（clone 失败）/ `proc_exit(3)`（helper 报到超时）/ `exit_group(7)` **一个都没出现**,
-且 `members=2` 说明 helper TCB 已建 ⇒ clone 已成功。落点因此收窄到
-**「clone 返回之后、`exit_group` 登记之前」**这一段, 其中 `futex_wait_until(&GROUP_HELPER_READY, …, deadline)`
-带截止时刻却也没吐出 `code=3`, 是首要疑点。
+子进程侧三个可能出口（[main.rs:1040-1076](../../src/user/init/src/main.rs#L1040-L1076)）
+`proc_exit(2)`（clone 失败）/ `proc_exit(3)`（helper 报到超时）/ `exit_group(7)` **一个都没出现**。
+
+**2026-11-24 取证更正**: 旧读数里 `[SCHED] TG members=2` 只能证明 helper TCB **已登记进组**，
+不能证明 clone 已成功返回 —— 取证已把落点继续前移到 **`clone_thread` 的 `vm_child_register` 内、
+TID 回写处**：组长进程在 `clone_vm_path` 里完成 `alloc/inherit/join_group/process_insert/adopt`
+后，卡在对 `parent_tidptr` 的 `write_struct_to_user`；helper 的 TCB 已插入进程表但**尚未入运行队列**
+（`scheduler_add_to_run_queue` 在 TID 回写之后），因此 helper 一行打印也不会出现。
+完整证据见下节「取证结果」。
+
+### 取证结果（2026-11-24）：根因是 x86 内核写 COW 只读用户页触发核态 #PF 停机
+
+**乙取证（用户态三出口打印）**，UEFI `-smp 2` 两轮：
+
+1. 第一轮只在 `group_child_body` 加 clone 后打印：串口只有 `[GU-ATTR] leg start` 与
+   `[GU-ATTR] parent child=1…`，子进程无任何行。
+2. 第二轮补 `fork child branch` / `child body enter` / `child before clone`：串口出现
+   `[GU-ATTR] fork child branch`、`[GU-ATTR] child body enter`、`[GU-ATTR] child before clone`，
+   **没有** `child clone rc=`，也没有 `helper enter` / `helper reported`。
+
+结论：fork 子进程已上核、已进入 `group_child_body`，但 `clone_thread` 系统调用**从未返回**。
+
+**内核侧细分（`vm_child_register` 各步打印）**，同一 UEFI 轮：
+
+```
+[GU-K] clone_vm enter parent=13 flags=0x1390F00 stack=0x40E0E0
+[GU-K] alloc ok child=14
+[GU-K] inherit ok child=14
+[GU-K] register begin child=14
+[GU-K] reg join_thread_group begin child=14
+[GU-K] reg insert begin child=14
+[GU-K] reg adopt ok child=14
+[GU-K] ptid write begin child=14 ptr=0x40D0D0
+```
+
+`ptid write begin` 之后没有 `ptid write ok`；同一轮 5 s 后父进程（pid=5）另起的 clone（child=15）
+从 `ptid write begin ptr=0x40C06C` 到 `ctid write ok` / `cleartid store ok` / `reg enqueue ok`
+全部正常。挂点因此钉死为 **`vm_child_register` 对 `CLONE_PARENT_SETTID` 指针的
+`write_struct_to_user(parent_tidptr)`**。
+
+**QEMU 异常直证**（干净镜像、不加载任何打印，`-d int` 抓 #PF）：
+
+```
+v=0e e=0003 i=0 cpl=0 IP=0008:0000000000141ed1 CR2=000000000040c0d0
+```
+
+`e=0003` 解码为 **present + write + supervisor**（P=1、W/R=1、U/S=0）：ring0 对
+**存在的只读页**做写；`addr2line` 将该 IP 落在
+`kernel_privileged::syscall::raw::write_struct`（`write_struct_to_user` 的 i32/u32 单态）内，
+CR2 正是组长进程 `group_child_body` 的 BSS TID 槽。之后该 CPU 进 panic 停机循环，父进程
+5 s 后 `[THREAD] FAIL: reap-timeout code=0`。
+
+**为什么 BIOS 同镜像 PASS**：两腿 `CR0.WP` 实测都是 1（UEFI `0x80010033`、BIOS `0x80000011`），
+所以不是 WP 位差异；BIOS 下同一 `parent_tidptr` 写成功，说明该用户页在 BIOS 侧不是
+COW 只读（大页映射不参与 COW / 或已被先前写破 COW），而 UEFI 侧该页是 4K COW 只读。
+x86_64 的 `#PF` 处理器目前只把核态 `ProtectionViolation` 直接 `Panic`
+（[handlers.rs:274](../../src/kernel/privileged/idt/handlers.rs#L274)），没有 aarch64 那条
+`break_cow_for_kernel_uaccess` 窄支路
+（[page_fault.rs:694](../../src/kernel/privileged/mm/page_fault.rs#L694)），于是核态写 COW 页
+= 停机，`clone_thread` 永不返回。
+
+**修复方向（待施工，不在本轮）**：给 x86_64 `#PF` 增加与 aarch64 同形的「核态 uaccess 写 COW
+只读页」破 COW 支路（判据同 `kernel_uaccess_cow_candidate`：同 EL + 写 + 权限故障 + FAR 落用户半区，
+再验用户 leaf / 只读 / COW 帧标记），破 COW 后直接返回重试该 store；或者把 `clone` 的 TID 回写
+改为 COW 感知的 uaccess 写。前者覆盖面更广，后者改动面更窄。两条都需先补 x86 4K COW
+引导腿回归，且保持 BIOS 路径不变。
+
+**复原**：本轮所有 `[GU-ATTR]` / `[GU-K]` 插桩已 `git checkout` 复原，工作树干净，HEAD 仍
+`c9122f96`；证据日志 `/tmp/uefi_gu_attr_r{1..8}.log`、`/tmp/uefi_manual_serial.log`、
+`/tmp/qemu_int.log` 为临时取证，不入库。
 
 ### 与 H2 的区分（不要误并归因）
 
@@ -102,10 +167,10 @@ UEFI 稳定性（有预留时 5/5 都能跑到 `group_exit_leg`）。
 
 ## U-1 UEFI 双核下 `group_exit_leg` 确定性挂死
 
-- **描述**: OVMF + GRUB2 multiboot2 + `-smp 2` 引导时, init 线程探针的最后一条腿 `group_exit_leg` 确定性失败（5/5）, 签名 `[THREAD] FAIL: reap-timeout code=0`; 组长与 helper 两个 TCB 永不退出, `exit_requested` 从未置位（`[REAP]` 缺席）, cpu1 出现 4050 次唤醒 churn。同镜像同内核在 SeaBIOS 下 5/5 通过, 其余探针逐项同形。落点收窄在「clone 返回后、`exit_group` 登记前」, 首要疑点是带截止时刻的 `futex_wait_until(&GROUP_HELPER_READY, …)` 既不放行也不吐 `code=3`。
-- **方案**: 待授权取证后再钉。候选取证面（均需改装授权）: 甲、QEMU gdbstub 挂死时 dump 两个 TCB 的 `ProcessState` / `BlockReason` / `sleep_until` 与用户态 RIP（判「睡死」还是「自旋」, 直接分开 `futex_wait_until` 与 `exit_group` 两个候选）; 乙、`group_child_body` 三个出口前各加一行无条件取证打印（clone 返回码 / READY 字面值 / 进入 `exit_group` 前）, 一次判死落点; 丙、`diag_unreaped_group` 的 `exit_requested` 判据旁增一条「组长非 Zombie 且超预算」的取证发射面（只取证, 不改收割语义）。**不放宽 5 s 预算、不改 `[THREAD]` 判据**。**2026-11-24 排期**: 先走乙（三出口无条件打印）定位；若仍不吐出口行，再上甲 gdbstub。取证改动单独提交、可整体回滚，出数后即复原，不与修复提交混合。
-- **状态**: [~] 已入修复队列（P1，2026-11-24 用户授权取证；施工范围=取证，不改断言/预算，未直接改代码）
-- **详情**: 对照读数与负控制见上「背景与已验证事实」「归因」两节。证据日志留存 `/tmp/uefi_attr/`（`bios_r{1..5}.log` / `uefi_r{1..5}.log` / `nc_r{1..3}.log` / `bios_full.log`）与 `/tmp/uefi_d4i/boot.log`; 这些是临时取证目录, 不入库。U-1 已入修复队列；当前仅取证阶段, 修复代码待取证出数后再施工。
+- **描述**: OVMF + GRUB2 multiboot2 + `-smp 2` 引导时, init 线程探针的最后一条腿 `group_exit_leg` 确定性失败（5/5）, 签名 `[THREAD] FAIL: reap-timeout code=0`; 组长与 helper 两个 TCB 永不退出, `exit_requested` 从未置位（`[REAP]` 缺席）, cpu1 出现 4050 次唤醒 churn。同镜像同内核在 SeaBIOS 下 5/5 通过, 其余探针逐项同形。**2026-11-24 取证已定位**: 挂点在 `clone_thread` 的 `vm_child_register` 对 `parent_tidptr` 做 `write_struct_to_user` 时；UEFI 下该页是 4K COW 只读, ring0 写触发 `#PF e=0003`, x86 `#PF` 无核态 uaccess 破 COW 支路 ⇒ panic 停机, clone 永不返回、helper 不入运行队列。
+- **方案**: 取证已完成（乙 + 内核分步打印 + QEMU `-d int` 异常直证, 详见上「取证结果」）。修复候选：甲、给 x86_64 `#PF` 增加与 aarch64 同形的 `break_cow_for_kernel_uaccess` 支路（覆盖面广，推荐）；乙、把 clone 的 TID 回写改为 COW 感知 uaccess 写（改动面窄）。两条都需补 x86 4K COW 引导腿回归, 保持 BIOS 路径不变。**不放宽 5 s 预算、不改 `[THREAD]` 判据**；修复完成后才把 `[THREAD] PASS` 加回 UEFI 硬断言并删横幅。取证插桩已复原，未与修复提交混合。
+- **状态**: [~] 已入修复队列（P1，2026-11-24 取证完成、根因已定位；修复代码未开工，待用户裁定修复方案）
+- **详情**: 对照读数、负控制与完整取证链见上「背景与已验证事实」「归因」「取证结果」三节。历史证据日志 `/tmp/uefi_attr/`（`bios_r{1..5}.log` / `uefi_r{1..5}.log` / `nc_r{1..3}.log` / `bios_full.log`）与 `/tmp/uefi_d4i/boot.log` 为临时目录, 不入库；本轮新增 `/tmp/uefi_gu_attr_r{1..8}.log`、`/tmp/uefi_manual_serial.log`、`/tmp/qemu_int.log` 同样不入库。
 
 ## U-2 UEFI 单核下更早的静默挂死
 
