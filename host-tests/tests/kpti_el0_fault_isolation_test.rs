@@ -74,9 +74,18 @@ fn test_x64_user_fault_terminates_process() {
     );
     assert_eq!(
         body.matches("RecoveryAction::Recovered").count(),
-        3,
-        "用户态 #PF 只允许三条恢复路径 (栈扩展 / PfResult::Fixed / UffdWait); \
-         新增恢复路径必须显式论证其不会命中内核高半区地址"
+        4,
+        "只允许四条恢复路径 (用户态三条: 栈扩展 / PfResult::Fixed / UffdWait; 核态一条: \
+         COW 竞态窄兜底); 新增恢复路径必须显式论证其不会命中内核高半区地址"
+    );
+    // 第四条恢复路径只对「核态写 + 用户 leaf 且帧带 COW 待破标」开放, 其余核态故障仍 Panic.
+    assert!(
+        body.contains("kernel_uaccess_cow_candidate_x86"),
+        "核态 COW 兜底必须以错误码 + 用户 leaf + 帧标记的窄判据准入"
+    );
+    assert!(
+        body.contains("break_cow_for_kernel_page"),
+        "核态 COW 兜底必须复用与 aarch64 同一破页入口 (帧记账不分叉)"
     );
     // 内核态 not-present #PF 仍须 Panic (内核缺陷不可被当作进程故障掩盖).
     assert!(

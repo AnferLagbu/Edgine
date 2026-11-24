@@ -224,7 +224,8 @@ fn clone_vm_path(
         child_tidptr,
         joins_group,
     ) {
-        // `vm_child_register` 的失败分支全部在进程表登记之前, PID 仍归本路径持有.
+        // `vm_child_register` 的失败分支都在进程表登记之前 (含 TID 回写失败),
+        // PID 仍归本路径持有.
         api::proc_free_pid(child_pid);
         return ret;
     }
@@ -420,6 +421,38 @@ fn vm_child_register(
     child_tidptr: u64,
     joins_group: bool,
 ) -> Result<(), i64> {
+    // TID 回写放在登记/入组之前: 失败时子 TCB 尚未进进程表、未入组, 可直接释放,
+    // 调用方归还 PID; 不会留下“TID 没写进去却已登记”的半成品线程.
+    //
+    // 写路径经 `write_struct_to_user` 的逐页可写预检: 用户传只读/未映射指针返回
+    // `false`, 这里转成 `EFAULT` 而不是静默忽略(UEFI `CR0.WP=1` 下裸 store 会核态
+    // #PF 停机).
+    if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
+        let tid: i32 = child_pid.cast_signed();
+        if !crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid) {
+            raw::drop_boxed_process(
+                core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+            );
+            return Err(Errno::Efault.as_ret());
+        }
+    }
+
+    if flags & CLONE_CHILD_SETTID != 0 && child_tidptr != 0 {
+        let tid: i32 = child_pid.cast_signed();
+        if !crate::privileged::syscall::api::write_struct_to_user(child_tidptr, &tid) {
+            raw::drop_boxed_process(
+                core::ptr::from_ref::<crate::privileged::proc::Process>(child).cast_mut(),
+            );
+            return Err(Errno::Efault.as_ret());
+        }
+    }
+
+    if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
+        child
+            .clear_child_tid
+            .store(child_tidptr, core::sync::atomic::Ordering::Release);
+    }
+
     if joins_group {
         let Some(group) = api::process_with(parent_pid, |p| alloc::sync::Arc::clone(p.group()))
         else {
@@ -460,25 +493,6 @@ fn vm_child_register(
 
     // K-03: 登记成功后才改写资源归属 —— 此前任何失败路径都无需回滚共享计数.
     vm_child_adopt_resources(flags, child, parent_pid);
-
-    // CLONE_PARENT_SETTID
-    if flags & CLONE_PARENT_SETTID != 0 && parent_tidptr != 0 {
-        let tid: i32 = child_pid.cast_signed();
-        let _ = crate::privileged::syscall::api::write_struct_to_user(parent_tidptr, &tid);
-    }
-
-    // CLONE_CHILD_SETTID: 写子进程 TID 到 child_tidptr (共享地址空间, 子可直接读到)
-    if flags & CLONE_CHILD_SETTID != 0 && child_tidptr != 0 {
-        let tid: i32 = child_pid.cast_signed();
-        let _ = crate::privileged::syscall::api::write_struct_to_user(child_tidptr, &tid);
-    }
-
-    // CLONE_CHILD_CLEARTID: 登记清除地址, 子进程退出时写 0 并 futex 唤醒
-    if flags & CLONE_CHILD_CLEARTID != 0 && child_tidptr != 0 {
-        child
-            .clear_child_tid
-            .store(child_tidptr, core::sync::atomic::Ordering::Release);
-    }
 
     // 添加到调度器
     //

@@ -293,6 +293,35 @@ pub fn validate_user_aligned<T>(ptr: u64) -> bool {
     ptr.is_multiple_of(align) && validate_user_buf(ptr, core::mem::size_of::<T>() as u64)
 }
 
+/// 验证 `[ptr, ptr+len)` 可用内核写入: 区间已映射且逐页可写.
+///
+/// 与 [`validate_user_buf`] 的区别: 后者只证明可读; 本函数额外确认页描述符可写,
+/// 若遇 fork COW 只读页会先主动破 COW. 写路径必须先过本函数再 store, 否则 UEFI
+/// `CR0.WP=1` 下核态写 COW 页会触发 `#PF` 并停机.
+#[must_use]
+pub fn validate_user_writable(ptr: u64, len: u64) -> bool {
+    if !validate_user_buf(ptr, len) {
+        return false;
+    }
+    #[cfg(feature = "host-test")]
+    {
+        // host 侧无页表硬件模型, 区间判据通过即视为可写 (与 user_range_mapped 同口径).
+        true
+    }
+    #[cfg(not(feature = "host-test"))]
+    {
+        crate::privileged::mm::page_fault::validate_user_writable(ptr, len)
+    }
+}
+
+/// typed 写访问的完整判据: 对齐 + 区间已映射 + 逐页可写.
+#[inline]
+#[must_use]
+pub fn validate_user_writable_aligned<T>(ptr: u64) -> bool {
+    let align = core::mem::align_of::<T>() as u64;
+    ptr.is_multiple_of(align) && validate_user_writable(ptr, core::mem::size_of::<T>() as u64)
+}
+
 /// 逐页确认 `[start, end)` 在当前进程用户页表中已映射.
 #[cfg(not(feature = "host-test"))]
 fn user_range_mapped(start: u64, end: u64) -> bool {
@@ -332,7 +361,7 @@ pub fn write_struct_to_user<T: Copy>(dst_ptr: u64, src: &T) -> bool {
         return false;
     }
     let size = core::mem::size_of::<T>() as u64;
-    if !validate_user_buf(dst_ptr, size) {
+    if !validate_user_writable(dst_ptr, size) {
         return false;
     }
     // SAFETY: validate_user_buf 已验证 dst_ptr 指向的 user 缓冲

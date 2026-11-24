@@ -176,10 +176,10 @@ pub mod raw {
     /// 写一个 u64 到用户地址; 判据不满足返回 `false` 且不写入.
     #[must_use]
     pub fn write_u64(ptr: u64, val: u64) -> bool {
-        if !crate::privileged::userptr::validate_user_aligned::<u64>(ptr) {
+        if !crate::privileged::userptr::validate_user_writable_aligned::<u64>(ptr) {
             return false;
         }
-        // SAFETY: 同 `read_u64` 的判据; write_volatile 只写按值, 不构造引用.
+        // SAFETY: 上方已校验对齐 + 已映射 + 逐页可写; write_volatile 只写按值, 不构造引用.
         unsafe {
             crate::privileged::mm::copy_user::smap_begin();
             core::ptr::write_volatile(ptr as *mut u64, val);
@@ -192,7 +192,7 @@ pub mod raw {
     #[must_use]
     pub fn write_u64_pair(ptr: u64, cur: u64, max: u64) -> bool {
         if !ptr.is_multiple_of(core::mem::align_of::<u64>() as u64)
-            || !crate::privileged::userptr::validate_user_buf(ptr, 16)
+            || !crate::privileged::userptr::validate_user_writable(ptr, 16)
         {
             return false;
         }
@@ -209,11 +209,11 @@ pub mod raw {
 
     /// 复制结构体到用户地址（repr(C) 类型）; 判据不满足返回 `false`.
     pub fn write_struct<T: Copy>(dst: u64, src: &T) -> bool {
-        if !crate::privileged::userptr::validate_user_aligned::<T>(dst) {
+        if !crate::privileged::userptr::validate_user_writable_aligned::<T>(dst) {
             return false;
         }
-        // SAFETY: 上方已校验 size_of::<T>() 字节区间合法且已映射, 且 dst 对齐到
-        // align_of::<T>(); write_volatile 只写按值.
+        // SAFETY: 上方已校验 size_of::<T>() 字节区间合法、已映射且逐页可写, 且 dst
+        // 对齐到 align_of::<T>(); write_volatile 只写按值.
         unsafe {
             crate::privileged::mm::copy_user::smap_begin();
             core::ptr::write_volatile(dst as *mut T, *src);

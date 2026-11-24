@@ -695,7 +695,19 @@ pub fn break_cow_for_kernel_uaccess(esr: u64, fault_addr: u64) -> bool {
     if !kernel_uaccess_cow_candidate(esr, fault_addr) {
         return false;
     }
+    break_cow_for_kernel_page(fault_addr)
+}
 
+/// 与架构无关的「核态 uaccess 写 COW 只读用户页」破页动作.
+///
+/// 调用方负责先按本架构的异常编码做窄准入 (aarch64: `ESR` 同 EL + 写 + 权限故障;
+/// x86_64: `#PF` 错误码 present + write + supervisor 且恢复点活跃), 本函数只验证
+/// 用户 leaf / 只读 / COW 待破标记, 通过后破 COW 并返回 `true` 让调用方重试原 store.
+///
+/// 判据与 aarch64 原支路逐项一致: 页表根取 `get_current_pml4()` (KPTI 下解析回用户根),
+/// 帧标记由 fork 置只读的同一时刻登记, 是区分「COW 只读」与「真·只读映射」的唯一证据。
+#[must_use]
+pub fn break_cow_for_kernel_page(fault_addr: u64) -> bool {
     let user_cr3 = vmm::get_current_pml4();
     let aligned = fault_addr & !(PAGE_SIZE - 1);
     // 判据 1: 用户 leaf (裸 u64 判据按架构分派位布局, 与 fork/拆除两侧同一函数).
@@ -705,7 +717,7 @@ pub fn break_cow_for_kernel_uaccess(esr: u64, fault_addr: u64) -> bool {
     if !super::is_user_leaf(pte) {
         return false;
     }
-    // 判据 2: 描述符确实只读. 越界/未映射 (MMIO 一类) 在此一并落回停机语义.
+    // 判据 2: 描述符确实只读. 越界/未映射 (MMIO 一类) 在此一并落回失败语义.
     let Some(leaf) = super::Vmm::translate_in_pml4(user_cr3, VirtAddr(aligned)) else {
         return false;
     };
@@ -723,6 +735,78 @@ pub fn break_cow_for_kernel_uaccess(esr: u64, fault_addr: u64) -> bool {
         PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
     }
     broken
+}
+
+/// 验证 `[ptr, ptr+len)` 不仅能被用户态读, 而且内核此刻写入不会触发保护故障.
+///
+/// 与 [`validate_user_buf`](crate::privileged::userptr::validate_user_buf) 的分工:
+/// 后者只证明区间已映射 (读安全), 本函数额外逐页确认描述符可写; 若页只读但带
+/// fork COW 标记, 先在这里主动破 COW (与 EL0 缺页同一 `cow_handle_fault` 入口),
+/// 破后仍不可写即判失败。
+///
+/// 这是内核 uaccess 的“写前预检”: 通过后普通 store 不再触发 #PF, 用户传只读/未映射
+/// 指针在进入 store 前就返回 `false`, 不会把核态缺页升级成 panic。预检与 store 之间
+/// 仍可能有并发 `mprotect` 竞态, 由 #PF 的 COW 窄支路兜底; 非 COW 的竞态属内核缺陷,
+/// 保持原 panic 语义。
+#[must_use]
+pub fn validate_user_writable(ptr: u64, len: u64) -> bool {
+    if ptr == 0 || len == 0 {
+        return len == 0 && ptr != 0;
+    }
+    let Some(end) = ptr.checked_add(len) else {
+        return false;
+    };
+    if end > crate::privileged::constants::limits::USER_ADDR_MAX {
+        return false;
+    }
+    let mut va = ptr & !(PAGE_SIZE - 1);
+    while va < end {
+        if !ensure_user_page_writable(va) {
+            return false;
+        }
+        va = va.saturating_add(PAGE_SIZE);
+    }
+    true
+}
+
+/// 单页写前预检: 用户 leaf 且可写; 只读但带 COW 帧标记时主动破 COW 后复验.
+fn ensure_user_page_writable(addr: u64) -> bool {
+    let user_cr3 = vmm::get_current_pml4();
+    let aligned = addr & !(PAGE_SIZE - 1);
+    let Some(pte) = super::Vmm::get_pte_value(user_cr3, VirtAddr(aligned)) else {
+        return false;
+    };
+    if !super::is_user_leaf(pte) {
+        return false;
+    }
+    let Some(leaf) = super::Vmm::translate_in_pml4(user_cr3, VirtAddr(aligned)) else {
+        return false;
+    };
+    if leaf.writable {
+        return true;
+    }
+    if !pmm::get_pmm().frame_cow_test(PhysAddr(leaf.phys.as_u64() & 0x000F_FFFF_FFFF_F000)) {
+        return false;
+    }
+    if super::cow::cow_handle_fault(user_cr3, addr).is_none() {
+        return false;
+    }
+    super::Vmm::translate_in_pml4(user_cr3, VirtAddr(aligned)).is_some_and(|leaf| leaf.writable)
+}
+
+/// x86_64 的破 COW 准入判据: 同 EL 的写 + 页存在 + 故障地址落用户半区.
+///
+/// 与 aarch64 的 [`kernel_uaccess_cow_candidate`] 同形, 但 x86 的 `#PF` 错误码没有
+/// `EC` 位, 「同 EL」由调用方 (`PageFaultHandler` 的 `!is_user_mode` 分支) 保证。
+/// 是否真正破 COW 仍由 [`break_cow_for_kernel_page`] 的页表/帧标记判据决定。
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub fn kernel_uaccess_cow_candidate_x86(fault_addr: u64, info: PageFaultInfo) -> bool {
+    fault_addr != 0
+        && fault_addr < crate::privileged::constants::limits::USER_ADDR_MAX
+        && info.access.write
+        && !info.access.user
+        && info.page.present
 }
 
 // ── 统计 ──
@@ -885,6 +969,40 @@ mod tests {
         ));
         // 取指异常即使子码同形也不进射程 (由 EC 前置判挡下)
         assert!(!kernel_uaccess_cow_candidate(0x8600_000F, 0x40A0_D0));
+    }
+
+    /// x86_64 的核态 uaccess 写 COW 准入: present + write + supervisor + 用户半区.
+    ///
+    /// 错误码 0x03 = P|W|U? 注意 bit2 (U/S)=0 表示 supervisor; 成立例正是
+    /// UEFI 实测 `#PF e=0003 CR2=0x40C0D0`.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_x86_kernel_uaccess_cow_candidate_scope() {
+        let cow_write = PageFaultInfo::from_error_code(0x40C0_D0, 0x03);
+        assert!(kernel_uaccess_cow_candidate_x86(0x40C0_D0, cow_write));
+
+        // 非 present (0x00) 不借 COW 名义建页
+        assert!(!kernel_uaccess_cow_candidate_x86(
+            0x40C0_D0,
+            PageFaultInfo::from_error_code(0x40C0_D0, 0x00)
+        ));
+        // 读故障 (0x01) 无 COW 解释
+        assert!(!kernel_uaccess_cow_candidate_x86(
+            0x40C0_D0,
+            PageFaultInfo::from_error_code(0x40C0_D0, 0x01)
+        ));
+        // 用户态故障 (0x07 = P|W|U) 由用户态路径处理, 不进核态兜底
+        assert!(!kernel_uaccess_cow_candidate_x86(
+            0x40C0_D0,
+            PageFaultInfo::from_error_code(0x40C0_D0, 0x07)
+        ));
+        // 内核半区地址一律不进射程
+        assert!(!kernel_uaccess_cow_candidate_x86(
+            crate::privileged::constants::limits::USER_ADDR_MAX,
+            cow_write
+        ));
+        // NULL 不进射程
+        assert!(!kernel_uaccess_cow_candidate_x86(0, cow_write));
     }
 
     /// 准入判据不成立时**必须在碰页表之前**返回 `false` (fail-closed, 不得"假装已恢复").

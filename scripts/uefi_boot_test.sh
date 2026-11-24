@@ -25,18 +25,18 @@
 #         5. 内存图权威 (D4-g): `Boot info: mem=M MB` 的 M >= 400 —— OVMF 的 tag4
 #            基本内存信息只报 ~8 MB, 修复前它覆盖 tag6 的 511 MB, 故该下界能把回归判红;
 #         6. 引导模块早期搬移 (D4-h): `Early relocate 'initrd':` 在;
-#         7. 用户态探针可达面: `[TLS] PASS:` / `[SIG] PASS:` / `[EXEC] PASS: cwd+root`
+#         7. 用户态探针可达面: `[TLS] PASS:` / `[SIG] PASS:` / `[UACCESS] PASS:`
+#            (clone TID 指向只读 .text 必须 EFAULT, 不进入裸 store) / `[THREAD] PASS:`
+#            (U-1 根因修复后线程组探针恢复) / `[EXEC] PASS: cwd+root`
 #            (无 `[EXEC] FAIL`) / `[WASM] PASS:` (无 `[WASM] FAIL`) / `[SCHED] SNAP END`
 #            + `conserve=ok` (无 `conserve=BAD`) / `[KPTI] EL0 … denied`;
 #         8. 驱动与网络: `e1000: 初始化完成` / `DHCP configured (lease applied)`;
 #         9. P-62 默认能力行与 BIOS 腿同口径 (本腿不切 feature).
 #
-#       **显式不判**: `[THREAD]` 腿. UEFI 下 init 线程组探针确定性挂死, 已归因为
-#       预存缺陷 (BIOS 同镜像 5/5 PASS; 摘掉 firmware 预留的负控制三轮从未通过, 且
-#       2/3 轮挂得更早 ⇒ 非 D4-i 乙 引入), 用户裁定「登记独立工程 + 腿按可达面接线」.
-#       登记册 = docs/plan/uefi-thread-exit-hang.md (U-1/U-2). 本腿无条件打印横幅
-#       点名该册并声明不判 —— **不是静默跳过**: 静默跳过在 full 档读起来和通过一样.
-#       修复后须把 THREAD 探针的 PASS 行加回硬断言并删掉横幅.
+#       **U-1 已修复**: `[THREAD]` 腿曾是显式不判项 (UEFI 下确定性挂死), 根因已定位为
+#       clone 的 TID 回写命中 4K COW 只读页、x86 核态写保护 #PF 停机. 修复 (uaccess
+#       写前预检 + clone TID 失败返回 EFAULT) 后 UEFI 5/5 复跑 PASS, 本腿已把
+#       `[THREAD] PASS:` 加回硬断言并删除旧横幅; 登记册 = docs/plan/uefi-thread-exit-hang.md.
 #
 # 用法:
 #   ./scripts/uefi_boot_test.sh [x86_64|all]   # 默认 x86_64
@@ -308,6 +308,8 @@ need "[PMM] Early relocate 'initrd':" "initrd 搬出固定堆窗 (D4-h)"
 # 7. 用户态探针可达面
 need "[TLS] PASS:" "TLS fork 继承 + 跨进程切换隔离"
 need "[SIG] PASS:" "信号 svc-return + irq-exit 投递"
+need "[UACCESS] PASS:" "只读 TID 回写返回 EFAULT (U-1 根因回归锁)"
+need "[THREAD] PASS:" "线程组 clone/futex/join/exit_group 全链路 (U-1 修复后回归项)"
 need "[EXEC] PASS: cwd+root" "execve 运行时射程聚合行 (cwd + chroot 两腿)"
 forbid "[EXEC] FAIL" "execve 单腿失败不得被聚合 PASS 掩盖"
 need "[WASM] PASS:" "wasm 进程级载体端到端 (W-7)"
@@ -330,22 +332,11 @@ else
     FAILED=$((FAILED + 1))
 fi
 
-# ── 显式不判: [THREAD] 腿 (已登记预存缺陷, 非静默跳过) ──────────────────────
 echo "================================================================"
-warn "已登记预存缺陷 —— 本腿**不判** [THREAD] (UEFI 下 init 线程组探针挂死)"
-warn "登记册: docs/plan/uefi-thread-exit-hang.md (U-1 双核 group_exit_leg / U-2 单核更早静默挂死)"
-warn "归因: BIOS 同镜像 5/5 PASS, UEFI 5/5 FAIL(reap-timeout); 摘掉 firmware 预留的负控制三轮从未通过"
-warn "修复后须把 THREAD 探针的 PASS 行加回硬断言面并删除本横幅 (见登记册「门禁口径」)"
-if grep -qaF "[THREAD]" "$BOOT_LOG"; then
-    info "实测 [THREAD] 行 (供对账, 不参与判定): $(grep -aF "[THREAD]" "$BOOT_LOG" | tail -1 | tr -d '\000\r')"
-else
-    info "实测 [THREAD] 行: 缺席 (更早挂死形态, 见登记册 U-2)"
-fi
-
 echo "================================================================"
 if [ "$FAILED" -ne 0 ]; then
     err "UEFI 引导真跑腿失败: $FAILED 项 (D4-i 丙; 日志: $BOOT_LOG)"
     exit 1
 fi
-ok "UEFI 引导真跑腿判据全符合 (D4-i 丙; [THREAD] 按登记册显式不判)"
+ok "UEFI 引导真跑腿判据全符合 (D4-i 丙; 含 U-1 修复后的 [THREAD] 硬断言)"
 exit 0

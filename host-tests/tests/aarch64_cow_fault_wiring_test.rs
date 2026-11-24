@@ -324,11 +324,22 @@ fn test_kernel_uaccess_cow_branch_scope_locked() {
         );
     }
 
+    // 解码准入之后统一走架构无关的破页动作: aarch64 入口只保留"解码四条 → 调共享函数".
+    let entry = norm(&fn_body(
+        &src,
+        "pub fn break_cow_for_kernel_uaccess(esr: u64, fault_addr: u64) -> bool",
+    ));
+    assert!(
+        entry.contains("break_cow_for_kernel_page(fault_addr)"),
+        "aarch64 入口必须委托给与 x86_64 共用的 break_cow_for_kernel_page —— \
+         两份页侧判据分叉即两份记账"
+    );
+
     // 页侧准入: 表根取当前 TTBR0 (即翻译这次核态访问的那张表); 描述符须是用户 leaf、
     // 确实只读、且带 COW 待破标; 破 COW 走与 EL0 同一入口.
     let body = norm(&fn_body(
         &src,
-        "pub fn break_cow_for_kernel_uaccess(esr: u64, fault_addr: u64) -> bool",
+        "pub fn break_cow_for_kernel_page(fault_addr: u64) -> bool",
     ));
     assert!(
         body.contains("let user_cr3 = vmm::get_current_pml4();"),

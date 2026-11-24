@@ -248,6 +248,26 @@ impl ExceptionHandler for PageFaultHandler {
             }
             return RecoveryAction::TerminateProcess(pid);
         }
+
+        // x86_64: 核态写用户 COW 只读页的窄兜底.
+        //
+        // 正常路径由 uaccess 写前预检 (`page_fault::validate_user_writable`) 主动破 COW,
+        // 不应走到这里; 本支路只兜底“预检与 store 之间另一线程 mprotect/COW 竞态”.
+        // 判据仍是同 EL 写 + present + 用户半区 + 用户 leaf/只读/帧带 COW 标记, 全在
+        // `break_cow_for_kernel_page` 内收窄; 命中即破 COW 返回重试, 不命中仍按内核缺陷
+        // panic —— 不把未映射/真只读的竞态静默吞掉.
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: `frame` 由 trait 契约保证指向完整对齐的异常帧; 只读错误码字段.
+            let err_code = unsafe { (*frame).err_code };
+            let info = crate::privileged::mm::PageFaultInfo::from_error_code(fault_addr, err_code);
+            if crate::privileged::mm::page_fault::kernel_uaccess_cow_candidate_x86(fault_addr, info)
+                && crate::privileged::mm::page_fault::break_cow_for_kernel_page(fault_addr)
+            {
+                return RecoveryAction::Recovered;
+            }
+        }
+
         match analysis.cause {
             FaultCause::PageNotPresent => {
                 // B05-53 防御: 内核态 not-present #PF 一律 Panic 留现场.
@@ -257,10 +277,8 @@ impl ExceptionHandler for PageFaultHandler {
                 // (空指针解引用 / copy_from_user 缺页) 并继续执行错误指令, 导致
                 // 数据损坏或二次 #PF 死循环.
                 //
-                // copy_from_user 的异常表/恢复点机制当前未接线 (get_exception_recovery /
-                // mark_exception_occurred 在仓库中无消费方), 缺页时无法跳转恢复点,
-                // 静默跳过只会让未完成的拷贝返回"成功" → 更严重的数据损坏.
-                // 防御: 内核态 #PF 直接 Panic, 暴露故障而非静默继续.
+                // uaccess 写前预检未覆盖的核态缺页 (未映射/竞态) 属内核缺陷,
+                // 直接 Panic 留现场, 不用伪造恢复点静默续跑.
                 RecoveryAction::Panic(PanicInfo::new(
                     "Kernel Page Fault: page not present",
                     14,

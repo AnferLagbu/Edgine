@@ -2,9 +2,10 @@
 
 > 立项依据: [userspace-decoupling.md](./userspace-decoupling.md) D4-i 丙的 UEFI 真跑腿归因轮发现,
 > 用户裁定 **「登记独立工程 + 腿按可达面接线」** —— 立项批只登记与取证待授权, 当轮不施工;
-> 解耦批按原计划收口, `scripts/uefi_boot_test.sh` 按实测可达面断言, 挂死腿以**显式横幅**声明不判.
-> **2026-11-24 进展**: 用户授权 U-1 进入修复队列（P1），当前仅开取证阶段；不改 5s 预算、
-> 不改 `[THREAD]` 判据，修复完成后才把 `[THREAD] PASS` 加回 UEFI 硬断言并删横幅。
+> 解耦批按原计划收口, `scripts/uefi_boot_test.sh` 按实测可达面断言; 修复前挂死腿以**显式横幅**声明不判.
+> **2026-11-24 进展**: 用户授权 U-1 进入修复队列（P1），已完成取证并采用「uaccess 写前预检」根治；
+> 不改 5s 预算，`[THREAD] PASS` 已加回 UEFI 硬断言并删除横幅，另加 `[UACCESS] PASS` 钉住根因。
+> U-2（单核更早静默挂死）保持对照，不随 U-1 修复自动关闭。
 > 关联登记: [init-probe-fault-branches.md](./init-probe-fault-branches.md) F-1/F-2 (同属 init 探针故障家族,
 > 但那是 aarch64 跳零 / x86_64 NULL 拷贝的**偶发**分支, 本册是 UEFI 引导下的**确定性**分支);
 > [aarch64-reap-timeout-rootcause.md](./archive/aarch64-reap-timeout-rootcause.md) (H1/H2 已修, 签名同为
@@ -120,11 +121,19 @@ x86_64 的 `#PF` 处理器目前只把核态 `ProtectionViolation` 直接 `Panic
 （[page_fault.rs:694](../../src/kernel/privileged/mm/page_fault.rs#L694)），于是核态写 COW 页
 = 停机，`clone_thread` 永不返回。
 
-**修复方向（待施工，不在本轮）**：给 x86_64 `#PF` 增加与 aarch64 同形的「核态 uaccess 写 COW
-只读页」破 COW 支路（判据同 `kernel_uaccess_cow_candidate`：同 EL + 写 + 权限故障 + FAR 落用户半区，
-再验用户 leaf / 只读 / COW 帧标记），破 COW 后直接返回重试该 store；或者把 `clone` 的 TID 回写
-改为 COW 感知的 uaccess 写。前者覆盖面更广，后者改动面更窄。两条都需先补 x86 4K COW
-引导腿回归，且保持 BIOS 路径不变。
+**修复（2026-11-24，已落地）**：采用“uaccess 写前预检”根治，不依赖跨函数恢复点：
+
+1. `page_fault::validate_user_writable` 逐页确认用户页可写；只读但带 fork COW 标记时先
+   在预检里 `cow_handle_fault` 破 COW，真只读/未映射直接返回 `false`。
+2. `userptr::write_struct_to_user`、`syscall::raw::write_struct` / `write_u64` /
+   `write_u64_pair`、`copy_user::copy_to_user` / `clear_user` 全部先过预检；
+   读路径 (`copy_from_user` / `copy_string_from_user` / `strlen_user`) 逐页确认已映射。
+3. x86 `#PF` 只保留 COW 竞态窄兜底（present + write + supervisor + 用户 leaf/只读/帧带
+   COW 标记），命中破 COW 重试，不命中仍 panic。
+4. `vm_child_register` 把 TID 回写移到入组/进程表登记之前；写失败释放 TCB、返回 `EFAULT`。
+
+设计册：[`docs/design/uaccess-design.md`](../design/uaccess-design.md)。旧 `setup_recovery`
+异常恢复点机制已删除（其标签在函数体内、无法安全跨函数返回，且此前无消费者）。
 
 **复原**：本轮所有 `[GU-ATTR]` / `[GU-K]` 插桩已 `git checkout` 复原，工作树干净，HEAD 仍
 `c9122f96`；证据日志 `/tmp/uefi_gu_attr_r{1..8}.log`、`/tmp/uefi_manual_serial.log`、
@@ -168,9 +177,9 @@ UEFI 稳定性（有预留时 5/5 都能跑到 `group_exit_leg`）。
 ## U-1 UEFI 双核下 `group_exit_leg` 确定性挂死
 
 - **描述**: OVMF + GRUB2 multiboot2 + `-smp 2` 引导时, init 线程探针的最后一条腿 `group_exit_leg` 确定性失败（5/5）, 签名 `[THREAD] FAIL: reap-timeout code=0`; 组长与 helper 两个 TCB 永不退出, `exit_requested` 从未置位（`[REAP]` 缺席）, cpu1 出现 4050 次唤醒 churn。同镜像同内核在 SeaBIOS 下 5/5 通过, 其余探针逐项同形。**2026-11-24 取证已定位**: 挂点在 `clone_thread` 的 `vm_child_register` 对 `parent_tidptr` 做 `write_struct_to_user` 时；UEFI 下该页是 4K COW 只读, ring0 写触发 `#PF e=0003`, x86 `#PF` 无核态 uaccess 破 COW 支路 ⇒ panic 停机, clone 永不返回、helper 不入运行队列。
-- **方案**: 取证已完成（乙 + 内核分步打印 + QEMU `-d int` 异常直证, 详见上「取证结果」）。修复候选：甲、给 x86_64 `#PF` 增加与 aarch64 同形的 `break_cow_for_kernel_uaccess` 支路（覆盖面广，推荐）；乙、把 clone 的 TID 回写改为 COW 感知 uaccess 写（改动面窄）。两条都需补 x86 4K COW 引导腿回归, 保持 BIOS 路径不变。**不放宽 5 s 预算、不改 `[THREAD]` 判据**；修复完成后才把 `[THREAD] PASS` 加回 UEFI 硬断言并删横幅。取证插桩已复原，未与修复提交混合。
-- **状态**: [~] 已入修复队列（P1，2026-11-24 取证完成、根因已定位；修复代码未开工，待用户裁定修复方案）
-- **详情**: 对照读数、负控制与完整取证链见上「背景与已验证事实」「归因」「取证结果」三节。历史证据日志 `/tmp/uefi_attr/`（`bios_r{1..5}.log` / `uefi_r{1..5}.log` / `nc_r{1..3}.log` / `bios_full.log`）与 `/tmp/uefi_d4i/boot.log` 为临时目录, 不入库；本轮新增 `/tmp/uefi_gu_attr_r{1..8}.log`、`/tmp/uefi_manual_serial.log`、`/tmp/qemu_int.log` 同样不入库。
+- **方案**: 已按“uaccess 写前预检”根治：`validate_user_writable` 逐页预检写权限并主动破 COW，所有写助手接入；`clone` TID 回写前置、失败返回 `EFAULT`；x86 `#PF` 仅保留 COW 竞态窄兜底。旧跨函数恢复点机制删除。**不改 5 s 预算**；修复后已把 `[THREAD] PASS` 加回 UEFI 硬断言并删除横幅。
+- **状态**: [x] 已修复（P1，2026-11-24）。UEFI `-smp 2` 连续 5/5 `[THREAD] PASS`；新增 `[UACCESS] PASS: readonly clone EFAULT` 回归锁；BIOS 与 aarch64 同镜像 PASS。
+- **详情**: 对照读数、负控制与完整取证链见上「背景与已验证事实」「归因」「取证结果」三节。修复验证日志 `/tmp/uefi_uaccess_r{1..5}.log`、`/tmp/bios_uaccess_fix.log`、`/tmp/aarch64_uaccess_fix.log`、`/tmp/uefi_uaccess_probe.log` 为临时取证, 不入库。历史证据日志 `/tmp/uefi_attr/`、`/tmp/uefi_gu_attr_r{1..8}.log`、`/tmp/uefi_manual_serial.log`、`/tmp/qemu_int.log` 同样不入库。
 
 ## U-2 UEFI 单核下更早的静默挂死
 
@@ -189,10 +198,10 @@ UEFI 稳定性（有预留时 5/5 都能跑到 `group_exit_leg`）。
   `mem=` 取自 tag6 而非 tag4 兜底; 载体链（`[INITRAMFS] Unpacked` + `init from /init`）;
   `[EXEC] PASS: cwd+root` / `[WASM] PASS:` / `[SCHED] SNAP END` + `conserve=ok` 且无 `conserve=BAD`;
   `[TLS] PASS` / `[SIG] PASS` / `[KPTI] EL0 … denied`。
-- **显式不判（非静默跳过）**: `[THREAD]` 腿。脚本无条件打印横幅指明本册 U-1/U-2 已登记、
-  该腿在 UEFI 下为已知红、**本轮不判**, 并打印实测到的 `[THREAD]` 行原文供对账。
-  横幅与不判口径由 host 侧接线形状锁钉住, 防止日后被静默删掉或悄悄改成「断言 PASS」。
+- **U-1 修复后新增硬断言**: `[UACCESS] PASS: readonly clone EFAULT`（只读 TID 回写必须返回
+  `EFAULT`，钉住本轮根因）与 `[THREAD] PASS:`（clone/futex/join/exit_group 全链路）。
+  两者均由 host 侧接线形状锁把守：横幅残片出现即红，任一条被摘即红。
 - **三态**: OVMF CODE/VARS 缺失时 `ci/audit.sh` 走 `skip_leg "uefi"`, 计入未执行腿数并打印
   「零读数, 不可当作已验证」, 不当绿。
 
-U-1 修复后应把 `[THREAD] PASS` 加回硬断言面并删掉横幅, 届时本册两条目转 `[X]`。
+U-1 已转 `[x]`；U-2 仍 `[]`，留作单核对照，未占修复队列。

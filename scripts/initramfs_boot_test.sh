@@ -8,19 +8,21 @@
 #       D4 严格零嵌入后内嵌 `init.bin` 路径已删除, 本腿即**出货启动形态**;
 #       D4-e 起 `initramfs` feature 已退役 (解包无条件执行), 故本腿构建默认镜像
 #       (lockdep 常开), 不再切 KERNEL_FEATURES / KERNEL_NO_DEFAULT.
-#       本腿断言六条判据 (缺一即红):
+#       本腿断言七条判据 (缺一即红):
 #         1. `[INITRAMFS] Unpacked N files` 且 N >= 7 —— 归档被解析且真落盘
 #            (数量下限把"只有根目录/只有 /init 落盘"的嵌套目录回归钉住);
 #         2. `init from /init` —— PID 1 的镜像来自 VFS 读取 (回退路径打印的是
 #            `Entering Ring 3 (init pid=...)`, 不含该串);
 #         3. `[TIMERFD] PASS` —— 载体 init 真跑 timerfd 阻塞 read 与非阻塞 EAGAIN;
-#         4. `[THREAD] PASS` —— 载体加载的 init 真跑起来并打完 K-07a 线程组探针,
+#         4. `[UACCESS] PASS` —— clone 的 TID 指向 `.text` 只读页时返回 EFAULT,
+#            核态不进入裸 store/不停机 (U-1 根因回归锁);
+#         5. `[THREAD] PASS` —— 载体加载的 init 真跑起来并打完 K-07a 线程组探针,
 #            证明从文件系统读出的 ELF 与内嵌 ELF 等价可执行;
-#         5. `[EXEC] PASS: cwd+root` 且无 `[EXEC] FAIL` —— K-07b 批2 的 execve
+#         6. `[EXEC] PASS: cwd+root` 且无 `[EXEC] FAIL` —— K-07b 批2 的 execve
 #            运行时射程: cwd 相对名 + chroot 视图绝对路径两条腿都 exec 成功,
 #            载荷回读的 argv/envp/cwd 全部一致 (同时钉住归档权限位保留 ——
 #            无 x 位即 EACCES). 聚合行只在两腿全过后由 init 父进程打印;
-#         6. `[SCHED] SNAP END` 且 `conserve=ok` 无 `conserve=BAD` —— K-07b 批3
+#         7. `[SCHED] SNAP END` 且 `conserve=ok` 无 `conserve=BAD` —— K-07b 批3
 #            的 EEVDF 观测面在载体装载路径下同样可达且账目守恒.
 #
 # 构建面 = 出货默认 (D4-e): 历史上本腿取 `--no-default-features --features initramfs`
@@ -138,6 +140,7 @@ boot_and_check() {
     local marker_unpack="\[INITRAMFS\] Unpacked"
     local marker_carrier="init from /init"
     local marker_timerfd="\[TIMERFD\] PASS"
+    local marker_uaccess="\[UACCESS\] PASS"
     local marker_thread="\[THREAD\] PASS"
     # 判据取 init 父进程的聚合行 (`cwd+root` 两腿全过才打印). 不能只查
     # `[EXEC] PASS` —— 载荷每腿都会打印 `[EXEC] PASS: <腿> argv+envp+cwd`,
@@ -155,8 +158,8 @@ boot_and_check() {
     # 匹配行不输出.
     for _i in $(seq 1 $((TIMEOUT * 10))); do
         if grep -aq "$marker_carrier" "$log" && grep -aq "$marker_timerfd" "$log" \
-            && grep -aq "$marker_thread" "$log" && grep -aq "$marker_exec" "$log" \
-            && grep -aq "$marker_snap" "$log"; then
+            && grep -aq "$marker_uaccess" "$log" && grep -aq "$marker_thread" "$log" \
+            && grep -aq "$marker_exec" "$log" && grep -aq "$marker_snap" "$log"; then
             rc=0
             break
         fi
@@ -194,6 +197,12 @@ boot_and_check() {
         return 1
     fi
     ok "[$arch] timerfd e2e: $(grep -a "$marker_timerfd" "$log" | tail -1)"
+
+    if ! grep -aq "$marker_uaccess" "$log"; then
+        err "[$arch] 只读 TID uaccess 回归未通过 '$marker_uaccess' (日志: $log)"
+        return 1
+    fi
+    ok "[$arch] uaccess 只读 TID: $(grep -a "$marker_uaccess" "$log" | tail -1)"
 
     ok "[$arch] 载体 init 运行判据: $(grep -a "$marker_thread" "$log" | tail -1)"
 

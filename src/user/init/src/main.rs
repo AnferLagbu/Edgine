@@ -70,6 +70,9 @@ pub extern "C" fn _start() -> ! {
     // timerfd 阻塞 read e2e: 真 syscall 路径走 wait_for_ticks → 调度器阻塞 →
     // hrtimer 回调唤醒; host 单测覆盖队列语义, 此处覆盖真实睡眠与唤醒.
     timerfd_probe();
+    // uaccess 只读指针回归: clone 的 TID 回写目标若在 .text 只读页, 必须返回 EFAULT,
+    // 不能把核态写保护故障升级成 panic/停机 (UEFI CR0.WP=1 下的 U-1 根因回归锁).
+    uaccess_probe();
     // 第一次 fork：子进程立即退出，父进程 wait4 收割 —— 收割路径 `remove_and_free`
     // 使 `Process::drop` 运行并销毁其地址空间 (走 destroy_page_table)，该批待释放帧
     // 必然滞留 pending 链（远程核尚未追平代），父进程继续执行
@@ -341,6 +344,38 @@ const TIMERFD_MIN_ELAPSED_MS: u64 = 25;
 
 /// 真 syscall 路径验证 timerfd: 阻塞 read 睡到到期并返回 1 tick,
 /// 非阻塞 fd 在未到期时返回 `EAGAIN`. 失败只打印不退出, 由启动断言判红.
+/// uaccess 只读指针探针: `clone` 的 `parent_tid` 指向 `.text` 只读页时,
+/// 内核必须在写前预检处返回 `EFAULT`, 不得进入裸 store.
+fn uaccess_probe() {
+    // `uaccess_probe` 自身位于 `.text` (只读, 无 COW 标记); 用它当 TID 回写地址.
+    let ro_ptr = uaccess_probe as *const () as usize as *mut i32;
+    let rc = unsafe {
+        // SAFETY: 栈取 BSS 静态块; `child_tid = null` 跳过 CHILD_SETTID/CLEARTID;
+        // parent_tid 指向只读 .text, 预期在 TID 回写预检处失败.
+        clone_thread(
+            THREAD_CLONE_FLAGS,
+            thread_stack_top(&THREAD_STACKS[0]),
+            ro_ptr,
+            core::ptr::null_mut(),
+            0,
+            uaccess_ro_child,
+            0,
+        )
+    };
+    if rc != -14 {
+        print("[UACCESS] FAIL: readonly clone rc=");
+        print_dec(rc);
+        print("\n");
+        return;
+    }
+    print("[UACCESS] PASS: readonly clone EFAULT\n");
+}
+
+/// uaccess 只读探针的 clone 入口 (仅在回归失效、clone 意外成功时才会运行).
+extern "C" fn uaccess_ro_child(_arg: u64) {
+    proc_exit(0);
+}
+
 fn timerfd_probe() {
     let fd = timerfd_create(CLOCK_MONOTONIC, 0);
     if fd < 0 {

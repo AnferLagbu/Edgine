@@ -1,23 +1,22 @@
 //! 用户空间安全访问函数
 //!
 //! 提供在用户态与内核态之间安全复制数据的函数.
-//! 这些函数会校验用户指针, 并优雅地处理缺页异常.
+//! 这些函数会校验用户指针, 并在进入用户内存访问前完成权限预检.
 //!
 //! # 安全
 //!
 //! - 访问前校验所有用户指针
-//! - 复制过程中的缺页异常会被捕获并返回错误
+//! - 读路径逐页确认已映射; 写路径逐页确认可写 (COW 只读页主动破 COW)
+//! - 预检通过后才执行 store/load, 用户传非法指针返回 `KernelError::Fault`
 //! - 防止内核访问无效的用户内存
 //! - 防止用户读取任意的内核内存
 //!
-//! # 缺页异常处理
+//! # 缺页语义
 //!
-//! 本模块采用异常表机制处理缺页异常:
-//! 1. 访问用户内存前, 设置恢复点
-//! 2. 若发生缺页异常, 异常处理程序查找恢复点
-//! 3. 处理程序跳转到恢复点, 返回错误
-//!
-//! 这避免了因非法用户指针导致内核 panic.
+//! 本模块不再依赖“访问中捕获异常再跳恢复点”: 那类恢复点无法安全跨函数返回.
+//! 改为**写前/读前预检** (`userptr::validate_user_writable` / `validate_user_buf`),
+//! 把用户可控的缺页在进入 store 前消掉. x86_64 `CR0.WP=1` 下核态写 COW 只读页
+//! 曾经直接 `#PF` 停机 (UEFI U-1), 预检是根因修复; #PF 处理器只保留 COW 竞态窄兜底.
 //!
 //! # 性能
 //!
@@ -31,11 +30,8 @@
 //! 使用 `copy_nonoverlapping` 是安全的, 因为:
 //! - 源与目的缓冲区保证不重叠 (用户态 vs 内核态)
 //! - 复制前已校验缓冲区边界
-//! - 异常恢复机制能处理复制过程中的任何缺页
+//! - 访问前的逐页预检保证不会在复制中触发用户缺页
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
-#[cfg(test)]
 use super::PAGE_SIZE;
 
 // P4.B.4: SMAP 启用 (CR4.SMAP=1) 后, Ring 0 访问 USER 页触发 #PF.
@@ -108,140 +104,6 @@ pub(crate) unsafe fn smap_end() {}
 use crate::privileged::constants::limits::USER_ADDR_MAX;
 use crate::privileged::error::KernelError;
 
-/// 异常表条目 —— 用于缺页恢复
-#[repr(C)]
-pub struct ExceptionTableEntry {
-    /// 可能触发异常的指令地址
-    pub insn_addr: u64,
-    /// 异常时跳转到的恢复地址
-    pub fixup_addr: u64,
-}
-
-/// 全局异常表 (在链接脚本中定义)
-#[used]
-// SAFETY: 指针操作在有效范围内
-#[unsafe(link_section = ".exception_table")]
-static EXCEPTION_TABLE_START: ExceptionTableEntry = ExceptionTableEntry {
-    insn_addr: 0,
-    fixup_addr: 0,
-};
-
-/// 每 CPU 异常上下文存储
-/// 使用静态数组而非 `thread_local`!, 以兼容裸机环境
-static PER_CPU_EXCEPTION_CTX: [AtomicU64; crate::privileged::config::MAX_CPUS] =
-    [const { AtomicU64::new(0) }; crate::privileged::config::MAX_CPUS];
-
-/// 表示尚未设置异常上下文的标记值
-const NO_EXCEPTION_CTX: u64 = 0;
-
-/// 每 CPU 异常发生标志
-static PER_CPU_EXCEPTION_OCCURRED: [AtomicBool; crate::privileged::config::MAX_CPUS] =
-    [const { AtomicBool::new(false) }; crate::privileged::config::MAX_CPUS];
-
-/// 获取当前 CPU ID (带边界校验)
-///
-/// # Panics
-/// Debug 构建下, 若 `cpu_id` >= `MAX_CPUS`, 立即 panic, 以尽早发现配置错误
-///
-/// # Safety
-/// Release 构建下, 使用取模运算防止越界访问,
-/// 但这表明存在配置问题 (CPU 数量过多)
-#[inline]
-fn current_cpu_id() -> usize {
-    let cpu = crate::privileged::smp::current_cpu_index() as usize;
-    let max_cpus = crate::privileged::config::MAX_CPUS;
-
-    #[cfg(debug_assertions)]
-    {
-        // 不可恢复: CPU ID 超过 MAX_CPUS 是配置错误, release 模式下取模降级,
-        // debug 模式下必须停机以暴露问题
-        assert!(
-            cpu < max_cpus,
-            "CPU ID {cpu} exceeds MAX_CPUS ({max_cpus}). Increase MAX_CPUS or reduce CPU count!"
-        );
-        cpu
-    }
-
-    #[cfg(not(debug_assertions))]
-    {
-        cpu % max_cpus
-    }
-}
-
-/// 检查上次操作中是否发生了异常
-#[inline]
-pub fn exception_occurred() -> bool {
-    let cpu = current_cpu_id();
-    PER_CPU_EXCEPTION_OCCURRED[cpu].load(Ordering::SeqCst)
-}
-
-/// 清除异常发生标志
-#[inline]
-pub fn clear_exception_flag() {
-    let cpu = current_cpu_id();
-    PER_CPU_EXCEPTION_OCCURRED[cpu].store(false, Ordering::SeqCst);
-}
-
-/// 设置异常发生标志 (由异常处理程序调用)
-#[inline]
-pub fn mark_exception_occurred() {
-    let cpu = current_cpu_id();
-    PER_CPU_EXCEPTION_OCCURRED[cpu].store(true, Ordering::SeqCst);
-}
-
-/// 对恢复地址进行编码以便存储
-/// 使用偏移编码: `stored_value` = `recovery_addr` + 1
-/// 这保证 0 (`NO_EXCEPTION_CTX`) 永远不会作为有效地址使用
-#[inline]
-fn encode_recovery_addr(addr: u64) -> u64 {
-    addr.wrapping_add(1)
-}
-
-/// 从存储中解码恢复地址
-/// encode 的逆运算: `recovery_addr` = `stored_value` - 1
-#[inline]
-fn decode_recovery_addr(encoded: u64) -> u64 {
-    encoded.wrapping_sub(1)
-}
-
-/// 设置当前的异常恢复点
-/// 返回旧的恢复点
-#[inline]
-pub fn set_exception_recovery(recovery_addr: u64) -> Option<u64> {
-    let cpu = current_cpu_id();
-    let encoded = encode_recovery_addr(recovery_addr);
-    let old = PER_CPU_EXCEPTION_CTX[cpu].swap(encoded, Ordering::SeqCst);
-    if old == NO_EXCEPTION_CTX {
-        None
-    } else {
-        Some(decode_recovery_addr(old))
-    }
-}
-
-/// 清除当前的异常恢复点
-#[inline]
-pub fn clear_exception_recovery() {
-    let cpu = current_cpu_id();
-    PER_CPU_EXCEPTION_CTX[cpu].store(NO_EXCEPTION_CTX, Ordering::SeqCst);
-}
-
-/// 获取当前的异常恢复点
-#[inline]
-pub fn get_exception_recovery() -> Option<u64> {
-    let cpu = current_cpu_id();
-    let val = PER_CPU_EXCEPTION_CTX[cpu].load(Ordering::SeqCst);
-    if val == NO_EXCEPTION_CTX {
-        None
-    } else {
-        Some(decode_recovery_addr(val))
-    }
-}
-
-/// 检查指针是否在合法的用户空间范围内
-///
-/// B04-14: `USER_ADDR_MAX = 0x0000_7FFF_FFFF_F000` 已天然排除内核高半区
-/// (含 `MMIO_VIRT_BASE = 0xFFFF9000_00000000+` DMA 代理区), 用户态无法
-/// 通过 `copy_from/to_user` 访问外设 MMIO 寄存器. 此函数是 I4 (用户内存代理)
 /// 与 I5/I6 (外设 DMA/MMIO) 不变式的唯一交叉检查点.
 #[inline]
 #[must_use]
@@ -262,88 +124,19 @@ pub fn is_user_buf(ptr: u64, len: usize) -> bool {
     is_user_ptr(ptr) && end <= USER_ADDR_MAX
 }
 
-/// 设置异常恢复点并返回旧恢复点.
-///
-/// 抽离为 `#[inline(never)]` 函数, 防止内联汇编被内联到巨大的调用者函数中.
-///
-/// # 架构相关
-///
-/// - **`x86_64`**: `lea` + 标签获取恢复地址.
-/// - **aarch64**: `adr` (PC 相对寻址, 单条指令) 获取恢复地址.
-///   避免 `movz`/`movk` 配对, 该配对会触发 LLVM 22 代码生成 bug
-///   (`invalid fixup for movz/movk`) — 当标签距离 mov 较远时.
-///
-// SAFETY: 调用方需保证在异常恢复有意义的上下文中调用 (即即将访问用户内存).
-#[inline(never)]
-unsafe fn setup_recovery() -> (u64, Option<u64>) {
-    // SAFETY: 本块包住下方两架构的 `asm!` (各自另有注释) 与恢复点簿记. asm 只用 PC 相对
-    // 寻址算出恢复标签地址, options(nostack, pure, readonly) 声明不碰栈与内存, 无副作用;
-    // 恢复点经 `set_exception_recovery` 写入 PER_CPU_EXCEPTION_CTX[cpu] 的 SeqCst 原子槽,
-    // 故无需额外锁. 「即将访问用户内存、与 teardown_recovery 配对且不嵌套」由上方调用方
-    // 契约保证 —— 它使安装的恢复点恰好覆盖随后那段受保护的用户内存访问.
-    unsafe {
-        clear_exception_flag();
-
-        let recovery_label: u64;
-        // SAFETY: inline asm 仅读取当前指令地址作为恢复点, 无副作用.
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!(
-            "9:",
-            "lea {recovery}, [rip + 8f]",
-            "8:",
-            recovery = out(reg) recovery_label,
-            options(nostack, pure, readonly),
-        );
-        // SAFETY: `adr` 是 PC-relative 单指令, 不触发 movz/movk fixup bug.
-        #[cfg(target_arch = "aarch64")]
-        core::arch::asm!(
-            "adr {recovery}, 8f",
-            "8:",
-            recovery = out(reg) recovery_label,
-            options(nostack, pure, readonly),
-        );
-
-        let old_recovery = set_exception_recovery(recovery_label);
-        (recovery_label, old_recovery)
-    }
-}
-
-/// 撤销异常恢复点, 若有旧恢复点则还原.
-///
-/// 与 `setup_recovery()` 配对. 若在受保护区域内发生了异常则返回 `true`.
-//
-// SAFETY: 调用方必须先调用 `setup_recovery()`.
-#[inline(never)]
-unsafe fn teardown_recovery(old_recovery: Option<u64>) -> bool {
-    if let Some(old) = old_recovery {
-        set_exception_recovery(old);
-    } else {
-        clear_exception_recovery();
-    }
-    exception_occurred()
-}
-
 /// 从用户空间复制数据到内核缓冲区
 ///
 /// # Safety
 ///
 /// 此函数是安全的, 因为它:
 /// 1. 校验用户指针范围
-/// 2. 使用 volatile 读防止编译器优化
-/// 3. 访问用户内存前先设置异常恢复点
-/// 4. 缺页时返回错误而非 panic
+/// 2. 逐页确认用户区间已映射后才访问
+/// 3. 非法指针返回 `KernelError::Fault`, 不触发核态缺页
 ///
 /// # 返回
 ///
 /// - `Ok(copied_len)`: 成功复制的字节数
-/// - `Err(KernelError::Fault)`: 用户指针非法或发生缺页
-///
-/// # 架构要求
-///
-/// 本函数依赖以下架构支持:
-/// - 异常表机制 (见 `exception_table_entry`)
-/// - 缺页处理程序检查异常表
-/// - 恢复点机制
+/// - `Err(KernelError::Fault)`: 用户指针非法
 /// # Errors
 /// 用户指针非法、目标缓冲区过小或访问用户内存时发生缺页时返回 Err。
 #[inline(never)]
@@ -356,7 +149,9 @@ pub fn copy_from_user(
         return Ok(0);
     }
 
-    if !is_user_buf(user_src, len) {
+    if !is_user_buf(user_src, len)
+        || !crate::privileged::userptr::validate_user_buf(user_src, len as u64)
+    {
         return Err(KernelError::Fault);
     }
 
@@ -364,27 +159,15 @@ pub fn copy_from_user(
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: `is_user_buf(user_src, len)` 已确认 [user_src, user_src+len) 全落在用户地址空间, `kernel_dst.len() >= len` 已检查; 源为用户页、目的为内核 slice, 两区不相交; 缺页由下方 `setup_recovery` 捕获并转 `KernelError::Fault`.
-
+    // SAFETY: `is_user_buf(user_src, len)` 已确认 [user_src, user_src+len) 全落在
+    // 用户地址空间且逐页已映射, `kernel_dst.len() >= len` 已检查; 源为用户页、
+    // 目的为内核 slice, 两区不相交; 预检通过后访问不再触发缺页.
     unsafe {
-        let src_ptr = user_src as *const u8;
-        let dst_ptr = kernel_dst.as_mut_ptr();
-
-        let (_recovery_label, old_recovery) = setup_recovery();
-
-        // P4.B.4: SMAP 保护下访问用户内存.
         smap_begin();
-        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, len);
+        core::ptr::copy_nonoverlapping(user_src as *const u8, kernel_dst.as_mut_ptr(), len);
         smap_end();
-
-        let faulted = teardown_recovery(old_recovery);
-
-        if faulted {
-            Err(KernelError::Fault)
-        } else {
-            Ok(len)
-        }
     }
+    Ok(len)
 }
 
 /// 从内核复制数据到用户空间
@@ -393,21 +176,13 @@ pub fn copy_from_user(
 ///
 /// 此函数是安全的, 因为它:
 /// 1. 校验用户指针范围
-/// 2. 使用 volatile 写防止编译器优化
-/// 3. 访问用户内存前先设置异常恢复点
-/// 4. 缺页时返回错误而非 panic
+/// 2. 逐页确认用户区间已映射且可写 (COW 只读页先破 COW)
+/// 3. 非法/只读指针返回 `KernelError::Fault`, 不触发核态缺页
 ///
 /// # 返回
 ///
 /// - `Ok(copied_len)`: 成功复制的字节数
-/// - `Err(KernelError::Fault)`: 用户指针非法或发生缺页
-///
-/// # 架构要求
-///
-/// 本函数依赖以下架构支持:
-/// - 异常表机制 (见 `exception_table_entry`)
-/// - 缺页处理程序检查异常表
-/// - 恢复点机制
+/// - `Err(KernelError::Fault)`: 用户指针非法
 /// # Errors
 /// 用户指针非法、源缓冲区过小或访问用户内存时发生缺页时返回 Err。
 #[inline(never)]
@@ -416,7 +191,9 @@ pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usiz
         return Ok(0);
     }
 
-    if !is_user_buf(user_dst, len) {
+    if !is_user_buf(user_dst, len)
+        || !crate::privileged::userptr::validate_user_writable(user_dst, len as u64)
+    {
         return Err(KernelError::Fault);
     }
 
@@ -424,27 +201,15 @@ pub fn copy_to_user(user_dst: u64, kernel_src: &[u8], len: usize) -> Result<usiz
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: `is_user_buf(user_dst, len)` 已确认 [user_dst, user_dst+len) 全落在用户地址空间, `kernel_src.len() >= len` 已检查; 源为内核 slice、目的为用户页, 两区不相交; 缺页由下方 `setup_recovery` 捕获.
-
+    // SAFETY: `is_user_buf` + `validate_user_writable` 已确认 [user_dst, user_dst+len)
+    // 全落用户空间、逐页已映射且可写 (COW 只读页已在预检中破), `kernel_src.len() >= len`;
+    // 源为内核 slice、目的为用户页, 两区不相交; 预检通过后访问不再触发缺页.
     unsafe {
-        let src_ptr = kernel_src.as_ptr();
-        let dst_ptr = user_dst as *mut u8;
-
-        let (_recovery_label, old_recovery) = setup_recovery();
-
-        // P4.B.4: SMAP 保护下写入用户内存.
         smap_begin();
-        core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, len);
+        core::ptr::copy_nonoverlapping(kernel_src.as_ptr(), user_dst as *mut u8, len);
         smap_end();
-
-        let faulted = teardown_recovery(old_recovery);
-
-        if faulted {
-            Err(KernelError::Fault)
-        } else {
-            Ok(len)
-        }
     }
+    Ok(len)
 }
 
 /// 从用户空间复制以 NUL 结尾的字符串
@@ -465,33 +230,36 @@ pub fn copy_string_from_user(
     }
 
     let mut bytes = alloc::vec::Vec::with_capacity(max_len);
+    let mut faulted = false;
+    let mut validated_page = u64::MAX;
 
-    // SAFETY: `is_user_ptr(user_str)` 已确认起点落在用户地址空间; 读取范围 0..max_len 的越界/缺页由下方 `setup_recovery` 捕获; 目标 `bytes` 是独立 `Vec`, 与用户页不重叠.
-
+    // SAFETY: 起点已确认在用户地址空间; 每跨入新页前先用 `validate_user_buf`
+    // 证明该页已映射, 预检通过后才读, 因此不会触发缺页; 目标 `bytes` 独立于用户页.
     unsafe {
-        let ptr = user_str as *const u8;
-
-        let (_recovery_label, old_recovery) = setup_recovery();
-
-        // P4.B.4: SMAP 保护下逐字节读取用户字符串.
-        // stac/clac 严格配对: 无论 break 还是正常退出都执行 clac.
         smap_begin();
         for i in 0..max_len {
-            let byte = core::ptr::read_volatile(ptr.add(i));
+            let addr = user_str.saturating_add(i as u64);
+            let page = addr & !(PAGE_SIZE - 1);
+            if page != validated_page {
+                if !crate::privileged::userptr::validate_user_buf(addr, 1) {
+                    faulted = true;
+                    break;
+                }
+                validated_page = page;
+            }
+            let byte = core::ptr::read_volatile(addr as *const u8);
             if byte == 0 {
                 break;
             }
             bytes.push(byte);
         }
         smap_end();
+    }
 
-        let faulted = teardown_recovery(old_recovery);
-
-        if faulted || bytes.len() == max_len {
-            Err(KernelError::Fault)
-        } else {
-            alloc::string::String::from_utf8(bytes).map_err(|_| KernelError::Fault)
-        }
+    if faulted || bytes.len() == max_len {
+        Err(KernelError::Fault)
+    } else {
+        alloc::string::String::from_utf8(bytes).map_err(|_| KernelError::Fault)
     }
 }
 
@@ -509,30 +277,20 @@ pub fn clear_user(user_ptr: u64, len: usize) -> Result<usize, KernelError> {
         return Ok(0);
     }
 
-    if !is_user_buf(user_ptr, len) {
+    if !is_user_buf(user_ptr, len)
+        || !crate::privileged::userptr::validate_user_writable(user_ptr, len as u64)
+    {
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: `is_user_buf(user_ptr, len)` 已确认 [user_ptr, user_ptr+len) 全落在用户地址空间; 写长度即该检查界定的 len; 缺页由下方 `setup_recovery` 捕获.
-
+    // SAFETY: `is_user_buf` + `validate_user_writable` 已确认区间全落用户空间、
+    // 逐页已映射且可写; 预检通过后写零不再触发缺页.
     unsafe {
-        let ptr = user_ptr as *mut u8;
-
-        let (_recovery_label, old_recovery) = setup_recovery();
-
-        // P4.B.4: SMAP 保护下写入用户内存.
         smap_begin();
-        core::ptr::write_bytes(ptr, 0, len);
+        core::ptr::write_bytes(user_ptr as *mut u8, 0, len);
         smap_end();
-
-        let faulted = teardown_recovery(old_recovery);
-
-        if faulted {
-            Err(KernelError::Fault)
-        } else {
-            Ok(len)
-        }
     }
+    Ok(len)
 }
 
 /// 获取用户空间字符串长度 (不复制内容)
@@ -549,34 +307,38 @@ pub fn strlen_user(user_str: u64, max_len: usize) -> Result<usize, KernelError> 
         return Err(KernelError::Fault);
     }
 
-    // SAFETY: `is_user_ptr(user_str)` 已确认起点落在用户地址空间; 逐字节读到 NUL 或 `max_len` 为止, 任何缺页由下方 `setup_recovery` 捕获并转 `KernelError::Fault`.
+    let mut found_len = None;
+    let mut faulted = false;
+    let mut validated_page = u64::MAX;
 
+    // SAFETY: 每跨入新页前先验证该页已映射, 预检通过后才逐字节读; 不会触发缺页.
     unsafe {
-        let ptr = user_str as *const u8;
-
-        let (_recovery_label, old_recovery) = setup_recovery();
-
-        // P4.B.4: SMAP 保护下逐字节读取用户字符串.
         smap_begin();
-        let mut found_len = None;
         for i in 0..max_len {
-            let byte = core::ptr::read_volatile(ptr.add(i));
+            let addr = user_str.saturating_add(i as u64);
+            let page = addr & !(PAGE_SIZE - 1);
+            if page != validated_page {
+                if !crate::privileged::userptr::validate_user_buf(addr, 1) {
+                    faulted = true;
+                    break;
+                }
+                validated_page = page;
+            }
+            let byte = core::ptr::read_volatile(addr as *const u8);
             if byte == 0 {
                 found_len = Some(i);
                 break;
             }
         }
         smap_end();
+    }
 
-        let faulted = teardown_recovery(old_recovery);
-
-        if faulted {
-            Err(KernelError::Fault)
-        } else if let Some(len) = found_len {
-            Ok(len)
-        } else {
-            Err(KernelError::Fault)
-        }
+    if faulted {
+        Err(KernelError::Fault)
+    } else if let Some(len) = found_len {
+        Ok(len)
+    } else {
+        Err(KernelError::Fault)
     }
 }
 

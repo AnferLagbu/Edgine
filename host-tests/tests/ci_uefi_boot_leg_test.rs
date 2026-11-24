@@ -8,10 +8,12 @@
 //   (串漂移、取数失败读成"零条"、只判声明侧不判登记侧、轮询里程碑取早了把后半段
 //   判据对象切掉), full 档照样绿. 本文件钉接线形态, 不重复真构建真启动.
 //
-//   另有一条**口径**必须钉住: `[THREAD]` 腿在 UEFI 下是已登记的预存缺陷
+//   另有一条**口径**已随 U-1 修复转档: `[THREAD]` 腿此前在 UEFI 下是已登记预存缺陷
 //   (docs/plan/uefi-thread-exit-hang.md U-1/U-2), 用户裁定「登记独立工程 + 腿按
-//   可达面接线」⇒ 脚本**显式声明不判**并打印横幅. 静默跳过与悄悄改成"断言 PASS"
-//   两种退化都要红: 前者让"不判"读起来像"通过", 后者让已知红腿阻断整个 full 档.
+//   可达面接线」⇒ 修复前脚本**显式声明不判**并打印横幅. U-1 经 uaccess 写前预检
+//   根治后, 脚本已删除横幅并把 `[THREAD] PASS` 加回硬断言, 同时新增
+//   `[UACCESS] PASS` 钉住根因 (只读 TID 回写必须返回 EFAULT). 本文件转为锁新口径:
+//   横幅不得复活, 两条 ASSERT 不得被摘.
 //
 // 验收 (六条, 缺一即红):
 //   1. 判据串与**产出方**同源 (格式化串取格式前缀, 动态读数取字面前缀);
@@ -19,8 +21,7 @@
 //   3. 反向针与两侧对账都在 (firmware 声明数 == 登记数; mem 下界; CRLF 剥离);
 //   4. 判据落在真 OVMF 启动产物上, 架构自检早于启动, aarch64 显式拒绝,
 //      OVMF 发现单源 (--probe), 轮询里程碑取 SNAP END 而非 THREAD;
-//   5. `[THREAD]` 显式不判: 横幅 + 登记册点名 + 登记册真存在且条目未闭,
-//      且**不得**把 THREAD 的 PASS 行加成硬断言;
+//   5. `[THREAD]`/`[UACCESS]` 都在硬断言面: 横幅残片为红, 登记册 U-1 `[x]`、U-2 `[]`;
 //   6. `ci/audit.sh` full 档步骤 4 真调用本脚本, 失败走 err, 有独立取证日志,
 //      固件缺失走 skip_leg 三态, 且门禁侧不另抄 OVMF 路径清单.
 
@@ -53,92 +54,102 @@ fn assert_before(hay: &str, a: &str, b: &str) {
     assert!(ia < ib, "{a:?} 必须出现在 {b:?} 之前");
 }
 
+/// 三元组 = (产出方文件, 产出方逐字串, 脚本侧判据串). 产出方是格式化串时取**格式
+/// 前缀** (运行时值由真跑腿证), 脚本侧含 `$SMP` 等变量时取脚本里的逐字形态.
+///
+/// 放在模块级是为让下面的测试函数体留在 clippy `too_many_lines` 预算内.
+const MARKER_PAIRS: &[(&str, &str, &str)] = &[
+    (INIT_PROBE, "[TLS] PASS:", "[TLS] PASS:"),
+    (INIT_PROBE, "[SIG] PASS:", "[SIG] PASS:"),
+    (INIT_PROBE, "[EXEC] PASS: cwd+root", "[EXEC] PASS: cwd+root"),
+    (INIT_PROBE, "[WASM] PASS:", "[WASM] PASS:"),
+    (
+        INIT_PROBE,
+        "[KPTI] EL0 kernel high-half access denied",
+        "[KPTI] EL0 kernel high-half access denied",
+    ),
+    (INIT_PROBE, "[THREAD] FAIL: ", "[THREAD]"),
+    (
+        INIT_PROBE,
+        "[UACCESS] PASS: readonly clone EFAULT",
+        "[UACCESS] PASS:",
+    ),
+    (
+        ACPI,
+        "[ACPI] RSDP found via Multiboot2",
+        "[ACPI] RSDP found via Multiboot2",
+    ),
+    (
+        ACPI,
+        "[ACPI] RSDP found via BIOS scan",
+        "[ACPI] RSDP found via BIOS scan",
+    ),
+    (
+        ACPI,
+        "[ACPI] Table scan complete: MADT={} FADT={} HPET={}",
+        "[ACPI] Table scan complete: MADT=true FADT=true HPET=true",
+    ),
+    (
+        ACPI,
+        "[ACPI] FADT: PM1a_EVT=0x{:X}",
+        "[ACPI] FADT: PM1a_EVT=",
+    ),
+    (
+        ACPI,
+        "[ACPI] HPET: base=0x{:X}",
+        "[ACPI] HPET: base=0xFED00000",
+    ),
+    (
+        ACPI,
+        "[ACPI] MADT: LAPIC base=0x{:X}, AP count={}",
+        "[ACPI] MADT: LAPIC base=0xFEE00000, AP count=$SMP",
+    ),
+    (
+        BOOT_MOD,
+        "Boot firmware reserved regions: {}",
+        "Boot firmware reserved regions: ",
+    ),
+    (
+        PMM,
+        "[PMM] Early reserve '{}': base=0x{:X} size={} relocate={}",
+        "[PMM] Early reserve 'firmware':",
+    ),
+    (
+        PMM,
+        "[PMM] Early relocate '{}':",
+        "[PMM] Early relocate 'initrd':",
+    ),
+    (LIB, "Boot info: mem={} MB", "Boot info: mem="),
+    (VMM, "[SMP] TLB probe PASS", "[SMP] TLB probe PASS"),
+    (SMP_X86, "[SMP] online CPUs: {}", "[SMP] online CPUs: $SMP"),
+    (
+        INITRAMFS_FS,
+        "[INITRAMFS] Unpacked {} files",
+        "Unpacked [0-9]\\+",
+    ),
+    (FUNCTIONS_INIT, "init from /init", "init from /init"),
+    (SCHED, "[SCHED] SNAP END", "[SCHED] SNAP END"),
+    (
+        SCHED,
+        "if conserve_all { \"ok\" } else { \"BAD\" }",
+        "conserve=ok",
+    ),
+    (E1000, "e1000: 初始化完成", "e1000: 初始化完成"),
+    (
+        NET_INIT,
+        "DHCP configured (lease applied)",
+        "DHCP configured (lease applied)",
+    ),
+];
+
 /// 1. 判据串与产出方同源.
 ///
 /// 三元组 = (产出方文件, 产出方逐字串, 脚本侧判据串). 产出方是格式化串时取**格式
 /// 前缀** (运行时值由真跑腿证), 脚本侧含 `$SMP` 等变量时取脚本里的逐字形态.
 #[test]
 fn test_uefi_markers_are_derived_from_producers() {
-    const PAIRS: &[(&str, &str, &str)] = &[
-        (INIT_PROBE, "[TLS] PASS:", "[TLS] PASS:"),
-        (INIT_PROBE, "[SIG] PASS:", "[SIG] PASS:"),
-        (INIT_PROBE, "[EXEC] PASS: cwd+root", "[EXEC] PASS: cwd+root"),
-        (INIT_PROBE, "[WASM] PASS:", "[WASM] PASS:"),
-        (
-            INIT_PROBE,
-            "[KPTI] EL0 kernel high-half access denied",
-            "[KPTI] EL0 kernel high-half access denied",
-        ),
-        (INIT_PROBE, "[THREAD] FAIL: ", "[THREAD]"),
-        (
-            ACPI,
-            "[ACPI] RSDP found via Multiboot2",
-            "[ACPI] RSDP found via Multiboot2",
-        ),
-        (
-            ACPI,
-            "[ACPI] RSDP found via BIOS scan",
-            "[ACPI] RSDP found via BIOS scan",
-        ),
-        (
-            ACPI,
-            "[ACPI] Table scan complete: MADT={} FADT={} HPET={}",
-            "[ACPI] Table scan complete: MADT=true FADT=true HPET=true",
-        ),
-        (
-            ACPI,
-            "[ACPI] FADT: PM1a_EVT=0x{:X}",
-            "[ACPI] FADT: PM1a_EVT=",
-        ),
-        (
-            ACPI,
-            "[ACPI] HPET: base=0x{:X}",
-            "[ACPI] HPET: base=0xFED00000",
-        ),
-        (
-            ACPI,
-            "[ACPI] MADT: LAPIC base=0x{:X}, AP count={}",
-            "[ACPI] MADT: LAPIC base=0xFEE00000, AP count=$SMP",
-        ),
-        (
-            BOOT_MOD,
-            "Boot firmware reserved regions: {}",
-            "Boot firmware reserved regions: ",
-        ),
-        (
-            PMM,
-            "[PMM] Early reserve '{}': base=0x{:X} size={} relocate={}",
-            "[PMM] Early reserve 'firmware':",
-        ),
-        (
-            PMM,
-            "[PMM] Early relocate '{}':",
-            "[PMM] Early relocate 'initrd':",
-        ),
-        (LIB, "Boot info: mem={} MB", "Boot info: mem="),
-        (VMM, "[SMP] TLB probe PASS", "[SMP] TLB probe PASS"),
-        (SMP_X86, "[SMP] online CPUs: {}", "[SMP] online CPUs: $SMP"),
-        (
-            INITRAMFS_FS,
-            "[INITRAMFS] Unpacked {} files",
-            "Unpacked [0-9]\\+",
-        ),
-        (FUNCTIONS_INIT, "init from /init", "init from /init"),
-        (SCHED, "[SCHED] SNAP END", "[SCHED] SNAP END"),
-        (
-            SCHED,
-            "if conserve_all { \"ok\" } else { \"BAD\" }",
-            "conserve=ok",
-        ),
-        (E1000, "e1000: 初始化完成", "e1000: 初始化完成"),
-        (
-            NET_INIT,
-            "DHCP configured (lease applied)",
-            "DHCP configured (lease applied)",
-        ),
-    ];
     let script = read(BOOT_SCRIPT);
-    for (producer, producer_needle, script_needle) in PAIRS {
+    for (producer, producer_needle, script_needle) in MARKER_PAIRS {
         let src = read(producer);
         assert!(
             src.contains(producer_needle),
@@ -175,8 +186,8 @@ fn test_every_judgement_has_a_red_branch() {
     );
     assert_eq!(
         script.matches("\nneed \"").count(),
-        20,
-        "正向判据应恰好 20 条, 实得 {} 条 —— 少一条即该判据被静默删除",
+        22,
+        "正向判据应恰好 22 条, 实得 {} 条 —— 少一条即该判据被静默删除",
         script.matches("\nneed \"").count()
     );
     assert_eq!(
@@ -185,7 +196,7 @@ fn test_every_judgement_has_a_red_branch() {
         "反向判据应恰好 4 条, 实得 {} 条",
         script.matches("\nforbid \"").count()
     );
-    // need/forbid 两个 helper 自身必须带红分支 (否则 20+4 条判据全是只报不红).
+    // need/forbid 两个 helper 自身必须带红分支 (否则 22+4 条判据全是只报不红).
     assert_before(&script, "need() {", "forbid() {");
     let need_body = &script[script.find("need() {").unwrap()..script.find("forbid() {").unwrap()];
     assert!(
@@ -260,8 +271,9 @@ fn test_reverse_needles_and_two_sided_reconciliation() {
     // 串口行以 CRLF 收尾: 取数前不剥 \r 会把"读到了"误报成"测不出" (首轮实测踩过).
     assert_eq!(
         script.matches("tr -d '\\000\\r'").count(),
-        3,
-        "三处整行取数 (firmware 声明 / mem_size / THREAD 对账行) 都须剥 NUL 与 CR, 实得 {} 处",
+        2,
+        "两处整行取数 (firmware 声明 / mem_size) 都须剥 NUL 与 CR, 实得 {} 处 —— \
+         U-1 修复后 THREAD 对账行已删, 计数随之收敛",
         script.matches("tr -d '\\000\\r'").count()
     );
 }
@@ -327,37 +339,39 @@ fn test_boot_targets_real_ovmf_and_rejects_aarch64() {
     );
 }
 
-/// 5. `[THREAD]` 显式不判 (非静默跳过, 也不得改成硬断言).
+/// 5. `[THREAD]` 在 U-1 修复后已回到硬断言面, 不判横幅必须删除.
 #[test]
-fn test_thread_leg_is_declared_not_judged() {
+fn test_thread_leg_is_judged_after_u1_fix() {
     let script = read(BOOT_SCRIPT);
-    for needle in [
+    // 修复后不得再留「显式不判」横幅 (留着会让硬断言读起来像豁免).
+    for stale in [
         "已登记预存缺陷 —— 本腿**不判** [THREAD]",
-        "docs/plan/uefi-thread-exit-hang.md",
         "实测 [THREAD] 行 (供对账, 不参与判定)",
         "修复后须把 THREAD 探针的 PASS 行加回硬断言面并删除本横幅",
     ] {
         assert!(
-            script.contains(needle),
-            "不判横幅缺针 {needle:?} —— 静默跳过在 full 档读起来和通过一样"
+            !script.contains(stale),
+            "U-1 已修复, 不判横幅残片 {stale:?} 未删 —— 门禁口径自相矛盾"
         );
     }
-    // 横幅必须无条件打印 (不在任何 if 分支里): 否则"没挂死"那轮就不声明口径了.
-    assert_before(&script, "warn \"已登记预存缺陷", "if [ \"$FAILED\" -ne 0 ]");
-    // 不得把 THREAD 的 PASS 行加成硬断言 (已知红腿会阻断整个 full 档, 掩盖其余门槛).
+    // 修复项与根因回归锁都必须在硬断言面.
     assert!(
-        !script.contains("need \"[THREAD]"),
-        "[THREAD] 被加成硬断言 —— 预存缺陷未修前这会让 full 档恒红 (裁定是显式不判)"
+        script.contains("need \"[THREAD] PASS:\""),
+        "[THREAD] PASS 未加回硬断言 —— U-1 修复后必须真判, 否则回归无从发现"
     );
-    // 登记册必须真存在且两条目未闭 (册被删/被悄悄标 [X] 时, 横幅就成了无据声明).
+    assert!(
+        script.contains("need \"[UACCESS] PASS:\""),
+        "[UACCESS] EFAULT 回归锁未接门禁 —— 只读 TID 回写必须由 UEFI 真跑钉住"
+    );
+    // 登记册: U-1 已闭, U-2 仍开放 (不因 U-1 修复自动关闭).
     let doc = read(REGISTER_DOC);
-    for entry in ["## U-1", "## U-2"] {
+    for (entry, want) in [("## U-1", "[x]"), ("## U-2", "[]")] {
         let start = doc.find(entry).unwrap();
         let body = &doc[start + entry.len()..];
         let end = body.find("\n## ").unwrap_or(body.len());
         assert!(
-            body[..end].contains("- **状态**: []"),
-            "登记册 {REGISTER_DOC} 的 {entry} 条目不开放 —— 不判口径失去登记依据"
+            body[..end].contains(&format!("- **状态**: {want}")),
+            "登记册 {entry} 的状态不是 {want:?} —— 与门禁判据口径不一致"
         );
     }
     assert!(
