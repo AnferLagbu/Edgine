@@ -542,7 +542,7 @@
 
   > **2026-11-25 T7 收口（方案一）**：T7 以双架构 musl 的静态/动态装载与失败路径为出口；glibc/vDSO 整体移交 D7 可选工程，不再计入 T7 剩余项；本行 `7 / 1 → 7 / 0`，`syscall-followup.md` T7 转 `[X]`。
 
-  > **2026-11-25 D7 G0（x86_64）**：真实 glibc `true` + `ld-linux` + `libc.so.6` 已接入 initramfs，串口 `[GLIBC] PASS: dynamic glibc execve`；aarch64 无载体为 SKIP。G0 收敛 `newfstatat` 参数位移、Linux `stat` 布局、`fstat` 跨用户边界、文件映射 VMA offset、初始栈 16B 对齐五处缺口。G1/G2 仍待开；D7 为可选工程，不回退 T7 的 `[X]`。证据见 `docs/report/d7-g0-glibc-true.md`。
+  > **2026-11-25 D7 G0/G1（x86_64）**：G0 真实 glibc `true` + G1 带 stdout 的 `hello` 均已通过；串口出现 `hello dynamic glibc` 与 `[GLIBC] HELLO PASS: dynamic glibc hello`，aarch64 无载体为 SKIP。G0 收敛 `newfstatat` 参数位移、Linux `stat` 布局、`fstat` 跨用户边界、文件映射 VMA offset、初始栈 16B 对齐五处缺口；G1 证明 `AT_PLATFORM` 缺失、`AT_HWCAP*=0`、`AT_SYSINFO_EHDR=0` 现状下 glibc stdio 可用，故不预先补 auxv。G2/G3 仍待开；D7 为可选工程，不回退 T7 的 `[X]`。证据见 `docs/report/d7-g0-glibc-true.md`、`docs/report/d7-g1-glibc-hello.md`。
 
   **甲・仍需跟踪的工程（22 份）**
 

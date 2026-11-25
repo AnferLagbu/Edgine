@@ -86,9 +86,11 @@ aarch64 串口日志：
 
 ## 下一步
 
-1. **G1**：补 `AT_PLATFORM`/`AT_HWCAP*` 等 glibc 关心的 auxv，跑带 stdout 的
-   x86_64 动态 glibc hello，确认 `printf`/`exit` 路径。
-2. **G2**：补 `set_tid_address`、`prlimit64`；`rseq` 先观察是否真的被注册，若
-   `ENOSYS` 可回退则后置。
-3. **G3**：仅当 `AT_SYSINFO_EHDR=0` 在 hello 上失败时才做最小 VDSO。
+1. **G1（已完成）**：带 stdout 的 x86_64 动态 glibc hello 已于 2026-11-25 通过，
+   当前 auxv 不需要补 `AT_PLATFORM`/`AT_HWCAP*` 也能跑；见
+   [d7-g1-glibc-hello.md](d7-g1-glibc-hello.md)。
+2. **G2**：先做会真实调用 `set_tid_address`/`prlimit64`/`rseq` 的探针，确认
+   `ENOSYS` 再补入口，不先加空桩。
+3. **G3**：仅当 `AT_SYSINFO_EHDR=0` 在 `clock_gettime`/`gettimeofday` 上失败时
+   才做最小 VDSO。
 4. **G4**：再评估 `clone3`/pthread/TLS/`dlopen`，不把线程面混进 G1。

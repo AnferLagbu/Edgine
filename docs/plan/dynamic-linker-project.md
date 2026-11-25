@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过（aarch64 暂无载体，SKIP）；G1/G2 待开。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2/G3 待开。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -53,7 +53,7 @@
 | `mmap` | 匿名映射可用；`MAP_FIXED` 未实现（hint 精确落点但不拆除旧 VMA）；私有文件映射靠 #PF COW | musl 加载共享库通常用 `MAP_FIXED`，会撞已有 VMA |
 | 文件映射 | `fd_mmap_backing` 已接；`MAP_PRIVATE` 可写靠 COW；`pcache` 已有 | 需验证 libc `.so` 的 text/data/bss/RELRO 组合 |
 | TLS | x86 `arch_prctl(ARCH_SET_FS)` 已实装；aarch64 有 `TPIDR_EL0` 写入与切换恢复 | 基本具备，需用动态 TLS 程序证实 |
-| 启动 syscall | `getrandom` 有；`set_tid_address`/`prlimit64`/`rseq` **全树无** | musl 通常不依赖；glibc 需要补 |
+| 启动 syscall | `getrandom` 有；`set_tid_address`/`prlimit64`/`rseq` **全树无** | G1 的 `true`/`hello` 未触发；G2 先用真实调用探针取证再补 |
 | VDSO | 无 | musl 可不用；glibc 需要评估 fallback 或最小 VDSO |
 | `elfld` | 102 行桩，仅静态 PIE；`edgine-gcc` 注入 `/usr/libexec/elfld.so` | 整体退役，不再扩成 linker |
 
@@ -126,7 +126,7 @@
 
 - 已提交（`adc6903c`）：`setup_user_stack_in_table` 在 `argc/argv/envp` 之后写 auxv 两字对，再放字符串与 16 字节 `AT_RANDOM` 区；`exec` 即使 argv/envp 为空也建栈。
 - 已提交（`adc6903c`）：`AT_PHDR` 由包含 `e_phoff` 的 `PT_LOAD` 反推；`AT_PHENT/AT_PHNUM/AT_BASE/AT_ENTRY/AT_PAGESZ/AT_EXECFN/AT_RANDOM` 已写入。
-- 已提交（`adc6903c`）：`AT_UID/EUID/GID/EGID/AT_SECURE/AT_HWCAP/AT_CLKTCK/AT_HWCAP2/AT_SYSINFO_EHDR=0` 已写入；`AT_PLATFORM` 尚未写，musl hello 不依赖，glibc 前补。
+- 已提交（`adc6903c`）：`AT_UID/EUID/GID/EGID/AT_SECURE/AT_HWCAP/AT_CLKTCK/AT_HWCAP2/AT_SYSINFO_EHDR=0` 已写入；`AT_PLATFORM` 尚未写，musl 与 D7 G1 的 glibc `true`/`hello` 均未依赖，暂不写，等真实 hwcaps/ifunc 需求。
 - 验证（2026-11-25）：x86 e2e 超时真因不是 auxv/栈布局，而是 x86 `rt_sigreturn` 跳板被复制到用户 BSS 栈页；该页 NX，执行跳板触发 instruction-fetch #PF，页故障处理器把它当数据缺页反复映射，制造逐页 TLB shootdown 风暴。修复为固定只读可执行跳板页 `0x500000`（`PRESENT|USER`，不带 NX/WRITABLE），信号返回不再执行栈上代码。
 - 取指缺页语义补齐（2026-11-25）：`handle_vma_fault_with_mm` 对 `instruction && VMA NX` 直接返回 `SignalSegv`，不再匿名分配同一 NX 页；可执行 VMA 的 not-present 取指仍保留按需分配（JIT/匿名 `PROT_EXEC`）。这样即使再出现“在 NX 数据页执行”的用户行为，也不会演变成 TLB shootdown 风暴。
 - aarch64 固定跳板移植（2026-11-25，`03aec35c`）：`SIGRETURN_TRAMPOLINE_ADDR` 与 `map_sigreturn_trampoline` 解除 x86_64 cfg，两架构共用 `0x500000` 只读可执行页；aarch64 `enter_handler` 把 `x30` 指向该页，信号投递不再把 8 字节跳板复制到 NX 用户栈。物理页清零/写入改走 `raw::phys_to_kern_mut`，兼容 aarch64 KPTI EL1 高半区视图。验证：aarch64 `[SIG] PASS`（svc 腿 + IRQ spin-live 腿）、`[tcp] Listening`、e2e 3/3；x86 回归 `[SIG] PASS`/`[tcp] Listening`/e2e 通过；`make test-kernel-host` 640/0、`./ci/build.sh all` 6/0。
@@ -138,13 +138,13 @@
 - `MAP_FIXED`：先 `remove_range` 拆除重叠，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`。
 - 校验 `MAP_PRIVATE` 文件映射的可写 COW、`mprotect(PROT_READ)` 的 RELRO、`PROT_NONE` guard。
 - 校验 `openat/pread/fstat/readlink/close` 足以让解释器找到并映射 libc。
-- 补 `set_tid_address`（若 musl/后续 glibc 需要）、`prlimit64`（glibc 前）。
+- `set_tid_address`/`prlimit64`：G1 未触发；G2 先用真实调用探针取证，再补入口。
 - `/proc/self/exe`：若 musl 的 `AT_EXECFN` 路径不足，再补；第一波先不强制。
 - 已施工（2026-11-25，`beb6c07d`）：`MAP_FIXED` / `MAP_FIXED_NOREPLACE` 固定落点；固定地址必须页对齐、不低于用户 VA 下界、不越过 `USER_ADDR_MAX`。`MAP_FIXED` 先按范围注销文件页缓存持有、拆 VMA 与用户页表项，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`，不拆旧映射。无当前 CR3 时固定落点 fail-closed（只拆描述符，不触碰 VMM）。
 - 已施工（2026-11-25，`beb6c07d`）：`PROT_NONE` 保留 VMA 占位但不置 `PRESENT`，缺页路径见到无 `PRESENT` 的 VMA 直接 `SIGSEGV`，不再被匿名页分配“修复”成可读页；`mprotect(PROT_NONE)` 同步清 PTE 的 present 位。
 - 已施工（2026-11-25，`beb6c07d`）：文件映射 VMA 不参与相邻合并，避免不同 `inode_id/offset` 被合成一个 VMA 后缺页读错文件页；同权限文件重叠直接拒绝。
 - 已验收（2026-11-25，D5 x86_64）：真实 `ld-musl` 完成 libc 装载、重定位与 RELRO，动态 hello 输出 `hello dynamic musl` 并以 0 退出；`mprotect(PROT_READ)` 不再返回 `ENOMEM`。`openat/pread/fstat/readlink/close` 的映射序列已由外部 loader 实际覆盖。
-- 仍待补专项断言：`MAP_PRIVATE` 文件写 COW 的“写后不污页缓存”与 `set_tid_address` / `prlimit64` 入口；第二项 musl 本轮未触发，glibc 前补。
+- 仍待补专项断言：`MAP_PRIVATE` 文件写 COW 的“写后不污页缓存”与 `set_tid_address` / `prlimit64` 入口；musl 与 D7 G1 均未触发，按 G2 取证再补。
 - 出口：解释器能打开 libc、按 `MAP_FIXED` 落段、做重定位、跑 `main`。
 
 ### D5：工具链、根镜像与 `elfld` 退役（2–3 人日）
@@ -191,8 +191,8 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 工作分解：
 
 - **G0 取证（x86_64 已完成 2026-11-25）**：glibc 动态 `true` + `ld-linux` + `libc.so.6` 根镜像已接入 initramfs；`/bin/glibc_true` 真实 `execve` 返回 0，串口打印 `[GLIBC] PASS: dynamic glibc execve`；aarch64 暂无载体，探针打印 SKIP。G0 收敛了 `newfstatat` 参数位移、Linux `struct stat` 布局、内核侧 `fstat` 跨用户边界、文件映射 VMA 拆分 offset、初始栈 16 字节对齐五处缺口。证据见 [d7-g0-glibc-true.md](../report/d7-g0-glibc-true.md)。
-- **G1 最小启动**：补 `AT_HWCAP/AT_HWCAP2/AT_PLATFORM/AT_SECURE` 等 glibc 关心的 auxv；跑单线程 hello。2–4 人日。
-- **G2 启动 syscall**：`set_tid_address`（复用 `clear_child_tid`）1–2 人日；`prlimit64`（复用 rlimit 表）1–2 人日；`rseq` 3–5 人日（若必须）。
+- **G1 最小启动（x86_64 已完成 2026-11-25）**：真实 glibc 动态 `hello` 已跑通，串口出现 `hello dynamic glibc` 与 `[GLIBC] HELLO PASS`；在 `AT_PLATFORM` 缺失、`AT_HWCAP*=0`、`AT_SYSINFO_EHDR=0` 现状下仍通过。结论是这三个 auxv 不是该腿根因，不预先补；证据见 [d7-g1-glibc-hello.md](../report/d7-g1-glibc-hello.md)。剩余 2–4 人日原本用于 auxv，改由 G2/G4 按真实调用再花。
+- **G2 启动 syscall（先取证）**：G1 的 hello 没有触发 `set_tid_address`/`prlimit64`/`rseq`，所以不先加空桩；用一个会真实调用它们的单线程探针确认 `ENOSYS` 后再补。若届时 pthread 提前进入，再把 `clone3` 常用字段与 rseq 并入。原估 3–7 人日，按真实调用面重估。
 - **G3 VDSO**：仅当 `AT_SYSINFO_EHDR=0` 失败时做；最小 `clock_gettime/gettimeofday/time/getcpu` + ELF 映射 + 符号解析，5–8 人日。
 - **G4 线程/加载器**：`clone3` 常用字段补齐 2–4 人日；glibc `pthread_create`/TLS/`dlopen` 记录 2–4 人日。
 
