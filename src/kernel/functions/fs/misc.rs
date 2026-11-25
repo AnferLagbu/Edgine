@@ -89,21 +89,22 @@ pub fn fsync_syscall(fd: i32) -> Result<usize, Errno> {
 
 /// time(tloc) — 返回自 Epoch 起的秒数
 ///
-/// Framekernel 简化: 返回 ticks (非真实秒), 用户态需自行换算.
+/// 与 `gettimeofday`/`CLOCK_REALTIME` 共用 `wall_clock_ns()`，不再返回裸
+/// `get_ticks()`（后者是毫秒计数，会让 glibc `time()` 比墙钟快 1000 倍）。
 ///
 /// # Errors
 /// 当 `tloc_ptr` 非空但越界或写入用户空间失败时返回 `EFAULT`.
 pub fn time_syscall(tloc_ptr: u64) -> Result<usize, Errno> {
-    let ticks = api::get_ticks();
+    let seconds = crate::functions::timer::clock::wall_clock_seconds();
     if tloc_ptr != 0 {
         if !api::validate_user_buf(tloc_ptr, 8) {
             return Err(Errno::Efault);
         }
-        if !api::write_u64_to_user(tloc_ptr, ticks) {
+        if !api::write_u64_to_user(tloc_ptr, seconds) {
             return Err(Errno::Efault);
         }
     }
-    Ok(crate::functions::intcast::usize_from_u64(ticks))
+    Ok(crate::functions::intcast::usize_from_u64(seconds))
 }
 
 // ============================================================================

@@ -1255,7 +1255,7 @@ fn dispatch_mm(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_GET_MEMPOLICY => crate::functions::mm::numa::sys_get_mempolicy(a0, a1),
         SYS_SET_MEMPOLICY => crate::functions::mm::numa::sys_set_mempolicy(a0, a1),
         SYS_MIGRATE_PAGES => crate::functions::mm::numa::sys_migrate_pages(a0),
-        SYS_GETCPU => crate::functions::mm::numa::sys_getcpu(),
+        SYS_GETCPU => crate::functions::mm::numa::sys_getcpu(a0, a1, a2),
 
         // userfaultfd (T1 G4 实装): 用户态缺页处理 fd (ioctl/read 由 fd 路由分发)
         SYS_USERFAULTFD => crate::functions::fs::uffd::userfaultfd_syscall(

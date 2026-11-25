@@ -107,6 +107,12 @@ fn wall_clock_ns() -> u64 {
     crate::functions::timer::time_sync::TimeSyncSubsystem::get_adjusted_time_ns()
 }
 
+/// 墙钟当前秒数 — `time()`/`gettimeofday()` 的单一口径
+#[must_use]
+pub(crate) fn wall_clock_seconds() -> u64 {
+    wall_clock_ns() / NS_PER_SEC
+}
+
 /// 单调时钟当前时间 (ns) — 原始 tick 计数 (ms 精度)
 fn monotonic_ns() -> u64 {
     crate::privileged::syscall::api::get_ticks() * NS_PER_MS

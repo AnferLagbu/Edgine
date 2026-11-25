@@ -466,15 +466,28 @@ pub fn sys_migrate_pages(_target_nodemask: u64) -> i64 {
 }
 
 /// `sys_getcpu` — 获取当前 CPU 和 NUMA 节点
+///
+/// Linux ABI：`getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *tcache)`。
+/// `cpu`/`node` 任一可为 NULL；非空时写回 32 位值。`tcache` 当前不消费（glibc
+/// fallback 传 NULL），仅做可访问性检查，避免把坏指针静默吞掉。
 #[must_use]
-pub fn sys_getcpu() -> i64 {
+pub fn sys_getcpu(cpu_ptr: u64, node_ptr: u64, tcache_ptr: u64) -> i64 {
     let cpu = crate::privileged::smp::current_cpu_index();
     let node = if numa_is_initialized() {
         numa_topology().cpu_to_node(cpu)
     } else {
         0
     };
-    i64::from(cpu) | (i64::from(node) << 32)
+    if cpu_ptr != 0 && !crate::privileged::syscall::api::write_struct_to_user(cpu_ptr, &cpu) {
+        return crate::privileged::syscall::Errno::Efault.as_ret();
+    }
+    if node_ptr != 0 && !crate::privileged::syscall::api::write_struct_to_user(node_ptr, &node) {
+        return crate::privileged::syscall::Errno::Efault.as_ret();
+    }
+    if tcache_ptr != 0 && !crate::privileged::syscall::api::validate_user_buf(tcache_ptr, 8) {
+        return crate::privileged::syscall::Errno::Efault.as_ret();
+    }
+    0
 }
 
 /// 两级 NUMA 策略查询: `addr` 所在 VMA 的 VMA 级策略优先, 回退进程级策略
