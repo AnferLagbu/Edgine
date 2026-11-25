@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：规划，未施工。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。
+> 状态：D1–D5 施工中；D5 已让 x86_64 上游 `ld-musl` 真跑通过（动态 hello 输出 + `[DYN] PASS`），aarch64 动态 fixture 与 `elfld` 退役仍待办。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -143,16 +143,23 @@
 - 已施工（2026-11-25，`beb6c07d`）：`MAP_FIXED` / `MAP_FIXED_NOREPLACE` 固定落点；固定地址必须页对齐、不低于用户 VA 下界、不越过 `USER_ADDR_MAX`。`MAP_FIXED` 先按范围注销文件页缓存持有、拆 VMA 与用户页表项，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`，不拆旧映射。无当前 CR3 时固定落点 fail-closed（只拆描述符，不触碰 VMM）。
 - 已施工（2026-11-25，`beb6c07d`）：`PROT_NONE` 保留 VMA 占位但不置 `PRESENT`，缺页路径见到无 `PRESENT` 的 VMA 直接 `SIGSEGV`，不再被匿名页分配“修复”成可读页；`mprotect(PROT_NONE)` 同步清 PTE 的 present 位。
 - 已施工（2026-11-25，`beb6c07d`）：文件映射 VMA 不参与相邻合并，避免不同 `inode_id/offset` 被合成一个 VMA 后缺页读错文件页；同权限文件重叠直接拒绝。
-- 待办：`set_tid_address` / `prlimit64` 仍无入口；`openat/pread/fstat/readlink/close` 已由 dispatch 覆盖，但尚未用真实 `ld-musl` 映射序列验收；`MAP_PRIVATE` 文件写 COW 与 `mprotect(PROT_READ)` RELRO 需动态 musl 真跑确认。
+- 已验收（2026-11-25，D5 x86_64）：真实 `ld-musl` 完成 libc 装载、重定位与 RELRO，动态 hello 输出 `hello dynamic musl` 并以 0 退出；`mprotect(PROT_READ)` 不再返回 `ENOMEM`。`openat/pread/fstat/readlink/close` 的映射序列已由外部 loader 实际覆盖。
+- 仍待补专项断言：`MAP_PRIVATE` 文件写 COW 的“写后不污页缓存”与 `set_tid_address` / `prlimit64` 入口；第二项 musl 本轮未触发，glibc 前补。
 - 出口：解释器能打开 libc、按 `MAP_FIXED` 落段、做重定位、跑 `main`。
 
 ### D5：工具链、根镜像与 `elfld` 退役（2–3 人日）
 
-- 产出动态 musl fixture：`hello` + `ld-musl-*.so.1` + `libc.so`；记录 sha256。
-- 根镜像放入真实解释器路径；`init` 仍静态，动态 hello 由 init `execve`。
-- 删除 `tools/elfld`（102 行 + build.sh 68 行）与 `tools/edgine-gcc` 的 `--dynamic-linker` 注入。
-- 删除 `EDGINE_INTERP`、`needs_interp_rewrite`、`rewrite_interp_path`、`prepare_elf_image` 的改写分支；`init.rs`/`exec.rs` 调用点同步。
-- 更新 scripts/requirements 中构建 `elfld.so` 的引用；确保镜像无 `/usr/libexec/elfld.so`。
+- 已提交（`775a9679`）：新增 x86_64 动态 fixture `scripts/fixtures/dynamic-musl-x86_64/`：
+  - `hello_dyn` 10,040 B，`PT_INTERP=/lib/ld-musl-x86_64.so.1`，`NEEDED=libc.musl-x86_64.so.1`；
+  - `ld-musl-x86_64.so.1` 649,832 B，来自 Alpine 3.20 minirootfs；
+  - `libc.musl-x86_64.so.1` 同一对象副本（Alpine 内为符号链接；cpio 解析器当前不支持 symlink，故复制同字节）；
+  - `hello.c` / `build_fixture.sh` / `README.md` / `SHA256SUMS`，记录三者 sha256。
+- 已提交（`775a9679`）：`scripts/make_initramfs_cpio.py` 归档新增 `bin/dyntest`、`lib/ld-musl-x86_64.so.1`、`lib/libc.musl-x86_64.so.1`；`Makefile` 新增 `DYN_MUSL_FIXTURE_DIR`/`USER_DYNTEST`/`USER_DYN_LOADER`/`USER_DYN_LIBC` 与仅 x86_64 的 `DYN_CPIO_DEPS`。
+- 已提交（`775a9679`）：`init` 静态，`dyn_probe()` 在 `exec_probe()` 后对 `/bin/dyntest` 发真 `execve`；父进程按 `wstatus==0` 打印 `[DYN] PASS: dynamic musl execve`，失败打印 status/reap；缺失载体打印 SKIP（aarch64 当前走此腿）。
+- 已提交（`775a9679`）：`scripts/qemu_boot_test.sh` x86_64 分支新增 fail-closed 断言：必须出现 `[DYN] PASS` 且不得出现 `[DYN] FAIL`；该行缺失即整轮 RC=1，不再让“内核启动 1/1”掩盖动态装载失败。
+- 根因与修复（2026-11-25）：首次真跑时 `ld-musl` 进入重定位，但 RELRO 阶段报 `RELRO protection failed: No error information`，动态子进程 127 退出。GDB 抓到 `mprotect` 参数为 RELRO 页，`mm.mprotect` 返回 `Err(ENOMEM)`；根因不是 `mprotect` 保护逻辑，而是 `proc_exec_replace_with_interp` 的 `replace_user_space` 只换了 CR3/entry/stack，**没有把临时进程新建的 `MmStruct` 转移给当前 PID**。当前进程仍持 init 的旧 mm，RELRO 页不在旧 VMA 表中，故 `to_modify` 为空返 `ENOMEM`。musl `ldso` 用 `__syscall` 读原始返回值、不写 `errno`，所以文案是 `No error information` 而非真实 ENOMEM。
+- 修复（`b2a9ec91`）：`replace_user_space` 增加 `new_mm` 参数，换表同时 `store_mm(new_mm)`；exec 成功后清空临时进程的 mm 槽位，所有权随地址空间转移。验证：x86_64 QEMU 动态 hello 打印 `hello dynamic musl`、`[DYN] PASS`，启动门禁 `1/1` 且新增 DYN 断言通过；aarch64 `[DYN] SKIP: no carrier`，`[SIG] PASS`/TCP/e2e 不回归。
+- 剩余：aarch64 动态 fixture 尚未准备（需单独取真实 Alpine aarch64 根镜像里的 `ld-musl-aarch64.so.1` 与 libc）；`elfld` 退役、`tools/elfld` 删除、`edgine-gcc` 的 `--dynamic-linker` 注入去除、`EDGINE_INTERP`/`rewrite_interp_path` 清理均未开始。
 - 出口：树中零 `elfld`/`EDGINE_INTERP`；动态 ELF 的 `PT_INTERP` 保持原样。
 
 ### D6：动态 musl 验收（4–6 人日）
