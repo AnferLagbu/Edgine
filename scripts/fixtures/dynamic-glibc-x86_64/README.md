@@ -1,10 +1,11 @@
 # glibc x86_64 动态装载 fixture
 
-D7 G0/G1/G2/G3/G4 载荷：真实 glibc 动态 `true`、带 stdout 的 `hello`、启动 syscall
-探针 `g2`、时间路径探针 `time` 与 pthread/TLS 探针 `glibc_pthread` + 上游
-`ld-linux` + `libc.so.6`，用于验证 glibc 解释器在 Edgine 上的装载、重定位、
-`exit(0)`、`printf`、启动 syscall、`AT_SYSINFO_EHDR=0` 下的时间 fallback 与
-`pthread_create`/TLS/`pthread_join`。
+D7 G0/G1/G2/G3/G4/C1 载荷：真实 glibc 动态 `true`、带 stdout 的 `hello`、启动 syscall
+探针 `g2`、时间路径探针 `time`、pthread/TLS 探针 `glibc_pthread` 与 clone3
+高级字段探针 `glibc_clone3` + 上游 `ld-linux` + `libc.so.6`，用于验证 glibc
+解释器在 Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
+`AT_SYSINFO_EHDR=0` 下的时间 fallback、`pthread_create`/TLS/`pthread_join` 与
+`clone3` 的 `exit_signal`/`CLONE_PIDFD`/短结构/`set_tid`/`cgroup` 边界。
 
 ## 来源
 
@@ -19,6 +20,10 @@ D7 G0/G1/G2/G3/G4 载荷：真实 glibc 动态 `true`、带 stdout 的 `hello`�
 - `glibc_pthread`：本目录 `glibc_pthread.c` 同编译器参数加 `-pthread` 编译，
   调用 `pthread_create`/TLS/`pthread_join`，验证 glibc 线程创建路径（含
   `clone3` 栈参数换算）与 TLS 隔离
+- `glibc_clone3`：本目录 `glibc_clone3.c` 同编译器参数编译，覆盖
+  `exit_signal=SIGUSR1` + `waitpid(__WALL)`、`CLONE_PIDFD` 写回/`CLOEXEC`/退出后
+  零超时 `poll`（Edgine 的通用 poll 当前为单次快照，不消费 timeout）、
+  `size=64` 短结构、`set_tid`/`cgroup` 期望 `ENOSYS`、`exit_signal=65` 期望 `EINVAL`
 - 解释器：Fedora 45 `/lib64/ld-linux-x86-64.so.2`（glibc 2.44）
 - libc：Fedora 45 `/lib64/libc.so.6`（glibc 2.44）
 - 所有二进制均 `strip --strip-all`，与仓内 musl fixture 同口径：只保留运行所需
@@ -34,6 +39,7 @@ D7 G0/G1/G2/G3/G4 载荷：真实 glibc 动态 `true`、带 stdout 的 `hello`�
 | `glibc_g2` | 11,200 B | `339b3624336b8e022b6fbfae2b72d3c75d517e11c903646bc64394516d1d2f19` |
 | `glibc_time` | 11,232 B | `1676f0f12b4090a06c687d7d6e6fdc57d57d7b215dfda240a95b731a78d77394` |
 | `glibc_pthread` | 11,344 B | `466bd228a8f0c7648a1e73b736c35c96697563168ae4aa08de39b3d271868c08` |
+| `glibc_clone3` | 11,272 B | `4fb861c111430dc7eb181598c0ca5c1ccc97276d550db5e9c58a3329bb48fc88` |
 | `ld-linux-x86-64.so.2` | 260,320 B | `6c3d7bdd7c5b6155fb6f7660bd49955f993580aac951e16bbe6eb004f87429e4` |
 | `libc.so.6` | 2,187,808 B | `958416ed2a6831d8c739c75da15ebe0ed570299a768967dcff3fc736ca62aadb` |
 
@@ -45,6 +51,7 @@ glibc_hello: ET_DYN PIE, PT_INTERP=/lib64/ld-linux-x86-64.so.2, NEEDED=libc.so.6
 glibc_g2: ET_DYN PIE, PT_INTERP=/lib64/ld-linux-x86-64.so.2, NEEDED=libc.so.6
 glibc_time: ET_DYN PIE, PT_INTERP=/lib64/ld-linux-x86-64.so.2, NEEDED=libc.so.6
 glibc_pthread: ET_DYN PIE, PT_INTERP=/lib64/ld-linux-x86-64.so.2, NEEDED=libc.so.6
+glibc_clone3: ET_DYN PIE, PT_INTERP=/lib64/ld-linux-x86-64.so.2, NEEDED=libc.so.6
 ld-linux-x86-64.so.2: ET_DYN, BIND_NOW, RELR
 libc.so.6: ET_DYN, SONAME=libc.so.6
 ```
@@ -60,6 +67,7 @@ libc.so.6: ET_DYN, SONAME=libc.so.6
 /bin/glibc_g2
 /bin/glibc_time
 /bin/glibc_pthread
+/bin/glibc_clone3
 /lib64/ld-linux-x86-64.so.2
 /lib64/libc.so.6
 ```
@@ -84,9 +92,12 @@ ld-linux-x86-64.so.2 --library-path . ./glibc_pthread
 echo "pthread_rc=$?"
 ```
 
+`glibc_clone3` 是内核语义探针：`set_tid`/`cgroup` 期望 `ENOSYS`，不应在普通
+Linux 宿主上直接跑（宿主内核对这两项有实现）；其验收腿只在 Edgine QEMU 串口。
+
 `0` 表示主程序、loader、libc 三者 ABI 自洽；Edgine 内核腿由 init 的
 `glibc_probe()` 分别执行 `/bin/glibc_true`、`/bin/glibc_hello`、`/bin/glibc_g2`、
-`/bin/glibc_time` 与 `/bin/glibc_pthread`。前两腿按 `wstatus == 0` 判定并检查
+`/bin/glibc_time`、`/bin/glibc_pthread` 与 `/bin/glibc_clone3`。前两腿按 `wstatus == 0` 判定并检查
 `hello dynamic glibc`；G2 腿要求 `set_tid_address` 返回当前 TID、`prlimit64` 返回成功，
 `rseq` 预期 `ENOSYS`（glibc 可 fallback）；G3 腿要求时间函数在
 `AT_SYSINFO_EHDR=0` 下全部返回成功；G4 腿要求 `pthread_create`/TLS/`pthread_join`

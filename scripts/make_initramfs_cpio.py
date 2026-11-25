@@ -104,6 +104,7 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/glibc_g2", "file", "glibc_g2.bin"),
     ("bin/glibc_time", "file", "glibc_time.bin"),
     ("bin/glibc_pthread", "file", "glibc_pthread.bin"),
+    ("bin/glibc_clone3", "file", "glibc_clone3.bin"),
     ("lib", "dir", ""),
     ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
     ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),

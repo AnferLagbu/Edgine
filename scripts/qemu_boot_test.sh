@@ -28,7 +28,9 @@ mkdir -p "$LOG_DIR"
 source scripts/boot_module.sh
 
 ARCH="${1:-all}"
-TIMEOUT_QEMU="${TIMEOUT_QEMU:-25}"
+TIMEOUT_QEMU="${TIMEOUT_QEMU:-40}"
+# 40s 是 C1 后的实测冷启动余量: 25s 会在 DHCPv6 配置面之前截断
+# (C1 增加 glibc clone3 探针后串口到 22s, net6 回显轮询再占 ~3s).
 # 门禁强度: 默认 fail-closed —— 任一里程碑缺失即整轮 RC=1.
 # 旧默认 1 源自「x86_64 e1000 初始化挂起」(ISSUE-RT-001) 时期的放宽, 该病灶现已被
 # 本脚本的 e1000 / DHCP 里程碑回归覆盖, 放宽只剩副作用: 残缺轮以 `n/m 通过` + RC=0
@@ -782,14 +784,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[TIME\] PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] PTHREAD PASS: glibc pthread" "$X64_LOG" \
                 && grep -aq "\[PTHREAD\] PASS" "$X64_LOG" \
+                && grep -aq "\[GLIBC\] CLONE3 PASS: glibc clone3" "$X64_LOG" \
+                && grep -aq "\[CLONE3\] PASS" "$X64_LOG" \
                 && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
                 && ! grep -aq "\[G2\] RSEQ UNEXPECTED" "$X64_LOG" \
                 && ! grep -aq "\[TIME\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[PTHREAD\] FAIL" "$X64_LOG" \
+                && ! grep -aq "\[CLONE3\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[GLIBC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread 通过 (D7 G0/G1/G2/G3/G4)"
+                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 通过 (D7 G0/G1/G2/G3/G4/C1)"
             else
-                warn "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread 未通过 (D7 G0/G1/G2/G3/G4)"
+                warn "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 未通过 (D7 G0/G1/G2/G3/G4/C1)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \
