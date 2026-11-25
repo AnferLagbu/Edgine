@@ -237,15 +237,17 @@ endif
 USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
 USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
 DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_BADFMT) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
-# D7 G0 glibc fixture: x86_64 先跑真实 glibc `true`，aarch64 暂无载体 (探针打印 SKIP).
+# D7 G0/G1 glibc fixture: x86_64 先跑真实 glibc `true`/`hello`，aarch64 暂无载体 (探针打印 SKIP).
 GLIBC_FIXTURE_DIR = scripts/fixtures/dynamic-glibc-x86_64
 ifeq ($(ARCH),x86_64)
 USER_GLIBC_TEST = $(USER_BUILD_DIR)/glibc_true.bin
+USER_GLIBC_HELLO = $(USER_BUILD_DIR)/glibc_hello.bin
 USER_GLIBC_LOADER = $(USER_BUILD_DIR)/ld-linux-x86-64.so.2
 USER_GLIBC_LIBC = $(USER_BUILD_DIR)/libc.so.6
-GLIBC_CPIO_DEPS = $(USER_GLIBC_TEST) $(USER_GLIBC_LOADER) $(USER_GLIBC_LIBC)
+GLIBC_CPIO_DEPS = $(USER_GLIBC_TEST) $(USER_GLIBC_HELLO) $(USER_GLIBC_LOADER) $(USER_GLIBC_LIBC)
 else
 USER_GLIBC_TEST =
+USER_GLIBC_HELLO =
 USER_GLIBC_LOADER =
 USER_GLIBC_LIBC =
 GLIBC_CPIO_DEPS =
@@ -466,9 +468,13 @@ $(USER_DYN_LIBC): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_LIBC_SRC)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
-# D7 G0 glibc: 仅 x86_64 有载体; aarch64 变量为空且规则不生成.
+# D7 G0/G1 glibc: 仅 x86_64 有载体; aarch64 变量为空且规则不生成.
 ifeq ($(ARCH),x86_64)
 $(USER_GLIBC_TEST): $(GLIBC_FIXTURE_DIR)/glibc_true
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_GLIBC_HELLO): $(GLIBC_FIXTURE_DIR)/glibc_hello
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 

@@ -766,13 +766,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # D7 G0: 真实 glibc 动态 true —— 上游 ld-linux 载入 libc.so.6 并完成
-            # 启动；`[GLIBC] PASS` 只在子进程 0 退出时打印，FAIL 一律阻断.
+            # D7 G0/G1: 真实 glibc 动态 true + hello —— 上游 ld-linux 载入
+            # libc.so.6、完成启动并让 glibc stdio 写出 `hello dynamic glibc`；
+            # `[GLIBC] PASS` / `[GLIBC] HELLO PASS` 只在子进程 0 退出时打印，FAIL 一律阻断.
             if grep -aq "\[GLIBC\] PASS: dynamic glibc execve" "$X64_LOG" \
+                && grep -aq "\[GLIBC\] HELLO PASS: dynamic glibc hello" "$X64_LOG" \
+                && grep -aq "hello dynamic glibc" "$X64_LOG" \
                 && ! grep -aq "\[GLIBC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] glibc 最小动态装载通过 (D7 G0)"
+                ok "[x86_64] glibc 最小动态 true/hello 通过 (D7 G0/G1)"
             else
-                warn "[x86_64] glibc 最小动态装载未通过 (D7 G0)"
+                warn "[x86_64] glibc 最小动态 true/hello 未通过 (D7 G0/G1)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \

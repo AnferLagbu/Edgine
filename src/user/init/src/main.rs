@@ -1559,13 +1559,14 @@ fn dyn_badfmt_probe() {
 /// `/lib64/ld-linux-x86-64.so.2`，`NEEDED=libc.so.6`；x86_64 专用，aarch64
 /// 当前无 glibc 载体。
 const GLIBC_PROBE_PATH: &[u8] = b"/bin/glibc_true\0";
+/// D7 G1: 带 stdout 的真实 glibc 动态 hello 载体路径。
+const GLIBC_HELLO_PATH: &[u8] = b"/bin/glibc_hello\0";
 
-/// D7 G0 glibc 最小启动探针: fork → `execve(/bin/glibc_true)` → 父进程按
-/// `wstatus == 0` 判定. 载荷只做 `exit(0)`，能通过说明上游 `ld-linux` 已完成
-/// 解释器装载、libc 映射/重定位、TLS 设置与 glibc 启动路径；失败则打印状态，
-/// 交给后续 G1/G2 定位第一个缺口。
+/// D7 G0/G1 glibc 启动探针: fork → `execve` 载体 → 父进程按 `wstatus == 0`
+/// 判定。`true` 只证明启动链能退出；`hello` 再证明 glibc stdio 能把一行写到
+/// 串口。载体缺失时逐腿打印 SKIP，失败打印状态，交给后续 G2/G3 定位。
 fn glibc_probe() {
-    if !file_present(GLIBC_PROBE_PATH) {
+    if !file_present(GLIBC_PROBE_PATH) && !file_present(GLIBC_HELLO_PATH) {
         println("[GLIBC] SKIP: no carrier");
         return;
     }
@@ -1584,10 +1585,24 @@ fn glibc_probe() {
     print_char(b'\n');
     let _ = userlib::sys::close(fd);
 
+    if file_present(GLIBC_PROBE_PATH) {
+        let _ = glibc_exec(GLIBC_PROBE_PATH, "[GLIBC] PASS: dynamic glibc execve");
+    } else {
+        println("[GLIBC] SKIP: no true carrier");
+    }
+    if file_present(GLIBC_HELLO_PATH) {
+        let _ = glibc_exec(GLIBC_HELLO_PATH, "[GLIBC] HELLO PASS: dynamic glibc hello");
+    } else {
+        println("[GLIBC] HELLO SKIP: no carrier");
+    }
+}
+
+/// 执行一个 glibc 载体并按 0 退出判定；`pass` 是成功行前缀。
+fn glibc_exec(path: &[u8], pass: &str) -> bool {
     let child = fork();
     if child == 0 {
-        let argv: [*const u8; 2] = [GLIBC_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
-        let rc = proc_exec(GLIBC_PROBE_PATH, &argv, &[]);
+        let argv: [*const u8; 2] = [path.as_ptr().cast::<u8>(), core::ptr::null()];
+        let rc = proc_exec(path, &argv, &[]);
         print("[GLIBC] child exec rc=");
         print_dec(rc);
         print_char(b'\n');
@@ -1595,18 +1610,21 @@ fn glibc_probe() {
     }
     let Ok(pid) = i32::try_from(child) else {
         println("[GLIBC] FAIL: fork");
-        return;
+        return false;
     };
     let mut status = 0i32;
     let reaped = wait_pid_status(pid, &mut status);
     if reaped == i64::from(pid) && status == 0 {
-        println("[GLIBC] PASS: dynamic glibc execve");
+        print(pass);
+        print_char(b'\n');
+        true
     } else {
         print("[GLIBC] FAIL: status=");
         print_dec(i64::from(status));
         print(" reap=");
         print_dec(reaped);
         print_char(b'\n');
+        false
     }
 }
 
