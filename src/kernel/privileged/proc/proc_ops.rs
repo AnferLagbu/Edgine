@@ -762,11 +762,13 @@ pub extern "C" fn proc_exec_replace_with_interp(
                 proc.entry,
                 proc.process().user_stack.load(Ordering::SeqCst),
                 proc.stack_bottom.load(Ordering::SeqCst),
+                proc.process().mm.load(Ordering::Acquire),
             ))
         })
         .flatten();
 
-    let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom)) = new_addr_space else {
+    let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom, new_mm)) = new_addr_space
+    else {
         USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;
     };
@@ -821,6 +823,7 @@ pub extern "C" fn proc_exec_replace_with_interp(
         new_entry,
         new_user_stack,
         new_stack_bottom,
+        new_mm,
     ) {
         USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;
@@ -832,7 +835,12 @@ pub extern "C" fn proc_exec_replace_with_interp(
     // 归零并销毁当前进程正在使用的页表 (UAF).
     // 临时进程从未运行, 与装配失败回滚同走 `discard_unrun` 销毁单源:
     // 写 Zombie → 镜像摘除并归还分配 → PCB 释放 → PID 回收.
-    PROCESS_TABLE.with_process(new_pid_u32, |p| p.cr3.store(0, Ordering::SeqCst));
+    PROCESS_TABLE.with_process(new_pid_u32, |p| {
+        p.cr3.store(0, Ordering::SeqCst);
+        // mm 所有权已随地址空间转移给当前 PID；清空临时进程槽位，
+        // 避免它仍被视为该 MmStruct 的持有者.
+        p.mm.store(core::ptr::null_mut(), Ordering::Release);
+    });
     USER_PROC_MANAGER.discard_unrun(new_pid_u32);
 
     // 5a. I-48: 重置信号状态 (execve 后信号处理 = 默认)

@@ -1096,6 +1096,7 @@ impl UserProcManager {
         new_entry: u64,
         new_user_stack: u64,
         new_stack_bottom: u64,
+        new_mm: *mut MmStruct,
     ) -> bool {
         let Some(kproc) = PROCESS_TABLE.get(pid) else {
             return false;
@@ -1146,6 +1147,11 @@ impl UserProcManager {
         proc_ref.set_entry(new_entry);
         proc_ref.store_user_stack(new_user_stack);
         proc_ref.store_stack_bottom(new_stack_bottom);
+        // exec 的新 MmStruct 由临时进程在装载期建立；换表必须同步换 mm，
+        // 否则当前进程仍指向旧映像的 VMA/brk/mmap 描述，mprotect 与缺页
+        // 会按旧描述判定（RELRO 区间无 VMA ⇒ ENOMEM）。所有权随地址空间
+        // 一起转移：调用方随后清空临时进程的 mm 槽位。
+        proc_ref.store_mm(new_mm);
         true
     }
 
