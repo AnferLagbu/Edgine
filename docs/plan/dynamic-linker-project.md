@@ -170,7 +170,7 @@
 - 已施工（`81eea0ba`）：缺解释器失败路径双架构造桩（145 B ELF，PT_INTERP 指向不存在路径），`proc_exec` 返回 `-ENOENT`，`[DYN] NEG PASS`；QEMU 两架构 fail-closed 断言均通过。
 - 已施工（`d6505490`）：`elfld` 全链退役；`ci/build.sh all` 6/0、host-tests 与 `make test-kernel-host` 全绿、UEFI 全判据通过（`978e2b2f` 修 no-op clear 误红）。
 - 已完成：x86_64 与 aarch64 上游 `ld-musl` 真跑（外部程序输出 + `[DYN] PASS`）；缺解释器路径返回 `ENOENT`（`[DYN] NEG PASS`）；`elfld` 改写链与旧工具退役；`ci/audit.sh full` 全绿（含双架构 QEMU/UEFI）；T7-c 动态腿转绿。
-- 剩余（D6 扩展，不阻塞本阶段出口）：非绝对/非法 `PT_INTERP` 格式与 libc 缺失两条失败路径未造桩；glibc/vDSO 后置。
+- 剩余（D6 扩展，不阻塞本阶段出口）：相对 `PT_INTERP` 已由 `[DYN] FMT PASS` 覆盖（`ENOEXEC`），无 NUL/越界等形态由 `interp_path` 单测覆盖；musl 的 libc 与 `ld-musl` 同一对象，`libc 缺失` 不构成独立失败面（归 glibc 后置）；glibc/vDSO 后置。
 - 可选加分：动态 `pthread_create`（TLS + mmap 栈）；`dlopen` 只做记录，不作第一波门槛。
 - 出口（已达成）：T7-c 动态腿转绿；`elfld` 退役；文档/台账闭合。
 
