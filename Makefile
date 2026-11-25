@@ -212,14 +212,14 @@ USER_DYNTEST = $(USER_BUILD_DIR)/dyntest.bin
 USER_DYN_BAD = $(USER_BUILD_DIR)/dyntest_nointerp.bin
 ifeq ($(ARCH),x86_64)
 DYN_TEST_SRC = hello_dyn
-DYN_BAD_SRC = badinterp_x86_64.bin
+DYN_BAD_SRC = badinterp_x86_64.dat
 DYN_LOADER_SRC = ld-musl-x86_64.so.1
 DYN_LIBC_SRC = libc.musl-x86_64.so.1
 DYN_LOADER_NAME = ld-musl-x86_64.so.1
 DYN_LIBC_NAME = libc.musl-x86_64.so.1
 else ifeq ($(ARCH),aarch64)
 DYN_TEST_SRC = busybox
-DYN_BAD_SRC = badinterp_aarch64.bin
+DYN_BAD_SRC = badinterp_aarch64.dat
 DYN_LOADER_SRC = ld-musl-aarch64.so.1
 DYN_LIBC_SRC = libc.musl-aarch64.so.1
 DYN_LOADER_NAME = ld-musl-aarch64.so.1
