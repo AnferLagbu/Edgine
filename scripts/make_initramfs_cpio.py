@@ -88,6 +88,12 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     # P1 wasmi stdio demo 载荷 (wasi-sdk 真产物, 见 scripts/make_wasi_demo.py);
     # 最小 WASI 子集 (fd_write + proc_exit), 由 wasm_userspace feature 腿消费.
     ("bin/hello_wasi.wasm", "file", "hello_wasi.wasm"),
+    # D5 动态 musl 验收: 主程序 + 解释器 + libc 副本 (Alpine 中 libc 是 loader 的
+    # 符号链接, cpio 解析器不支持符号链接, 故给两份相同字节).
+    ("bin/dyntest", "file", "dyntest.bin"),
+    ("lib", "dir", ""),
+    ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
+    ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),
 )
 # 必需条目 (源文件缺失即失败)
 REQUIRED_SRC = "init.bin"

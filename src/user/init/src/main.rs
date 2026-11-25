@@ -137,6 +137,7 @@ pub extern "C" fn _start() -> ! {
     // 并继续"同口径.
     // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
     exec_probe();
+    dyn_probe();
 
     // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
     // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
@@ -1411,6 +1412,46 @@ fn wasmi_probe() {
         print_char(b'\n');
     } else {
         println("[WASMI] exit=reap");
+    }
+}
+
+/// D5 动态 musl 载体路径: `/bin/dyntest` 由 initramfs 带入, `PT_INTERP` 指向
+/// `/lib/ld-musl-x86_64.so.1`, `NEEDED` 为 `libc.musl-x86_64.so.1`.
+const DYN_PROBE_PATH: &[u8] = b"/bin/dyntest\0";
+
+/// D5 动态 musl 真运行探针: fork → `execve(/bin/dyntest)` → 父进程按 wstatus 判定.
+///
+/// 载荷是真实带 `PT_INTERP` 的动态 PIE; 子进程退出码 0 只可能在解释器完成
+/// 装载、libc 完成符号解析并跑到 `exit(0)` 时出现. 载荷缺失 (非 x86 归档) 时
+/// 打印 SKIP, 不让无载体与真回归同形.
+fn dyn_probe() {
+    if !file_present(DYN_PROBE_PATH) {
+        println("[DYN] SKIP: no carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [DYN_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let rc = proc_exec(DYN_PROBE_PATH, &argv, &[]);
+        print("[DYN] child exec rc=");
+        print_dec(rc);
+        print_char(b'\n');
+        proc_exit(3);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[DYN] FAIL: fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) && status == 0 {
+        println("[DYN] PASS: dynamic musl execve");
+    } else {
+        print("[DYN] FAIL: status=");
+        print_dec(i64::from(status));
+        print(" reap=");
+        print_dec(reaped);
+        print_char(b'\n');
     }
 }
 

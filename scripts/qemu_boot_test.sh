@@ -738,6 +738,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] execve 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # D5: 动态 musl 真 execve 腿 —— 子进程经 PT_INTERP 进入 ld-musl，
+            # 完成 libc 装载/重定位/RELRO 并执行 main 输出 `hello dynamic musl`.
+            # 该行是父进程按 wstatus==0 打出的唯一验收判据；缺失或 FAIL 均
+            # fail-closed，避免“内核启动通过”掩盖动态装载失败.
+            if grep -aq "\[DYN\] PASS: dynamic musl execve" "$X64_LOG" \
+                && ! grep -aq "\[DYN\] FAIL" "$X64_LOG"; then
+                ok "[x86_64] 动态 musl execve 通过 (D5 PT_INTERP + RELRO)"
+            else
+                warn "[x86_64] 动态 musl execve 未通过 (D5 PT_INTERP + RELRO)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \
                 && { grep -aq "\[WASM\] SKIP:" "$X64_LOG" || grep -aq "\[WASM\] PASS:" "$X64_LOG"; }; then
                 ok "[x86_64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"

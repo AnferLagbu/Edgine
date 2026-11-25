@@ -204,6 +204,16 @@ USER_WASMRUN_ELF = $(RUST_USER_TARGET)/wasmrun
 # 归档恒生成, 使全部启动腿共用同一条依赖链, 不会出现"起跑才发现归档缺失".
 USER_CPIO = $(USER_BUILD_DIR)/initramfs.cpio
 MK_CPIO_PY = scripts/make_initramfs_cpio.py
+# D5 动态 musl 验收 fixture: 仅有 x86_64 版; aarch64 归档跳过缺失条目.
+DYN_MUSL_FIXTURE_DIR = scripts/fixtures/dynamic-musl-x86_64
+USER_DYNTEST = $(USER_BUILD_DIR)/dyntest.bin
+USER_DYN_LOADER = $(USER_BUILD_DIR)/ld-musl-x86_64.so.1
+USER_DYN_LIBC = $(USER_BUILD_DIR)/libc.musl-x86_64.so.1
+ifeq ($(ARCH),x86_64)
+DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
+else
+DYN_CPIO_DEPS =
+endif
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
@@ -294,6 +304,18 @@ $(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
 $(USER_BUILD_DIR)/reboottest.bin: $(USER_REBOOTTEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@$(OBJCOPY) --strip-all $< $@
+
+$(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/hello_dyn
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_DYN_LOADER): $(DYN_MUSL_FIXTURE_DIR)/ld-musl-x86_64.so.1
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_DYN_LIBC): $(DYN_MUSL_FIXTURE_DIR)/libc.musl-x86_64.so.1
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
 endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
@@ -403,7 +425,7 @@ $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD
               $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
               $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
               $(USER_BUILD_DIR)/reboottest.bin \
-              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(MK_CPIO_PY)
+              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(DYN_CPIO_DEPS) $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
 
