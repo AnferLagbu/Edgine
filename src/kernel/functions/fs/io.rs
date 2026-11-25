@@ -741,6 +741,41 @@ pub fn close_range_syscall(first: u32, last: u32, flags: u32) -> Result<usize, E
     Ok(closed)
 }
 
+/// pread64(fd, buf, count, pos) — 显式偏移单缓冲读.
+///
+/// 不改变 fd 当前偏移；`pos` 为负返回 `EINVAL`。数据区先做用户范围校验，
+/// 再由 `vfs_pread` 写入调用方地址空间。
+///
+/// # Errors
+/// - `buf == 0` 或用户范围非法 → `EFAULT`
+/// - `pos < 0` → `EINVAL`
+/// - 底层 `vfs_pread` 返回负值 → 对应 `Errno`（当前无效 fd 与底层读错仍以
+///   `-1` 泛化，见 L1 边界登记）
+pub fn pread64_syscall(fd: i32, buf: u64, count: u64, pos: i64) -> Result<usize, Errno> {
+    if buf == 0 {
+        return Err(Errno::Efault);
+    }
+    if pos < 0 {
+        return Err(Errno::Einval);
+    }
+    if count == 0 {
+        return Ok(0);
+    }
+    if !api::validate_user_buf(buf, count) {
+        return Err(Errno::Efault);
+    }
+    let n = crate::functions::fs::api::vfs_pread(
+        fd.cast_unsigned(),
+        buf as *mut u8,
+        crate::functions::intcast::low_u32_from_u64(count),
+        pos.cast_unsigned(),
+    );
+    if n < 0 {
+        return Err(Errno::from_ret(i64::from(n)));
+    }
+    Ok(crate::functions::intcast::usize_from_i32(n))
+}
+
 /// preadv(fd, iov, iovcnt, pos) — 显式偏移向量读 (T1 G1 实装)
 ///
 /// 逐 iovec 段委托 privileged 机制 `vfs_pread` (显式 offset 读, 不更新 fd

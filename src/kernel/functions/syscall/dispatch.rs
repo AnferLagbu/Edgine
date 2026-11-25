@@ -133,7 +133,8 @@ fn dispatch_fs(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 文件 I/O 基础系统调用 (read/write 与向量 I/O)
 fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_CLOSE_RANGE, SYS_PREADV, SYS_PWRITEV, SYS_READ, SYS_READV, SYS_WRITE, SYS_WRITEV,
+        SYS_CLOSE_RANGE, SYS_PREAD64, SYS_PREADV, SYS_PWRITEV, SYS_READ, SYS_READV, SYS_WRITE,
+        SYS_WRITEV,
     };
     let [a0, a1, a2, a3, _a4, _a5] = args;
 
@@ -163,6 +164,17 @@ fn dispatch_fs_io(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_u32_from_u64(a1),
             crate::functions::intcast::low_u32_from_u64(a2),
         )),
+        // pread64 (D7 L1): glibc dlopen 用 pread64 读取第二共享对象的 ELF 头；
+        // 补齐 Linux ABI 入口后 loader 才能走正常的文件映射/重定位路径。
+        SYS_PREAD64 => match i32::try_from(a0) {
+            Ok(fd) => as_ret(crate::functions::fs::io::pread64_syscall(
+                fd,
+                a1,
+                a2,
+                a3.cast_signed(),
+            )),
+            Err(_) => Errno::Einval.as_ret(),
+        },
         // preadv/pwritev (T1 G1 实装): 显式偏移向量 I/O (pos 为负时 -EINVAL)
         SYS_PREADV => match i32::try_from(a0) {
             Ok(fd) => as_ret(crate::functions::fs::io::preadv_syscall(
