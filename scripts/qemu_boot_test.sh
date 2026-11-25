@@ -766,11 +766,11 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # D7 G0/G1/G2/G3: 真实 glibc 动态 true + hello + 启动 syscall + 时间路径
+            # D7 G0/G1/G2/G3/G4: 真实 glibc 动态 true + hello + 启动 syscall + 时间路径 + pthread
             # 探针 —— 上游 ld-linux 载入 libc.so.6、完成启动并让 glibc stdio 写出
             # `hello dynamic glibc`；`set_tid_address`/`prlimit64` 必须返回成功，
             # `rseq` 预期 ENOSYS；glibc 时间函数在 `AT_SYSINFO_EHDR=0` 下必须走
-            # syscall fallback。任一 GLIBC/G2/TIME FAIL 一律阻断.
+            # syscall fallback；pthread 必须完成 create/join/TLS 校验。任一 GLIBC/G2/TIME/PTHREAD FAIL 一律阻断.
             if grep -aq "\[GLIBC\] PASS: dynamic glibc execve" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] HELLO PASS: dynamic glibc hello" "$X64_LOG" \
                 && grep -aq "hello dynamic glibc" "$X64_LOG" \
@@ -780,13 +780,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[G2\] RSEQ ENOSYS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] TIME PASS: no-vdso fallback" "$X64_LOG" \
                 && grep -aq "\[TIME\] PASS" "$X64_LOG" \
+                && grep -aq "\[GLIBC\] PTHREAD PASS: glibc pthread" "$X64_LOG" \
+                && grep -aq "\[PTHREAD\] PASS" "$X64_LOG" \
                 && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
                 && ! grep -aq "\[G2\] RSEQ UNEXPECTED" "$X64_LOG" \
                 && ! grep -aq "\[TIME\] FAIL" "$X64_LOG" \
+                && ! grep -aq "\[PTHREAD\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[GLIBC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 fallback 通过 (D7 G0/G1/G2/G3)"
+                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread 通过 (D7 G0/G1/G2/G3/G4)"
             else
-                warn "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 fallback 未通过 (D7 G0/G1/G2/G3)"
+                warn "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread 未通过 (D7 G0/G1/G2/G3/G4)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \

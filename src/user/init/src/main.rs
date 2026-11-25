@@ -1565,16 +1565,20 @@ const GLIBC_HELLO_PATH: &[u8] = b"/bin/glibc_hello\0";
 const GLIBC_G2_PATH: &[u8] = b"/bin/glibc_g2\0";
 /// D7 G3: `clock_gettime`/`gettimeofday`/`time`/`clock_getres` 时间路径探针。
 const GLIBC_TIME_PATH: &[u8] = b"/bin/glibc_time\0";
+/// D7 G4: glibc `pthread_create`/TLS/`pthread_join` 探针路径。
+const GLIBC_PTHREAD_PATH: &[u8] = b"/bin/glibc_pthread\0";
 
-/// D7 G0/G1/G2/G3 glibc 启动探针: fork → `execve` 载体 → 父进程按
+/// D7 G0/G1/G2/G3/G4 glibc 启动探针: fork → `execve` 载体 → 父进程按
 /// `wstatus == 0` 判定。`true` 只证明启动链能退出；`hello` 再证明 glibc stdio
 /// 能把一行写到串口；`g2` 取证启动 syscall；`time` 判断无 VDSO 时的时间
-/// fallback。载体缺失时逐腿打印 SKIP，失败打印状态。
+/// fallback；`pthread` 验证 glibc 线程创建/TLS/加入。载体缺失时逐腿打印
+/// SKIP，失败打印状态。
 fn glibc_probe() {
     if !file_present(GLIBC_PROBE_PATH)
         && !file_present(GLIBC_HELLO_PATH)
         && !file_present(GLIBC_G2_PATH)
         && !file_present(GLIBC_TIME_PATH)
+        && !file_present(GLIBC_PTHREAD_PATH)
     {
         println("[GLIBC] SKIP: no carrier");
         return;
@@ -1613,6 +1617,11 @@ fn glibc_probe() {
         let _ = glibc_exec(GLIBC_TIME_PATH, "[GLIBC] TIME PASS: no-vdso fallback");
     } else {
         println("[GLIBC] TIME SKIP: no carrier");
+    }
+    if file_present(GLIBC_PTHREAD_PATH) {
+        let _ = glibc_exec(GLIBC_PTHREAD_PATH, "[GLIBC] PTHREAD PASS: glibc pthread");
+    } else {
+        println("[GLIBC] PTHREAD SKIP: no carrier");
     }
 }
 
