@@ -27,7 +27,7 @@
   GENERAL_CACHES, GLOBAL_KMALLOC
 
 层级 3: VMM / VMA（虚拟内存）
-  VMM_LOCK, MmStruct::vmas
+  VMM_LOCK, MmStruct::vmas, MAP_LOCK（固定 sigreturn 跳板页的复合映射锁；与 VMM_LOCK 同层）
 
 层级 4: Page Cache（页缓存）
   PAGE_CACHE[hash_bucket]

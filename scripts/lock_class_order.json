@@ -47,6 +47,7 @@
     { "level": 2, "name": "GENERAL_CACHES", "anchor": "symbol", "note": "slab free-list 面" },
     { "level": 2, "name": "GLOBAL_KMALLOC", "anchor": "symbol", "note": "kmalloc 内核堆面" },
     { "level": 3, "name": "VMM_LOCK", "anchor": "symbol", "note": "页表手递锁 (AtomicBool + 关中断), 非 privileged sync 类型 ⇒ lockdep 不可见" },
+    { "level": 3, "name": "MAP_LOCK", "anchor": "symbol", "note": "固定 sigreturn 跳板页的复合映射锁; 外层串行 translate/alloc/map, 与 VMM_LOCK 同层" },
     { "level": 3, "name": "MmStruct::vmas", "anchor": "symbol" },
     { "level": 4, "name": "PAGE_CACHE", "anchor": "symbol", "doc_token": "PAGE_CACHE[hash_bucket]" },
     { "level": 6, "name": "SWAP", "anchor": "symbol", "doc_token": "SWAP.lock" },
