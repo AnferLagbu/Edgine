@@ -124,11 +124,18 @@ aarch64：`[GLIBC] SKIP: no carrier`，无 glibc 载体，G2 腿不执行。
 3. `prlimit64` 只做“当前/init 限制”的保守权限面，未实现任意进程的完整
    Linux 权限语义；这是 D7 的单线程边界，等 G4 pthread 再扩。
 4. `set_tid_address` 的 `tidptr` 不在入口校验，退出清理失败静默；当前探针与
-   glibc 启动调用都传合法用户指针。
+   glibc 启动调用都传合法用户指针，尚未加独立退出清理集成断言。
 5. `rseq` 未注册/未退出，D7 后续若进入 pthread 或 glibc 要求 rseq 注册，
    再单独补 334↔293 映射与注册语义。
 6. aarch64 仍无 glibc 载体，G2 只在 x86_64 有实测读数；aarch64 侧的映射与
    `293 -> UNKNOWN` 由 host ABI 测试锁住。
+7. `getrlimit` 仍恒返回 `RLIM_INFINITY`，与 `prlimit64` 读真实表暂时不一致；
+   这是独立的 rlimit 收敛项，不在 G2 混改。
+
+以上 5 项延后边界（`prlimit64` 跨进程、`rseq`、`set_tid` 退出清理断言、
+`getrlimit` 统一、aarch64 G2 载体）已登记在
+`docs/plan/dynamic-linker-project.md` 的 `D7-DEFERRED` 表，状态均为 `[ ]`；
+后续 G3/G4 或 rlimit 切片开工前必须逐项核对，处理一项才可改 `[X]` 并回填证据。
 
 ## 下一步
 
