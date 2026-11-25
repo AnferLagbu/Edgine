@@ -1014,6 +1014,14 @@ pub fn proc_save_user_regs_aarch64(
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 pub extern "C" fn sys_fork() -> Pid {
+    sys_fork_with_exit_signal(0)
+}
+
+/// 带 `exit_signal` 的 fork 内部实现.
+///
+/// `exit_signal` 在子进程进入运行队列前写入，避免 clone(2)/clone3 的
+/// `exit_signal` 在子进程已可被其他 CPU 调度后才落盘导致丢信号。
+pub extern "C" fn sys_fork_with_exit_signal(exit_signal: u64) -> Pid {
     let parent_pid = Scheduler::current().unwrap_or(0);
     if parent_pid == 0 {
         return 0;
@@ -1034,6 +1042,10 @@ pub extern "C" fn sys_fork() -> Pid {
         .unwrap_or(parent_pid);
     let child_ptr = raw::alloc_process(child_pid, "", Some(ProcessId(parent_tgid)));
     let child = raw::process_ref_mut(child_ptr);
+    child.exit_signal.store(
+        crate::privileged::glue::low_u32_from_u64(exit_signal),
+        Ordering::SeqCst,
+    );
 
     // COW 页表克隆: 父子共享物理页, 写入时触发 page fault 复制
     // KPTI 修复: page fault handler 现在使用 get_user_pml4() 获取正确的用户页表

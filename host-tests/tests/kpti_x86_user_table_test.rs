@@ -366,8 +366,8 @@ fn test_sys_fork_registers_child_in_user_proc_manager() {
     // 偶发未成对; fail-closed: 注册失败须回滚进程表条目.
     let src = code_only(&read(PROC_OPS));
     let start = src
-        .find("pub extern \"C\" fn sys_fork()")
-        .expect("proc_ops.rs 必须定义 sys_fork");
+        .find("pub extern \"C\" fn sys_fork_with_exit_signal(exit_signal: u64)")
+        .expect("proc_ops.rs 必须定义 sys_fork_with_exit_signal");
     let after = &src[start..];
     let end = after
         .find("\npub extern \"C\" fn proc_get_ppid")

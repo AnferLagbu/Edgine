@@ -41,6 +41,12 @@ pub const CLONE_FILES: u64 = 0x0000_0400;
 /// `CLONE_SIGHAND`: 共享信号动作表（`CLONE_THREAD` 的前置）.
 pub const CLONE_SIGHAND: u64 = 0x0000_0800;
 
+/// `CLONE_PIDFD`: 把子进程的 pidfd 写入 `clone3` 的 `pidfd` 字段（Linux 5.2+）.
+pub const CLONE_PIDFD: u64 = 0x0000_1000;
+
+/// `CLONE_INTO_CGROUP`: 把子进程放入 `clone3` 的 `cgroup` 指定 cgroup（Linux 5.7+）.
+pub const CLONE_INTO_CGROUP: u64 = 0x0000_0002_0000_0000;
+
 /// `CLONE_THREAD`: 与调用方同一线程组（子 TID 而非子进程）.
 pub const CLONE_THREAD: u64 = 0x0001_0000;
 

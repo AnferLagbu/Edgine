@@ -102,7 +102,7 @@ fn clone_vm_path_splits_thread_from_shared_vm_process() {
     );
     for callee in [
         "vm_child_alloc(parent_pid, child_pid, parent_cr3, joins_group)",
-        "vm_child_inherit(parent_pid, &mut *child, parent_cr3, child_stack, tls)",
+        "vm_child_inherit(parent_pid, &mut *child, parent_cr3, child_stack, tls, exit_signal,)",
         "vm_child_register(",
     ] {
         assert!(has(&body, callee), "K-02: clone_vm_path 必须接线 {callee}");

@@ -207,6 +207,10 @@ pub struct Process {
 
     /// 退出码 (由 `wait4` 报告给父进程).
     pub exit_code: AtomicU32,
+    /// 子进程退出时通知父线程组的信号 (clone(2) flags 低字节 / clone3 `exit_signal`).
+    ///
+    /// 0 表示不发信号; 仅线程组最后成员退出时投递一次, 普通线程为 0.
+    pub exit_signal: AtomicU32,
     /// 累计 CPU 时间 (tick).
     pub cpu_time: AtomicU64,
 
@@ -484,6 +488,7 @@ impl Process {
             user_stack: AtomicU64::new(0),
             wasm_handle: AtomicU32::new(0),
             exit_code: AtomicU32::new(0),
+            exit_signal: AtomicU32::new(0),
             cpu_time: AtomicU64::new(0),
             user_time: AtomicU64::new(0),
             sys_time: AtomicU64::new(0),

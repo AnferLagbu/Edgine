@@ -2374,7 +2374,7 @@ impl Scheduler {
             crate::privileged::proc::itimer_real_release_pid(pid);
             crate::privileged::proc::posix_timer_release_pid(pid);
 
-            let parent_tgid = PROCESS_TABLE
+            let (parent_tgid, exit_signal) = PROCESS_TABLE
                 .with_process(pid, |proc| {
                     let pwm = proc.get_pwm();
                     proc.exit_code.store(effective_code, Ordering::SeqCst);
@@ -2397,15 +2397,25 @@ impl Scheduler {
                         }
                     }
 
-                    proc.group().parent()
+                    (
+                        proc.group().parent(),
+                        proc.exit_signal.load(Ordering::Acquire),
+                    )
                 })
-                .unwrap_or(0);
+                .unwrap_or((0, 0));
 
             if last_member && parent_tgid != 0 {
                 // P-78: 子组整体退出 = 全部 `wait4` 等待条件成立. 唤醒父组内
                 // 所有阻塞于 `WaitingForChild` 的线程 (含非组长 wait4 调用者);
                 // 组长阻塞于其它原因时由助手保持既有直接唤醒.
                 Self::wake_child_waiters(parent_tgid);
+                // clone3 `exit_signal` / clone(2) flags 低字节: 子组最后成员
+                // 退出时向父线程组投递一次. 0 表示 clone3 显式静默.
+                if let Ok(sig) = u8::try_from(exit_signal)
+                    && sig != 0
+                {
+                    let _ = super::signal::do_signal_send_group(parent_tgid, sig);
+                }
             }
 
             if last_member {

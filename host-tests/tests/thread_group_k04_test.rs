@@ -151,7 +151,7 @@ fn process_new_seeds_group_parent_from_argument() {
 #[test]
 fn fork_records_parent_group_and_child_group() {
     let src = code_only(&read_src(PROC_OPS_SRC));
-    let fork = fn_body(&src, "pub extern \"C\" fn sys_fork");
+    let fork = fn_body(&src, "pub extern \"C\" fn sys_fork_with_exit_signal");
 
     assert!(
         has(
@@ -298,9 +298,13 @@ fn exit_teardown_is_gated_on_last_group_member() {
     assert!(
         has(
             &body,
-            "if last_member && parent_tgid != 0 { Self::wake_child_waiters(parent_tgid); }"
+            "if last_member && parent_tgid != 0 { Self::wake_child_waiters(parent_tgid);"
         ),
         "K-04 / P-78: 只在线程组整体退出后唤醒父组 (经助手覆盖组内全部等待线程)"
+    );
+    assert!(
+        has(&body, "do_signal_send_group(parent_tgid, sig)"),
+        "D7-C1: clone3 exit_signal 只在组最后成员退出时投递"
     );
     assert!(
         has(
@@ -321,7 +325,7 @@ fn exit_teardown_is_gated_on_last_group_member() {
     assert!(
         has(
             &body,
-            "let parent_tgid = PROCESS_TABLE
+            "let (parent_tgid, exit_signal) = PROCESS_TABLE
                  .with_process(pid, |proc| {"
         ) && has(&body, "proc.group().parent()"),
         "K-04: 父组唤醒目标必须取线程组父字段"

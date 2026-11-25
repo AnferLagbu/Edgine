@@ -37,6 +37,12 @@ pub const WNOHANG: i32 = 0x1;
 pub const WUNTRACED: i32 = 0x2;
 /// wait4 options: 报告已恢复的子进程
 pub const WCONTINUED: i32 = 0x8;
+/// wait4 options: 等待所有子进程 (含 `exit_signal != SIGCHLD` 的 clone 子进程).
+///
+/// Linux 在 `clone3` 的 `exit_signal` 非 `SIGCHLD` 时要求父进程传
+/// `__WALL`/`__WCLONE` 才能 wait；本内核的等待集合已按线程组子账统一收口，
+/// 因此接受该位并按其“全部子进程可见”语义执行。
+pub const __WALL: i32 = 0x4000_0000;
 
 /// 等待收集结果 (wait4 与 waitid 共用)
 #[derive(Debug)]
@@ -187,7 +193,7 @@ pub fn wait4_syscall(pid: i32, wstatus_ptr: u64, options: i32) -> Result<usize, 
         return Err(Errno::Einval);
     }
 
-    let valid_opts = WNOHANG | WUNTRACED | WCONTINUED;
+    let valid_opts = WNOHANG | WUNTRACED | WCONTINUED | __WALL;
     if options & !valid_opts != 0 {
         return Err(Errno::Einval);
     }

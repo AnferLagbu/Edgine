@@ -303,7 +303,7 @@ fn fork_copies_fd_and_signal_and_fs_and_rolls_back_refs() {
         "K-03a: fork 失败回滚必须撤销继承取得的 OpenFile 引用"
     );
 
-    let fork = fn_body(&src, "fn sys_fork");
+    let fork = fn_body(&src, "fn sys_fork_with_exit_signal");
     assert_eq!(
         fork.matches("release_inherited_fd_refs(child);").count(),
         2,

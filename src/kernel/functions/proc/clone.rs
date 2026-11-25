@@ -57,13 +57,18 @@ pub fn clone3_stack_top(stack: u64, stack_size: u64) -> Result<u64, Errno> {
 ///
 /// - `CLONE_VM`/`CLONE_THREAD` 未同时设置 `CLONE_SIGHAND`, `CLONE_THREAD`
 ///   未同时设置 `CLONE_VM`, 或 `child_stack` 非零但未按 16 字节对齐 → `EINVAL`
+/// - `exit_signal` 超出 `0..=64`（Linux `_NSIG`）→ `EINVAL`
 /// - 底层 clone 返回负值时转换为对应的 `Errno`
+///
+/// `exit_signal` 是 `clone(2)` flags 低字节或 `clone3` 的独立字段；线程组路径
+/// 固定不向父组发信号（Linux 语义），普通子进程在最后成员退出时投递一次。
 pub fn clone_syscall(
     flags: u64,
     child_stack: u64,
     parent_tidptr: u64,
     child_tidptr: u64,
     tls: u64,
+    exit_signal: u64,
 ) -> Result<usize, Errno> {
     // CLONE_VM + CLONE_THREAD 必须同时设置 CLONE_SIGHAND (POSIX 线程要求)
     // 注: Rust 中 `&` 优先级高于 `==`, 括号仅为明确语义 (B05-31 审计复核).
@@ -103,7 +108,25 @@ pub fn clone_syscall(
         return Err(Errno::Einval);
     }
 
-    let ret = clone_impl(flags, child_stack, parent_tidptr, child_tidptr, tls);
+    // 线程组不向父组投递退出信号；普通进程的 exit_signal 必须是有效信号号。
+    // Linux `_NSIG == 64`，故 64（SIGRTMAX）合法；仅 65 及以上拒绝。
+    if exit_signal > 64 {
+        return Err(Errno::Einval);
+    }
+    let exit_signal = if flags & CLONE_THREAD != 0 {
+        0
+    } else {
+        exit_signal
+    };
+
+    let ret = clone_impl(
+        flags,
+        child_stack,
+        parent_tidptr,
+        child_tidptr,
+        tls,
+        exit_signal,
+    );
     if ret < 0 {
         Err(Errno::from_ret(ret))
     } else {
@@ -129,6 +152,7 @@ fn clone_impl(
     parent_tidptr: u64,
     child_tidptr: u64,
     tls: u64,
+    exit_signal: u64,
 ) -> i64 {
     let parent_pid = match api::process_get_current_pid() {
         0 => return Errno::Echild.as_ret(),
@@ -137,7 +161,7 @@ fn clone_impl(
 
     // 如果没有 CLONE_VM, 行为等同于 fork
     if flags & CLONE_VM == 0 {
-        return clone_fork_path(flags, child_stack, parent_tidptr, child_tidptr);
+        return clone_fork_path(flags, child_stack, parent_tidptr, child_tidptr, exit_signal);
     }
 
     // CLONE_VM: 共享地址空间 (创建线程)
@@ -147,13 +171,20 @@ fn clone_impl(
         parent_tidptr,
         child_tidptr,
         tls,
+        exit_signal,
         parent_pid,
     )
 }
 
 /// fork 路径 (`flags & CLONE_VM == 0`): 复制地址空间 (COW) 并处理 TID 标志
-fn clone_fork_path(flags: u64, child_stack: u64, parent_tidptr: u64, child_tidptr: u64) -> i64 {
-    let child_pid = api::sys_fork();
+fn clone_fork_path(
+    flags: u64,
+    child_stack: u64,
+    parent_tidptr: u64,
+    child_tidptr: u64,
+    exit_signal: u64,
+) -> i64 {
+    let child_pid = api::sys_fork_with_exit_signal(exit_signal);
     if child_pid == 0 {
         return Errno::Enomem.as_ret();
     }
@@ -206,6 +237,7 @@ fn clone_vm_path(
     parent_tidptr: u64,
     child_tidptr: u64,
     tls: u64,
+    exit_signal: u64,
     parent_pid: u32,
 ) -> i64 {
     let parent_cr3 = api::process_with(parent_pid, |p| p.cr3.load(Ordering::SeqCst)).unwrap_or(0);
@@ -232,7 +264,14 @@ fn clone_vm_path(
     let child = raw::process_ref_mut(child_ptr);
 
     // 继承父进程属性 / 内核栈 / 上下文 (失败时内部已回滚 PCB)
-    if let Err(ret) = vm_child_inherit(parent_pid, &mut *child, parent_cr3, child_stack, tls) {
+    if let Err(ret) = vm_child_inherit(
+        parent_pid,
+        &mut *child,
+        parent_cr3,
+        child_stack,
+        tls,
+        exit_signal,
+    ) {
         api::proc_free_pid(child_pid);
         return ret;
     }
@@ -318,6 +357,7 @@ fn vm_child_inherit(
     parent_cr3: u64,
     child_stack: u64,
     tls: u64,
+    exit_signal: u64,
 ) -> Result<(), i64> {
     // 复制父进程属性
     let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base, parent_mm) =
@@ -343,6 +383,10 @@ fn vm_child_inherit(
     // CLONE_VM: 子线程与父线程共享同一地址空间描述符 (VMA 查询单一真源,
     // 指向与 cr3 共享同一地址空间).
     child.mm.store(parent_mm, Ordering::Release);
+    child.exit_signal.store(
+        crate::privileged::glue::low_u32_from_u64(exit_signal),
+        Ordering::Release,
+    );
 
     // 分配内核栈 (用户 TCB 统一 USER_KSTACK_SIZE, 与 fork 路径和释放口径同源)
     if !child.allocate_user_kernel_stack() {
@@ -660,19 +704,25 @@ mod tests {
 
     #[test]
     fn clone_thread_without_vm_is_rejected() {
-        let ret = clone_syscall(CLONE_THREAD | CLONE_SIGHAND, 0, 0, 0, 0);
+        let ret = clone_syscall(CLONE_THREAD | CLONE_SIGHAND, 0, 0, 0, 0, 0);
         assert!(matches!(ret, Err(Errno::Einval)));
     }
 
     #[test]
     fn clone_thread_without_sighand_is_rejected() {
-        let ret = clone_syscall(CLONE_THREAD | CLONE_VM, 0, 0, 0, 0);
+        let ret = clone_syscall(CLONE_THREAD | CLONE_VM, 0, 0, 0, 0, 0);
         assert!(matches!(ret, Err(Errno::Einval)));
     }
 
     #[test]
     fn clone_vm_without_sighand_is_rejected() {
-        let ret = clone_syscall(CLONE_VM, 0, 0, 0, 0);
+        let ret = clone_syscall(CLONE_VM, 0, 0, 0, 0, 0);
+        assert!(matches!(ret, Err(Errno::Einval)));
+    }
+
+    #[test]
+    fn clone_exit_signal_out_of_range_is_rejected() {
+        let ret = clone_syscall(CLONE_THREAD | CLONE_VM | CLONE_SIGHAND, 0, 0, 0, 0, 65);
         assert!(matches!(ret, Err(Errno::Einval)));
     }
 

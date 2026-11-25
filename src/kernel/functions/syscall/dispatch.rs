@@ -863,6 +863,57 @@ fn dispatch_proc_lifecycle(num: u64, args: [u64; 6]) -> Option<i64> {
     })
 }
 
+/// clone3 `struct clone_args` 的基础 8 字段（前 64 字节）。
+#[derive(Copy, Clone, Default)]
+struct CloneArgs {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+}
+
+/// 按 `size` 分级读取 clone3 参数；扩展字段只读到已定义上限（88 字节）。
+///
+/// `size < 64` 拒绝；`set_tid`/`set_tid_size`/`cgroup` 当前无内核语义，
+/// 解析后由调用方显式 `ENOSYS`。
+fn read_clone3_args(arg: u64, size: u64) -> Result<CloneArgs, Errno> {
+    if size < 64 {
+        return Err(Errno::Einval);
+    }
+    let mut base = CloneArgs::default();
+    if !crate::privileged::syscall::api::read_struct_from_user(arg, &mut base) {
+        return Err(Errno::Efault);
+    }
+
+    let mut set_tid = 0u64;
+    let mut set_tid_size = 0u64;
+    let mut cgroup = 0u64;
+    if size >= 72 {
+        let addr = arg.checked_add(64).ok_or(Errno::Efault)?;
+        set_tid = crate::privileged::syscall::api::read_u64_from_user(addr).ok_or(Errno::Efault)?;
+    }
+    if size >= 80 {
+        let addr = arg.checked_add(72).ok_or(Errno::Efault)?;
+        set_tid_size =
+            crate::privileged::syscall::api::read_u64_from_user(addr).ok_or(Errno::Efault)?;
+    }
+    if size >= 88 {
+        let addr = arg.checked_add(80).ok_or(Errno::Efault)?;
+        cgroup = crate::privileged::syscall::api::read_u64_from_user(addr).ok_or(Errno::Efault)?;
+    }
+    if set_tid != 0 || set_tid_size != 0 {
+        return Err(Errno::Enosys);
+    }
+    if cgroup != 0 || base.flags & crate::functions::syscall::types::CLONE_INTO_CGROUP != 0 {
+        return Err(Errno::Enosys);
+    }
+    Ok(base)
+}
+
 /// 进程创建/等待与 robust list 系统调用
 fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
@@ -872,62 +923,88 @@ fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
 
     Some(match num {
         // 进程创建/等待
-        SYS_CLONE => as_ret(crate::functions::proc::clone::clone_syscall(
-            a0, a1, a2, a3, a4,
-        )),
-        SYS_CLONE3 => {
-            // clone3(2): 首个参数指向用户空间 `struct clone_args`.
-            // SIMPLIFIED: 仅提取 flags/stack/parent_tid/child_tid/tls 五个字段委托
-            // `clone_syscall`, 忽略 pidfd/set_tid/cgroup/exit_signal 等高级字段;
-            // 影响面: 使用这些高级字段的调用方 (如线程库 clone3 路径) 语义不完整;
-            // 何时需扩展: 完整实现 clone3 (独立 sys_clone3 机制, 支持全部字段) 后替换.
-            #[repr(C)]
-            #[derive(Copy, Clone)]
-            struct CloneArgs {
-                flags: u64,
-                pidfd: u64,
-                child_tid: u64,
-                parent_tid: u64,
-                exit_signal: u64,
-                stack: u64,
-                stack_size: u64,
-                tls: u64,
+        SYS_CLONE => {
+            // clone3 专属的高级标志不能经 legacy clone 静默丢弃；当前无
+            // pidfd/cgroup 语义，显式拒绝，避免“成功创建但参数被忽略”。
+            if a0 & crate::functions::syscall::types::CLONE_PIDFD != 0
+                || a0 & crate::functions::syscall::types::CLONE_INTO_CGROUP != 0
+            {
+                return Some(Errno::Einval.as_ret());
             }
-            let mut args = CloneArgs {
-                flags: 0,
-                pidfd: 0,
-                child_tid: 0,
-                parent_tid: 0,
-                exit_signal: 0,
-                stack: 0,
-                stack_size: 0,
-                tls: 0,
+            let signal = a0 & 0xff;
+            as_ret(crate::functions::proc::clone::clone_syscall(
+                a0, a1, a2, a3, a4, signal,
+            ))
+        }
+        SYS_CLONE3 => {
+            // clone3(2): `a0` 指向用户 `struct clone_args`，`a1` 为 size。
+            let base = match read_clone3_args(a0, a1) {
+                Ok(base) => base,
+                Err(errno) => return Some(errno.as_ret()),
             };
-            if !crate::privileged::syscall::api::read_struct_from_user(a0, &mut args) {
-                return Some(Errno::Efault.as_ret());
+
+            // CLONE_PIDFD: 在创建子进程前验证写回地址，避免“子进程已创建但
+            // 参数非法”。fd 的实际安装留在子进程创建成功之后。
+            let pidfd_requested = base.flags & crate::functions::syscall::types::CLONE_PIDFD != 0;
+            if pidfd_requested {
+                if base.pidfd == 0 {
+                    return Some(Errno::Einval.as_ret());
+                }
+                if !crate::privileged::syscall::api::validate_user_buf(base.pidfd, 4) {
+                    return Some(Errno::Efault.as_ret());
+                }
             }
 
             // clone3 的 `stack` 是栈底、`stack_size` 是大小；clone(2) 的
             // `child_stack` 是初始 RSP（栈顶）。栈底直接当 RSP 会让 glibc
             // pthread 首次压栈落进 guard page，pthread_create 只能退回 clone(2)。
             let child_stack = match crate::functions::proc::clone::clone3_stack_top(
-                args.stack,
-                args.stack_size,
+                base.stack,
+                base.stack_size,
             ) {
                 Ok(top) => top,
                 Err(errno) => return Some(errno.as_ret()),
             };
             // clone3 带 CLONE_VM 时必须有显式栈；不能像 fork 一样继承父栈。
-            if args.flags & crate::functions::syscall::types::CLONE_VM != 0 && child_stack == 0 {
+            if base.flags & crate::functions::syscall::types::CLONE_VM != 0 && child_stack == 0 {
                 return Some(Errno::Einval.as_ret());
             }
-            as_ret(crate::functions::proc::clone::clone_syscall(
-                args.flags,
+            let child = match crate::functions::proc::clone::clone_syscall(
+                base.flags,
                 child_stack,
-                args.parent_tid,
-                args.child_tid,
-                args.tls,
-            ))
+                base.parent_tid,
+                base.child_tid,
+                base.tls,
+                base.exit_signal,
+            ) {
+                Ok(child) => child,
+                Err(errno) => return Some(errno.as_ret()),
+            };
+
+            if pidfd_requested {
+                let fd = match crate::functions::proc::pidfd::pidfd_open(
+                    crate::functions::intcast::low_u32_from_usize(child),
+                    0,
+                ) {
+                    Ok(fd) => fd,
+                    Err(errno) => return Some(errno.as_ret()),
+                };
+                // clone3 返回的 pidfd 带 close-on-exec (Linux 语义).
+                let _ = crate::privileged::proc::with_current_fd_table(|t| {
+                    t.set_cloexec(fd, true);
+                });
+                let fd_i32 = crate::functions::intcast::low_i32_from_usize(fd);
+                if !crate::privileged::syscall::api::write_struct_to_user(base.pidfd, &fd_i32) {
+                    // 写回失败只可能发生在验证后地址被并发解映射；关闭已安装的
+                    // pidfd，避免描述符泄漏。子进程本身保持已创建状态。
+                    let _ = crate::functions::fs::vfs_close_safe(
+                        crate::functions::intcast::low_u32_from_usize(fd),
+                    );
+                    return Some(Errno::Efault.as_ret());
+                }
+            }
+
+            crate::functions::intcast::i64_from_usize(child)
         }
         SYS_WAIT4 => as_ret(crate::functions::proc::wait4::wait4_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),
