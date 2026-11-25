@@ -17,7 +17,7 @@
 
 use crate::functions::fs::MmapBacking;
 use crate::privileged::mm::{FileBackedVma, MmStruct, Vma, VmaType};
-use crate::privileged::mm::{PageFlags as VmaFlags, PAGE_SIZE};
+use crate::privileged::mm::{PAGE_SIZE, PageFlags as VmaFlags};
 use crate::privileged::syscall::Errno;
 
 // ============================================================================
@@ -33,7 +33,7 @@ pub const MAP_ANONYMOUS: i32 = 0x20;
 /// `MAP_FIXED`: 强制使用指定地址, 并拆除该区间已有映射.
 pub const MAP_FIXED: i32 = 0x10;
 /// `MAP_FIXED_NOREPLACE`: 强制使用指定地址, 但区间已有映射时返回 `EEXIST`.
-pub const MAP_FIXED_NOREPLACE: i32 = 0x100000;
+pub const MAP_FIXED_NOREPLACE: i32 = 0x0010_0000;
 
 /// mmap 系统调用的标志位基准值 (0, 标志位由调用侧按需 OR 组合)。
 pub const SYS_MMAP_FLAGS: u64 = 0;
@@ -106,11 +106,7 @@ pub fn mmap_syscall(mm: &MmStruct, req: MmapRequest) -> Result<usize, Errno> {
 }
 
 /// `mmap_syscall` 的地址空间变体: `cr3` 显式给出，供固定落点拆除旧映射时使用.
-fn mmap_syscall_inner(
-    mm: &MmStruct,
-    req: MmapRequest,
-    cr3: Option<u64>,
-) -> Result<usize, Errno> {
+fn mmap_syscall_inner(mm: &MmStruct, req: MmapRequest, cr3: Option<u64>) -> Result<usize, Errno> {
     if req.length == 0 {
         return Err(Errno::Einval);
     }
@@ -213,10 +209,10 @@ fn mmap_syscall_inner(
     Ok(addr)
 }
 
-/// 校验固定落点: 非零、页对齐、不低于用户 VA 下界、不越过 TASK_SIZE.
+/// 校验固定落点: 非零、页对齐、不低于用户 VA 下界、不越过 `TASK_SIZE`.
 fn validate_fixed_addr(addr: u64, len: usize) -> Result<usize, Errno> {
     use crate::privileged::constants::limits::USER_ADDR_MAX;
-    if addr == 0 || addr % PAGE_SIZE != 0 {
+    if addr == 0 || !addr.is_multiple_of(PAGE_SIZE) {
         return Err(Errno::Einval);
     }
     if addr < crate::privileged::mm::user_va_lower_bound() {
@@ -546,7 +542,10 @@ mod tests {
         assert_eq!(vmas.len(), 2, "旧 VMA 应被拆成前段 + 新映射");
         let old = vmas.iter().find(|v| v.start == base).expect("前段保留");
         assert_eq!(old.end, base + page, "旧 VMA 前段只保留未覆盖页");
-        let new = vmas.iter().find(|v| v.start == base + page).expect("新映射");
+        let new = vmas
+            .iter()
+            .find(|v| v.start == base + page)
+            .expect("新映射");
         assert!(new.flags.contains(VmaFlags::WRITABLE), "新映射必须可写");
         assert!(new.flags.contains(VmaFlags::NX), "PROT_RW 必须不可执行");
     }

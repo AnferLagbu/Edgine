@@ -34,7 +34,7 @@ use userlib::sys::{EgDhcpv6Policy, dhcpv6_get_policy, dhcpv6_set_policy};
 ///
 /// 该地址在任何用户视图下都不得可读 —— 读到值即 KPTI 隔离失效。
 /// 基址取自各架构链接脚本把内核镜像放在物理 LMA 起点的约定：
-/// - x86_64: `KERNEL_BASE(0xFFFF_8000_0000_0000) + 0x100000`
+/// - `x86_64`: `KERNEL_BASE(0xFFFF_8000_0000_0000) + 0x100000`
 ///   （见 `privileged/link/x86_64.ld` 的 `. = 0x100000`，对应
 ///   `privileged/mm/mod.rs` 的 `KERNEL_BASE`）。
 /// - aarch64: `KERNEL_BASE(0xFFFF_0000_0000_0000) + 0x4008_0000`
@@ -477,7 +477,7 @@ fn tls_get() -> Option<u64> {
     }
 }
 
-/// 经硬件 TLS 基址读取偏移 0 的 8 字节 (x86_64: `fs:[0]`).
+/// 经硬件 TLS 基址读取偏移 0 的 8 字节 (`x86_64`: `fs:[0]`).
 #[cfg(target_arch = "x86_64")]
 fn tls_read_word() -> u64 {
     let word: u64;
@@ -624,7 +624,7 @@ const THREAD_CLONE_FLAGS: u64 = CLONE_VM
 ///
 /// 必须带内部可变性: 无 `UnsafeCell` 的不可变 `static` 会被 rustc 归入 `.rodata`,
 /// 而 aarch64 的 `.rodata` 段不带 `PF_W` ⇒ 装载成只读页, 子线程首次压栈即触发
-/// level-3 权限错误 (x86_64 的链接脚本把 `.rodata` 并入可写 `PT_LOAD`, 故同形代码
+/// level-3 权限错误 (`x86_64` 的链接脚本把 `.rodata` 并入可写 `PT_LOAD`, 故同形代码
 /// 在两架构表现不一致 —— 判据以两架构都真跑为准).
 #[repr(C, align(16))]
 struct ThreadStack(UnsafeCell<[u8; THREAD_STACK_BYTES]>);
@@ -1416,7 +1416,7 @@ fn wasmi_probe() {
     }
 }
 
-/// D5/D6 动态 musl 载体路径: `/bin/dyntest` 由 initramfs 带入；x86_64 的
+/// D5/D6 动态 musl 载体路径: `/bin/dyntest` 由 initramfs 带入；`x86_64` 的
 /// `PT_INTERP` 指向 `/lib/ld-musl-x86_64.so.1`，aarch64 指向
 /// `/lib/ld-musl-aarch64.so.1`，二者 `NEEDED` 均为对应架构的 `libc.musl-*`.
 const DYN_PROBE_PATH: &[u8] = b"/bin/dyntest\0";
@@ -1442,9 +1442,9 @@ fn dyn_probe() {
             // busybox 以 argv[0] 的 basename 选择 applet；execve 的是
             // `/bin/dyntest`，但这里必须伪装成 multicall 入口名，argv[1]
             // 才会被当作 applet 参数（宿主 qemu-user 同口径实测）.
-            b"/bin/busybox\0".as_ptr(),
-            b"echo\0".as_ptr(),
-            b"hello dynamic musl\0".as_ptr(),
+            c"/bin/busybox".as_ptr().cast::<u8>(),
+            c"echo".as_ptr().cast::<u8>(),
+            c"hello dynamic musl".as_ptr().cast::<u8>(),
             core::ptr::null(),
         ];
         let rc = proc_exec(DYN_PROBE_PATH, &argv, &[]);
@@ -1470,9 +1470,9 @@ fn dyn_probe() {
     }
 }
 
-/// D6 失败路径: 合法 ELF 头 + 指向不存在解释器的 PT_INTERP.
+/// D6 失败路径: 合法 ELF 头 + 指向不存在解释器的 `PT_INTERP`.
 ///
-/// 期望内核在读取解释器阶段返回 ENOENT（-2），子进程打印固定 PASS 后 0 退出；
+/// 期望内核在读取解释器阶段返回 `ENOENT`（-2），子进程打印固定 PASS 后 0 退出；
 /// 不得 panic、不得把旧 init 映像当成成功 exec 继续跑. 无载体 (非动态架构)
 /// 打印 SKIP，与真回归区分.
 const DYN_BAD_INTERP_PATH: &[u8] = b"/bin/dyntest_nointerp\0";
@@ -1860,7 +1860,7 @@ fn ipv6_udp_probe() {
     }
 }
 
-/// 用户态双栈 DNS 解析探针 (DNS 双栈 E1 端到端验证, 仅 x86_64).
+/// 用户态双栈 DNS 解析探针 (DNS 双栈 E1 端到端验证, 仅 `x86_64`).
 ///
 /// 经 `EG_GETADDRINFO` 解析 `test6.edgine` 的 AAAA 记录, 校验返回单个
 /// `EgAddrInfo` (family=`AF_INET6`, addr=`fd00::53`). 依赖宿主 dnsmasq 经 `DHCPv6`
@@ -1974,7 +1974,7 @@ fn dhcpv6_policy_probe() {
     println("[dhcpv6-policy] PASS: round-trip+enabled+reject");
 }
 
-/// 用户态 UDP 连接态探针 (P4 D9 端到端验证, 仅 x86_64).
+/// 用户态 UDP 连接态探针 (P4 D9 端到端验证, 仅 `x86_64`).
 ///
 /// 验证 D9 UDP 连接态语义 (纯本地状态, 无需对端应答, 故确定性强):
 /// 1. `socket(AF_INET, SOCK_DGRAM)` 建 IPv4 UDP socket;
@@ -2053,7 +2053,7 @@ fn udp_connect_probe() {
     let _ = close_socket(fd);
 }
 
-/// 用户态组播成员管理探针 (P6 / D11 端到端验证, 仅 x86_64).
+/// 用户态组播成员管理探针 (P6 / D11 端到端验证, 仅 `x86_64`).
 ///
 /// IPv4 腿一次跑通组播全链路 (per-socket 引用计数 → iface 组表 → IGMP 报告 →
 /// L3 RX 过滤 → UDP 端口匹配投递 → 退组):
@@ -2267,7 +2267,7 @@ fn mcast_probe_v6() {
     let _ = close_socket(fd6);
 }
 
-/// 用户态 UDP 活体对端回填探针 (P4 D9 recvfrom 端到端验证, 仅 x86_64).
+/// 用户态 UDP 活体对端回填探针 (P4 D9 recvfrom 端到端验证, 仅 `x86_64`).
 ///
 /// 补 `udp_connect_probe` 未覆盖的"活体收发腿": 经已连接 UDP socket 实际发出
 /// 数据报并由宿主回显服务应答, 验证 `recvfrom` 回填真实对端地址 (syscall 层 U3
@@ -2485,14 +2485,14 @@ fn tcp_echo_conn(conn: i32, poll_ms: i64, max_recv_tries: u32) {
     println("[tcp] Connection closed");
 }
 
-/// 用户态 TCP echo 服务端 (P3 D6 端到端验证, 仅 x86_64).
+/// 用户态 TCP echo 服务端 (P3 D6 端到端验证, 仅 `x86_64`).
 ///
 /// 常驻子进程: 监听 `0.0.0.0:80`, 循环 `accept` 已建立连接并原样回显.
 /// 用途是端到端验证 D6 "先建后换" 交接语义 ——
 /// 1. 连续多次入站连接下**监听槽持续可用** (每次 accept 后监听 fd 仍可再 accept);
 /// 2. 连接处理完 `close_socket` 后 FD 归还, 可被下一次 `accept` 复用 (FD 回收).
 ///
-/// 驱动方为 `scripts/qemu_boot_test.sh` 的端到端阶段: x86_64 硬门禁腿以
+/// 驱动方为 `scripts/qemu_boot_test.sh` 的端到端阶段: `x86_64` 硬门禁腿以
 /// `-netdev user,...,hostfwd=tcp::8080-:80` 启动 QEMU, 宿主客户端连
 /// `localhost:8080`; aarch64 软观测腿用 `tcp::8081-:80` (P-32 放行, 接档位2
 /// T1 观测). 均由 slirp 转发到 guest `:80` 触发本服务.

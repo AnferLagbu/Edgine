@@ -57,8 +57,8 @@ fn dual_loader_selects_interp_entry_and_separate_bias() {
         "双映像核心入口必须存在"
     );
     assert!(
-        USER_PROC.contains("let entry = match interp_verified")
-            && USER_PROC.contains("Some(v) => v.entry + interp_bias"),
+        USER_PROC.contains("let entry = interp_meta")
+            && USER_PROC.contains("|(v, _)| v.entry + interp_bias"),
         "有解释器时入口必须归解释器"
     );
     assert!(
@@ -87,7 +87,7 @@ fn d3_initial_stack_carries_auxv() {
         "初始栈必须写 argc/argv/envp/auxv 四段"
     );
     assert!(
-        USER_PROC.contains("let main_phdr = super::elf::phdr_addr")
+        USER_PROC.contains("super::elf::phdr_addr(main_elf")
             && USER_PROC.contains("store_elf_meta("),
         "装载期必须把 AT_PHDR/AT_ENTRY/AT_BASE 存到进程"
     );

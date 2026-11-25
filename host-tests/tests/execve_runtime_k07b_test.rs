@@ -308,7 +308,7 @@ fn test_user_stack_writes_envp_strings_and_sentinel() {
     let setup = fn_body(&code, "pub unsafe fn setup_user_stack_in_table");
     assert_contains(
         &setup,
-        "let mut env_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();",
+        "let (mut arg_lens, mut env_lens) = (alloc::vec::Vec::new(), alloc::vec::Vec::new());",
         "envp 字符串长度需与 argv 同法先量一遍",
     );
     assert_contains(

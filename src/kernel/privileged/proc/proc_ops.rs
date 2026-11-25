@@ -704,6 +704,30 @@ pub extern "C" fn proc_exec_replace(
     )
 }
 
+/// 读取刚装载完成的临时进程地址空间快照。
+///
+/// 返回 `(cr3, entry, user_stack, stack_bottom, mm)`；进程已被回滚（state=0）时
+/// 返回 `None`，调用方按装载失败处理。
+fn snapshot_new_addr_space(
+    new_pid: u32,
+) -> Option<(u64, u64, u64, u64, *mut crate::privileged::mm::MmStruct)> {
+    USER_PROC_MANAGER
+        .with_process(new_pid, |proc| {
+            let state = proc.process().state.load(Ordering::SeqCst);
+            if state == 0 {
+                return None;
+            }
+            Some((
+                proc.process().cr3.load(Ordering::SeqCst),
+                proc.entry,
+                proc.process().user_stack.load(Ordering::SeqCst),
+                proc.stack_bottom.load(Ordering::SeqCst),
+                proc.process().mm.load(Ordering::Acquire),
+            ))
+        })
+        .flatten()
+}
+
 // SAFETY: FFI 导出函数，通过 C ABI 与外部代码互操作
 #[unsafe(no_mangle)]
 /// 用主 ELF + 可选解释器替换当前进程映像（D2 双映像 exec 入口）。
@@ -751,23 +775,8 @@ pub extern "C" fn proc_exec_replace_with_interp(
     let new_pid_u32 = new_pid.cast_unsigned();
 
     // 阶段 2: 读取新进程的地址空间信息 (CR3/entry/stack)
-    let new_addr_space = USER_PROC_MANAGER
-        .with_process(new_pid_u32, |proc| {
-            let state = proc.process().state.load(Ordering::SeqCst);
-            if state == 0 {
-                return None;
-            }
-            Some((
-                proc.process().cr3.load(Ordering::SeqCst),
-                proc.entry,
-                proc.process().user_stack.load(Ordering::SeqCst),
-                proc.stack_bottom.load(Ordering::SeqCst),
-                proc.process().mm.load(Ordering::Acquire),
-            ))
-        })
-        .flatten();
-
-    let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom, new_mm)) = new_addr_space
+    let Some((new_cr3, new_entry, mut new_user_stack, new_stack_bottom, new_mm)) =
+        snapshot_new_addr_space(new_pid_u32)
     else {
         USER_PROC_MANAGER.discard_unrun(new_pid_u32);
         return -1;

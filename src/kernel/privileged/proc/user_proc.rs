@@ -73,6 +73,7 @@ pub const GDT_USER_CODE: u64 = 0x20;
 /// ELF 程序头类型: 可加载段
 pub const PT_LOAD: u32 = 1;
 
+use super::elf::verify::VerifyResult;
 /// ELF 头部 / 程序头 — 重导出 elf.rs canonical 定义
 ///
 /// 使用 `privileged::proc::elf::Elf64Header` 作为唯一权威, 避免重复定义
@@ -132,7 +133,7 @@ pub(crate) mod raw {
     pub(crate) const AUXV_ENTRIES: usize = 18;
 
     /// 构造本进程的 auxv 静态部分；`AT_EXECFN` / `AT_RANDOM` 由栈构造器填实际地址.
-    pub(crate) fn auxv_for(proc_ref: &UserProcRef) -> [(u64, u64); AUXV_ENTRIES] {
+    pub(crate) fn auxv_for(proc_ref: UserProcRef) -> [(u64, u64); AUXV_ENTRIES] {
         let mut auxv = [(0u64, 0u64); AUXV_ENTRIES];
         auxv[0] = (AT_PHDR, proc_ref.load_elf_phdr());
         auxv[1] = (AT_PHENT, proc_ref.load_elf_phentsize());
@@ -892,7 +893,7 @@ impl Default for UserProcManager {
 ///
 /// 两架构的信号返回都不能把跳板代码写在用户栈上: 线程栈/BSS 是 NX 数据页,
 /// 执行跳板会触发取指异常. 固定页放在 0x500000 (`USER_CODE_BASE` 与 heap
-/// base 0x600000 之间), 只读可执行, fork 走 COW 克隆的 frame_inc/frame_dec
+/// base 0x600000 之间), 只读可执行, fork 走 `COW` 克隆的 `frame_inc/frame_dec`
 /// 正常共享.
 pub fn map_sigreturn_trampoline(cr3: u64) -> bool {
     use crate::privileged::config::memory::PAGE_SIZE;
@@ -915,11 +916,7 @@ pub fn map_sigreturn_trampoline(cr3: u64) -> bool {
     // 高半区别名, 在 aarch64 KPTI EL1 视图下同样可达; 写入范围严格一页.
     unsafe {
         let dst = raw::phys_to_kern_mut(phys, 0);
-        core::ptr::write_bytes(
-            dst,
-            0,
-            crate::privileged::glue::usize_from_u64(PAGE_SIZE),
-        );
+        core::ptr::write_bytes(dst, 0, crate::privileged::glue::usize_from_u64(PAGE_SIZE));
         core::ptr::copy_nonoverlapping(
             super::signal::SIGRETURN_TRAMPOLINE.as_ptr(),
             dst,
@@ -1045,7 +1042,7 @@ impl UserProcManager {
         // SAFETY: proc 来自 manager 的 BTreeMap，在 `get` 返回后到本函数结束前
         // 调用方未销毁该进程；只读元数据.
         let proc_ref = unsafe { raw::UserProcRef::new_unchecked(proc) };
-        raw::auxv_for(&proc_ref)
+        raw::auxv_for(proc_ref)
     }
 
     /// 通过闭包安全访问进程
@@ -1923,50 +1920,27 @@ impl UserProcManager {
         auxv: &[(u64, u64)],
     ) -> u64 {
         // 所需空间: arg_count(8) + argv 指针(8*(arg_count+1)) + envp 指针(8*(env_count+1)) + 字符串
-        let mut string_bytes: usize = 0;
-        let mut arg_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
-        let mut env_lens: alloc::vec::Vec<usize> = alloc::vec::Vec::new();
-
-        if !argv.is_null() {
-            for i in 0..arg_count {
-                // SAFETY: `# Safety` 段要求 argv 非空时指向至少 arg_count 个有效 C
-                // 字符串指针; 本处只读第 i 个槽位, i < arg_count.
-                let s = unsafe { *argv.add(i) };
-                if s.is_null() {
-                    arg_lens.push(1);
-                    string_bytes += 1;
-                } else {
-                    let mut len: usize = 0;
-                    // SAFETY: s 是 C 字符串, 不断读直到 NUL。
-                    while unsafe { *s.add(len) } != 0 {
-                        len += 1;
-                    }
-                    arg_lens.push(len + 1);
-                    string_bytes += len + 1;
+        let (mut arg_lens, mut env_lens) = (alloc::vec::Vec::new(), alloc::vec::Vec::new());
+        let (mut argv_bytes, mut envp_bytes) = (0usize, 0usize);
+        for (ptrs, count, lens, total) in [
+            (argv, arg_count, &mut arg_lens, &mut argv_bytes),
+            (envp, env_count, &mut env_lens, &mut envp_bytes),
+        ] {
+            let count = if ptrs.is_null() { 0 } else { count };
+            for i in 0..count {
+                // SAFETY: `# Safety` 段要求 ptrs 非空时指向至少 count 个有效 C
+                // 字符串指针; 本处只读第 i 个槽位, i < count.
+                let s = unsafe { *ptrs.add(i) };
+                let mut len = usize::from(s.is_null());
+                // SAFETY: s 非空时按入口约束是 C 字符串, 读到 NUL 为止.
+                while !s.is_null() && unsafe { *s.add(len) } != 0 {
+                    len += 1;
                 }
+                lens.push(len + 1);
+                *total += len + 1;
             }
         }
-
-        if !envp.is_null() {
-            for i in 0..env_count {
-                // SAFETY: `# Safety` 段要求 envp 非空时指向至少 env_count 个有效 C
-                // 字符串指针; 本处只读第 i 个槽位, i < env_count.
-                let s = unsafe { *envp.add(i) };
-                if s.is_null() {
-                    env_lens.push(1);
-                    string_bytes += 1;
-                } else {
-                    let mut len: usize = 0;
-                    // SAFETY: s 是 C 字符串, 不断读直到 NUL。
-                    while unsafe { *s.add(len) } != 0 {
-                        len += 1;
-                    }
-                    env_lens.push(len + 1);
-                    string_bytes += len + 1;
-                }
-            }
-        }
-
+        let string_bytes = argv_bytes + envp_bytes;
         let ptr_count = 1 + (arg_count + 1) + (env_count + 1) + auxv.len() * 2;
         // AT_RANDOM 的 16 字节也必须落在栈内.
         let total = ptr_count * 8 + string_bytes + 16;
@@ -2071,9 +2045,9 @@ impl UserProcManager {
         let r1 = seed.rotate_left(17) ^ 0x5A5A_A5A5_8765_4321;
         for i in 0..16 {
             let byte = if i < 8 {
-                (r0 >> (8 * i)) as u8
+                r0.to_le_bytes()[i]
             } else {
-                (r1 >> (8 * (i - 8))) as u8
+                r1.to_le_bytes()[i - 8]
             };
             raw::write_user_byte(cr3, random_off + i, byte);
         }
@@ -2104,7 +2078,7 @@ impl UserProcManager {
         let stack_top = proc_ref.load_user_stack();
         let cr3 = proc_ref.load_cr3();
 
-        let auxv = raw::auxv_for(&proc_ref);
+        let auxv = raw::auxv_for(proc_ref);
         // SAFETY: argv/envp 由入口 `# Safety` 段约束; cr3 / stack_top 取自本进程镜像
         // 的原子字段 (load_cr3 / load_user_stack).
         let new_sp = unsafe {
@@ -2168,6 +2142,68 @@ impl UserProcManager {
         self.load_elf_from_memory_with_interp(elf_addr, elf_size, 0, 0, pwm)
     }
 
+    /// 校验 ELF 缓冲并读取文件头。
+    ///
+    /// # Safety
+    /// `data` 必须指向至少 `size` 字节可读的缓冲；非空、长度与架构机器码由
+    /// [`super::elf::verify::verify_elf`] 统一检查。
+    unsafe fn verify_image(data: *const u8, size: u64) -> Option<(VerifyResult, ElfHeader)> {
+        if data.is_null() || size < core::mem::size_of::<ElfHeader>() as u64 {
+            return None;
+        }
+        // SAFETY: 调用方按本函数 `# Safety` 段保证 `data` 指向至少 `size` 字节可读缓冲.
+        let verified = unsafe { super::elf::verify::verify_elf(data, size) }.ok()?;
+        // SAFETY: verify_elf 已校验头部范围, 按值 `read_unaligned` 读取不要求对齐.
+        let header = unsafe { data.cast::<ElfHeader>().read_unaligned() };
+        Some((verified, header))
+    }
+
+    /// 校验装载请求的参数形状：主映像非空且足够大、解释器地址/长度成对。
+    ///
+    /// 返回 `Some(interp_present)` 表示可继续；任何畸形请求返回 `None`，由调用方
+    /// 统一以负返回值拒绝。日志保留原有三种失败文案。
+    fn validate_load_request(
+        elf_addr: usize,
+        elf_size: u64,
+        interp_addr: usize,
+        interp_size: u64,
+    ) -> Option<bool> {
+        crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
+        if elf_addr == 0 || elf_size < core::mem::size_of::<ElfHeader>() as u64 {
+            crate::klog_boot_info!("[ELF] load_elf_from_memory: null or too small");
+            return None;
+        }
+        // D2: 解释器存在性必须成对给出；半对参数视为调用方装配错误，不猜测.
+        if (interp_addr == 0) != (interp_size == 0) {
+            crate::klog_boot_info!("[ELF] interp addr/size mismatch");
+            return None;
+        }
+        let interp_present = interp_addr != 0;
+        if interp_present && interp_size < core::mem::size_of::<ElfHeader>() as u64 {
+            crate::klog_boot_info!("[ELF] interp null or too small");
+            return None;
+        }
+        Some(interp_present)
+    }
+
+    /// 为即将装载的映像创建空进程壳（尚未映射任何段）。
+    fn create_process_for_image(&self, entry: u64, pwm: u64) -> Option<*mut UserProcess> {
+        let info = UserProcInfo {
+            entry,
+            name: [0; 64],
+            code_size: 0,
+            code_data: core::ptr::null(),
+        };
+        crate::klog_boot_info!("[ELF] calling self.create...");
+        let proc = self.create(&info, pwm);
+        if proc.is_some() {
+            crate::klog_boot_info!("[ELF] self.create OK");
+        } else {
+            crate::klog_boot_info!("[ELF] self.create failed");
+        }
+        proc
+    }
+
     /// 从内存中的主 ELF + 可选解释器 ELF 加载用户进程, 返回新 pid (失败为负值).
     ///
     /// Linux `execve` 的动态装载契约：主映像的 `PT_INTERP` 由 functions 层读出
@@ -2175,7 +2211,7 @@ impl UserProcManager {
     /// `.dynsym` / `.rela`，也不修改主映像。
     ///
     /// `interp_addr == 0 && interp_size == 0` 表示静态映像；二者只给一个即拒绝。
-    /// 主映像与解释器各自选 `load_bias`；解释器按 ET_DYN 装载到 mmap 区，
+    /// 主映像与解释器各自选 `load_bias`；解释器按 `ET_DYN` 装载到 `mmap` 区，
     /// 入口交给解释器。auxv / 初始栈属 D3，本入口暂只建立 argv/envp 可用的栈。
     ///
     /// # Panics
@@ -2188,58 +2224,28 @@ impl UserProcManager {
         interp_size: u64,
         pwm: u64,
     ) -> i32 {
-        let elf_data = elf_addr as *const u8;
-        crate::klog_boot_info!("[ELF] load_elf_from_memory: entry");
-        if elf_data.is_null() || elf_size < core::mem::size_of::<ElfHeader>() as u64 {
-            crate::klog_boot_info!("[ELF] load_elf_from_memory: null or too small");
+        let Some(interp_present) =
+            Self::validate_load_request(elf_addr, elf_size, interp_addr, interp_size)
+        else {
             return -1;
-        }
-
-        // D2: 解释器存在性必须成对给出；半对参数视为调用方装配错误，不猜测.
-        if (interp_addr == 0) != (interp_size == 0) {
-            crate::klog_boot_info!("[ELF] interp addr/size mismatch");
-            return -1;
-        }
-        let interp_present = interp_addr != 0;
-        let interp_data = interp_addr as *const u8;
-        if interp_present
-            && (interp_data.is_null() || interp_size < core::mem::size_of::<ElfHeader>() as u64)
-        {
-            crate::klog_boot_info!("[ELF] interp null or too small");
-            return -1;
-        }
-
+        };
+        let (elf_data, interp_data) = (elf_addr as *const u8, interp_addr as *const u8);
         // P1-I-33: 委托给 elf::verify::verify_elf 单一来源, 避免解析方式不一致
         crate::klog_boot_info!("[ELF] calling verify_elf...");
-        // SAFETY: `verify_elf` 的契约是「指针指向至少 `elf_size` 字节可读的缓冲」;
-        // 该可读性由调用点按 doc 约定传入内核缓冲保证 (init 的 `read_file_kernel`
-        // 的 `Vec` / exec 的 ELF 缓冲), 本函数首部只补判非空与
-        // `elf_size >= size_of::<ElfHeader>()`. `verify_elf` 内部只读解析
-        // (魔数/类别/机器码/程序头表范围), 不写缓冲, 头部按 `read_unaligned` 读
-        // ⇒ 不要求对齐.
-        let Ok(verified) = (unsafe { super::elf::verify::verify_elf(elf_data, elf_size) }) else {
+        // SAFETY: 可读性由调用点按 doc 约定传入内核缓冲保证 (`Vec` / exec ELF 缓冲).
+        let Some((verified, header)) = (unsafe { Self::verify_image(elf_data, elf_size) }) else {
             crate::klog_boot_info!("[ELF] verify_elf failed");
             return -1;
         };
         crate::klog_boot_info!("[ELF] verify_elf OK, entry={:#x}", verified.entry);
 
-        // SAFETY: verify_elf 已通过校验, header 按值读取安全
-        let header = unsafe { elf_data.cast::<ElfHeader>().read_unaligned() };
-
-        let interp_verified = if interp_present {
-            // SAFETY: 同上；解释器缓冲由 functions 层读入并在本调用期间保持有效.
-            let Ok(v) = (unsafe { super::elf::verify::verify_elf(interp_data, interp_size) })
-            else {
+        let interp_meta = if interp_present {
+            // SAFETY: 解释器缓冲由 functions 层读入并在本调用期间保持有效.
+            let Some(meta) = (unsafe { Self::verify_image(interp_data, interp_size) }) else {
                 crate::klog_boot_info!("[ELF] interp verify_elf failed");
                 return -1;
             };
-            Some(v)
-        } else {
-            None
-        };
-        let interp_header = if interp_present {
-            // SAFETY: interp_verified 已通过同一 verify_elf 校验，头按值读取安全.
-            Some(unsafe { interp_data.cast::<ElfHeader>().read_unaligned() })
+            Some(meta)
         } else {
             None
         };
@@ -2251,7 +2257,7 @@ impl UserProcManager {
         } else {
             0
         };
-        let interp_bias: u64 = interp_verified.map_or(0, |v| {
+        let interp_bias: u64 = interp_meta.as_ref().map_or(0, |(v, _)| {
             if v.is_pie {
                 crate::privileged::config::aslr_mmap_base()
             } else {
@@ -2259,41 +2265,30 @@ impl UserProcManager {
             }
         });
         let main_entry = verified.entry + load_bias;
-        let entry = match interp_verified {
-            Some(v) => v.entry + interp_bias,
-            None => main_entry,
-        };
+        let entry = interp_meta
+            .as_ref()
+            .map_or(main_entry, |(v, _)| v.entry + interp_bias);
         // D3: `AT_PHDR` 必须从“包含 e_phoff 的 PT_LOAD”反推；e_phoff 本身不是 VA.
-        let main_elf = unsafe { core::slice::from_raw_parts(elf_data, elf_size as usize) };
-        let main_phdr = super::elf::phdr_addr(main_elf, load_bias).unwrap_or(0);
+        // SAFETY: `elf_data` 已由 verify_elf 校验为至少 `elf_size` 字节可读；
+        // 切片只用于只读解析，长度使用 64→usize 的位级助手，避免裸 `as` 截断.
+        let main_elf = unsafe {
+            core::slice::from_raw_parts(elf_data, crate::privileged::glue::usize_from_u64(elf_size))
+        };
+        let Some(proc) = self.create_process_for_image(entry, pwm) else {
+            return -1;
+        };
 
         // SAFETY: verify_elf 已通过校验, 后续 raw 指针访问 (header / phdr / 物理页) 集中此块
         unsafe {
-            let info = UserProcInfo {
-                entry,
-                name: [0; 64],
-                code_size: 0,
-                code_data: core::ptr::null(),
-            };
-
-            crate::klog_boot_info!("[ELF] calling self.create...");
-            let proc = if let Some(p) = self.create(&info, pwm) {
-                crate::klog_boot_info!("[ELF] self.create OK");
-                p
-            } else {
-                crate::klog_boot_info!("[ELF] self.create failed");
-                return -1;
-            };
-
             // SAFETY: proc 由 create 返回, 生命周期由 UserProcManager 管理。
             let proc_ref = UserProcRef::new_unchecked(proc);
             let cr3 = proc_ref.load_cr3();
             // D3: 把主/解释器静态事实挂在进程上；栈构造时只消费这些事实，
             // 不再回读已经被替换的 ELF 缓冲.
             proc_ref.store_elf_meta(
-                main_phdr,
-                header.phnum as u64,
-                header.phentsize as u64,
+                super::elf::phdr_addr(main_elf, load_bias).unwrap_or(0),
+                u64::from(header.phnum),
+                u64::from(header.phentsize),
                 main_entry,
                 interp_bias,
             );
@@ -2302,10 +2297,8 @@ impl UserProcManager {
             // `load_elf_segments` 按 PT_LOAD 同源建立，后续 mmap/mprotect/brk
             // 不再依赖“无 mm 裸页”旁路。
             let mut mm = alloc::boxed::Box::new(MmStruct::new());
-            let interp_image = match (interp_verified, interp_header) {
-                (Some(_), Some(header)) => Some((interp_data, interp_size, header, interp_bias)),
-                _ => None,
-            };
+            let interp_image =
+                interp_meta.map(|(_, header)| (interp_data, interp_size, header, interp_bias));
             let Some((main_end, interp_end)) = Self::load_elf_images(
                 elf_data,
                 elf_size,
@@ -2370,6 +2363,7 @@ impl UserProcManager {
         let interp_end = match interp {
             // SAFETY: 同上；解释器 header 来自同一 verify_elf 校验的缓冲.
             Some((data, size, header, bias)) => {
+                // SAFETY: 同上；解释器 header 来自同一 verify_elf 校验的缓冲.
                 unsafe { Self::load_elf_segments(data, size, &header, bias, cr3, mm) }?
             }
             None => 0,

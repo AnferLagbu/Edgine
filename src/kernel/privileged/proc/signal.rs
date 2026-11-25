@@ -204,8 +204,8 @@ pub const SIGRETURN_TRAMPOLINE: [u8; 8] = [0x68, 0x11, 0x80, 0xD2, 0x01, 0x00, 0
 /// sigreturn trampoline 大小
 pub const SIGRETURN_TRAMPOLINE_SIZE: usize = SIGRETURN_TRAMPOLINE.len();
 
-/// 固定跳板页虚拟地址 (USER_CODE_BASE 之后、heap base 0x600000 之前).
-pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x500000;
+/// 固定跳板页虚拟地址 (`USER_CODE_BASE` 之后、heap base 0x600000 之前).
+pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x0050_0000;
 
 /// 信号栈帧总大小 (含帧头与 trampoline)
 pub const SIGNAL_FRAME_TOTAL_SIZE: usize = <ArchUserFrame as UserFrame>::FRAME_HEADER_SIZE

@@ -7,7 +7,9 @@
 use edgine::kernel::functions::mm::mmap::{
     MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MAP_PRIVATE, MmapRequest, mmap_syscall,
 };
-use edgine::kernel::privileged::mm::{MmStruct, PAGE_SIZE, PageFlags, Vma, VmaType, user_va_lower_bound};
+use edgine::kernel::privileged::mm::{
+    MmStruct, PAGE_SIZE, PageFlags, Vma, VmaType, user_va_lower_bound,
+};
 use edgine::kernel::privileged::syscall::Errno;
 
 fn init_boot_info() {
@@ -34,9 +36,12 @@ fn map_fixed_places_mapping_at_exact_address() {
     init_boot_info();
     let mm = MmStruct::new();
     let bound = user_va_lower_bound();
-    let addr = mmap_syscall(&mm, request(bound, 0x01, MAP_FIXED)).expect("MAP_FIXED 无重叠必须成功");
+    let addr =
+        mmap_syscall(&mm, request(bound, 0x01, MAP_FIXED)).expect("MAP_FIXED 无重叠必须成功");
     assert_eq!(u64::try_from(addr).unwrap(), bound);
-    let vma = mm.find_vma(usize::try_from(bound).unwrap()).expect("VMA 必须落位");
+    let vma = mm
+        .find_vma(usize::try_from(bound).unwrap())
+        .expect("VMA 必须落位");
     assert!(vma.flags.contains(PageFlags::PRESENT | PageFlags::USER));
     assert!(!vma.flags.contains(PageFlags::WRITABLE));
 }
@@ -57,7 +62,10 @@ fn map_fixed_noreplace_rejects_overlap() {
 
     let err = mmap_syscall(&mm, request(bound, 0x01, MAP_FIXED_NOREPLACE)).unwrap_err();
     assert_eq!(err, Errno::Eexist, "NOREPLACE 冲突必须 EEXIST");
-    assert!(mm.find_vma(usize::try_from(bound).unwrap()).is_some(), "冲突时不得拆除旧映射");
+    assert!(
+        mm.find_vma(usize::try_from(bound).unwrap()).is_some(),
+        "冲突时不得拆除旧映射"
+    );
 }
 
 #[test]
@@ -65,7 +73,8 @@ fn map_fixed_noreplace_places_when_free() {
     init_boot_info();
     let mm = MmStruct::new();
     let bound = user_va_lower_bound();
-    let addr = mmap_syscall(&mm, request(bound, 0x03, MAP_FIXED_NOREPLACE)).expect("空闲落点必须成功");
+    let addr =
+        mmap_syscall(&mm, request(bound, 0x03, MAP_FIXED_NOREPLACE)).expect("空闲落点必须成功");
     assert_eq!(u64::try_from(addr).unwrap(), bound);
 }
 
@@ -92,7 +101,7 @@ fn prot_none_vma_has_no_present_bit() {
     let mm = MmStruct::new();
     let bound = user_va_lower_bound();
     let addr = mmap_syscall(&mm, request(bound, 0, 0)).expect("PROT_NONE 映射必须成功");
-    let vma = mm.find_vma(usize::try_from(addr).unwrap()).expect("VMA 必须落位");
+    let vma = mm.find_vma(addr).expect("VMA 必须落位");
     assert!(vma.flags.is_empty(), "PROT_NONE VMA 不得置 PRESENT 或 USER");
 }
 
@@ -167,5 +176,8 @@ fn file_backed_overlap_is_rejected_even_with_same_flags() {
             mount_idx: Some(0),
         }))
         .unwrap_err();
-    assert!(err.contains("file backing"), "同权限不同 inode 的文件重叠必须拒绝: {err}");
+    assert!(
+        err.contains("file backing"),
+        "同权限不同 inode 的文件重叠必须拒绝: {err}"
+    );
 }

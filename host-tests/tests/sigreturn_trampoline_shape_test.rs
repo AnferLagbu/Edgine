@@ -1,10 +1,10 @@
-//! `rt_sigreturn` 固定跳板页形状锁（x86_64 / aarch64）。
+//! `rt_sigreturn` 固定跳板页形状锁（`x86_64` / aarch64）。
 //!
 //! 根因：信号返回跳板曾被写到用户栈（`thread_stack`/BSS 数据页）。BSS 是 NX，
 //! 执行跳板触发 instruction-fetch #PF；页故障处理器把它当数据缺页反复“修复”，
 //! 形成逐页 TLB shootdown 风暴，x86 e2e 永远到不了 `[tcp] Listening`。
 //!
-//! 锁定契约：x86_64 跳板必须是固定、只读可执行的独立页；不得再复制到用户栈。
+//! 锁定契约：`x86_64` 跳板必须是固定、只读可执行的独立页；不得再复制到用户栈。
 
 const SIGNAL: &str = include_str!("../../src/kernel/privileged/proc/signal.rs");
 const USER_PROC: &str = include_str!("../../src/kernel/privileged/proc/user_proc.rs");
@@ -12,7 +12,7 @@ const USER_PROC: &str = include_str!("../../src/kernel/privileged/proc/user_proc
 #[test]
 fn sigreturn_trampoline_has_fixed_executable_page() {
     assert!(
-        SIGNAL.contains("pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x500000;"),
+        SIGNAL.contains("pub const SIGRETURN_TRAMPOLINE_ADDR: u64 = 0x0050_0000;"),
         "跳板必须固定在 0x500000（USER_CODE_BASE 与 heap base 之间的独立页）"
     );
     assert!(

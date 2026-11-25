@@ -369,7 +369,7 @@ fn elf_load_segment(
 /// 计算 `AT_PHDR`：程序头表在用户地址空间中的实际地址。
 ///
 /// 用包含 `e_phoff` 的 `PT_LOAD` 反推 `p_vaddr + (e_phoff - p_offset)`，
-/// 再叠加 `load_bias`；不能直接拿 `e_phoff` 当虚拟地址（PIE/非零 p_offset 都会错）。
+/// 再叠加 `load_bias`；不能直接拿 `e_phoff` 当虚拟地址（`PIE`/非零 `p_offset` 都会错）。
 #[must_use]
 pub fn phdr_addr(elf_data: &[u8], load_bias: u64) -> Option<u64> {
     let header = elf_validate(elf_data)?;

@@ -166,6 +166,7 @@ pub unsafe extern "C" fn user_proc_setup_argv(
 /// 为没有 argv/envp 的 PID 1 建立带 auxv 的初始栈 (安全包装)。
 ///
 /// functions 层禁止 `unsafe`；空参数指针与计数由本函数内部固定，调用方只传 pid.
+#[must_use]
 pub fn user_proc_setup_empty_argv(pid: u32) -> i32 {
     // SAFETY: argv/envp 为空指针且计数为 0，setup_user_stack 只按空数组处理.
     unsafe { user_proc_setup_argv(pid, core::ptr::null(), 0, core::ptr::null(), 0) }
