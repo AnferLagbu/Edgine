@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过（aarch64 暂无载体，SKIP）；G1/G2 待开。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -190,7 +190,7 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 
 工作分解：
 
-- **G0 取证**：glibc 动态 hello + `ld-linux` + `libc.so.6` 根镜像；先试 `AT_SYSINFO_EHDR=0`，记录第一个失败点。1–2 人日。
+- **G0 取证（x86_64 已完成 2026-11-25）**：glibc 动态 `true` + `ld-linux` + `libc.so.6` 根镜像已接入 initramfs；`/bin/glibc_true` 真实 `execve` 返回 0，串口打印 `[GLIBC] PASS: dynamic glibc execve`；aarch64 暂无载体，探针打印 SKIP。G0 收敛了 `newfstatat` 参数位移、Linux `struct stat` 布局、内核侧 `fstat` 跨用户边界、文件映射 VMA 拆分 offset、初始栈 16 字节对齐五处缺口。证据见 [d7-g0-glibc-true.md](../report/d7-g0-glibc-true.md)。
 - **G1 最小启动**：补 `AT_HWCAP/AT_HWCAP2/AT_PLATFORM/AT_SECURE` 等 glibc 关心的 auxv；跑单线程 hello。2–4 人日。
 - **G2 启动 syscall**：`set_tid_address`（复用 `clear_child_tid`）1–2 人日；`prlimit64`（复用 rlimit 表）1–2 人日；`rseq` 3–5 人日（若必须）。
 - **G3 VDSO**：仅当 `AT_SYSINFO_EHDR=0` 失败时做；最小 `clock_gettime/gettimeofday/time/getcpu` + ELF 映射 + 符号解析，5–8 人日。
