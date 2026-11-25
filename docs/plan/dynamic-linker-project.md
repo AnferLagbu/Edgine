@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；dlopen 与 clone3 高级字段待开（遗留 9 项见 `D7-DEFERRED`）。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；C1 clone3 高级字段已收口；dlopen 待开（遗留 8 项见 `D7-DEFERRED`）。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -216,7 +216,7 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 | `D7-DEFERRED-A1` | aarch64 glibc G2/G3/G4 运行时载体 | `[ ]` | 无 aarch64 glibc 载体，G2/G3/G4 仅 x86_64 实测；aarch64 只锁 `293 -> UNKNOWN` 映射 | 交叉编译出 aarch64 glibc fixture | aarch64 串口出现 `SET_TID/PRLIMIT/RSEQ/TIME/PTHREAD` 与 `[GLIBC] G2/TIME/PTHREAD PASS`，QEMU 门禁转绿 |
 | `D7-DEFERRED-V1` | 最小 VDSO | `[ ]` | `AT_SYSINFO_EHDR=0`，G3 已证时间路径全部 syscall fallback；未实现 VDSO | 新的 glibc 时间/CPU 路径出现硬依赖或明确要求 VDSO | `clock_gettime/gettimeofday/time/getcpu` 的 VDSO 映射、符号解析、fallback 对照测试 |
 | `D7-DEFERRED-T1` | 真实 RTC/墙钟 epoch | `[ ]` | 墙钟为 tick 派生值；`time/gettimeofday/CLOCK_REALTIME` 一致，但不是真实 epoch | 需要真实日期、NTP/TimeSync 或用户可见时间 | RTC 读取/设置与 `CLOCK_REALTIME` 同源；`time()` 返回真实 epoch；跨启动测试 |
-| `D7-DEFERRED-C1` | `clone3` 高级字段 | `[ ]` | G4 只消费 `flags/stack/stack_size/parent_tid/child_tid/tls`；`pidfd`/`exit_signal`/`set_tid`/`cgroup` 未消费；`stack_size` 已换算栈顶 | 需要 `CLONE_PIDFD`、clone3 进程退出信号或 cgroup 入组 | `pidfd` 写回、`exit_signal` 生效、`set_tid`/`cgroup` 拒绝或实现、clone3 ABI 测试 + QEMU 回归 |
+| `D7-DEFERRED-C1` | `clone3` 高级字段 | `[X]` | 2026-11-26 收口：`exit_signal` 落 PCB 并由组最后成员退出投递；`CLONE_PIDFD` 创建前校验写回地址、创建后 `pidfd_open`/`CLOEXEC`/写回；`set_tid`/`set_tid_size`/`cgroup` 显式 `ENOSYS`；`size>=64` 分级读字段；`exit_signal` 按 Linux `_NSIG=64` 校验；`wait4` 接受 `__WALL`；legacy clone 对 `CLONE_PIDFD`/`CLONE_INTO_CGROUP` 显式 `EINVAL` | 后续 cgroup/PID namespace 实装时替换 ENOSYS；pidfd 创建后失败保留子进程；通用 poll/ppoll timeout 不阻塞，pidfd 只保证零超时快照 | `[CLONE3] PASS` + `[GLIBC] CLONE3 PASS`；G0–G4 全绿；证据见 `docs/report/d7-c1-glibc-clone3.md` |
 | `D7-DEFERRED-L1` | glibc `dlopen` 多共享对象 | `[ ]` | 当前只验证主程序 + `libc.so.6` 两映像；无 `dlopen`/`dlsym`/`dlclose` 腿 | G4 dlopen 切片开工 | 第二个 `.so` 装载、符号解析、重定位、`dlclose` 卸载、QEMU 串口 |
 
 估算：

@@ -550,6 +550,8 @@
 
   > **2026-11-25 D7 G4 pthread 子腿（x86_64）**：新增 `glibc_pthread` 探针，真实 glibc `pthread_create`/TLS/`pthread_join`/`pthread_mutex` 通过；串口 `[PTHREAD] PASS`、`[GLIBC] PTHREAD PASS: glibc pthread`。首轮定位并修复 `clone3` 栈参数：`struct clone_args.stack` 是栈底、`stack_size` 是大小，内核原实现直接把栈底当初始 RSP；新增 `clone3_stack_top()` 换算栈顶并补零长度/溢出测试。调试期串口确认 glibc 实际走 `clone3`（`flags=0x3D0F00`、`stack_size=0x7FFF80`、`ret=Ok(35)`）。`rseq` 仍为 `ENOSYS`，本腿证明 glibc pthread 可 fallback。**G4 新增 `D7-DEFERRED-C1`（clone3 高级字段）与 `D7-DEFERRED-L1`（dlopen 多共享对象）两项，均 `[ ]`**；`D7-DEFERRED` 现共 9 项。G4 dlopen 腿仍待开。证据见 `docs/report/d7-g4-glibc-pthread.md`。
 
+  > **2026-11-26 D7 C1（x86_64）**：`D7-DEFERRED-C1` 收口。`exit_signal` 独立字段化并由线程组最后成员退出投递；`CLONE_PIDFD` 在创建前校验写回地址、创建后安装 CLOEXEC fd 并写回；`set_tid`/`set_tid_size`/`cgroup` 显式 `ENOSYS`；`size>=64` 分级读扩展字段；`exit_signal` 按 Linux `_NSIG=64` 允许 0..=64；`wait4` 接受 `__WALL`。QEMU 串口 `[CLONE3] PASS`、`[GLIBC] CLONE3 PASS: glibc clone3`，G0–G4 全绿。**一并根治 fork 后 COW 破页顺序**：`handle_vma_fault_with_mm` 原先按 VMA `WRITABLE` 与 `FileBacked` 先于 COW 判定，导致 glibc 数据/GOT 的 COW 只读页在 write fault 时被文件页或零页替换，表现为 clone3 返回后 GOT 整页归零 / `stdout` vtable 变回未重定位值。修复后按「PTE present + 帧 COW 标」先破 COW，`FileBacked` 与旧 `!VMA WRITABLE` 支路仍处理 not-present 文件页。证据见 `docs/report/d7-c1-glibc-clone3.md`。D7 延后项 9 → 8；L1 待开。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
