@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -174,7 +174,9 @@
 - 可选加分：动态 `pthread_create`（TLS + mmap 栈）；`dlopen` 只做记录，不作第一波门槛。
 - 出口（已达成）：T7-c 动态腿转绿；`elfld` 退役；文档/台账闭合。
 
-### D7：glibc（可选后置）
+### D7：glibc（可选后置，不阻塞 T7）
+
+口径：T7 已于 2026-11-25 按方案一以双架构 musl 收口；本 D7 是 glibc/vDSO 扩展工程，T7 不再以 glibc 为阻塞项。以下工作按需推进，不影响 T7 的 `[X]` 状态。
 
 glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差异：
 

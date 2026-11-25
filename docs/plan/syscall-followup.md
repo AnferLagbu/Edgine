@@ -1,7 +1,7 @@
 # syscall 后续工程总纲（编号治理闭环后的剩余任务）
 
 > 关联：B09-17/18（编号归位）+ syscall-dispatch-cleanup（问题 4/5 收敛）均已完成（commit `aea73cd1`）。
-> 本总纲规划**剩余任务**：功能实装（T1）、分层迁移（T2）、半成品清除（T3）、审计核实（T4/T5/T6）、预存登记（T7）。
+> 本总纲规划**剩余任务**：功能实装（T1）、分层迁移（T2）、半成品清除（T3）、审计核实（T4/T5/T6）、Linux ABI 兼容（T7，2026-11-25 已按方案一收口）。
 > 数据来源：分册 9 工程计划 D + syscall-dispatch-cleanup B2 分类 + 2026-09-15 源码核实。
 
 ## 描述
@@ -9,7 +9,7 @@
 syscall 编号空间治理已闭环（EG_* 归位 SYS_*、双 dispatch 重叠归零）。剩余为三类：
 1. **功能实装**：Linux 有标准编号但未实装的 syscall（T1）。
 2. **分层收尾**：privileged 回退层 24 个"未迁移" syscall 转 functions（T2），其中半成品先清除（T3）。
-3. **审计核实**：R3/R1/TODO 遗留（T4/T5/T6）+ aarch64 编号预存（T7）。
+3. **审计核实**：R3/R1/TODO 遗留（T4/T5/T6）+ Linux ABI 兼容（T7，2026-11-25 已收口）。
 
 ## 任务方案
 
@@ -87,7 +87,9 @@ read/write/rt_sigreturn/seccomp/prctl/io_uring_setup/enter/register/unshare/setn
 **落地拆分（施工另开，未开工前不动 dispatch）**：
 - **T7-a 编号表（已完成 2026-11-24）**：内核 internal canonical 统一为 x86_64 Linux 编号；`edgine-abi::linux_syscall` 提供 aarch64 边界翻译（公开号双向表 + 遗留号私有段）。`MAX_SYSCALLS = 900` 已删除，改 `is_linux_nr(nr)` / `is_private_nr(nr)` 两段判断，未知号一律 `-ENOSYS`。
 - **T7-b 入口与用户库（已完成 2026-11-24）**：aarch64 切 `x8` 编号 + `x0-x5` 参数；`src/user/lib/src/sys.rs` 的 `sys0..sys6`、`clone_thread`、`rt_sigreturn` trampoline（`movz x8,#139`）同步迁移；x86_64 保持 Linux 入口。
-- **T7-c 外部程序验收（动态 musl 双架构已完成 2026-11-25）**：静态腿用 Zig 0.13 `zig cc -target <arch>-linux-musl -static` 生成外部 hello，替换 `/bin/exectest` 后由既有 `exec_probe` 真实 `execve`；x86_64 与 aarch64 均输出 `hello from external musl` 且 `[EXEC] PASS`（证据见 [t7-external-musl-hello.md](../report/t7-external-musl-hello.md)）。动态腿由 `ld-musl` 真装载：x86_64 用 `hello_dyn`，aarch64 用 Alpine busybox 作为外部 PIE，双架构均输出 `hello dynamic musl` 且 `[DYN] PASS`；缺解释器坏 ELF fixture 双架构均 `[DYN] NEG PASS`（`ENOENT`）。`elfld` 已退役（`d6505490`）。相对 `PT_INTERP` 双架构均 `[DYN] FMT PASS`（`ENOEXEC`），无 NUL/越界等畸形形态由 `interp_path` 单测锁住；musl 的 `libc.musl-*` 与 `ld-musl` 是同一对象（Alpine 中 libc 是 loader 符号链接），移除 libc 文件不构成独立失败面，`libc 缺失` 归 glibc 后置。glibc/vDSO 仍未覆盖；`busybox_ECHO` 的原静态腿未通过单独归因，不混入动态证明。
+- **T7-c 外部程序验收（已完成 2026-11-25；T7 收口依据）**：静态腿用 Zig 0.13 `zig cc -target <arch>-linux-musl -static` 生成外部 hello，替换 `/bin/exectest` 后由既有 `exec_probe` 真实 `execve`；x86_64 与 aarch64 均输出 `hello from external musl` 且 `[EXEC] PASS`（证据见 [t7-external-musl-hello.md](../report/t7-external-musl-hello.md)）。动态腿由 `ld-musl` 真装载：x86_64 用 `hello_dyn`，aarch64 用 Alpine busybox 作为外部 PIE，双架构均输出 `hello dynamic musl` 且 `[DYN] PASS`；缺解释器坏 ELF fixture 双架构均 `[DYN] NEG PASS`（`ENOENT`）。`elfld` 已退役（`d6505490`）。相对 `PT_INTERP` 双架构均 `[DYN] FMT PASS`（`ENOEXEC`），无 NUL/越界等畸形形态由 `interp_path` 单测锁住；musl 的 `libc.musl-*` 与 `ld-musl` 是同一对象（Alpine 中 libc 是 loader 符号链接），移除 libc 文件不构成独立失败面，`libc 缺失` 归 D7 的独立 `libc.so.6` 场景。T7 以本节的静态/动态 musl 与失败路径收口；glibc/vDSO 不再作为 T7 阻塞项，整体移交 `dynamic-linker-project.md` 的 D7 可选工程。`busybox_ECHO` 的原静态腿未通过单独归因，不混入动态证明。
+
+**T7 收口口径（2026-11-25 方案一）**：T7 以双架构 musl 的静态/动态装载与失败路径为收口依据；glibc/vDSO 整体移交 `dynamic-linker-project.md` 的 D7 可选工程，不再作为 T7-c 的剩余项。失败面边界保留：无 NUL/越界/加法回绕仅由 `interp_path` 单测覆盖；musl 的 `libc 缺失` 退化为 loader 缺失，独立 `libc.so.6` 缺失留 D7。
 
 **私有段边界（与 T7-a 同批，不能拖）**：承诺 Linux ABI 意味着 Linux 公开编号空间全部让给 Linux（当前 0–466，预留到 499 及未来增长段）；EG 私有不再借用 400–899 的任何 Linux 可能扩展号。迁移前 SGEG 的 **400–423 / 453–463** 与 Linux 冲突：aarch64 400=`sched_setattr`、x86_64 453=`map_shadow_stack`，继续占用就会让 Linux 程序调错函数。T7-a 已把 SGEG 与 EG 500–899 统一迁到高位私有基址 `0x4000_0000` 起（按旧号偏移保留相对布局），旧号不做兼容别名——保留别名等于把“双 ABI”换个名字留下。这是一次显式 ABI 断代，SGEG 冻结面正好可同批迁移，不另开兼容层。
 
@@ -122,7 +124,7 @@ T7 (Linux ABI 兼容, P1)
   - 丙批审查整改（分册 9 **D-8** 余项 7 项）：**7 项已落地**——A1 用户页表遍历持 `VMM_LOCK`（`41003e87`，原案「`MmStruct.rss_pages` 记账」因 `MmStruct` 无 per-process 归属不可达，经用户裁定改走方案 A：保留 cr3 遍历语义 + 同持 VMM_LOCK；公共 API 面未删）/ A3 OOMD victim 过滤僵尸（`93568c05`）/ A4 `terminated_count` 仅送达才累加（`4614e707`）/ B2 ext2 `i_ctime` 独立取值（`1b852e5d`）/ B4 换行（`3541b63c`）/ exfat 删静默成功覆写（`7079a94e`）/ F9 豁免残留清除（`29bee0a5`）。
   - exFAT 正式任务（D-5 ③）**维持登记**：删除静默成功覆写仅恢复「不支持」语义，三项前置（目录项定位 / 时间戳编解码 / 验证载体）仍缺。
   - R1 台账数字**未变动**（`CRITICAL=7 / HIGH=0 / WARN=0 / INFO=436`）：本批改动为 trait 覆写删除与 import 分组，未增减已分类的零引用 `pub fn`，清单算术保持闭合。
-- [~] T7：Linux syscall ABI 兼容 — **T7-a/T7-b 已完成，T7-c 动态 musl 双架构已完成，glibc/vDSO 待办**（2026-11-24 用户裁定：承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有高位扩展段，不做双 ABI 并存。T7-a：canonical x86_64 编号 + `edgine-abi::linux_syscall` aarch64 双向翻译表，私有号全部迁 `0x4000_0000`，删除 `MAX_SYSCALLS`；T7-b：aarch64 `x8` 入口 + `x0-x5` 参数、用户库门、`clone_thread`、`rt_sigreturn` trampoline 全部迁移。T7-c：静态 musl 双架构通过；动态 musl 由上游 `ld-musl` 真 `execve`，x86_64/aarch64 均 `[DYN] PASS`，缺解释器 `[DYN] NEG PASS`，相对 `PT_INTERP` `[DYN] FMT PASS`，`elfld` 退役。验证：`./ci/build.sh all` 6/6、`make test-host`、`make test-kernel-host`、`bash ci/audit.sh full`（含 QEMU 双架构 2/2、UEFI）均通过。glibc/vDSO 仍待；musl 的 libc 缺失退化为 loader 缺失，坏 `PT_INTERP` 格式已由 `ENOEXEC` 腿覆盖；T7 由 P2 预存登记升 P1）
+- [X] T7：Linux syscall ABI 兼容 — **T7-a/T7-b/T7-c 已完成；T7 以双架构 musl 静态/动态装载与失败路径收口，glibc/vDSO 归 D7 可选工程，不阻塞 T7**（2026-11-24 用户裁定：承诺 Linux 用户态 ABI，采用单一 Linux ABI + EG 私有高位扩展段，不做双 ABI 并存。T7-a：canonical x86_64 编号 + `edgine-abi::linux_syscall` aarch64 双向翻译表，私有号全部迁 `0x4000_0000`，删除 `MAX_SYSCALLS`；T7-b：aarch64 `x8` 入口 + `x0-x5` 参数、用户库门、`clone_thread`、`rt_sigreturn` trampoline 全部迁移。T7-c：静态 musl 双架构通过；动态 musl 由上游 `ld-musl` 真 `execve`，x86_64/aarch64 均 `[DYN] PASS`，缺解释器 `[DYN] NEG PASS`，相对 `PT_INTERP` `[DYN] FMT PASS`，`elfld` 退役。验证：`./ci/build.sh all` 6/6、`make test-host`、`make test-kernel-host`、`bash ci/audit.sh full`（含 QEMU 双架构 2/2、UEFI）均通过。glibc/vDSO 已移交 D7（可选，不阻塞 T7）；musl 的 libc 缺失退化为 loader 缺失，坏 `PT_INTERP` 格式已由 `ENOEXEC` 腿覆盖；T7 原由 P2 预存登记升 P1，2026-11-25 按方案一收口）
 
 ### T3 实施记录（2026-09-15）
 

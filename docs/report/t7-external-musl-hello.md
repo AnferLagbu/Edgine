@@ -3,6 +3,9 @@
 日期：2026-11-24（静态）；2026-11-25 补记动态
 关联：`docs/plan/syscall-followup.md` T7-c
 
+> 收口口径（2026-11-25 方案一）：T7 以本报告的静态/动态 musl 与失败路径收口；
+> glibc/vDSO 整体归 `docs/plan/dynamic-linker-project.md` 的 D7 可选工程，不阻塞 T7。
+
 > 本文前半保留 2026-11-24 静态腿原始读数；动态 musl 与失败路径结果见
 > “动态 musl 补记”一节，边界结论以补记后的内容为准。
 
@@ -106,7 +109,8 @@ Alpine 的 `libc.musl-<arch>.so.1` 与 `ld-musl-<arch>.so.1` 是同一对象（�
 
 ## 边界与未覆盖
 
-- 静态腿只覆盖静态 musl；动态 musl 已由补记覆盖，glibc、vDSO、TLS 变体、
+- 静态腿只覆盖静态 musl；动态 musl 已由补记覆盖。glibc 与 vDSO 整体归
+  `dynamic-linker-project.md` 的 D7 可选工程，不作为 T7 的收口条件；TLS 变体、
   带复杂重定位的 PIE 仍未跑。
 - 同批尝试的 `busybox_ECHO`（1.35.0 x86_64 musl，sha256 `b9d380e2…9ff5`）在
   x86_64 上 `[EXEC] FAIL: cwd=0 root=0`，未进入 `[EXEC] PASS`。该载荷不作为
