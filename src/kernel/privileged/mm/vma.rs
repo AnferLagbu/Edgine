@@ -734,12 +734,22 @@ impl MmStruct {
     /// 搜索起点取 `mmap_base` 与 [`crate::privileged::mm::user_va_lower_bound`]
     /// 的较大者: 恒等窗口 / ELF 装载基址之下不放用户映射 (K-08, I4 代理面).
     pub fn find_free_range(&self, size: usize) -> Option<usize> {
-        let vmas = self.vmas.lock();
         let lower =
             crate::privileged::glue::usize_from_u64(crate::privileged::mm::user_va_lower_bound());
-        let mut cursor = self.mmap_base.max(lower);
+        self.find_free_range_from(self.mmap_base.max(lower), size)
+    }
+
+    /// 从显式起点搜索空闲 VMA 区间 (供单测复用, 不触碰 boot 初始化的下界).
+    fn find_free_range_from(&self, mut cursor: usize, size: usize) -> Option<usize> {
+        let vmas = self.vmas.lock();
 
         for vma in vmas.iter() {
+            // VMA 列表按 start 升序; 已完全落在 cursor 之下的 VMA 不能把
+            // cursor 回退到它的 end, 否则 hint-less mmap 会从低位重新分配,
+            // 抢占 brk 堆区 (glibc loader 在 main_end 处映射 libc 即由此触发).
+            if vma.end <= cursor {
+                continue;
+            }
             if cursor + size <= vma.start {
                 return Some(cursor);
             }
@@ -1046,21 +1056,31 @@ impl MmStruct {
             & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
         let start_brk = self.start_brk.load(Ordering::Acquire);
+        if new_brk < start_brk {
+            return Err("brk below start_brk");
+        }
         let current_brk = self.brk.load(Ordering::Acquire);
 
-        if page_aligned > start_brk {
+        // Linux 语义: `mm->brk` 保存请求的精确值, 只有 VMA 覆盖范围按页对齐.
+        // glibc malloc 以 `sbrk` 返回的精确旧 break 推导堆布局; 若这里把
+        // `mm->brk` 也页对齐后返回, glibc 的 top chunk 记账会错位, 表现为
+        // 第二次 malloc/free 时 "malloc(): corrupted top size".
+        let page_size = crate::privileged::glue::usize_from_u64(PAGE_SIZE);
+        let current_page_end = (current_brk + page_size - 1) & !(page_size - 1);
+        if page_aligned > current_page_end {
             let flags = PageFlags::PRESENT | PageFlags::WRITABLE | PageFlags::USER;
-            let vma = Vma::new(current_brk, page_aligned, flags, VmaType::Heap);
+            let vma = Vma::new(current_page_end, page_aligned, flags, VmaType::Heap);
             self.insert_vma(vma)?;
-            self.brk.store(page_aligned, Ordering::Release);
-        } else if page_aligned < current_brk {
+        } else if page_aligned < current_page_end {
             // 先更新 brk，防止其他 CPU 在 remove_range 后读到旧值
             // 去访问已被 unmap 的堆区域
-            self.brk.store(page_aligned, Ordering::Release);
-            self.remove_range(page_aligned, current_brk, cr3);
+            self.brk.store(new_brk, Ordering::Release);
+            self.remove_range(page_aligned, current_page_end, cr3);
+            return Ok(new_brk);
         }
 
-        Ok(self.brk.load(Ordering::Acquire))
+        self.brk.store(new_brk, Ordering::Release);
+        Ok(new_brk)
     }
 
     // ============================================================================
@@ -1443,4 +1463,48 @@ pub unsafe extern "C" fn vma_find(mm_ptr: *const MmStruct, addr: u64) -> u64 {
             let flags = vma.flags.bits();
             ((vma.start as u64) << 32) | flags
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page_size() -> usize {
+        crate::privileged::glue::usize_from_u64(PAGE_SIZE)
+    }
+
+    #[test]
+    fn find_free_range_does_not_regress_below_mmap_base() {
+        let mut mm = MmStruct::new();
+        mm.mmap_base = 0x7fff_0000_0000;
+        // 低位 VMA 模拟已装载的 PIE/库; 旧实现会把 cursor 回退到它的 end,
+        // 让 hint-less mmap 落回 main_end 并抢占 brk 堆区.
+        let low_start = 0x5555_0000_0000usize;
+        let low_end = low_start + page_size();
+        mm.insert_vma(Vma::new(
+            low_start,
+            low_end,
+            PageFlags::PRESENT | PageFlags::USER | PageFlags::NX,
+            VmaType::Anonymous,
+        ))
+        .unwrap();
+
+        let got = mm.find_free_range_from(mm.mmap_base, page_size()).unwrap();
+        assert!(
+            got >= mm.mmap_base,
+            "hint-less mmap 必须从 mmap_base 之上分配, 实际 {got:#x}"
+        );
+    }
+
+    #[test]
+    fn set_brk_keeps_exact_break_value() {
+        let mm = MmStruct::new();
+        let base = 0x40_0000usize;
+        mm.start_brk.store(base, Ordering::SeqCst);
+        mm.brk.store(base, Ordering::SeqCst);
+
+        let requested = base + 0x123;
+        assert_eq!(mm.set_brk(requested, 0).unwrap(), requested);
+        assert_eq!(mm.brk.load(Ordering::SeqCst), requested);
+    }
 }
