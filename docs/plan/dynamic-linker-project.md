@@ -169,9 +169,10 @@
 - 已施工（`e89cc918`）：`qemu_boot_test.sh` 两架构各自 fail-closed 要求 `[DYN] PASS` 且无 `[DYN] FAIL`；实测双架构 QEMU 启动门禁均 `1/1`，aarch64 e2e 3/3、x86 e2e 不回归。
 - 已施工（`81eea0ba`）：缺解释器失败路径双架构造桩（145 B ELF，PT_INTERP 指向不存在路径），`proc_exec` 返回 `-ENOENT`，`[DYN] NEG PASS`；QEMU 两架构 fail-closed 断言均通过。
 - 已施工（`d6505490`）：`elfld` 全链退役；`ci/build.sh all` 6/0、host-tests 与 `make test-kernel-host` 全绿、UEFI 全判据通过（`978e2b2f` 修 no-op clear 误红）。
-- 待办：坏 `PT_INTERP`（非绝对路径）与 libc 缺失两条失败路径尚未造桩；`ci/audit.sh full` 复跑；T7-c 台账收口。
+- 已完成：x86_64 与 aarch64 上游 `ld-musl` 真跑（外部程序输出 + `[DYN] PASS`）；缺解释器路径返回 `ENOENT`（`[DYN] NEG PASS`）；`elfld` 改写链与旧工具退役；`ci/audit.sh full` 全绿（含双架构 QEMU/UEFI）；T7-c 动态腿转绿。
+- 剩余（D6 扩展，不阻塞本阶段出口）：非绝对/非法 `PT_INTERP` 格式与 libc 缺失两条失败路径未造桩；glibc/vDSO 后置。
 - 可选加分：动态 `pthread_create`（TLS + mmap 栈）；`dlopen` 只做记录，不作第一波门槛。
-- 出口：T7-c 动态腿转绿；`elfld` 退役；文档/台账闭合。
+- 出口（已达成）：T7-c 动态腿转绿；`elfld` 退役；文档/台账闭合。
 
 ### D7：glibc（可选后置）
 
