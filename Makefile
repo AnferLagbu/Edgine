@@ -204,16 +204,33 @@ USER_WASMRUN_ELF = $(RUST_USER_TARGET)/wasmrun
 # 归档恒生成, 使全部启动腿共用同一条依赖链, 不会出现"起跑才发现归档缺失".
 USER_CPIO = $(USER_BUILD_DIR)/initramfs.cpio
 MK_CPIO_PY = scripts/make_initramfs_cpio.py
-# D5 动态 musl 验收 fixture: 仅有 x86_64 版; aarch64 归档跳过缺失条目.
-DYN_MUSL_FIXTURE_DIR = scripts/fixtures/dynamic-musl-x86_64
+# D5/D6 动态 musl 验收 fixture: 两架构各一份真实上游解释器与 libc.
+# 主载荷按架构取: x86_64 用自建动态 hello；aarch64 暂用 Alpine busybox 作为
+# 外部程序证明腿 (argv 见 init 的 dyn_probe).
+DYN_MUSL_FIXTURE_DIR = scripts/fixtures/dynamic-musl-$(ARCH)
 USER_DYNTEST = $(USER_BUILD_DIR)/dyntest.bin
-USER_DYN_LOADER = $(USER_BUILD_DIR)/ld-musl-x86_64.so.1
-USER_DYN_LIBC = $(USER_BUILD_DIR)/libc.musl-x86_64.so.1
 ifeq ($(ARCH),x86_64)
-DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
+DYN_TEST_SRC = hello_dyn
+DYN_LOADER_SRC = ld-musl-x86_64.so.1
+DYN_LIBC_SRC = libc.musl-x86_64.so.1
+DYN_LOADER_NAME = ld-musl-x86_64.so.1
+DYN_LIBC_NAME = libc.musl-x86_64.so.1
+else ifeq ($(ARCH),aarch64)
+DYN_TEST_SRC = busybox
+DYN_LOADER_SRC = ld-musl-aarch64.so.1
+DYN_LIBC_SRC = libc.musl-aarch64.so.1
+DYN_LOADER_NAME = ld-musl-aarch64.so.1
+DYN_LIBC_NAME = libc.musl-aarch64.so.1
 else
-DYN_CPIO_DEPS =
+DYN_TEST_SRC =
+DYN_LOADER_SRC =
+DYN_LIBC_SRC =
+DYN_LOADER_NAME =
+DYN_LIBC_NAME =
 endif
+USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
+USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
+DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
@@ -304,18 +321,6 @@ $(USER_BUILD_DIR)/wasmrun.bin: $(USER_WASMRUN_ELF)
 $(USER_BUILD_DIR)/reboottest.bin: $(USER_REBOOTTEST_ELF)
 	@mkdir -p $(USER_BUILD_DIR)
 	@$(OBJCOPY) --strip-all $< $@
-
-$(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/hello_dyn
-	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
-
-$(USER_DYN_LOADER): $(DYN_MUSL_FIXTURE_DIR)/ld-musl-x86_64.so.1
-	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
-
-$(USER_DYN_LIBC): $(DYN_MUSL_FIXTURE_DIR)/libc.musl-x86_64.so.1
-	@mkdir -p $(USER_BUILD_DIR)
-	@cp $< $@
 endif
 
 # $(LDSCRIPT) 入依赖: 链接脚本按文件名点名 .o (boot.o / isr.o, 见 x86_64.ld 注释),
@@ -419,6 +424,19 @@ $(USER_PROBE_WASM): $(MK_PROBE_WASM_PY)
 $(USER_WASI_DEMO): $(WASI_DEMO_FIXTURE)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $(WASI_DEMO_FIXTURE) $@
+
+# D5/D6 动态 fixture 复制规则 (两架构共用变量, 源名按 ARCH 选择).
+$(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_TEST_SRC)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_DYN_LOADER): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_LOADER_SRC)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_DYN_LIBC): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_LIBC_SRC)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
 
 $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
               $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \

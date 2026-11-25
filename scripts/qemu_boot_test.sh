@@ -974,6 +974,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] execve 探针载体态不合规 (无 SKIP 亦无 PASS, 或出现 FAIL) (A-14)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # D6: aarch64 动态 musl 真 execve 腿 —— 上游 ld-musl-aarch64 完成
+            # busybox + libc 装载/重定位/RELRO，busybox echo applet 输出固定文案并 0 退出.
+            # 与 x86 分支同口径 fail-closed.
+            if grep -aq "\[DYN\] PASS: dynamic musl execve" "$A64_LOG" \
+                && ! grep -aq "\[DYN\] FAIL" "$A64_LOG"; then
+                ok "[aarch64] 动态 musl execve 通过 (D6 PT_INTERP + RELRO)"
+            else
+                warn "[aarch64] 动态 musl execve 未通过 (D6 PT_INTERP + RELRO)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             if ! grep -aq "\[WASM\] FAIL" "$A64_LOG" \
                 && { grep -aq "\[WASM\] SKIP:" "$A64_LOG" || grep -aq "\[WASM\] PASS:" "$A64_LOG"; }; then
                 ok "[aarch64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"

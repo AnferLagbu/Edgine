@@ -1415,8 +1415,9 @@ fn wasmi_probe() {
     }
 }
 
-/// D5 动态 musl 载体路径: `/bin/dyntest` 由 initramfs 带入, `PT_INTERP` 指向
-/// `/lib/ld-musl-x86_64.so.1`, `NEEDED` 为 `libc.musl-x86_64.so.1`.
+/// D5/D6 动态 musl 载体路径: `/bin/dyntest` 由 initramfs 带入；x86_64 的
+/// `PT_INTERP` 指向 `/lib/ld-musl-x86_64.so.1`，aarch64 指向
+/// `/lib/ld-musl-aarch64.so.1`，二者 `NEEDED` 均为对应架构的 `libc.musl-*`.
 const DYN_PROBE_PATH: &[u8] = b"/bin/dyntest\0";
 
 /// D5 动态 musl 真运行探针: fork → `execve(/bin/dyntest)` → 父进程按 wstatus 判定.
@@ -1431,7 +1432,20 @@ fn dyn_probe() {
     }
     let child = fork();
     if child == 0 {
+        // x86_64 的 hello_dyn 无参数；aarch64 复用 Alpine busybox 作为外部程序
+        // 证明腿，argv 传 applet + 固定文案，输出与 x86 同形.
+        #[cfg(target_arch = "x86_64")]
         let argv: [*const u8; 2] = [DYN_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        #[cfg(target_arch = "aarch64")]
+        let argv: [*const u8; 4] = [
+            // busybox 以 argv[0] 的 basename 选择 applet；execve 的是
+            // `/bin/dyntest`，但这里必须伪装成 multicall 入口名，argv[1]
+            // 才会被当作 applet 参数（宿主 qemu-user 同口径实测）.
+            b"/bin/busybox\0".as_ptr(),
+            b"echo\0".as_ptr(),
+            b"hello dynamic musl\0".as_ptr(),
+            core::ptr::null(),
+        ];
         let rc = proc_exec(DYN_PROBE_PATH, &argv, &[]);
         print("[DYN] child exec rc=");
         print_dec(rc);
