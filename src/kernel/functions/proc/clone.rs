@@ -26,6 +26,28 @@ use crate::functions::syscall::types::{
     CLONE_SIGHAND, CLONE_THREAD, CLONE_VM,
 };
 
+/// clone3 的栈字段换算：`stack` 是栈底、`stack_size` 是大小，clone(2) 需要初始 RSP。
+///
+/// `stack_size == 0` 时保持 clone(2) 的“stack 即 RSP”口径；非零时返回栈顶。
+///
+/// # Errors
+///
+/// - `stack == 0 && stack_size != 0` → `EINVAL`（有栈大小但无栈底）
+/// - `stack + stack_size` 溢出 → `EINVAL`（避免把回绕地址交给子线程）
+pub fn clone3_stack_top(stack: u64, stack_size: u64) -> Result<u64, Errno> {
+    if stack == 0 {
+        return if stack_size == 0 {
+            Ok(0)
+        } else {
+            Err(Errno::Einval)
+        };
+    }
+    if stack_size == 0 {
+        return Ok(stack);
+    }
+    stack.checked_add(stack_size).ok_or(Errno::Einval)
+}
+
 /// clone 安全代理
 ///
 /// 验证: flags 合法, `CLONE_VM+CLONE_THREAD` 需要 `CLONE_SIGHAND`,
@@ -652,5 +674,22 @@ mod tests {
     fn clone_vm_without_sighand_is_rejected() {
         let ret = clone_syscall(CLONE_VM, 0, 0, 0, 0);
         assert!(matches!(ret, Err(Errno::Einval)));
+    }
+
+    #[test]
+    fn clone3_stack_top_uses_stack_size() {
+        assert_eq!(clone3_stack_top(0x1000, 0x2000), Ok(0x3000));
+        assert_eq!(clone3_stack_top(0x1000, 0), Ok(0x1000));
+        assert_eq!(clone3_stack_top(0, 0), Ok(0));
+    }
+
+    #[test]
+    fn clone3_stack_size_without_stack_is_rejected() {
+        assert!(matches!(clone3_stack_top(0, 0x2000), Err(Errno::Einval)));
+    }
+
+    #[test]
+    fn clone3_stack_top_rejects_overflow() {
+        assert!(matches!(clone3_stack_top(u64::MAX, 1), Err(Errno::Einval)));
     }
 }

@@ -906,9 +906,24 @@ fn dispatch_proc_create(num: u64, args: [u64; 6]) -> Option<i64> {
             if !crate::privileged::syscall::api::read_struct_from_user(a0, &mut args) {
                 return Some(Errno::Efault.as_ret());
             }
+
+            // clone3 的 `stack` 是栈底、`stack_size` 是大小；clone(2) 的
+            // `child_stack` 是初始 RSP（栈顶）。栈底直接当 RSP 会让 glibc
+            // pthread 首次压栈落进 guard page，pthread_create 只能退回 clone(2)。
+            let child_stack = match crate::functions::proc::clone::clone3_stack_top(
+                args.stack,
+                args.stack_size,
+            ) {
+                Ok(top) => top,
+                Err(errno) => return Some(errno.as_ret()),
+            };
+            // clone3 带 CLONE_VM 时必须有显式栈；不能像 fork 一样继承父栈。
+            if args.flags & crate::functions::syscall::types::CLONE_VM != 0 && child_stack == 0 {
+                return Some(Errno::Einval.as_ret());
+            }
             as_ret(crate::functions::proc::clone::clone_syscall(
                 args.flags,
-                args.stack,
+                child_stack,
                 args.parent_tid,
                 args.child_tid,
                 args.tls,
