@@ -749,6 +749,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 动态 musl execve 未通过 (D5 PT_INTERP + RELRO)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+
+            # D6 失败路径: 缺解释器必须在内核侧返回 ENOENT (-2) 并由子进程确认；
+            # 只允许 PASS，不允许 SKIP/FAIL（两架构都带 bad-interp 载体）.
+            if grep -aq "\[DYN\] NEG PASS:" "$X64_LOG" \
+                && ! grep -aq "\[DYN\] NEG FAIL" "$X64_LOG"; then
+                ok "[x86_64] 缺解释器失败路径通过 (D6 ENOENT)"
+            else
+                warn "[x86_64] 缺解释器失败路径未通过 (D6)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \
                 && { grep -aq "\[WASM\] SKIP:" "$X64_LOG" || grep -aq "\[WASM\] PASS:" "$X64_LOG"; }; then
                 ok "[x86_64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"
@@ -982,6 +992,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 动态 musl execve 通过 (D6 PT_INTERP + RELRO)"
             else
                 warn "[aarch64] 动态 musl execve 未通过 (D6 PT_INTERP + RELRO)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+
+            # D6 失败路径: 缺解释器必须在内核侧返回 ENOENT (-2) 并由子进程确认；
+            # 只允许 PASS，不允许 SKIP/FAIL（两架构都带 bad-interp 载体）.
+            if grep -aq "\[DYN\] NEG PASS:" "$A64_LOG" \
+                && ! grep -aq "\[DYN\] NEG FAIL" "$A64_LOG"; then
+                ok "[aarch64] 缺解释器失败路径通过 (D6 ENOENT)"
+            else
+                warn "[aarch64] 缺解释器失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$A64_LOG" \

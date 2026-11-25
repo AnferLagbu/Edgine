@@ -92,6 +92,9 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     # 的符号链接, cpio 解析器不支持符号链接, 故给两份相同字节). 两架构的 loader/libc
     # 条目并列登记; 当前架构未构建的源文件由 collect_entries 跳过.
     ("bin/dyntest", "file", "dyntest.bin"),
+    # D6 失败路径: 合法 ELF 头 + 一条指向不存在解释器的 PT_INTERP；内核应在
+    # 读解释器阶段返回 ENOENT，不得 panic 或静默执行旧映像.
+    ("bin/dyntest_nointerp", "file", "dyntest_nointerp.bin"),
     ("lib", "dir", ""),
     ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
     ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),

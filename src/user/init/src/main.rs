@@ -138,6 +138,7 @@ pub extern "C" fn _start() -> ! {
     // 必须在 busy 忙等子进程 fork 之前同步完成: 探针靠父进程 wait4 收割.
     exec_probe();
     dyn_probe();
+    dyn_negative_probe();
 
     // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
     // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
@@ -1462,6 +1463,48 @@ fn dyn_probe() {
         println("[DYN] PASS: dynamic musl execve");
     } else {
         print("[DYN] FAIL: status=");
+        print_dec(i64::from(status));
+        print(" reap=");
+        print_dec(reaped);
+        print_char(b'\n');
+    }
+}
+
+/// D6 失败路径: 合法 ELF 头 + 指向不存在解释器的 PT_INTERP.
+///
+/// 期望内核在读取解释器阶段返回 ENOENT（-2），子进程打印固定 PASS 后 0 退出；
+/// 不得 panic、不得把旧 init 映像当成成功 exec 继续跑. 无载体 (非动态架构)
+/// 打印 SKIP，与真回归区分.
+const DYN_BAD_INTERP_PATH: &[u8] = b"/bin/dyntest_nointerp\0";
+
+fn dyn_negative_probe() {
+    if !file_present(DYN_BAD_INTERP_PATH) {
+        println("[DYN] NEG SKIP: no bad-interp carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [DYN_BAD_INTERP_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let rc = proc_exec(DYN_BAD_INTERP_PATH, &argv, &[]);
+        if rc == -2 {
+            println("[DYN] NEG PASS: missing interp -> ENOENT");
+            proc_exit(0);
+        }
+        print("[DYN] NEG FAIL: rc=");
+        print_dec(rc);
+        print_char(b'\n');
+        proc_exit(1);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[DYN] NEG FAIL: fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) && status == 0 {
+        println("[DYN] NEG PASS: bad interp rejected, child survived");
+    } else {
+        print("[DYN] NEG FAIL: status=");
         print_dec(i64::from(status));
         print(" reap=");
         print_dec(reaped);

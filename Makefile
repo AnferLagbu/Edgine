@@ -209,20 +209,24 @@ MK_CPIO_PY = scripts/make_initramfs_cpio.py
 # 外部程序证明腿 (argv 见 init 的 dyn_probe).
 DYN_MUSL_FIXTURE_DIR = scripts/fixtures/dynamic-musl-$(ARCH)
 USER_DYNTEST = $(USER_BUILD_DIR)/dyntest.bin
+USER_DYN_BAD = $(USER_BUILD_DIR)/dyntest_nointerp.bin
 ifeq ($(ARCH),x86_64)
 DYN_TEST_SRC = hello_dyn
+DYN_BAD_SRC = badinterp_x86_64.bin
 DYN_LOADER_SRC = ld-musl-x86_64.so.1
 DYN_LIBC_SRC = libc.musl-x86_64.so.1
 DYN_LOADER_NAME = ld-musl-x86_64.so.1
 DYN_LIBC_NAME = libc.musl-x86_64.so.1
 else ifeq ($(ARCH),aarch64)
 DYN_TEST_SRC = busybox
+DYN_BAD_SRC = badinterp_aarch64.bin
 DYN_LOADER_SRC = ld-musl-aarch64.so.1
 DYN_LIBC_SRC = libc.musl-aarch64.so.1
 DYN_LOADER_NAME = ld-musl-aarch64.so.1
 DYN_LIBC_NAME = libc.musl-aarch64.so.1
 else
 DYN_TEST_SRC =
+DYN_BAD_SRC =
 DYN_LOADER_SRC =
 DYN_LIBC_SRC =
 DYN_LOADER_NAME =
@@ -230,7 +234,7 @@ DYN_LIBC_NAME =
 endif
 USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
 USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
-DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
+DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
@@ -427,6 +431,10 @@ $(USER_WASI_DEMO): $(WASI_DEMO_FIXTURE)
 
 # D5/D6 动态 fixture 复制规则 (两架构共用变量, 源名按 ARCH 选择).
 $(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_TEST_SRC)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_DYN_BAD): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_BAD_SRC)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
