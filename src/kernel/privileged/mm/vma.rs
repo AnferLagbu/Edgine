@@ -590,15 +590,21 @@ impl MmStruct {
     /// # Errors
     /// 当新 VMA 与已有 VMA 重叠且类型 (`vma_type`) 或标志 (`flags`) 不同 (即不兼容映射) 时,
     /// 返回 `Err("VMA overlap with incompatible mapping")`.
+    /// 文件映射另要求不重叠: 每个 VMA 承载自己的 `inode_id/offset`, 合并会把
+    /// 不同文件页的页缓存键抹掉, 因此相邻文件映射也不合并.
     pub fn insert_vma(&self, vma: Vma) -> Result<(), &'static str> {
         let mut vmas = self.vmas.lock();
 
         for existing in vmas.iter() {
-            if vma.start < existing.end
-                && vma.end > existing.start
-                && (existing.kind != vma.kind || existing.flags != vma.flags)
-            {
-                return Err("VMA overlap with incompatible mapping");
+            if vma.start < existing.end && vma.end > existing.start {
+                if existing.kind != vma.kind || existing.flags != vma.flags {
+                    return Err("VMA overlap with incompatible mapping");
+                }
+                // 文件映射的页缓存身份不是 flags 能表达的: 即使类型/权限相同,
+                // 不同 inode/offset 的两段也不能合并成一个 VMA.
+                if vma.kind == VmaType::FileBacked || existing.kind == VmaType::FileBacked {
+                    return Err("VMA overlap with incompatible file backing");
+                }
             }
         }
 
@@ -606,9 +612,10 @@ impl MmStruct {
         let mut i = 0;
         while i < vmas.len() {
             let existing = &vmas[i];
-            // file_pwm 不参与合并语义, 但不同 pwm 的相邻 VMA 不可合并:
-            // 合并后用谁的 pwm 调用 vfs_pread_inode 都不严谨 (权限模型).
-            if existing.kind != merged.kind
+            // 文件映射永不合并: 合并后 offset/inode 只能保留一个, 缺页会读错文件页.
+            // 匿名映射仍按 kind/flags/file_pwm 合并 (file_pwm 对匿名无意义).
+            if merged.kind == VmaType::FileBacked
+                || existing.kind != merged.kind
                 || existing.flags != merged.flags
                 || existing.file_pwm != merged.file_pwm
             {
@@ -691,6 +698,12 @@ impl MmStruct {
     }
 
     fn unmap_vma_pages(vma: &Vma, cr3: u64) {
+        // cr3 == 0 表示没有可操作的用户页表根 (无当前进程/地址空间未建立).
+        // 只拆 VMA 描述符, fail-closed 不触碰任何页表, 也不初始化 VMM.
+        if cr3 == 0 {
+            return;
+        }
+
         // 锁序: 调用者持有 VMA_LOCK, 此处获取 VMM_LOCK
         // 这是唯一合法的嵌套方向 (VMA → VMM).
         // 禁止在持有 VMM_LOCK 时获取 VMA_LOCK 以避免 ABBA 死锁.

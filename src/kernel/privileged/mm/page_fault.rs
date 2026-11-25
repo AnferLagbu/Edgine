@@ -349,6 +349,12 @@ fn handle_vma_fault_with_mm(
     let aligned = crate::privileged::glue::usize_from_u64(info.fault_addr)
         & !(crate::privileged::glue::usize_from_u64(PAGE_SIZE) - 1);
 
+    // PROT_NONE / 无 PRESENT 的 VMA: 该区间只占地址, 不允许任何访问.
+    // 必须在按需分配之前拦截: 否则缺页路径会把 guard 页"修复"成可读页.
+    if !vma.flags.contains(PageFlags::PRESENT) {
+        return PfResult::SignalSegv;
+    }
+
     // 取指故障落在 NX VMA: 没有合法恢复动作. 若继续按匿名页分配, 会反复
     // 映射同一 NX 页并重试, 每轮进入 VMM 临界区并广播 TLB shootdown, 最终
     // 变成取指缺页风暴. 数据 VMA 上的取指必须按 SIGSEGV 终止.

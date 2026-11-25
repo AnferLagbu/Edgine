@@ -1913,6 +1913,7 @@ pub const PROT_EXEC: i32 = 0x4;
 pub const MAP_SHARED: i32 = 0x01;
 pub const MAP_PRIVATE: i32 = 0x02;
 pub const MAP_FIXED: i32 = 0x10;
+pub const MAP_FIXED_NOREPLACE: i32 = 0x100000;
 pub const MAP_ANONYMOUS: i32 = 0x20;
 
 /// `mmap(addr, len, prot, flags, fd, offset)` — 成功返映射地址 (>0), 失败返 `-Errno`.
