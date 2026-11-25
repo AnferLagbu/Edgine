@@ -546,6 +546,8 @@
 
   > **2026-11-25 D7 G2（x86_64）**：新增 `glibc_g2` 原始 syscall 探针，补 `set_tid_address`（`218↔96`）与 `prlimit64`（`302↔261`）的 canonical/aarch64 映射、dispatch、ABI 互逆测试及 initramfs/init/QEMU 门禁；`rseq` 不映射，保持 `-ENOSYS`。x86_64 串口 `SET_TID PASS`、`PRLIMIT PASS`（`nofile=32/INF`）、`RSEQ ENOSYS`、`[GLIBC] G2 PASS`，aarch64 仍 SKIP。宿主 GDB 复核同一 glibc 2.44 loader 的启动序列实际调用 `set_tid_address → rseq → prlimit64(RLIMIT_STACK)`，并更正 G1 报告“未触发”的旧表述。**G2 的 5 项延后边界已登记在 `docs/plan/dynamic-linker-project.md` 的 `D7-DEFERRED` 表（`D7-DEFERRED-P1/R1/S1/G1/A1`，均 `[ ]`）**，G3/G4 或 rlimit/aarch64 载体切片开工前必须逐项核对，处理一项才可改 `[X]` 并回填证据。G3/G4 仍待开。证据见 `docs/report/d7-g2-glibc-startup-syscalls.md`。
 
+  > **2026-11-25 D7 G3（x86_64）**：`AT_SYSINFO_EHDR=0` 下新增 `glibc_time` 探针，`clock_gettime`/`gettimeofday`/`time`/`clock_getres`/`getcpu` 全部走 syscall fallback；串口 `[TIME] PASS`、`[GLIBC] TIME PASS: no-vdso fallback`。结论是当前单线程时间面不需要最小 VDSO，G3 不实现 VDSO。首轮同时暴露并修复 `time_syscall` 返回毫秒 tick（改为 `wall_clock_seconds`）与 `sys_getcpu` 不写用户 `cpu*/node*` 指针（改为 Linux `getcpu` 语义）两个 ABI 缺口。**G3 新增 `D7-DEFERRED-V1`（最小 VDSO）与 `D7-DEFERRED-T1`（真实 RTC/墙钟 epoch）两项登记，均 `[ ]`**；`D7-DEFERRED` 现共 7 项，后续 G4 或时间/VDSO 切片开工前逐项核对。G4 仍待开。证据见 `docs/report/d7-g3-glibc-time-vdso.md`。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
