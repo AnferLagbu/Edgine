@@ -1174,8 +1174,19 @@ impl PhysicalMemoryManager {
         for idx in 0..count {
             // SAFETY: idx < count ≤ MAX_EARLY_REGIONS (push 侧上界检查), 启动期单写者.
             let region = unsafe { (*self.early_regions.get())[idx] };
-            if !region.relocate || !ranges_overlap(region.base, region.size, RAM_BASE, window_size)
-            {
+            if !region.relocate {
+                continue;
+            }
+            if !ranges_overlap(region.base, region.size, RAM_BASE, window_size) {
+                // 不重叠时搬移是 no-op：显式记一条，供 UEFI/BIOS 启动腿区分
+                // "按语义无需搬移" 与 "应当搬移却漏了"（后者 relocate 行缺席且本行也缺席）.
+                klog_pmm!(
+                    "[PMM] Early reserve '{}' clear of boot window: base=0x{:X} end=0x{:X} window_end=0x{:X}",
+                    region.label,
+                    region.base,
+                    region.base.saturating_add(region.size),
+                    RAM_BASE.saturating_add(window_size)
+                );
                 continue;
             }
             let bytes = region.size.div_ceil(PAGE_SIZE) * PAGE_SIZE;

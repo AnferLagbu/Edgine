@@ -119,6 +119,11 @@ const MARKER_PAIRS: &[(&str, &str, &str)] = &[
         "[PMM] Early relocate '{}':",
         "[PMM] Early relocate 'initrd':",
     ),
+    (
+        PMM,
+        "[PMM] Early reserve '{}' clear of boot window: base=0x{:X} end=0x{:X} window_end=0x{:X}",
+        "[PMM] Early reserve 'initrd' clear of boot window:",
+    ),
     (LIB, "Boot info: mem={} MB", "Boot info: mem="),
     (VMM, "[SMP] TLB probe PASS", "[SMP] TLB probe PASS"),
     (SMP_X86, "[SMP] online CPUs: {}", "[SMP] online CPUs: $SMP"),
@@ -179,15 +184,15 @@ fn test_every_judgement_has_a_red_branch() {
     let script = read(BOOT_SCRIPT);
     assert_eq!(
         script.matches("FAILED=$((FAILED + 1))").count(),
-        11,
-        "判红累加应恰好 11 处 (need/forbid 各 1 + 解包取数/不足 2 + firmware 取数/为零/\
-         登记取数/不对账 4 + mem 取数/低于下界 2 + 能力行 1), 实得 {} 处",
+        12,
+        "判红累加应恰好 12 处 (need/forbid 各 1 + 解包取数/不足 2 + firmware 取数/为零/\
+         登记取数/不对账 4 + mem 取数/低于下界 2 + 能力行 1 + D4-h clear 分支 1), 实得 {} 处",
         script.matches("FAILED=$((FAILED + 1))").count()
     );
     assert_eq!(
         script.matches("\nneed \"").count(),
-        22,
-        "正向判据应恰好 22 条, 实得 {} 条 —— 少一条即该判据被静默删除",
+        21,
+        "正向判据应恰好 21 条 (D4-h 改 relocate/clear 二选一), 实得 {} 条 —— 少一条即该判据被静默删除",
         script.matches("\nneed \"").count()
     );
     assert_eq!(

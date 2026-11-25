@@ -24,7 +24,9 @@
 #            13-14 区 ⇒ pflash 未生效而退化成 BIOS 启动时本腿即红, 不产生假绿;
 #         5. 内存图权威 (D4-g): `Boot info: mem=M MB` 的 M >= 400 —— OVMF 的 tag4
 #            基本内存信息只报 ~8 MB, 修复前它覆盖 tag6 的 511 MB, 故该下界能把回归判红;
-#         6. 引导模块早期搬移 (D4-h): `Early relocate 'initrd':` 在;
+#         6. 引导模块早期搬移 (D4-h): `Early relocate 'initrd':` 在，或显式
+#            `Early reserve 'initrd' clear of boot window:`（initrd 已不与引导窗相交，
+#            搬移按语义是 no-op；两条都缺席才红）;
 #         7. 用户态探针可达面: `[TLS] PASS:` / `[SIG] PASS:` / `[UACCESS] PASS:`
 #            (clone TID 指向只读 .text 必须 EFAULT, 不进入裸 store) / `[THREAD] PASS:`
 #            (U-1 根因修复后线程组探针恢复) / `[EXEC] PASS: cwd+root`
@@ -302,8 +304,14 @@ case "$MEM_MB" in
         ;;
 esac
 
-# 6. 引导模块早期搬移 (D4-h)
-need "[PMM] Early relocate 'initrd':" "initrd 搬出固定堆窗 (D4-h)"
+# 6. 引导模块早期搬移 (D4-h): 真相交则 relocate；已不相交则 clear 行显式记录.
+if grep -aqF "[PMM] Early relocate 'initrd':" "$BOOT_LOG" \
+    || grep -aqF "[PMM] Early reserve 'initrd' clear of boot window:" "$BOOT_LOG"; then
+    ok "[uefi] initrd 引导窗语义成立 (relocate 或显式 clear) (D4-h)"
+else
+    err "[uefi] initrd 搬移/clear 证据缺失 (D4-h)"
+    FAILED=$((FAILED + 1))
+fi
 
 # 7. 用户态探针可达面
 need "[TLS] PASS:" "TLS fork 继承 + 跨进程切换隔离"
