@@ -105,6 +105,7 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/glibc_time", "file", "glibc_time.bin"),
     ("bin/glibc_pthread", "file", "glibc_pthread.bin"),
     ("bin/glibc_clone3", "file", "glibc_clone3.bin"),
+    ("bin/glibc_dlopen", "file", "glibc_dlopen.bin"),
     ("lib", "dir", ""),
     ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
     ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),
@@ -114,6 +115,8 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("lib64", "dir", ""),
     ("lib64/ld-linux-x86-64.so.2", "file", "ld-linux-x86-64.so.2"),
     ("lib64/libc.so.6", "file", "libc.so.6"),
+    # D7 L1: dlopen 探针的第二个共享对象；绝对路径 /lib64/libdlprobe.so.
+    ("lib64/libdlprobe.so", "file", "libdlprobe.so"),
 )
 # 必需条目 (源文件缺失即失败)
 REQUIRED_SRC = "init.bin"

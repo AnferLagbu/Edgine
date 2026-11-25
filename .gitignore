@@ -131,3 +131,7 @@ boot_disk*
 
 # ===== 构建缓存 =====
 # 构建架构缓存文件已迁移至 other/build/log/.arch (受 other/ 全局忽略保护, 无需单独规则)
+
+# ===== D7 L1 fixture 共享对象 =====
+# 这是刻意入仓的测试载荷，不是构建产物；`*.so` 通用规则不应吞掉它。
+!scripts/fixtures/dynamic-glibc-x86_64/libdlprobe.so

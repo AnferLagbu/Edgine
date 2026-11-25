@@ -1569,6 +1569,8 @@ const GLIBC_TIME_PATH: &[u8] = b"/bin/glibc_time\0";
 const GLIBC_PTHREAD_PATH: &[u8] = b"/bin/glibc_pthread\0";
 /// D7 C1: clone3 高级字段 (`exit_signal`/`pidfd`/`size`/`set_tid`/`cgroup`) 探针路径。
 const GLIBC_CLONE3_PATH: &[u8] = b"/bin/glibc_clone3\0";
+/// D7 L1: glibc `dlopen`/`dlsym`/`dlclose` 第二共享对象探针路径。
+const GLIBC_DLOPEN_PATH: &[u8] = b"/bin/glibc_dlopen\0";
 
 /// D7 G0/G1/G2/G3/G4 glibc 启动探针: fork → `execve` 载体 → 父进程按
 /// `wstatus == 0` 判定。`true` 只证明启动链能退出；`hello` 再证明 glibc stdio
@@ -1582,6 +1584,7 @@ fn glibc_probe() {
         && !file_present(GLIBC_TIME_PATH)
         && !file_present(GLIBC_PTHREAD_PATH)
         && !file_present(GLIBC_CLONE3_PATH)
+        && !file_present(GLIBC_DLOPEN_PATH)
     {
         println("[GLIBC] SKIP: no carrier");
         return;
@@ -1630,6 +1633,11 @@ fn glibc_probe() {
         let _ = glibc_exec(GLIBC_CLONE3_PATH, "[GLIBC] CLONE3 PASS: glibc clone3");
     } else {
         println("[GLIBC] CLONE3 SKIP: no carrier");
+    }
+    if file_present(GLIBC_DLOPEN_PATH) {
+        let _ = glibc_exec(GLIBC_DLOPEN_PATH, "[GLIBC] DLOPEN PASS: glibc dlopen");
+    } else {
+        println("[GLIBC] DLOPEN SKIP: no carrier");
     }
 }
 

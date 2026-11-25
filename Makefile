@@ -237,9 +237,17 @@ endif
 USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
 USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
 DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_BADFMT) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
-# D7 G0/G1/G2/G3/G4/C1 glibc fixture: x86_64 跑真实 glibc `true`/`hello`、启动 syscall、
-# 时间路径、pthread/TLS 与 clone3 探针，aarch64 暂无载体 (探针打印 SKIP).
+# D7 G0/G1/G2/G3/G4/C1/L1 glibc fixture: x86_64 跑真实 glibc `true`/`hello`、启动 syscall、
+# 时间路径、pthread/TLS、clone3 与 dlopen 探针，aarch64 暂无载体 (探针打印 SKIP).
 GLIBC_FIXTURE_DIR = scripts/fixtures/dynamic-glibc-x86_64
+# 预编译 fixture 显式声明为无源依赖目标，阻止 make 内置 `%: %.c` 用
+# x86_64-linux-gnu-gcc 在宿主重编（该交叉编译器在开发机不存在）。
+GLIBC_PREBUILT = $(addprefix $(GLIBC_FIXTURE_DIR)/,glibc_true glibc_hello glibc_g2 \
+	glibc_time glibc_pthread glibc_clone3 glibc_dlopen libdlprobe.so)
+
+$(GLIBC_PREBUILT):
+	@test -e "$@" || { echo "缺少预编译 glibc fixture: $@" >&2; exit 1; }
+
 ifeq ($(ARCH),x86_64)
 USER_GLIBC_TEST = $(USER_BUILD_DIR)/glibc_true.bin
 USER_GLIBC_HELLO = $(USER_BUILD_DIR)/glibc_hello.bin
@@ -247,9 +255,11 @@ USER_GLIBC_G2 = $(USER_BUILD_DIR)/glibc_g2.bin
 USER_GLIBC_TIME = $(USER_BUILD_DIR)/glibc_time.bin
 USER_GLIBC_PTHREAD = $(USER_BUILD_DIR)/glibc_pthread.bin
 USER_GLIBC_CLONE3 = $(USER_BUILD_DIR)/glibc_clone3.bin
+USER_GLIBC_DLOPEN = $(USER_BUILD_DIR)/glibc_dlopen.bin
+USER_LIBDLPROBE = $(USER_BUILD_DIR)/libdlprobe.so
 USER_GLIBC_LOADER = $(USER_BUILD_DIR)/ld-linux-x86-64.so.2
 USER_GLIBC_LIBC = $(USER_BUILD_DIR)/libc.so.6
-GLIBC_CPIO_DEPS = $(USER_GLIBC_TEST) $(USER_GLIBC_HELLO) $(USER_GLIBC_G2) $(USER_GLIBC_TIME) $(USER_GLIBC_PTHREAD) $(USER_GLIBC_CLONE3) $(USER_GLIBC_LOADER) $(USER_GLIBC_LIBC)
+GLIBC_CPIO_DEPS = $(USER_GLIBC_TEST) $(USER_GLIBC_HELLO) $(USER_GLIBC_G2) $(USER_GLIBC_TIME) $(USER_GLIBC_PTHREAD) $(USER_GLIBC_CLONE3) $(USER_GLIBC_DLOPEN) $(USER_LIBDLPROBE) $(USER_GLIBC_LOADER) $(USER_GLIBC_LIBC)
 else
 USER_GLIBC_TEST =
 USER_GLIBC_HELLO =
@@ -257,6 +267,8 @@ USER_GLIBC_G2 =
 USER_GLIBC_TIME =
 USER_GLIBC_PTHREAD =
 USER_GLIBC_CLONE3 =
+USER_GLIBC_DLOPEN =
+USER_LIBDLPROBE =
 USER_GLIBC_LOADER =
 USER_GLIBC_LIBC =
 GLIBC_CPIO_DEPS =
@@ -500,6 +512,14 @@ $(USER_GLIBC_PTHREAD): $(GLIBC_FIXTURE_DIR)/glibc_pthread
 	@cp $< $@
 
 $(USER_GLIBC_CLONE3): $(GLIBC_FIXTURE_DIR)/glibc_clone3
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_GLIBC_DLOPEN): $(GLIBC_FIXTURE_DIR)/glibc_dlopen
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_LIBDLPROBE): $(GLIBC_FIXTURE_DIR)/libdlprobe.so
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 

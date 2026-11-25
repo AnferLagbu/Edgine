@@ -786,13 +786,16 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[PTHREAD\] PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] CLONE3 PASS: glibc clone3" "$X64_LOG" \
                 && grep -aq "\[CLONE3\] PASS" "$X64_LOG" \
+                && grep -aq "\[GLIBC\] DLOPEN PASS: glibc dlopen" "$X64_LOG" \
+                && grep -aq "\[DLOPEN\] PASS" "$X64_LOG" \
                 && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
                 && ! grep -aq "\[G2\] RSEQ UNEXPECTED" "$X64_LOG" \
                 && ! grep -aq "\[TIME\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[PTHREAD\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[CLONE3\] FAIL" "$X64_LOG" \
+                && ! grep -aq "\[DLOPEN\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[GLIBC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 通过 (D7 G0/G1/G2/G3/G4/C1)"
+                ok "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 + L1 dlopen 通过 (D7 G0/G1/G2/G3/G4/C1/L1)"
             else
                 warn "[x86_64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 未通过 (D7 G0/G1/G2/G3/G4/C1)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
