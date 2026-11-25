@@ -95,6 +95,8 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     # D6 失败路径: 合法 ELF 头 + 一条指向不存在解释器的 PT_INTERP；内核应在
     # 读解释器阶段返回 ENOENT，不得 panic 或静默执行旧映像.
     ("bin/dyntest_nointerp", "file", "dyntest_nointerp.bin"),
+    # D6 扩展失败路径：相对 PT_INTERP（内核应 ENOEXEC）。
+    ("bin/dyntest_badfmt", "file", "dyntest_badfmt.bin"),
     ("lib", "dir", ""),
     ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
     ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),

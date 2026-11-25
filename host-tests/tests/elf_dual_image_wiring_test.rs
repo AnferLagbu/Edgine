@@ -15,7 +15,9 @@ const INIT: &str = include_str!("../../src/kernel/functions/init.rs");
 #[test]
 fn interp_path_is_read_not_rewritten() {
     assert!(
-        ELF_MOD.contains("pub fn interp_path(elf_data: &[u8]) -> Option<&str>"),
+        ELF_MOD.contains(
+            "pub fn interp_path(elf_data: &[u8]) -> Result<Option<&str>, InterpPathError>"
+        ),
         "D2 必须从 PT_INTERP 读取路径，而不是只检测前缀"
     );
     assert!(

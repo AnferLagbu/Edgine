@@ -759,6 +759,13 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 缺解释器失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            if grep -aq "\[DYN\] FMT PASS:" "$X64_LOG" \
+                && ! grep -aq "\[DYN\] FMT FAIL" "$X64_LOG"; then
+                ok "[x86_64] 相对 PT_INTERP 失败路径通过 (D6 ENOEXEC)"
+            else
+                warn "[x86_64] 相对 PT_INTERP 失败路径未通过 (D6)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \
                 && { grep -aq "\[WASM\] SKIP:" "$X64_LOG" || grep -aq "\[WASM\] PASS:" "$X64_LOG"; }; then
                 ok "[x86_64] wasm 探针载体态合规 (SKIP/PASS, 无 FAIL) (W-7)"
@@ -1002,6 +1009,13 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 缺解释器失败路径通过 (D6 ENOENT)"
             else
                 warn "[aarch64] 缺解释器失败路径未通过 (D6)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            if grep -aq "\[DYN\] FMT PASS:" "$A64_LOG" \
+                && ! grep -aq "\[DYN\] FMT FAIL" "$A64_LOG"; then
+                ok "[aarch64] 相对 PT_INTERP 失败路径通过 (D6 ENOEXEC)"
+            else
+                warn "[aarch64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$A64_LOG" \

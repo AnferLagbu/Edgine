@@ -210,6 +210,8 @@ MK_CPIO_PY = scripts/make_initramfs_cpio.py
 DYN_MUSL_FIXTURE_DIR = scripts/fixtures/dynamic-musl-$(ARCH)
 USER_DYNTEST = $(USER_BUILD_DIR)/dyntest.bin
 USER_DYN_BAD = $(USER_BUILD_DIR)/dyntest_nointerp.bin
+USER_DYN_BADFMT = $(USER_BUILD_DIR)/dyntest_badfmt.bin
+DYN_NEG_PY = scripts/make_dyn_negative_fixture.py
 ifeq ($(ARCH),x86_64)
 DYN_TEST_SRC = hello_dyn
 DYN_BAD_SRC = badinterp_x86_64.dat
@@ -234,7 +236,7 @@ DYN_LIBC_NAME =
 endif
 USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
 USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
-DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
+DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_BADFMT) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
@@ -437,6 +439,11 @@ $(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_TEST_SRC)
 $(USER_DYN_BAD): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_BAD_SRC)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
+
+# D6 扩展失败路径夹具：从当前架构主载荷派生，避免把两份大二进制副本入库.
+$(USER_DYN_BADFMT): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_TEST_SRC) $(DYN_NEG_PY)
+	@mkdir -p $(USER_BUILD_DIR)
+	@python3 $(DYN_NEG_PY) --base $< --out $@
 
 $(USER_DYN_LOADER): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_LOADER_SRC)
 	@mkdir -p $(USER_BUILD_DIR)

@@ -121,15 +121,21 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     };
     let interp = if stub.is_some() {
         None
-    } else if let Some(path) = crate::privileged::proc::elf::interp_path(&image) {
-        let Some(bytes) =
-            crate::functions::fs::api::read_file_kernel(path, current_pwm, ELF_MAX_SIZE)
-        else {
-            return Err(Errno::Enoent);
-        };
-        Some(bytes)
     } else {
-        None
+        match crate::privileged::proc::elf::interp_path(&image) {
+            Ok(Some(path)) => {
+                let Some(bytes) =
+                    crate::functions::fs::api::read_file_kernel(path, current_pwm, ELF_MAX_SIZE)
+                else {
+                    return Err(Errno::Enoent);
+                };
+                Some(bytes)
+            }
+            Ok(None) => None,
+            // PT_INTERP 存在但内容畸形 ⇒ Linux `execve` 的 ENOEXEC；不能静默
+            // 退化成静态装载，否则会把动态程序送进没有解释器的入口.
+            Err(_) => return Err(Errno::Enoexec),
+        }
     };
     let (image_ptr, image_len) = if let Some(stub) = &stub {
         (stub.as_ptr() as u64, stub.len() as u64)

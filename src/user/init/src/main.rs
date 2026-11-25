@@ -139,6 +139,7 @@ pub extern "C" fn _start() -> ! {
     exec_probe();
     dyn_probe();
     dyn_negative_probe();
+    dyn_badfmt_probe();
 
     // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
     // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
@@ -1505,6 +1506,47 @@ fn dyn_negative_probe() {
         println("[DYN] NEG PASS: bad interp rejected, child survived");
     } else {
         print("[DYN] NEG FAIL: status=");
+        print_dec(i64::from(status));
+        print(" reap=");
+        print_dec(reaped);
+        print_char(b'\n');
+    }
+}
+
+/// D6 扩展失败路径: `PT_INTERP` 存在但不是绝对路径.
+///
+/// 内核必须在解析 `PT_INTERP` 时返回 `ENOEXEC`（-8），不得退化成静态装载.
+/// 载荷由构建期把 `hello_dyn`/`busybox` 的路径首字节改成相对路径派生.
+const DYN_BADFMT_PATH: &[u8] = b"/bin/dyntest_badfmt\0";
+
+fn dyn_badfmt_probe() {
+    if !file_present(DYN_BADFMT_PATH) {
+        println("[DYN] FMT SKIP: no carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [DYN_BADFMT_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let rc = proc_exec(DYN_BADFMT_PATH, &argv, &[]);
+        if rc == -8 {
+            println("[DYN] FMT PASS: relative interp -> ENOEXEC");
+            proc_exit(0);
+        }
+        print("[DYN] FMT FAIL: rc=");
+        print_dec(rc);
+        print_char(b'\n');
+        proc_exit(1);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[DYN] FMT FAIL: fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) && status == 0 {
+        println("[DYN] FMT PASS: malformed interp rejected, child survived");
+    } else {
+        print("[DYN] FMT FAIL: status=");
         print_dec(i64::from(status));
         print(" reap=");
         print_dec(reaped);

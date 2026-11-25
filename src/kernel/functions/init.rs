@@ -86,17 +86,20 @@ fn load_init_from_initramfs() -> i32 {
     ) else {
         return -3;
     };
-    let interp = if let Some(path) = crate::privileged::proc::elf::interp_path(&elf) {
-        let Some(bytes) = crate::functions::fs::api::read_file_kernel(
-            path,
-            0,
-            crate::functions::proc::exec::ELF_MAX_SIZE,
-        ) else {
-            return -4;
-        };
-        Some(bytes)
-    } else {
-        None
+    let interp = match crate::privileged::proc::elf::interp_path(&elf) {
+        Ok(Some(path)) => {
+            let Some(bytes) = crate::functions::fs::api::read_file_kernel(
+                path,
+                0,
+                crate::functions::proc::exec::ELF_MAX_SIZE,
+            ) else {
+                return -4;
+            };
+            Some(bytes)
+        }
+        Ok(None) => None,
+        // /init 自带畸形 PT_INTERP 时按 ENOEXEC 拒绝启动，不得静态装载后跳进坏入口.
+        Err(_) => return -5,
     };
     let (interp_ptr, interp_len) = interp.as_ref().map_or((core::ptr::null(), 0), |bytes| {
         (bytes.as_ptr(), bytes.len() as u64)

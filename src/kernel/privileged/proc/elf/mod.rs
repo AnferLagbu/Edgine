@@ -404,18 +404,36 @@ pub fn phdr_addr(elf_data: &[u8], load_bias: u64) -> Option<u64> {
     None
 }
 
+/// `PT_INTERP` 路径解析失败: 段存在但不是一个落在文件内、NUL 结尾的绝对
+/// ASCII 路径。调用方必须按 Linux `execve` 语义返回 `ENOEXEC`，不得退化成
+/// 静态装载（那会把动态程序送进没有解释器的入口）。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InterpPathError {
+    /// `PT_INTERP` 存在但内容畸形（空串、相对路径、非 ASCII、无 NUL 或越界）。
+    Malformed,
+}
+
 /// 读取 ELF 的 `PT_INTERP` 路径（不修改原映像）。
 ///
 /// Linux `execve` 的契约是“内核读出解释器路径并装载第二个 ELF”，不是把路径
 /// 改写成一个内核自带的桩。返回的 `&str` 借用 `elf_data`，调用方需在读取
 /// 解释器文件期间保持该缓冲有效。
 ///
-/// 只接受绝对路径、NUL 结尾且为 ASCII 的 `PT_INTERP`；畸形段一律跳过。
-#[must_use]
-pub fn interp_path(elf_data: &[u8]) -> Option<&str> {
-    let header = elf_validate(elf_data)?;
+/// - `Ok(None)`: 文件没有 `PT_INTERP`，按静态 ELF 处理；
+/// - `Ok(Some(path))`: 合法的绝对 ASCII 路径；
+/// - `Err(InterpPathError)`: `PT_INTERP` 存在但畸形，调用方必须拒绝装载。
+///
+/// 只接受绝对路径、NUL 结尾且为 ASCII 的 `PT_INTERP`。
+///
+/// # Errors
+/// 当 `PT_INTERP` 存在但为空、相对路径、非 ASCII、无 NUL 或偏移/长度越界时
+/// 返回 [`InterpPathError::Malformed`]；调用方应映射为 `ENOEXEC`。
+pub fn interp_path(elf_data: &[u8]) -> Result<Option<&str>, InterpPathError> {
+    let Some(header) = elf_validate(elf_data) else {
+        return Err(InterpPathError::Malformed);
+    };
     if header.phoff == 0 || header.phnum == 0 {
-        return None;
+        return Ok(None);
     }
 
     // SAFETY: `verify_elf` 已校验 program header table 落在 `elf_data` 内；
@@ -433,32 +451,34 @@ pub fn interp_path(elf_data: &[u8]) -> Option<&str> {
                 .cast::<Elf64Phdr>()
                 .read_unaligned()
         };
-        if phdr.ty != PT_INTERP || phdr.filesz == 0 {
+        if phdr.ty != PT_INTERP {
             continue;
+        }
+        if phdr.filesz == 0 {
+            return Err(InterpPathError::Malformed);
         }
 
         let offset = crate::privileged::glue::usize_from_u64(phdr.offset);
         let len = crate::privileged::glue::usize_from_u64(phdr.filesz);
         let Some(end) = offset.checked_add(len) else {
-            continue;
+            return Err(InterpPathError::Malformed);
         };
         if end > elf_data.len() {
-            continue;
+            return Err(InterpPathError::Malformed);
         }
 
         let raw = &elf_data[offset..end];
         let Some(nul) = raw.iter().position(|b| *b == 0) else {
-            continue;
+            return Err(InterpPathError::Malformed);
         };
         let path = &raw[..nul];
         if path.is_empty() || path[0] != b'/' || !path.is_ascii() {
-            continue;
+            return Err(InterpPathError::Malformed);
         }
-        if let Ok(path) = core::str::from_utf8(path) {
-            return Some(path);
-        }
+        let path = core::str::from_utf8(path).map_err(|_| InterpPathError::Malformed)?;
+        return Ok(Some(path));
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -564,15 +584,23 @@ mod tests {
     #[test]
     fn interp_path_reads_absolute_path_without_rewriting() {
         let elf = elf_with_interp_path(b"/lib/ld-musl-x86_64.so.1\0");
-        assert_eq!(interp_path(&elf.0), Some("/lib/ld-musl-x86_64.so.1"));
+        assert_eq!(interp_path(&elf.0), Ok(Some("/lib/ld-musl-x86_64.so.1")));
     }
 
     #[test]
-    fn interp_path_rejects_relative_or_unterminated() {
+    fn interp_path_rejects_relative_unterminated_and_oob() {
         let relative = elf_with_interp_path(b"lib/ld-musl-x86_64.so.1\0");
-        assert_eq!(interp_path(&relative.0), None);
+        assert_eq!(interp_path(&relative.0), Err(InterpPathError::Malformed));
         let unterminated = elf_with_interp_path(b"/lib/ld-musl-x86_64.so.1");
-        assert_eq!(interp_path(&unterminated.0), None);
+        assert_eq!(
+            interp_path(&unterminated.0),
+            Err(InterpPathError::Malformed)
+        );
+
+        let oob = elf_with_interp(200, 10);
+        assert_eq!(interp_path(&oob.0), Err(InterpPathError::Malformed));
+        let overflow = elf_with_interp(u64::MAX, 2);
+        assert_eq!(interp_path(&overflow.0), Err(InterpPathError::Malformed));
     }
 
     /// 8 字节对齐的 ELF 缓冲区 (测试用构造器; `elf_validate` 本身按值读取, 不要求对齐).
