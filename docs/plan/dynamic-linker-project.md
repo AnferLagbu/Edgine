@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D5 施工中；D5 已让 x86_64 上游 `ld-musl` 真跑通过（动态 hello 输出 + `[DYN] PASS`），aarch64 动态 fixture 与 `elfld` 退役仍待办。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。
+> 状态：D1–D6 施工中；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），失败路径与 `elfld` 退役仍待办。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -159,15 +159,15 @@
 - 已提交（`775a9679`）：`scripts/qemu_boot_test.sh` x86_64 分支新增 fail-closed 断言：必须出现 `[DYN] PASS` 且不得出现 `[DYN] FAIL`；该行缺失即整轮 RC=1，不再让“内核启动 1/1”掩盖动态装载失败。
 - 根因与修复（2026-11-25）：首次真跑时 `ld-musl` 进入重定位，但 RELRO 阶段报 `RELRO protection failed: No error information`，动态子进程 127 退出。GDB 抓到 `mprotect` 参数为 RELRO 页，`mm.mprotect` 返回 `Err(ENOMEM)`；根因不是 `mprotect` 保护逻辑，而是 `proc_exec_replace_with_interp` 的 `replace_user_space` 只换了 CR3/entry/stack，**没有把临时进程新建的 `MmStruct` 转移给当前 PID**。当前进程仍持 init 的旧 mm，RELRO 页不在旧 VMA 表中，故 `to_modify` 为空返 `ENOMEM`。musl `ldso` 用 `__syscall` 读原始返回值、不写 `errno`，所以文案是 `No error information` 而非真实 ENOMEM。
 - 修复（`b2a9ec91`）：`replace_user_space` 增加 `new_mm` 参数，换表同时 `store_mm(new_mm)`；exec 成功后清空临时进程的 mm 槽位，所有权随地址空间转移。验证：x86_64 QEMU 动态 hello 打印 `hello dynamic musl`、`[DYN] PASS`，启动门禁 `1/1` 且新增 DYN 断言通过；aarch64 `[DYN] SKIP: no carrier`，`[SIG] PASS`/TCP/e2e 不回归。
-- 剩余：aarch64 动态 fixture 尚未准备（需单独取真实 Alpine aarch64 根镜像里的 `ld-musl-aarch64.so.1` 与 libc）；`elfld` 退役、`tools/elfld` 删除、`edgine-gcc` 的 `--dynamic-linker` 注入去除、`EDGINE_INTERP`/`rewrite_interp_path` 清理均未开始。
+- 剩余：`elfld` 退役、`tools/elfld` 删除、`edgine-gcc` 的 `--dynamic-linker` 注入去除、`EDGINE_INTERP`/`rewrite_interp_path` 清理均未开始；D6 失败路径尚未造桩。
 - 出口：树中零 `elfld`/`EDGINE_INTERP`；动态 ELF 的 `PT_INTERP` 保持原样。
 
 ### D6：动态 musl 验收（4–6 人日）
 
-- x86_64：动态 hello 输出固定字符串，正常退出；`readelf -l` 确认 `PT_INTERP` 未被改写。
-- aarch64：同上；验证 `TPIDR_EL0` TLS 与解释器入口。
-- 失败路径：缺解释器、坏 `PT_INTERP`、libc 缺失 → `ENOENT/ENOEXEC`，不 panic、不回到旧映像。
-- 回归：静态 musl 双架构、`./ci/build.sh all`、`make test-host`、`make test-kernel-host`、`ci/audit.sh full`、QEMU/UEFI。
+- 已施工（`e89cc918`）：x86_64 动态 `hello_dyn` 输出 `hello dynamic musl`，0 退出；`readelf -l` 确认 `PT_INTERP=/lib/ld-musl-x86_64.so.1` 未被改写。
+- 已施工（`e89cc918`）：aarch64 采用 Alpine 3.20.3 minirootfs 的真实 busybox 动态 PIE（919,232 B，`PT_INTERP=/lib/ld-musl-aarch64.so.1`，`NEEDED=libc.musl-aarch64.so.1`），init 以 argv0 `/bin/busybox` + applet `echo` 执行 `/bin/dyntest`；上游 loader 完成 libc 装载/重定位/RELRO 后输出 `hello dynamic musl` 并 0 退出。该腿同时覆盖 aarch64 `TPIDR_EL0` TLS 与解释器入口。
+- 已施工（`e89cc918`）：`qemu_boot_test.sh` 两架构各自 fail-closed 要求 `[DYN] PASS` 且无 `[DYN] FAIL`；实测双架构 QEMU 启动门禁均 `1/1`，aarch64 e2e 3/3、x86 e2e 不回归。
+- 待办：失败路径（缺解释器、坏 `PT_INTERP`、libc 缺失）造桩与 `ENOENT/ENOEXEC` 断言；`elfld` 退役；`ci/audit.sh full` 与 UEFI 回归复跑。
 - 可选加分：动态 `pthread_create`（TLS + mmap 栈）；`dlopen` 只做记录，不作第一波门槛。
 - 出口：T7-c 动态腿转绿；`elfld` 退役；文档/台账闭合。
 
