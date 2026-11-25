@@ -140,6 +140,10 @@
 - 校验 `openat/pread/fstat/readlink/close` 足以让解释器找到并映射 libc。
 - 补 `set_tid_address`（若 musl/后续 glibc 需要）、`prlimit64`（glibc 前）。
 - `/proc/self/exe`：若 musl 的 `AT_EXECFN` 路径不足，再补；第一波先不强制。
+- 已施工（2026-11-25，`beb6c07d`）：`MAP_FIXED` / `MAP_FIXED_NOREPLACE` 固定落点；固定地址必须页对齐、不低于用户 VA 下界、不越过 `USER_ADDR_MAX`。`MAP_FIXED` 先按范围注销文件页缓存持有、拆 VMA 与用户页表项，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`，不拆旧映射。无当前 CR3 时固定落点 fail-closed（只拆描述符，不触碰 VMM）。
+- 已施工（2026-11-25，`beb6c07d`）：`PROT_NONE` 保留 VMA 占位但不置 `PRESENT`，缺页路径见到无 `PRESENT` 的 VMA 直接 `SIGSEGV`，不再被匿名页分配“修复”成可读页；`mprotect(PROT_NONE)` 同步清 PTE 的 present 位。
+- 已施工（2026-11-25，`beb6c07d`）：文件映射 VMA 不参与相邻合并，避免不同 `inode_id/offset` 被合成一个 VMA 后缺页读错文件页；同权限文件重叠直接拒绝。
+- 待办：`set_tid_address` / `prlimit64` 仍无入口；`openat/pread/fstat/readlink/close` 已由 dispatch 覆盖，但尚未用真实 `ld-musl` 映射序列验收；`MAP_PRIVATE` 文件写 COW 与 `mprotect(PROT_READ)` RELRO 需动态 musl 真跑确认。
 - 出口：解释器能打开 libc、按 `MAP_FIXED` 落段、做重定位、跑 `main`。
 
 ### D5：工具链、根镜像与 `elfld` 退役（2–3 人日）
