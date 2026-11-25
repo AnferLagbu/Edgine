@@ -552,6 +552,8 @@
 
   > **2026-11-26 D7 C1（x86_64）**：`D7-DEFERRED-C1` 收口。`exit_signal` 独立字段化并由线程组最后成员退出投递；`CLONE_PIDFD` 在创建前校验写回地址、创建后安装 CLOEXEC fd 并写回；`set_tid`/`set_tid_size`/`cgroup` 显式 `ENOSYS`；`size>=64` 分级读扩展字段；`exit_signal` 按 Linux `_NSIG=64` 允许 0..=64；`wait4` 接受 `__WALL`。QEMU 串口 `[CLONE3] PASS`、`[GLIBC] CLONE3 PASS: glibc clone3`，G0–G4 全绿。**一并根治 fork 后 COW 破页顺序**：`handle_vma_fault_with_mm` 原先按 VMA `WRITABLE` 与 `FileBacked` 先于 COW 判定，导致 glibc 数据/GOT 的 COW 只读页在 write fault 时被文件页或零页替换，表现为 clone3 返回后 GOT 整页归零 / `stdout` vtable 变回未重定位值。修复后按「PTE present + 帧 COW 标」先破 COW，`FileBacked` 与旧 `!VMA WRITABLE` 支路仍处理 not-present 文件页。证据见 `docs/report/d7-c1-glibc-clone3.md`。D7 延后项 9 → 8；L1 待开。
 
+  > **2026-11-26 D7 L1（x86_64）**：`D7-DEFERRED-L1` 收口。新增 `glibc_dlopen` 与独立 `libdlprobe.so`，`RTLD_NOW|RTLD_LOCAL` 装载第二共享对象，`dlsym` 解析 `probe_add`/`probe_get`，首次调用 `12`，缺失符号 `NULL`，`dlclose` 后重新 `dlopen` 使 `probe_counter` 回到 `5`；串口 `[DLOPEN] PASS`、`[GLIBC] DLOPEN PASS: glibc dlopen`，G0–G4 全绿，`qemu_boot_test.sh x86_64` RC=0。首轮 `malloc(): corrupted top size` 的根因不在 `pread64`：`MmStruct::find_free_range` 遍历 VMA 时无条件 `cursor=vma.end`，把已低于 `mmap_base` 的低位 VMA 终点当游标，导致 glibc loader 把 `libc.so.6` 映射到 `main_end` 并占据 brk 堆区；另 `set_brk` 把页对齐值写回 `mm->brk`，破坏 glibc `sbrk`/top chunk 记账。修复为跳过整体低于游标的 VMA、`mm->brk` 保存/返回精确 `new_brk`（VMA 仍页对齐，新增 `brk < start_brk` 拒绝），补 2 条 VMA 回归单测；`make test-kernel-host` 640 passed / 0 failed。证据见 `docs/report/d7-l1-glibc-dlopen.md`。D7 延后项 8 → 7。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |

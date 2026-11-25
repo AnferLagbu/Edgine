@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；C1 clone3 高级字段已收口；dlopen 待开（遗留 8 项见 `D7-DEFERRED`）。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；C1 clone3 高级字段已收口；L1 glibc `dlopen` 第二共享对象已收口；D7 延后项剩余 7 项（P1/R1/S1/G1/A1/V1/T1，见 `D7-DEFERRED`）。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -199,13 +199,13 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
   G2 留下的 5 项边界已登记在下方 `D7-DEFERRED` 表（G3/G4 另补 V1/T1/C1/L1 四项）；后续切片开工前逐项核对，不得静默跳过。
 - **G3 时间路径/无 VDSO（x86_64 已完成 2026-11-25）**：`AT_SYSINFO_EHDR=0` 下新增 `glibc_time` 探针，`clock_gettime`/`gettimeofday`/`time`/`clock_getres`/`getcpu` 全部走 syscall fallback；串口 `[TIME] PASS`、`[GLIBC] TIME PASS: no-vdso fallback`。结论是当前单线程时间面**不需要最小 VDSO**，不实现 VDSO。首轮同时暴露并修复两个 ABI 缺口：`time_syscall` 返回毫秒 tick（应为墙钟秒），`sys_getcpu` 返回打包值而不写用户 `cpu*/node*` 指针（改为 Linux `getcpu` 语义）。证据见 [d7-g3-glibc-time-vdso.md](../report/d7-g3-glibc-time-vdso.md)。
 - **G4 pthread/clone3/TLS（x86_64 已完成 2026-11-25）**：新增 `glibc_pthread` 探针，真实 glibc `pthread_create`/TLS/`pthread_join`/`pthread_mutex` 全部通过，串口 `[PTHREAD] PASS`、`[GLIBC] PTHREAD PASS: glibc pthread`。首轮定位并修复 `clone3` 栈参数语义：`struct clone_args.stack` 是栈底、`stack_size` 是大小，内核原先直接把栈底当初始 RSP；补 `clone3_stack_top()` 换算为栈顶并补零长度/溢出测试。调试期串口确认 glibc 实际走 `clone3`（`flags=0x3D0F00`、`stack_size=0x7FFF80`、`ret=Ok(35)`）。`rseq` 仍保持 `-ENOSYS`，pthread 腿证明 glibc 当前可 fallback。证据见 [d7-g4-glibc-pthread.md](../report/d7-g4-glibc-pthread.md)。
-- **G4 dlopen（待开）**：当前只验证主程序 + `libc.so.6` 两映像；多共享对象、`dlopen`/`dlsym`/`dlclose` 与重定位链尚未取证，登记为 `D7-DEFERRED-L1`。
+- **G4 dlopen（x86_64 已完成 2026-11-26）**：新增 `glibc_dlopen` 与独立 `libdlprobe.so`，`RTLD_NOW|RTLD_LOCAL` 装载第二共享对象，`dlsym` 解析 `probe_add`/`probe_get`，首次调用 `12`，缺失符号 `NULL`，`dlclose` 后重新 `dlopen` 使 `probe_counter` 回到 `5`；串口 `[DLOPEN] PASS`、`[GLIBC] DLOPEN PASS: glibc dlopen`，G0–G4 全绿。首轮 `malloc(): corrupted top size` 的根因不是 `pread64`，而是 `MmStruct::find_free_range` 将 mmap 游标回退到低位 VMA 末尾、让 glibc 把 `libc.so.6` 映射到 brk 堆区，以及 `set_brk` 把页对齐值写回 `mm->brk` 破坏 glibc top chunk 记账；两处均已根治并补回归单测。证据见 [d7-l1-glibc-dlopen.md](../report/d7-l1-glibc-dlopen.md)。
 
 #### D7 延后项登记（`D7-DEFERRED`）
 
-> 本节是 D7 G2/G3/G4 留下的**未收口边界登记**，不是已完成清单。G4 dlopen、pthread/rseq、rlimit 收敛、aarch64 glibc 载体或真实 RTC/VDSO 切片开工前，必须逐项核对本表；处理一项时把状态改为 `[X]`，并在提交/报告中回填验收证据。**禁止只删除本表行而不留收口记录**，否则这些边界会随任务推进被遗忘。
+> 本节是 D7 G2/G3/G4 留下的**未收口边界登记**，不是已完成清单。pthread/rseq、rlimit 收敛、aarch64 glibc 载体或真实 RTC/VDSO 切片开工前，必须逐项核对本表；处理一项时把状态改为 `[X]`，并在提交/报告中回填验收证据。**禁止只删除本表行而不留收口记录**，否则这些边界会随任务推进被遗忘。
 >
-> 检索锚点：`D7-DEFERRED`。状态口径：`[ ]` 延后/未开工，`[~]` 进行中，`[X]` 已收口并回填证据。本轮登记 9 项（G2 五项 + G3 两项 + G4 两项），均不计入 T7 的 `7 / 0`。
+> 检索锚点：`D7-DEFERRED`。状态口径：`[ ]` 延后/未开工，`[~]` 进行中，`[X]` 已收口并回填证据。本轮登记 9 项（G2 五项 + G3 两项 + G4 两项），均不计入 T7 的 `7 / 0`；C1、L1 收口后当前剩余 7 项。
 
 | ID | 未收口边界 | 状态 | 当前口径 | 解除触发 | 验收证据 |
 |---|---|---|---|---|---|
@@ -217,7 +217,7 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 | `D7-DEFERRED-V1` | 最小 VDSO | `[ ]` | `AT_SYSINFO_EHDR=0`，G3 已证时间路径全部 syscall fallback；未实现 VDSO | 新的 glibc 时间/CPU 路径出现硬依赖或明确要求 VDSO | `clock_gettime/gettimeofday/time/getcpu` 的 VDSO 映射、符号解析、fallback 对照测试 |
 | `D7-DEFERRED-T1` | 真实 RTC/墙钟 epoch | `[ ]` | 墙钟为 tick 派生值；`time/gettimeofday/CLOCK_REALTIME` 一致，但不是真实 epoch | 需要真实日期、NTP/TimeSync 或用户可见时间 | RTC 读取/设置与 `CLOCK_REALTIME` 同源；`time()` 返回真实 epoch；跨启动测试 |
 | `D7-DEFERRED-C1` | `clone3` 高级字段 | `[X]` | 2026-11-26 收口：`exit_signal` 落 PCB 并由组最后成员退出投递；`CLONE_PIDFD` 创建前校验写回地址、创建后 `pidfd_open`/`CLOEXEC`/写回；`set_tid`/`set_tid_size`/`cgroup` 显式 `ENOSYS`；`size>=64` 分级读字段；`exit_signal` 按 Linux `_NSIG=64` 校验；`wait4` 接受 `__WALL`；legacy clone 对 `CLONE_PIDFD`/`CLONE_INTO_CGROUP` 显式 `EINVAL` | 后续 cgroup/PID namespace 实装时替换 ENOSYS；pidfd 创建后失败保留子进程；通用 poll/ppoll timeout 不阻塞，pidfd 只保证零超时快照 | `[CLONE3] PASS` + `[GLIBC] CLONE3 PASS`；G0–G4 全绿；证据见 `docs/report/d7-c1-glibc-clone3.md` |
-| `D7-DEFERRED-L1` | glibc `dlopen` 多共享对象 | `[ ]` | 当前只验证主程序 + `libc.so.6` 两映像；无 `dlopen`/`dlsym`/`dlclose` 腿 | G4 dlopen 切片开工 | 第二个 `.so` 装载、符号解析、重定位、`dlclose` 卸载、QEMU 串口 |
+| `D7-DEFERRED-L1` | glibc `dlopen` 多共享对象 | `[X]` | 2026-11-26 收口：新增 `glibc_dlopen`/`libdlprobe.so`，覆盖第二 `.so` 装载、`dlsym`/`GLOB_DAT` 重定位、缺失符号、`dlclose` 与重新装载；同时根治 `find_free_range` 游标回退抢占 brk 与 `set_brk` 页对齐回写两个根因 | 扩展 libc 依赖链/`RTLD_GLOBAL`/构造析构/TLS 卸载语义时另开工 | `[DLOPEN] PASS` + `[GLIBC] DLOPEN PASS`；G0–G4 全绿；证据见 `docs/report/d7-l1-glibc-dlopen.md` |
 
 估算：
 
