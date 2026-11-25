@@ -382,6 +382,23 @@ fn handle_vma_fault_with_mm(
         }
     }
 
+    // ── COW: 写入只读页 ──
+    // PTE 只读 + 帧带 COW 待破标才是 COW 的证据; 不能只看 VMA 是否可写:
+    // fork/clone 后的数据 VMA 本身仍是 WRITABLE, 但其 PTE 被置为只读共享,
+    // 若按 VMA 标志判定会漏掉这一支, 落到下方匿名页分配而把原内容替换成零页.
+    if info.access.write
+        && info.page.present
+        && let Some(old) = super::Vmm::get_physical_in_pml4(user_cr3, VirtAddr(aligned as u64))
+        && super::pmm::get_pmm().frame_cow_test(old)
+    {
+        return match super::cow::cow_handle_fault(user_cr3, info.fault_addr) {
+            Some(_) => {
+                PAGE_FAULT_COUNT.fetch_add(1, Ordering::Relaxed);
+                PfResult::Fixed
+            }
+            None => PfResult::SignalSegv,
+        };
+    }
     // ── FileBacked VMA: 从 Page Cache 获取缓存页 ──
     if vma.kind == VmaType::FileBacked
         && let Some(inode_id) = vma.inode_id
@@ -389,7 +406,6 @@ fn handle_vma_fault_with_mm(
         return handle_file_fault(mm, vma, inode_id, info, aligned, user_cr3);
     }
 
-    // ── COW: 写入只读页 ──
     if info.access.write && !vma.flags.contains(PageFlags::WRITABLE) {
         return do_cow_copy_with_mm(mm, vma, aligned, user_cr3);
     }
