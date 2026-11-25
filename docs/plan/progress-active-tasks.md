@@ -548,6 +548,8 @@
 
   > **2026-11-25 D7 G3（x86_64）**：`AT_SYSINFO_EHDR=0` 下新增 `glibc_time` 探针，`clock_gettime`/`gettimeofday`/`time`/`clock_getres`/`getcpu` 全部走 syscall fallback；串口 `[TIME] PASS`、`[GLIBC] TIME PASS: no-vdso fallback`。结论是当前单线程时间面不需要最小 VDSO，G3 不实现 VDSO。首轮同时暴露并修复 `time_syscall` 返回毫秒 tick（改为 `wall_clock_seconds`）与 `sys_getcpu` 不写用户 `cpu*/node*` 指针（改为 Linux `getcpu` 语义）两个 ABI 缺口。**G3 新增 `D7-DEFERRED-V1`（最小 VDSO）与 `D7-DEFERRED-T1`（真实 RTC/墙钟 epoch）两项登记，均 `[ ]`**；`D7-DEFERRED` 现共 7 项，后续 G4 或时间/VDSO 切片开工前逐项核对。G4 仍待开。证据见 `docs/report/d7-g3-glibc-time-vdso.md`。
 
+  > **2026-11-25 D7 G4 pthread 子腿（x86_64）**：新增 `glibc_pthread` 探针，真实 glibc `pthread_create`/TLS/`pthread_join`/`pthread_mutex` 通过；串口 `[PTHREAD] PASS`、`[GLIBC] PTHREAD PASS: glibc pthread`。首轮定位并修复 `clone3` 栈参数：`struct clone_args.stack` 是栈底、`stack_size` 是大小，内核原实现直接把栈底当初始 RSP；新增 `clone3_stack_top()` 换算栈顶并补零长度/溢出测试。调试期串口确认 glibc 实际走 `clone3`（`flags=0x3D0F00`、`stack_size=0x7FFF80`、`ret=Ok(35)`）。`rseq` 仍为 `ENOSYS`，本腿证明 glibc pthread 可 fallback。**G4 新增 `D7-DEFERRED-C1`（clone3 高级字段）与 `D7-DEFERRED-L1`（dlopen 多共享对象）两项，均 `[ ]`**；`D7-DEFERRED` 现共 9 项。G4 dlopen 腿仍待开。证据见 `docs/report/d7-g4-glibc-pthread.md`。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
