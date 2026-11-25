@@ -674,7 +674,12 @@ impl MmStruct {
                 Self::unmap_vma_pages(&removed, cr3);
             } else if start <= vma_start {
                 let mut truncated = vmas.remove(i);
+                let delta = end - vma_start;
                 truncated.start = end;
+                if truncated.inode_id.is_some() {
+                    // 文件映射舍弃头部片段后, 剩余片段的文件偏移必须前移.
+                    truncated.offset += delta as u64;
+                }
                 vmas.insert(i, truncated);
                 Self::unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type), cr3);
                 i += 1;
@@ -685,13 +690,18 @@ impl MmStruct {
                 Self::unmap_vma_pages(&Vma::new(start, vma_end, vma_flags, vma_type), cr3);
                 i += 1;
             } else {
-                let left = Vma::new(vma_start, start, vma_flags, vma_type);
-                let right = Vma::new(end, vma_end, vma_flags, vma_type);
-                let mid = Vma::new(start, end, vma_flags, vma_type);
-                vmas.remove(i);
+                let original = vmas.remove(i);
+                let mut left = original.clone();
+                let mut right = original;
+                left.end = start;
+                right.start = end;
+                if right.inode_id.is_some() {
+                    // 尾部片段起点后移, 文件偏移同步后移, 保留 inode/pwm/mount.
+                    right.offset += (end - vma_start) as u64;
+                }
                 vmas.insert(i, right);
                 vmas.insert(i, left);
-                Self::unmap_vma_pages(&mid, cr3);
+                Self::unmap_vma_pages(&Vma::new(start, end, vma_flags, vma_type), cr3);
                 i += 2;
             }
         }
@@ -831,12 +841,19 @@ impl MmStruct {
             // 中段: [overlap, overlap_end) — 新权限
             let overlap_start = vma.start.max(start);
             let overlap_end = vma.end.min(end);
+            // 文件映射按 VMA 起点换算文件偏移; 中段/后段起点前移后必须同步
+            // 前移 offset, 否则重新缺页会读回文件开头而不是对应片段.
+            let mid_offset = if vma.inode_id.is_some() {
+                vma.offset + (overlap_start - vma.start) as u64
+            } else {
+                vma.offset
+            };
             fragments.push(Vma {
                 start: overlap_start,
                 end: overlap_end,
                 flags: new_flags,
                 kind: vma.kind,
-                offset: vma.offset,
+                offset: mid_offset,
                 inode_id: vma.inode_id,
                 shared: vma.shared,
                 file_pwm: vma.file_pwm,
@@ -847,12 +864,17 @@ impl MmStruct {
 
             // 后段: [end, vma.end)
             if vma.end > end {
+                let back_offset = if vma.inode_id.is_some() {
+                    vma.offset + (end - vma.start) as u64
+                } else {
+                    vma.offset
+                };
                 fragments.push(Vma {
                     start: end,
                     end: vma.end,
                     flags: vma.flags,
                     kind: vma.kind,
-                    offset: vma.offset,
+                    offset: back_offset,
                     inode_id: vma.inode_id,
                     shared: vma.shared,
                     file_pwm: vma.file_pwm,

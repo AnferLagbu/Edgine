@@ -830,29 +830,19 @@ pub extern "C" fn vfs_seek(fd: u32, offset: i32, whence: u32) -> i32 {
 // fstat — 从 fd 获取文件属性
 // ============================================================================
 
-/// `fstat(2)` — 从 fd 取文件属性并写入用户空间.
+/// `fstat` 核心 — 从 fd 取 `VfsStat`，**不写用户内存**。
 ///
-/// 属性中的 uid/gid 经 SGEG 身份表映射 (I4 写入用户内存); fd 无效返回
-/// `-EBADF`, 后端失败返回 `-1`.
-pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
-    if st.is_null() {
-        return -1;
-    }
+/// `vfs_fstat_safe` 曾复用 `vfs_fstat` 并把内核栈 `VfsStat` 当用户缓冲传入，
+/// `write_struct_to_user` 必拒，导致所有内核侧 fstat 恒 `EIO`。glibc 的
+/// `ld.so` 在装载 `libc.so.6` 时走 fstat，正好命中该失败面（D7 G0）。
+#[must_use]
+pub fn vfs_fstat_core(fd: u32, _pwm: u64) -> Option<VfsStat> {
+    let handle_id = current_fd_handle(fd as usize)?;
 
-    // Plan B: 通过 OpenFile 的 Inode trait 执行
-    let Some(handle_id) = current_fd_handle(fd as usize) else {
-        return -9;
-    };
-
-    // I4: 用户内存经 privileged 安全代理 (范围校验后写入)
-    let result = OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
+    OPEN_FILE_TABLE.with_file(handle_id, |open_file| {
         let pwm = open_file.pwm;
-        // 非 inode 承载的特殊对象 (eventfd 等): 合成最小 stat (无 inode 编号)
         let mut stat = match open_file.as_inode() {
-            Some(inode) => match inode.stat(pwm) {
-                Ok(stat) => stat,
-                Err(_) => return -1,
-            },
+            Some(inode) => inode.stat(pwm).ok()?,
             None => VfsStat {
                 perm: 0o600,
                 file_type: open_file.file_type,
@@ -860,28 +850,38 @@ pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, _pwm: u64) -> i32 {
                 ..VfsStat::default()
             },
         };
-        // sgeg 身份映射: 把 pwm 归属的 uid/gid 写入最终 stat (先算后写, 免二次回读)
         stat.uid = subject::uid_of(SubjectId::new(stat.owner_pwm));
         stat.gid = subject::gid_of(SubjectId::new(stat.group_pwm));
         if stat.gid == 0xFFFF_FFFF {
             stat.gid = stat.uid;
         }
-        if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
-            0
-        } else {
-            -1
-        }
-    });
+        Some(stat)
+    })?
+}
 
-    result.unwrap_or(-1)
+/// `fstat(2)` — 从 fd 取文件属性并写入用户空间.
+///
+/// 属性中的 uid/gid 经 SGEG 身份表映射 (I4 写入用户内存); fd 无效返回
+/// `-EBADF`, 后端失败返回 `-1`.
+pub extern "C" fn vfs_fstat(fd: u32, st: *mut VfsStat, pwm: u64) -> i32 {
+    if st.is_null() {
+        return -1;
+    }
+
+    let Some(stat) = vfs_fstat_core(fd, pwm) else {
+        return -1;
+    };
+    if crate::privileged::userptr::write_struct_to_user(st as u64, &stat) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Safe 包装: functions 层用, 返回 `VfsStat` 而非 raw pointer.
 #[must_use]
 pub fn vfs_fstat_safe(fd: u32, pwm: u64) -> Option<VfsStat> {
-    let mut st = VfsStat::default();
-    let r = vfs_fstat(fd, &raw mut st, pwm);
-    if r < 0 { None } else { Some(st) }
+    vfs_fstat_core(fd, pwm)
 }
 
 // ============================================================================

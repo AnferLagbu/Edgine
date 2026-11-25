@@ -358,6 +358,23 @@ pub fn close(fd: i32) -> i32 {
     // SAFETY: S 类 — 只有 fd 标量跨边界, 内核只操作自己的 fd 表, 不触碰用户内存.
     unsafe { ret_i32(sys1(SYS_CLOSE, arg_bits(i64::from(fd)))) }
 }
+
+/// `stat(path, statbuf)` — Linux `struct stat` 缓冲由调用方提供.
+///
+/// `st` 必须至少 144 字节 (x86_64) / 128 字节 (aarch64); 本 wrapper 不解析内容.
+#[must_use]
+pub fn stat_path(path: &[u8], st: &mut [u8]) -> i64 {
+    // SAFETY: P + B 类 — path 取自活借用 (NUL 结尾由调用方保证); st 是活的可写
+    // 借用, 内核校验其长度后写入 Linux `struct stat`.
+    unsafe { sys2(SYS_STAT, path.as_ptr() as u64, st.as_mut_ptr() as u64) }
+}
+
+/// `fstat(fd, statbuf)` — Linux `struct stat` 缓冲由调用方提供.
+#[must_use]
+pub fn fstat_fd(fd: i32, st: &mut [u8]) -> i64 {
+    // SAFETY: S + B 类 — fd 是标量; st 是活的可写借用, 内核校验其长度后写.
+    unsafe { sys2(SYS_FSTAT, arg_bits(i64::from(fd)), st.as_mut_ptr() as u64) }
+}
 #[must_use]
 pub fn getpid() -> u64 {
     // SAFETY: S 类 — 无参数, 内核只读当前进程控制块, 不写用户内存.

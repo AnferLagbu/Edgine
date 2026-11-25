@@ -237,6 +237,19 @@ endif
 USER_DYN_LOADER = $(USER_BUILD_DIR)/$(DYN_LOADER_NAME)
 USER_DYN_LIBC = $(USER_BUILD_DIR)/$(DYN_LIBC_NAME)
 DYN_CPIO_DEPS = $(USER_DYNTEST) $(USER_DYN_BAD) $(USER_DYN_BADFMT) $(USER_DYN_LOADER) $(USER_DYN_LIBC)
+# D7 G0 glibc fixture: x86_64 先跑真实 glibc `true`，aarch64 暂无载体 (探针打印 SKIP).
+GLIBC_FIXTURE_DIR = scripts/fixtures/dynamic-glibc-x86_64
+ifeq ($(ARCH),x86_64)
+USER_GLIBC_TEST = $(USER_BUILD_DIR)/glibc_true.bin
+USER_GLIBC_LOADER = $(USER_BUILD_DIR)/ld-linux-x86-64.so.2
+USER_GLIBC_LIBC = $(USER_BUILD_DIR)/libc.so.6
+GLIBC_CPIO_DEPS = $(USER_GLIBC_TEST) $(USER_GLIBC_LOADER) $(USER_GLIBC_LIBC)
+else
+USER_GLIBC_TEST =
+USER_GLIBC_LOADER =
+USER_GLIBC_LIBC =
+GLIBC_CPIO_DEPS =
+endif
 # W-7 端到端探针载荷 (确定性最小 wasm 模块), 由 initramfs 打为 bin/hello.wasm
 USER_PROBE_WASM = $(USER_BUILD_DIR)/hello.wasm
 MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
@@ -453,12 +466,27 @@ $(USER_DYN_LIBC): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_LIBC_SRC)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $< $@
 
+# D7 G0 glibc: 仅 x86_64 有载体; aarch64 变量为空且规则不生成.
+ifeq ($(ARCH),x86_64)
+$(USER_GLIBC_TEST): $(GLIBC_FIXTURE_DIR)/glibc_true
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_GLIBC_LOADER): $(GLIBC_FIXTURE_DIR)/ld-linux-x86-64.so.2
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+
+$(USER_GLIBC_LIBC): $(GLIBC_FIXTURE_DIR)/libc.so.6
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $< $@
+endif
+
 $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD_DIR)/install.bin \
               $(USER_BUILD_DIR)/fbterm.bin $(USER_BUILD_DIR)/httpsrv.bin \
               $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
               $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
               $(USER_BUILD_DIR)/reboottest.bin \
-              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(DYN_CPIO_DEPS) $(MK_CPIO_PY)
+              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(DYN_CPIO_DEPS) $(GLIBC_CPIO_DEPS) $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
 

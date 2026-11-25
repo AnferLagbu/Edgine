@@ -97,11 +97,17 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/dyntest_nointerp", "file", "dyntest_nointerp.bin"),
     # D6 扩展失败路径：相对 PT_INTERP（内核应 ENOEXEC）。
     ("bin/dyntest_badfmt", "file", "dyntest_badfmt.bin"),
+    # D7 G0: 真实 glibc 动态 true + 上游 ld-linux/libc（x86_64 专用；源缺失跳过）.
+    ("bin/glibc_true", "file", "glibc_true.bin"),
     ("lib", "dir", ""),
     ("lib/ld-musl-x86_64.so.1", "file", "ld-musl-x86_64.so.1"),
     ("lib/libc.musl-x86_64.so.1", "file", "libc.musl-x86_64.so.1"),
     ("lib/ld-musl-aarch64.so.1", "file", "ld-musl-aarch64.so.1"),
     ("lib/libc.musl-aarch64.so.1", "file", "libc.musl-aarch64.so.1"),
+    # glibc 的 PT_INTERP 是 /lib64/ld-linux-x86-64.so.2；loader 默认搜索 /lib64.
+    ("lib64", "dir", ""),
+    ("lib64/ld-linux-x86-64.so.2", "file", "ld-linux-x86-64.so.2"),
+    ("lib64/libc.so.6", "file", "libc.so.6"),
 )
 # 必需条目 (源文件缺失即失败)
 REQUIRED_SRC = "init.bin"

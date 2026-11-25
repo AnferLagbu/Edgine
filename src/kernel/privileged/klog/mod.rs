@@ -530,7 +530,8 @@ pub fn klog_register_defaults() {
 // klog no-op, 整体 cfg 掉消除 dead_code 警告.
 
 #[cfg(not(feature = "host-test"))]
-const RING_SIZE: usize = 128 * 1024;
+// 保留 256B 尾部余量, 使 `.bss` 收尾不越过 K-08 的 USER_CODE_BASE 边界.
+const RING_SIZE: usize = 128 * 1024 - 256;
 
 #[cfg(not(feature = "host-test"))]
 struct RingBuf {

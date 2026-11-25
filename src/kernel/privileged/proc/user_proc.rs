@@ -1947,11 +1947,16 @@ impl UserProcManager {
         // 确保 16 字节对齐
         let total = (total + 15) & !15;
 
-        if total as u64 > stack_top - USER_STACK_TOP + USER_STACK_SIZE {
-            return 0; // Stack overflow
+        // Linux 初始栈的 `%rsp` 在进程入口必须是 16 字节对齐；`create` 侧的
+        // `initial_rsp` 为最后一次 push 预留了 8 字节，故这里以 16 字节向下取整，
+        // 而不是直接用 `stack_top - total`。glibc `_dl_start` 的 `movaps` 会
+        // 在 8 模 16 的栈上以 #GP(0) 失败（G0 首个实测缺口）。
+        let stack_limit = stack_top - USER_STACK_TOP + USER_STACK_SIZE;
+        if total as u64 + 16 > stack_limit {
+            return 0; // Stack overflow (含对齐余量)
         }
 
-        let new_sp = stack_top - total as u64;
+        let new_sp = (stack_top - total as u64) & !15u64;
         let mut pos = crate::privileged::glue::usize_from_u64(new_sp);
 
         // 写入 argc

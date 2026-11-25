@@ -140,6 +140,7 @@ pub extern "C" fn _start() -> ! {
     dyn_probe();
     dyn_negative_probe();
     dyn_badfmt_probe();
+    glibc_probe();
 
     // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
     // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
@@ -1547,6 +1548,61 @@ fn dyn_badfmt_probe() {
         println("[DYN] FMT PASS: malformed interp rejected, child survived");
     } else {
         print("[DYN] FMT FAIL: status=");
+        print_dec(i64::from(status));
+        print(" reap=");
+        print_dec(reaped);
+        print_char(b'\n');
+    }
+}
+
+/// D7 G0: 真实 glibc 动态 `true` 载体路径。`PT_INTERP` 为
+/// `/lib64/ld-linux-x86-64.so.2`，`NEEDED=libc.so.6`；x86_64 专用，aarch64
+/// 当前无 glibc 载体。
+const GLIBC_PROBE_PATH: &[u8] = b"/bin/glibc_true\0";
+
+/// D7 G0 glibc 最小启动探针: fork → `execve(/bin/glibc_true)` → 父进程按
+/// `wstatus == 0` 判定. 载荷只做 `exit(0)`，能通过说明上游 `ld-linux` 已完成
+/// 解释器装载、libc 映射/重定位、TLS 设置与 glibc 启动路径；失败则打印状态，
+/// 交给后续 G1/G2 定位第一个缺口。
+fn glibc_probe() {
+    if !file_present(GLIBC_PROBE_PATH) {
+        println("[GLIBC] SKIP: no carrier");
+        return;
+    }
+    // G0 诊断: glibc loader 在映射 libc 前会先 stat/open 共享库; 这两步失败
+    // 会直接表现为 "cannot stat shared object". 保留一行 rc 观测, 便于失败定位.
+    let mut st = [0u8; 144];
+    let stat_rc = userlib::sys::stat_path(b"/lib64/libc.so.6\0", &mut st);
+    print("[GLIBC] stat libc rc=");
+    print_dec(stat_rc);
+    let fd = userlib::sys::open(b"/lib64/libc.so.6\0", 0, 0);
+    print(" fd=");
+    print_dec(i64::from(fd));
+    let fstat_rc = userlib::sys::fstat_fd(fd, &mut st);
+    print(" fstat rc=");
+    print_dec(fstat_rc);
+    print_char(b'\n');
+    let _ = userlib::sys::close(fd);
+
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [GLIBC_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let rc = proc_exec(GLIBC_PROBE_PATH, &argv, &[]);
+        print("[GLIBC] child exec rc=");
+        print_dec(rc);
+        print_char(b'\n');
+        proc_exit(3);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[GLIBC] FAIL: fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) && status == 0 {
+        println("[GLIBC] PASS: dynamic glibc execve");
+    } else {
+        print("[GLIBC] FAIL: status=");
         print_dec(i64::from(status));
         print(" reap=");
         print_dec(reaped);

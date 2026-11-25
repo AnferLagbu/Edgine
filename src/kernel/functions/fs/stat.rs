@@ -14,13 +14,167 @@
 //! - [`lstat_syscall`] 不跟随符号链接
 //! - [`fstat_syscall`] 按 FD 查询
 
-use crate::functions::fs::VfsStat;
 use crate::functions::fs::api as fw;
+use crate::functions::fs::{VfsFileType, VfsStat};
 use crate::privileged::syscall::Errno;
 use crate::privileged::syscall::api;
 
 use super::subject;
-const VFS_STAT_SIZE: u64 = core::mem::size_of::<VfsStat>() as u64;
+
+/// Linux `struct stat` 的 x86_64 / aarch64 布局与 `VfsStat` 的转换。
+///
+/// `VfsStat` 是内核内部元数据；`stat`/`fstat`/`newfstatat` 面向用户态时必须
+/// 按 Linux UAPI 布局写回，否则 glibc 的 `ld.so` 会按 144 字节结构读取并
+/// 把 size/mode 解释到错误字段（G0 实测 `libc.so.6: cannot stat`）。
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct LinuxTimespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct LinuxStat {
+    st_dev: u64,
+    st_ino: u64,
+    st_nlink: u64,
+    st_mode: u32,
+    st_uid: u32,
+    st_gid: u32,
+    __pad0: i32,
+    st_rdev: u64,
+    st_size: i64,
+    st_blksize: i64,
+    st_blocks: i64,
+    st_atim: LinuxTimespec,
+    st_mtim: LinuxTimespec,
+    st_ctim: LinuxTimespec,
+    __reserved: [i64; 3],
+}
+
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct LinuxTimespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct LinuxStat {
+    st_dev: u64,
+    st_ino: u64,
+    st_mode: u32,
+    st_nlink: u32,
+    st_uid: u32,
+    st_gid: u32,
+    st_rdev: u64,
+    __pad1: u64,
+    st_size: i64,
+    st_blksize: u32,
+    __pad2: u32,
+    st_blocks: i64,
+    st_atim: LinuxTimespec,
+    st_mtim: LinuxTimespec,
+    st_ctim: LinuxTimespec,
+    __unused: [u32; 2],
+}
+
+const S_IFMT: u32 = 0o170_000;
+const S_IFREG: u32 = 0o100_000;
+const S_IFDIR: u32 = 0o040_000;
+const S_IFCHR: u32 = 0o020_000;
+const S_IFLNK: u32 = 0o120_000;
+
+fn linux_stat_from_vfs(s: &VfsStat) -> LinuxStat {
+    let type_bits = match VfsFileType::from_u8(s.file_type) {
+        Some(VfsFileType::Dir) => S_IFDIR,
+        Some(VfsFileType::Dev) => S_IFCHR,
+        Some(VfsFileType::Symlink) => S_IFLNK,
+        _ => S_IFREG,
+    };
+    let mode = type_bits | (u32::from(s.perm) & !S_IFMT);
+    let size = i64::from(s.size);
+    let blocks = (size + 511) / 512;
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        LinuxStat {
+            st_dev: 0,
+            st_ino: u64::from(s.node_id),
+            st_nlink: 1,
+            st_mode: mode,
+            st_uid: s.uid,
+            st_gid: s.gid,
+            __pad0: 0,
+            st_rdev: 0,
+            st_size: size,
+            st_blksize: 4096,
+            st_blocks: blocks,
+            st_atim: LinuxTimespec {
+                tv_sec: s.atime.cast_signed(),
+                tv_nsec: 0,
+            },
+            st_mtim: LinuxTimespec {
+                tv_sec: s.mtime.cast_signed(),
+                tv_nsec: 0,
+            },
+            st_ctim: LinuxTimespec {
+                tv_sec: s.ctime.cast_signed(),
+                tv_nsec: 0,
+            },
+            __reserved: [0; 3],
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        LinuxStat {
+            st_dev: 0,
+            st_ino: u64::from(s.node_id),
+            st_mode: mode,
+            st_nlink: 1,
+            st_uid: s.uid,
+            st_gid: s.gid,
+            st_rdev: 0,
+            __pad1: 0,
+            st_size: size,
+            st_blksize: 4096,
+            __pad2: 0,
+            st_blocks: blocks,
+            st_atim: LinuxTimespec {
+                tv_sec: s.atime.cast_signed(),
+                tv_nsec: 0,
+            },
+            st_mtim: LinuxTimespec {
+                tv_sec: s.mtime.cast_signed(),
+                tv_nsec: 0,
+            },
+            st_ctim: LinuxTimespec {
+                tv_sec: s.ctime.cast_signed(),
+                tv_nsec: 0,
+            },
+            __unused: [0; 2],
+        }
+    }
+}
+
+fn write_linux_stat(st_buf_ptr: u64, s: &VfsStat) -> Result<usize, Errno> {
+    if !api::validate_user_buf(st_buf_ptr, core::mem::size_of::<LinuxStat>() as u64) {
+        return Err(Errno::Efault);
+    }
+    let stat = linux_stat_from_vfs(s);
+    if api::write_struct_to_user::<LinuxStat>(st_buf_ptr, &stat) {
+        Ok(0)
+    } else {
+        Err(Errno::Efault)
+    }
+}
 
 // ============================================================================
 // stat
@@ -37,17 +191,10 @@ pub fn stat_syscall(path_ptr: u64, st_buf_ptr: u64) -> Result<usize, Errno> {
     if !api::validate_user_ptr(path_ptr) {
         return Err(Errno::Efault);
     }
-    if !api::validate_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
-        return Err(Errno::Efault);
-    }
     let pwm = current_pwm();
     // privileged safe API: 返回 VfsStat (无 raw pointer 跨边界)
     let stat = fw::vfs_stat_safe(path_ptr as *const u8, pwm).ok_or(Errno::Eio)?;
-    // privileged safe API: 写结构体到 user buf, 内部已 check_user_buf
-    if !api::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
-        return Err(Errno::Efault);
-    }
-    Ok(0)
+    write_linux_stat(st_buf_ptr, &stat)
 }
 
 // ============================================================================
@@ -80,15 +227,45 @@ pub fn fstat_syscall(fd: i32, st_buf_ptr: u64) -> Result<usize, Errno> {
     if st_buf_ptr == 0 {
         return Err(Errno::Efault);
     }
-    if !api::validate_user_buf(st_buf_ptr, VFS_STAT_SIZE) {
-        return Err(Errno::Efault);
-    }
     let pwm = current_pwm();
     let stat = fw::vfs_fstat_safe(fd.cast_unsigned(), pwm).ok_or(Errno::Eio)?;
-    if !api::write_struct_to_user::<VfsStat>(st_buf_ptr, &stat) {
+    write_linux_stat(st_buf_ptr, &stat)
+}
+
+const AT_FDCWD: i32 = -100;
+const AT_EMPTY_PATH: u32 = 0x1000;
+
+/// `newfstatat(dirfd, path, statbuf, flags)` — Linux 路径 stat ABI。
+///
+/// 当前 VFS 没有按 fd 解析相对路径的入口，因此只支持 `AT_FDCWD`（相对 cwd）与
+/// 绝对路径；`AT_EMPTY_PATH` 走 fd stat。`AT_SYMLINK_NOFOLLOW` 暂不另做分支
+/// （`RamFS` 的 `stat` 本身不跟随符号链接）。
+///
+/// # Errors
+/// 指针为空/越界返回 `EFAULT`；路径 stat 失败返回 `EIO`；非 `AT_FDCWD` 的
+/// 相对路径返回 `EINVAL`。
+pub fn newfstatat_syscall(
+    dirfd: i32,
+    path_ptr: u64,
+    st_buf_ptr: u64,
+    flags: u32,
+) -> Result<usize, Errno> {
+    if path_ptr == 0 || st_buf_ptr == 0 {
         return Err(Errno::Efault);
     }
-    Ok(0)
+    if !api::validate_user_ptr(path_ptr) {
+        return Err(Errno::Efault);
+    }
+
+    // glibc 的 ld.so 用 newfstatat 读取候选共享库元数据；AT_EMPTY_PATH 是
+    // fd 版本，其余绝对路径/AT_FDCWD 交给路径 stat。
+    if flags & AT_EMPTY_PATH != 0 && dirfd >= 0 {
+        return fstat_syscall(dirfd, st_buf_ptr);
+    }
+    if dirfd == AT_FDCWD {
+        return stat_syscall(path_ptr, st_buf_ptr);
+    }
+    Err(Errno::Einval)
 }
 
 // ============================================================================
@@ -293,4 +470,46 @@ pub fn utimensat_syscall(dirfd: i32, path_ptr: u64, times_ptr: u64, _flags: i32)
 /// 取当前进程凭证 (历史硬编码 `TEST_PWM` 路径已弃用)。
 fn current_pwm() -> u64 {
     subject::current_raw()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_stat_size_matches_linux_uapi() {
+        let expected = if cfg!(target_arch = "x86_64") {
+            144
+        } else {
+            128
+        };
+        assert_eq!(core::mem::size_of::<LinuxStat>(), expected);
+        assert_eq!(core::mem::align_of::<LinuxStat>(), 8);
+    }
+
+    #[test]
+    fn linux_stat_maps_vfs_fields() {
+        let vfs = VfsStat {
+            node_id: 7,
+            perm: 0o644,
+            uid: 1000,
+            gid: 1001,
+            size: 1024,
+            atime: 1,
+            mtime: 2,
+            ctime: 3,
+            file_type: VfsFileType::File.as_u8(),
+            ..VfsStat::default()
+        };
+        let stat = linux_stat_from_vfs(&vfs);
+        assert_eq!(stat.st_ino, 7);
+        assert_eq!(stat.st_mode, 0o100_644);
+        assert_eq!(stat.st_size, 1024);
+        assert_eq!(stat.st_blocks, 2);
+        assert_eq!(stat.st_uid, 1000);
+        assert_eq!(stat.st_gid, 1001);
+        assert_eq!(stat.st_atim.tv_sec, 1);
+        assert_eq!(stat.st_mtim.tv_sec, 2);
+        assert_eq!(stat.st_ctim.tv_sec, 3);
+    }
 }

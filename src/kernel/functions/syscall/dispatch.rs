@@ -288,9 +288,11 @@ fn dispatch_fs_at(num: u64, args: [u64; 6]) -> Option<i64> {
             crate::functions::intcast::low_i32_from_u64(a2),
             crate::functions::intcast::low_i32_from_u64(a3),
         )),
-        SYS_NEWFSTATAT => as_ret(crate::functions::fs::stat::fstat_syscall(
-            crate::functions::intcast::low_i32_from_u64(a1),
+        SYS_NEWFSTATAT => as_ret(crate::functions::fs::stat::newfstatat_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
             a2,
+            crate::functions::intcast::low_u32_from_u64(a3),
         )),
         SYS_UNLINKAT => as_ret(crate::functions::fs::access::unlink_syscall(a1)),
         SYS_RENAMEAT => as_ret(crate::functions::fs::misc::rename_syscall(a1, a3)),
