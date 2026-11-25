@@ -637,8 +637,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程信息与安全属性 (pid/session 与 seccomp/prctl) 系统调用
 fn dispatch_proc_info(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_PRCTL, SYS_SECCOMP,
-        SYS_SETPGID, SYS_SETSID, SYS_TCGETPGRP, SYS_TCSETPGRP,
+        SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_PRCTL, SYS_PRLIMIT64,
+        SYS_SECCOMP, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSID, SYS_TCGETPGRP, SYS_TCSETPGRP,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -656,6 +656,13 @@ fn dispatch_proc_info(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_GETTID => {
             crate::functions::intcast::i64_from_usize(crate::functions::proc::info::gettid_syscall())
         }
+        SYS_SET_TID_ADDRESS => crate::functions::proc::info::set_tid_address_syscall(a0),
+        SYS_PRLIMIT64 => crate::functions::proc::sysinfo::prlimit64_syscall(
+            a0.cast_signed(),
+            crate::functions::intcast::low_i32_from_u64(a1),
+            a2,
+            a3,
+        ),
         SYS_SETSID => crate::functions::proc::session::proc_setsid(),
         SYS_GETSID => crate::functions::proc::session::proc_getsid(
             crate::functions::intcast::low_i32_from_u64(a0),

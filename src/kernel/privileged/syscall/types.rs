@@ -322,6 +322,10 @@ pub const SYS_UMOUNT2: u64 = 166;
 ///
 /// 单一权威源 `edgine_abi::thread` (用户态 wrapper 引用同源).
 pub const SYS_GETTID: u64 = edgine_abi::thread::SYS_GETTID;
+/// `SYS_SET_TID_ADDRESS` — 登记退出时清零的 TID 地址并返回当前 TID
+pub const SYS_SET_TID_ADDRESS: u64 = edgine_abi::thread::SYS_SET_TID_ADDRESS;
+/// `SYS_PRLIMIT64` — 查询或设置 64 位资源限制
+pub const SYS_PRLIMIT64: u64 = 302;
 /// `SYS_TIME` — 获取秒级时间戳
 pub const SYS_TIME: u64 = 201;
 /// `SYS_CLOCK_GETTIME` — 读取指定时钟的时间
@@ -1059,6 +1063,8 @@ const _: () = {
         SYS_MOUNT,
         SYS_UMOUNT2,
         SYS_GETTID,
+        SYS_SET_TID_ADDRESS,
+        SYS_PRLIMIT64,
         SYS_TIME,
         SYS_CLOCK_GETTIME,
         SYS_EXIT_GROUP,

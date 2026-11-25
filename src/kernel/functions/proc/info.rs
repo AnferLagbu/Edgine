@@ -22,6 +22,7 @@ use alloc::string::String;
 
 use crate::privileged::proc::api;
 use crate::privileged::syscall::Errno;
+use core::sync::atomic::Ordering;
 
 /// `struct utsname` (POSIX): 6 个 65 字节字符串字段, 共 390 字节, 对齐 1
 #[repr(C)]
@@ -49,6 +50,29 @@ pub fn getpid_syscall() -> usize {
 #[must_use]
 pub fn gettid_syscall() -> usize {
     api::process_get_current_pid() as usize
+}
+
+/// `set_tid_address` — 登记退出时清零的 TID 地址，并返回当前 TID.
+///
+/// Linux 语义：把用户地址写入当前进程的 `clear_child_tid`，线程退出时由
+/// `robust::exit_cleanup` 写 0 并 futex 唤醒；空地址表示取消登记。这里不在
+/// 入口校验地址可写性，与 Linux 一致，坏地址只在退出清理时静默失败。
+///
+/// # Errors
+///
+/// 当前进程不在进程表时返回 `ESRCH`。
+#[must_use]
+pub fn set_tid_address_syscall(tidptr: u64) -> i64 {
+    let pid = api::process_get_current_pid();
+    if pid == 0 {
+        return Errno::Esrch.as_ret();
+    }
+    if api::process_with_mut(pid, |p| p.clear_child_tid.store(tidptr, Ordering::Release)).is_some()
+    {
+        i64::from(pid)
+    } else {
+        Errno::Esrch.as_ret()
+    }
 }
 
 /// getppid — 返回父进程 PID (恒成功)

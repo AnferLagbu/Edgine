@@ -1561,12 +1561,17 @@ fn dyn_badfmt_probe() {
 const GLIBC_PROBE_PATH: &[u8] = b"/bin/glibc_true\0";
 /// D7 G1: 带 stdout 的真实 glibc 动态 hello 载体路径。
 const GLIBC_HELLO_PATH: &[u8] = b"/bin/glibc_hello\0";
+/// D7 G2: 原始 `set_tid_address`/`prlimit64`/`rseq` 启动 syscall 探针路径。
+const GLIBC_G2_PATH: &[u8] = b"/bin/glibc_g2\0";
 
 /// D7 G0/G1 glibc 启动探针: fork → `execve` 载体 → 父进程按 `wstatus == 0`
 /// 判定。`true` 只证明启动链能退出；`hello` 再证明 glibc stdio 能把一行写到
 /// 串口。载体缺失时逐腿打印 SKIP，失败打印状态，交给后续 G2/G3 定位。
 fn glibc_probe() {
-    if !file_present(GLIBC_PROBE_PATH) && !file_present(GLIBC_HELLO_PATH) {
+    if !file_present(GLIBC_PROBE_PATH)
+        && !file_present(GLIBC_HELLO_PATH)
+        && !file_present(GLIBC_G2_PATH)
+    {
         println("[GLIBC] SKIP: no carrier");
         return;
     }
@@ -1594,6 +1599,11 @@ fn glibc_probe() {
         let _ = glibc_exec(GLIBC_HELLO_PATH, "[GLIBC] HELLO PASS: dynamic glibc hello");
     } else {
         println("[GLIBC] HELLO SKIP: no carrier");
+    }
+    if file_present(GLIBC_G2_PATH) {
+        let _ = glibc_exec(GLIBC_G2_PATH, "[GLIBC] G2 PASS: startup syscalls");
+    } else {
+        println("[GLIBC] G2 SKIP: no carrier");
     }
 }
 

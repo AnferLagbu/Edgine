@@ -148,6 +148,82 @@ pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
     0
 }
 
+/// `prlimit64(pid, resource, new_limit, old_limit)` 策略
+///
+/// 支持 `pid = 0`（当前进程）与显式当前 PID；非 init 进程不允许改其他进程的
+/// 限制，避免绕过 SGEG 权限面。`new_limit` 和 `old_limit` 都可为空，语义与
+/// Linux 的 `prlimit64(2)` 一致：空 new 只查询，空 old 只设置。
+///
+/// # Errors
+///
+/// 资源号越界或 pid 非法返回 `EINVAL`；目标进程不存在返回 `ESRCH`；非 init
+/// 改其他进程返回 `EPERM`；用户缓冲不可访问返回 `EFAULT`；设置被 rlimit 表
+/// 拒绝时透传 `EPERM`/`EINVAL`。
+#[must_use]
+pub fn prlimit64_syscall(pid: i64, resource: i32, new_ptr: u64, old_ptr: u64) -> i64 {
+    use crate::privileged::proc::rlimit::RLIMIT_NLIMITS;
+
+    let current = crate::privileged::proc::process_get_current_pid();
+    let target = match pid.cmp(&0) {
+        core::cmp::Ordering::Equal => current,
+        core::cmp::Ordering::Greater => {
+            let Ok(target) = u32::try_from(pid) else {
+                return Errno::Esrch.as_ret();
+            };
+            if target != current && current != 1 {
+                return Errno::Eperm.as_ret();
+            }
+            target
+        }
+        core::cmp::Ordering::Less => return Errno::Einval.as_ret(),
+    };
+    if target == 0 {
+        return Errno::Esrch.as_ret();
+    }
+    let Ok(index) = usize::try_from(resource) else {
+        return Errno::Einval.as_ret();
+    };
+    if index >= RLIMIT_NLIMITS {
+        return Errno::Einval.as_ret();
+    }
+    if (new_ptr != 0 && !crate::privileged::syscall::api::validate_user_buf(new_ptr, 16))
+        || (old_ptr != 0 && !crate::privileged::syscall::api::validate_user_buf(old_ptr, 16))
+    {
+        return Errno::Efault.as_ret();
+    }
+
+    let Some(old) =
+        crate::privileged::proc::process_with(target, |p| p.rlimit_table.lock().get(index))
+            .flatten()
+    else {
+        return Errno::Esrch.as_ret();
+    };
+
+    if new_ptr != 0 {
+        let mut values = [0u64; 2];
+        if !crate::privileged::syscall::api::read_struct_from_user(new_ptr, &mut values) {
+            return Errno::Efault.as_ret();
+        }
+        let is_privileged = current == 1;
+        match crate::privileged::proc::process_with_mut(target, |p| {
+            p.rlimit_table
+                .lock()
+                .set(index, values[0], values[1], is_privileged)
+        }) {
+            Some(Ok(())) => {}
+            Some(Err(error)) => return error.as_ret(),
+            None => return Errno::Esrch.as_ret(),
+        }
+    }
+
+    if old_ptr != 0
+        && !crate::privileged::syscall::api::write_struct_to_user(old_ptr, &[old.cur, old.max])
+    {
+        return Errno::Efault.as_ret();
+    }
+    0
+}
+
 /// gethostname(buf, size) 策略 — 读取当前进程 UTS namespace 主机名
 ///
 /// T1 G7: 原实现恒返回字面量 `"localhost"`, 与 `uname` (硬编码

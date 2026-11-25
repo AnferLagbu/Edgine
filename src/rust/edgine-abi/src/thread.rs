@@ -15,6 +15,9 @@ pub const SYS_KILL: u64 = 62;
 /// `SYS_GETTID`: 读取当前线程 ID.
 pub const SYS_GETTID: u64 = 186;
 
+/// `SYS_SET_TID_ADDRESS`: 登记退出时清零的 TID 地址并返回当前 TID.
+pub const SYS_SET_TID_ADDRESS: u64 = 218;
+
 /// `SYS_FUTEX`: futex 等待/唤醒.
 pub const SYS_FUTEX: u64 = 202;
 

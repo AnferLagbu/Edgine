@@ -766,16 +766,23 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
-            # D7 G0/G1: 真实 glibc 动态 true + hello —— 上游 ld-linux 载入
-            # libc.so.6、完成启动并让 glibc stdio 写出 `hello dynamic glibc`；
-            # `[GLIBC] PASS` / `[GLIBC] HELLO PASS` 只在子进程 0 退出时打印，FAIL 一律阻断.
+            # D7 G0/G1/G2: 真实 glibc 动态 true + hello + 启动 syscall 探针 ——
+            # 上游 ld-linux 载入 libc.so.6、完成启动并让 glibc stdio 写出
+            # `hello dynamic glibc`；`set_tid_address`/`prlimit64` 必须返回成功，
+            # `rseq` 预期 ENOSYS；任一 GLIBC/G2 FAIL 一律阻断.
             if grep -aq "\[GLIBC\] PASS: dynamic glibc execve" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] HELLO PASS: dynamic glibc hello" "$X64_LOG" \
                 && grep -aq "hello dynamic glibc" "$X64_LOG" \
+                && grep -aq "\[GLIBC\] G2 PASS: startup syscalls" "$X64_LOG" \
+                && grep -aq "\[G2\] SET_TID PASS" "$X64_LOG" \
+                && grep -aq "\[G2\] PRLIMIT PASS" "$X64_LOG" \
+                && grep -aq "\[G2\] RSEQ ENOSYS" "$X64_LOG" \
+                && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
+                && ! grep -aq "\[G2\] RSEQ UNEXPECTED" "$X64_LOG" \
                 && ! grep -aq "\[GLIBC\] FAIL" "$X64_LOG"; then
-                ok "[x86_64] glibc 最小动态 true/hello 通过 (D7 G0/G1)"
+                ok "[x86_64] glibc 动态 true/hello + G2 syscall 通过 (D7 G0/G1/G2)"
             else
-                warn "[x86_64] glibc 最小动态 true/hello 未通过 (D7 G0/G1)"
+                warn "[x86_64] glibc 动态 true/hello + G2 syscall 未通过 (D7 G0/G1/G2)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$X64_LOG" \

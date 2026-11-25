@@ -167,6 +167,7 @@ const fn canonical_to_aarch64_upper(nr: u64) -> u64 {
         202 => 98,  // SYS_FUTEX
         203 => 122, // SYS_SCHED_SETAFFINITY
         204 => 123, // SYS_SCHED_GETAFFINITY
+        218 => 96,  // SYS_SET_TID_ADDRESS
         222 => 107, // SYS_TIMER_CREATE
         223 => 110, // SYS_TIMER_SETTIME
         224 => 108, // SYS_TIMER_GETTIME
@@ -224,6 +225,7 @@ const fn canonical_to_aarch64_upper(nr: u64) -> u64 {
 
 const fn canonical_to_aarch64_high(nr: u64) -> u64 {
     match nr {
+        302 => 261, // SYS_PRLIMIT64
         303 => 264, // SYS_NAME_TO_HANDLE_AT
         304 => 265, // SYS_OPEN_BY_HANDLE_AT
         307 => 269, // SYS_SENDMMSG
@@ -320,6 +322,7 @@ const fn aarch64_to_canonical_low(nr: u64) -> u64 {
         8 => 191,  // SYS_GETXATTR
         11 => 194, // SYS_LISTXATTR
         14 => 197, // SYS_REMOVEXATTR
+        96 => 218, // SYS_SET_TID_ADDRESS
         98 => 202, // SYS_FUTEX
         94 => 231, // SYS_EXIT_GROUP
         21 => 233, // SYS_EPOLL_CTL
@@ -448,6 +451,7 @@ const fn aarch64_to_canonical_upper(nr: u64) -> u64 {
         220 => 56,  // SYS_CLONE
         221 => 59,  // SYS_EXECVE
         260 => 61,  // SYS_WAIT4
+        261 => 302, // SYS_PRLIMIT64
         228 => 149, // SYS_MLOCK
         229 => 150, // SYS_MUNLOCK
         230 => 151, // SYS_MLOCKALL

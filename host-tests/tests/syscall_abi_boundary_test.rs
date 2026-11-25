@@ -25,8 +25,10 @@ fn common_linux_numbers_are_bijective() {
         (59, 221),     // execve
         (61, 260),     // wait4
         (72, 25),      // fcntl
+        (218, 96),     // set_tid_address
         (257, 56),     // openat
         (262, 79),     // newfstatat
+        (302, 261),    // prlimit64
     ] {
         assert_eq!(canonical_to_aarch64(canonical), aarch64);
         assert_eq!(aarch64_to_canonical(aarch64), canonical);
@@ -60,4 +62,7 @@ fn unknown_numbers_fail_closed() {
     assert_eq!(canonical_to_aarch64(PRIVATE_END), UNKNOWN);
     assert_eq!(aarch64_to_canonical(9999), UNKNOWN);
     assert_eq!(aarch64_to_canonical(PRIVATE_END), UNKNOWN);
+    // aarch64 rseq 公开号 293 尚未映射；必须保持 UNKNOWN -> 内核 -ENOSYS，
+    // 不能误落到 canonical 侧任何已实现 syscall。
+    assert_eq!(aarch64_to_canonical(293), UNKNOWN);
 }
