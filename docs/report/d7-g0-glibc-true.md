@@ -77,8 +77,9 @@ aarch64 串口日志：
 - 只覆盖 x86_64。aarch64 没有 glibc 载体，当前是 SKIP，不是通过。
 - 载荷是 `true`，只验证“能启动并 `exit(0)`”；没有 stdout 输出、没有参数解析、
   没有 `AT_PLATFORM`/`AT_HWCAP` 依赖验证。
-- 仍有 glibc 启动面未覆盖：`set_tid_address`、`prlimit64`、`rseq`、pthread、
-  `dlopen`、VDSO；`AT_SYSINFO_EHDR=0` 的 fallback 只在 `true` 上验过。
+- 仍有 glibc 启动面未覆盖：G0 本腿没有直接断言 `set_tid_address`/`prlimit64`/
+  `rseq`；这些已由 G2 的原始 syscall 探针与宿主 GDB 复核补齐（`rseq` 保持
+  `ENOSYS`）；pthread、`dlopen`、VDSO 仍在 G3/G4。
 - `libc.so.6` 大于 `ELF_MAX_SIZE`，本腿证明它可由 loader `mmap`，不证明内核可把
   它当主程序整文件装载。
 - 该结果属 D7 可选工程；T7 已于 2026-11-25 按方案一以双架构 musl 收口，状态仍为
@@ -89,8 +90,9 @@ aarch64 串口日志：
 1. **G1（已完成）**：带 stdout 的 x86_64 动态 glibc hello 已于 2026-11-25 通过，
    当前 auxv 不需要补 `AT_PLATFORM`/`AT_HWCAP*` 也能跑；见
    [d7-g1-glibc-hello.md](d7-g1-glibc-hello.md)。
-2. **G2**：先做会真实调用 `set_tid_address`/`prlimit64`/`rseq` 的探针，确认
-   `ENOSYS` 再补入口，不先加空桩。
+2. **G2（已完成）**：`glibc_g2` 探针已确认 `set_tid_address`/`prlimit64` 返回
+   成功、`rseq` 保持 `ENOSYS`；宿主 GDB 证实 glibc 启动实际调用三者。见
+   [d7-g2-glibc-startup-syscalls.md](d7-g2-glibc-startup-syscalls.md)。
 3. **G3**：仅当 `AT_SYSINFO_EHDR=0` 在 `clock_gettime`/`gettimeofday` 上失败时
    才做最小 VDSO。
 4. **G4**：再评估 `clone3`/pthread/TLS/`dlopen`，不把线程面混进 G1。

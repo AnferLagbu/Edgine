@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2/G3 待开。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3/G4 待开。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -138,7 +138,10 @@
 - `MAP_FIXED`：先 `remove_range` 拆除重叠，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`。
 - 校验 `MAP_PRIVATE` 文件映射的可写 COW、`mprotect(PROT_READ)` 的 RELRO、`PROT_NONE` guard。
 - 校验 `openat/pread/fstat/readlink/close` 足以让解释器找到并映射 libc。
-- `set_tid_address`/`prlimit64`：G1 未触发；G2 先用真实调用探针取证，再补入口。
+- `set_tid_address`/`prlimit64`：G2 已按宿主 glibc 启动序列取证并补齐；`rseq`
+  保持 `ENOSYS`，等 G4 pthread 再定注册/退出语义。
+- 仍待补专项断言：`MAP_PRIVATE` 文件写 COW 的“写后不污页缓存”；`set_tid_address`
+  的退出清理与 `prlimit64` 跨进程权限面尚无独立集成断言。
 - `/proc/self/exe`：若 musl 的 `AT_EXECFN` 路径不足，再补；第一波先不强制。
 - 已施工（2026-11-25，`beb6c07d`）：`MAP_FIXED` / `MAP_FIXED_NOREPLACE` 固定落点；固定地址必须页对齐、不低于用户 VA 下界、不越过 `USER_ADDR_MAX`。`MAP_FIXED` 先按范围注销文件页缓存持有、拆 VMA 与用户页表项，再插入；`MAP_FIXED_NOREPLACE` 冲突返 `EEXIST`，不拆旧映射。无当前 CR3 时固定落点 fail-closed（只拆描述符，不触碰 VMM）。
 - 已施工（2026-11-25，`beb6c07d`）：`PROT_NONE` 保留 VMA 占位但不置 `PRESENT`，缺页路径见到无 `PRESENT` 的 VMA 直接 `SIGSEGV`，不再被匿名页分配“修复”成可读页；`mprotect(PROT_NONE)` 同步清 PTE 的 present 位。
@@ -183,16 +186,16 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 | 差异 | 现状 | glibc 影响 |
 |---|---|---|
 | VDSO | 全树无，当前只能 `AT_SYSINFO_EHDR = 0` | glibc 多数时间函数有 syscall fallback；若启动期硬依赖 VDSO，则必须补最小 VDSO |
-| `set_tid_address` | 无 syscall；但 `clear_child_tid` 字段与退出清理已存在 | glibc 启动/线程清理可能需要；可复用现有字段，成本较低 |
-| `prlimit64` | 无；`getrlimit/setrlimit` 已有 | glibc 可能直接调 `prlimit64`；缺省时看 fallback，必要时补 |
-| `rseq` | 无 | glibc 2.35+ 可能注册 rseq；若 ENOSYS 不致命则可后置，若致命则要补注册/退出语义 |
+| `set_tid_address` | 已实现（G2）：`218 ↔ 96`，写 `clear_child_tid`，返回当前 TID | glibc 启动实际调用；入口不校验 `tidptr`，退出清理静默失败 |
+| `prlimit64` | 已实现（G2）：`302 ↔ 261`，支持查询/设置 `[cur,max]` | glibc 启动用 `pid=0, RLIMIT_STACK, new=NULL` 查询；非 init 改其他 pid 返回 `EPERM` |
+| `rseq` | 取证完成（G2）：`334`/aarch64 `293` 均未映射，保持 `-ENOSYS` | glibc 在该腿接受 fallback；G4 pthread 再定注册/退出语义 |
 | `clone3` | 有入口，但只提取 flags/stack/tid/tls，部分高级字段忽略 | glibc `pthread_create` 可能走 `clone3`；需确认 fallback 或补齐常用字段 |
 
 工作分解：
 
 - **G0 取证（x86_64 已完成 2026-11-25）**：glibc 动态 `true` + `ld-linux` + `libc.so.6` 根镜像已接入 initramfs；`/bin/glibc_true` 真实 `execve` 返回 0，串口打印 `[GLIBC] PASS: dynamic glibc execve`；aarch64 暂无载体，探针打印 SKIP。G0 收敛了 `newfstatat` 参数位移、Linux `struct stat` 布局、内核侧 `fstat` 跨用户边界、文件映射 VMA 拆分 offset、初始栈 16 字节对齐五处缺口。证据见 [d7-g0-glibc-true.md](../report/d7-g0-glibc-true.md)。
-- **G1 最小启动（x86_64 已完成 2026-11-25）**：真实 glibc 动态 `hello` 已跑通，串口出现 `hello dynamic glibc` 与 `[GLIBC] HELLO PASS`；在 `AT_PLATFORM` 缺失、`AT_HWCAP*=0`、`AT_SYSINFO_EHDR=0` 现状下仍通过。结论是这三个 auxv 不是该腿根因，不预先补；证据见 [d7-g1-glibc-hello.md](../report/d7-g1-glibc-hello.md)。剩余 2–4 人日原本用于 auxv，改由 G2/G4 按真实调用再花。
-- **G2 启动 syscall（先取证）**：G1 的 hello 没有触发 `set_tid_address`/`prlimit64`/`rseq`，所以不先加空桩；用一个会真实调用它们的单线程探针确认 `ENOSYS` 后再补。若届时 pthread 提前进入，再把 `clone3` 常用字段与 rseq 并入。原估 3–7 人日，按真实调用面重估。
+- **G1 最小启动（x86_64 已完成 2026-11-25）**：真实 glibc 动态 `hello` 已跑通，串口出现 `hello dynamic glibc` 与 `[GLIBC] HELLO PASS`；在 `AT_PLATFORM` 缺失、`AT_HWCAP*=0`、`AT_SYSINFO_EHDR=0` 现状下仍通过。结论是这三个 auxv 不是该腿根因，不预先补；证据见 [d7-g1-glibc-hello.md](../report/d7-g1-glibc-hello.md)。G2 复核后确认 glibc 启动实际调用了 `set_tid_address`/`rseq`/`prlimit64`，G1 当时返回 `ENOSYS` 但被 glibc 容错。
+- **G2 启动 syscall（x86_64 已完成 2026-11-25）**：新增 `glibc_g2` 原始 syscall 探针，补 `set_tid_address` 与 `prlimit64`（含 canonical/aarch64 编号、dispatch、ABI 互逆测试、initramfs/init/QEMU 门禁）；`rseq` 不映射，保持 `-ENOSYS`。x86_64 串口 `SET_TID PASS`、`PRLIMIT PASS`、`RSEQ ENOSYS`、`[GLIBC] G2 PASS`，aarch64 仍 SKIP。宿主 GDB 证实 glibc 启动序列为 `set_tid_address → rseq → prlimit64(RLIMIT_STACK)`，并更正 G1 “未触发”的表述。证据见 [d7-g2-glibc-startup-syscalls.md](../report/d7-g2-glibc-startup-syscalls.md)。
 - **G3 VDSO**：仅当 `AT_SYSINFO_EHDR=0` 失败时做；最小 `clock_gettime/gettimeofday/time/getcpu` + ELF 映射 + 符号解析，5–8 人日。
 - **G4 线程/加载器**：`clone3` 常用字段补齐 2–4 人日；glibc `pthread_create`/TLS/`dlopen` 记录 2–4 人日。
 

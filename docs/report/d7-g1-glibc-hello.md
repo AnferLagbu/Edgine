@@ -74,8 +74,11 @@ G1 故意没有先写 `AT_PLATFORM`/`AT_HWCAP*` 再跑，而是先用当前 auxv
   的现状下，glibc 2.44 的 loader + hello 仍能启动并写出 stdout。
 - 因此 `AT_PLATFORM`/`AT_HWCAP*` **不是这条腿的根因**，不预先写死；等
   G4 的 hwcaps/ifunc 或真实失败出现时再补，避免把“猜测的兼容面”混进 ABI。
-- `set_tid_address`、`prlimit64`、`rseq` 在本腿也未触发；G2 应先构造能真正
-  调用它们的探针，再决定是否实现，而不是先加空桩。
+- `set_tid_address`、`prlimit64`、`rseq` 在 G1 当时被内核返回 `-ENOSYS`；
+  G2 用宿主 GDB 复核同一份 glibc loader，确认启动序列实际调用了这三个号
+  （`set_tid_address` → `rseq` → `prlimit64(RLIMIT_STACK)`），glibc 对失败做了
+  容错。故“未触发”的旧表述已更正为“调用了但未实现”，详见
+  `docs/report/d7-g2-glibc-startup-syscalls.md`。
 
 ## 边界
 
@@ -88,8 +91,9 @@ G1 故意没有先写 `AT_PLATFORM`/`AT_HWCAP*` 再跑，而是先用当前 auxv
 
 ## 下一步
 
-1. **G2 取证**：先做一个会调用 `set_tid_address`/`prlimit64` 的 glibc 单线程
-   探针，确认是否真的返回 `ENOSYS`；只有真实调用才补入口。
+1. **G2 取证（已完成 2026-11-25）**：`glibc_g2` 探针与 GDB 复核确认 glibc
+   启动实际调用 `set_tid_address`/`rseq`/`prlimit64`；内核已补前两者，`rseq`
+   保持 `ENOSYS`。详见 `docs/report/d7-g2-glibc-startup-syscalls.md`。
 2. **G2 线程**：若 G4 前要碰 pthread，再补 `clone3` 常用字段与 rseq；不把线程
    面混进 G1。
 3. **G3 VDSO**：继续观察 `AT_SYSINFO_EHDR=0` 在 `clock_gettime`/`gettimeofday`
