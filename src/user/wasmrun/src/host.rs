@@ -708,6 +708,13 @@ fn host_fd_readdir(
     if cookie == 0 {
         let _ = sys::lseek(host, 0, 0);
     }
+    if buf_len < 24 {
+        // 连一个 dirent 头都放不下: 按「本次 0 条」返回, 由调用方换更大的缓冲区.
+        return match write_u32(&mut caller, bufused_ptr, 0) {
+            Ok(()) => wasi::ERRNO_SUCCESS,
+            Err(e) => e,
+        };
+    }
     let mut out: Vec<u8> = Vec::new();
     let mut index = cookie;
     loop {
@@ -740,7 +747,6 @@ fn host_fd_readdir(
                 &entry.name[..fit],
             );
             out.extend_from_slice(&bytes);
-            index = index.wrapping_add(1);
             break;
         }
         let bytes = wasi::encode_dirent(

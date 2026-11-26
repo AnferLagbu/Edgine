@@ -585,12 +585,6 @@ impl ICache {
         }
     }
 
-    /// 检查引用计数是否为零
-    fn is_ref_zero(&self, fs_id: u32, ino: u32) -> bool {
-        self.lookup_index(fs_id, ino)
-            .is_none_or(|idx| self.entries[idx].ref_count == 0)
-    }
-
     /// 获取引用计数
     fn get_ref_count(&self, fs_id: u32, ino: u32) -> u32 {
         self.lookup_index(fs_id, ino)
