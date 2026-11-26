@@ -66,6 +66,14 @@ pub const SYSTEM_CAP_SET_DOMAIN_FLAGS: u64 = 1 << 2;
 /// 的 `setdomainname_syscall` 复用 (语义与既有 sethostname 判定完全一致).
 pub const SYSTEM_CAP_UTS_SETNAME: u64 = 1 << 9;
 
+/// SYSTEM 域 bit10 — 设置任意进程的资源限制 (`setrlimit` / `prlimit64`)
+///
+/// 与 `SYSTEM_CAP_SET_PWM` 分离: 修改 rlimit 是可影响他进程资源占用的
+/// 进程管理操作, 不复用身份设置能力位. 无此位仍可降低自身 soft/hard limit,
+/// 但提高 hard limit 或修改其他 pid 的 rlimit 返回 `EPERM`; bootstrap
+/// PWM 0 经 `engine::check` 恒全权.
+pub const SYSTEM_CAP_SET_RLIMIT: u64 = 1 << 10;
+
 /// FS 域: 读取文件内容与元数据
 pub const FS_CAP_READ: u64 = 1 << 0;
 /// FS 域: 写入文件内容

@@ -1,11 +1,12 @@
 #![deny(unsafe_code)]
-//! 系统信息策略 — getrusage / sysinfo / getrlimit / setrlimit / gethostname / sethostname / setdomainname / boot_check
+//! 系统信息策略 — getrusage / sysinfo / getrlimit / setrlimit / prlimit64 / gethostname / sethostname / setdomainname / boot_check
 //!
 //! 从 privileged/syscall/mod.rs 迁移的策略代码:
 //! - getrusage_syscall: 资源使用统计
 //! - sysinfo_syscall: 系统信息
 //! - getrlimit_syscall: 资源限制查询
 //! - setrlimit_syscall: 资源限制设置 (T2 批 1 自 privileged 回退层迁移)
+//! - prlimit64_syscall: 跨进程资源限制查询/设置 (D7 P1 能力面收口)
 //! - gethostname_syscall: 获取主机名
 //! - sethostname_syscall: 设置主机名
 //! - setdomainname_syscall: 设置域名
@@ -83,6 +84,19 @@ pub fn sysinfo_syscall(info_ptr: u64) -> i64 {
     0
 }
 
+/// 当前会话是否持有修改 rlimit 的 SYSTEM 域能力.
+///
+/// 与 `prlimit64`/`setrlimit` 的 `is_privileged` 判据单源: 修改其他 pid 的
+/// rlimit、或提高 hard limit, 都需要 `SYSTEM_CAP_SET_RLIMIT`; bootstrap
+/// PWM 0 由 `pwm_has_capability` 恒真. 不再用 `pid == 1` 冒充特权.
+fn current_has_rlimit_capability() -> bool {
+    crate::privileged::sgeg::pwm_has_capability(
+        crate::privileged::sgeg::pwm_get_current(),
+        crate::privileged::sgeg::CAP_DOMAIN_SYSTEM,
+        crate::privileged::sgeg::SYSTEM_CAP_SET_RLIMIT,
+    )
+}
+
 /// setrlimit(resource, rlim) 策略 — 设置资源限制
 ///
 /// T2 批 1 (syscall-followup): 自 privileged 回退层迁移. `RlimitTable` 机制
@@ -106,9 +120,9 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     }
     let (cur, max) = (vals[0], vals[1]);
 
-    // 特权判定: pid=1 (init) 视为特权进程
+    // 提高 hard limit 需要 rlimit 专属能力; 降低限制不受此门控.
     let pid = crate::privileged::proc::process_get_current_pid();
-    let is_privileged = pid == 1;
+    let is_privileged = current_has_rlimit_capability();
 
     match crate::privileged::proc::process_with(pid, |proc| {
         let mut rlimit_table = proc.rlimit_table.lock();
@@ -174,27 +188,29 @@ pub fn getrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
 
 /// `prlimit64(pid, resource, new_limit, old_limit)` 策略
 ///
-/// 支持 `pid = 0`（当前进程）与显式当前 PID；非 init 进程不允许改其他进程的
-/// 限制，避免绕过 SGEG 权限面。`new_limit` 和 `old_limit` 都可为空，语义与
-/// Linux 的 `prlimit64(2)` 一致：空 new 只查询，空 old 只设置。
+/// 支持 `pid = 0`（当前进程）与显式当前 PID；修改其他进程的 rlimit 需要
+/// SYSTEM 域 `SYSTEM_CAP_SET_RLIMIT`（bootstrap PWM 0 恒有），避免绕过
+/// SGEG 权限面。`new_limit` 和 `old_limit` 都可为空，语义与 Linux 的
+/// `prlimit64(2)` 一致：空 new 只查询，空 old 只设置。
 ///
 /// # Errors
 ///
-/// 资源号越界或 pid 非法返回 `EINVAL`；目标进程不存在返回 `ESRCH`；非 init
-/// 改其他进程返回 `EPERM`；用户缓冲不可访问返回 `EFAULT`；设置被 rlimit 表
-/// 拒绝时透传 `EPERM`/`EINVAL`。
+/// 资源号越界或 pid 非法返回 `EINVAL`；目标进程不存在返回 `ESRCH`；无
+/// rlimit 能力改其他进程返回 `EPERM`；用户缓冲不可访问返回 `EFAULT`；设置
+/// 被 rlimit 表拒绝时透传 `EPERM`/`EINVAL`。
 #[must_use]
 pub fn prlimit64_syscall(pid: i64, resource: i32, new_ptr: u64, old_ptr: u64) -> i64 {
     use crate::privileged::proc::rlimit::RLIMIT_NLIMITS;
 
     let current = crate::privileged::proc::process_get_current_pid();
+    let privileged = current_has_rlimit_capability();
     let target = match pid.cmp(&0) {
         core::cmp::Ordering::Equal => current,
         core::cmp::Ordering::Greater => {
             let Ok(target) = u32::try_from(pid) else {
                 return Errno::Esrch.as_ret();
             };
-            if target != current && current != 1 {
+            if target != current && !privileged {
                 return Errno::Eperm.as_ret();
             }
             target
@@ -226,7 +242,7 @@ pub fn prlimit64_syscall(pid: i64, resource: i32, new_ptr: u64, old_ptr: u64) ->
         if !crate::privileged::syscall::api::read_struct_from_user(new_ptr, &mut values) {
             return Errno::Efault.as_ret();
         }
-        let is_privileged = current == 1;
+        let is_privileged = privileged;
         match crate::privileged::proc::process_with_mut(target, |p| {
             p.rlimit_table
                 .lock()
@@ -348,8 +364,26 @@ mod tests {
     use crate::privileged::config::MAX_OPEN_FILES;
     use crate::privileged::constants::limits::USER_ADDR_MAX;
     use crate::privileged::proc::rlimit::{RLIM_INFINITY, RLIMIT_NLIMITS, RLIMIT_NOFILE};
+    use crate::privileged::proc::scheduler::Scheduler;
     use crate::privileged::proc::{PROCESS_TABLE, Process};
     use alloc::boxed::Box;
+
+    /// 当前调度进程的恢复守卫: 断言失败时也把 `Scheduler` 恢复到测试前状态.
+    struct CurrentGuard(Option<u32>);
+
+    impl CurrentGuard {
+        fn set(pid: u32) -> Self {
+            let prev = Scheduler::current();
+            Scheduler::set_current(pid);
+            Self(prev)
+        }
+    }
+
+    impl Drop for CurrentGuard {
+        fn drop(&mut self) {
+            Scheduler::set_current(self.0.unwrap_or(0));
+        }
+    }
 
     /// 上界本身不是合法用户指针 (`validate_user_ptr` 要求 `ptr < USER_ADDR_MAX`),
     /// 用它触发指针校验分支, 同时不会真的解引用 host 地址空间.
@@ -415,6 +449,53 @@ mod tests {
             matches!(rlimit_for_process(0, RLIMIT_NOFILE), Err(Errno::Esrch)),
             "pid == 0 必须 ESRCH"
         );
+    }
+
+    #[test]
+    fn test_prlimit64_cross_process_requires_rlimit_capability() {
+        let _lock = crate::functions::fs::FS_GLOBAL_TEST_LOCK.lock();
+        let current = TestProc::new("rlimit-cap-current");
+        let target = TestProc::new("rlimit-cap-target");
+        let _guard = CurrentGuard::set(current.0);
+
+        // 创建一个非 bootstrap 身份并登录; 新身份仅有 VIABLE_FLOOR, 不含
+        // SYSTEM_CAP_SET_RLIMIT, 因此改他 pid 必须 EPERM.
+        let note = "p1-rlimit-cap";
+        let password = "p1-rlimit-password";
+        let table = crate::privileged::sgeg::identity::get_table();
+        let pwm = table.create(password, note, 0).expect("测试身份创建应成功");
+        crate::privileged::sgeg::session::login(note, password).expect("测试身份登录应成功");
+        assert_eq!(
+            crate::privileged::sgeg::session::get_current_pwm(),
+            pwm,
+            "登录后当前会话应绑定测试身份"
+        );
+        assert_eq!(
+            prlimit64_syscall(i64::from(target.0), RLIMIT_NOFILE as i32, 0, 0),
+            Errno::Eperm.as_ret(),
+            "无 rlimit 能力改他 pid 必须 EPERM"
+        );
+
+        // 同一 pid / pid=0 只是查询, 不要求跨进程能力.
+        assert_eq!(
+            prlimit64_syscall(i64::from(current.0), RLIMIT_NOFILE as i32, 0, 0),
+            0,
+            "查询自身 rlimit 不应要求能力"
+        );
+        assert_eq!(
+            prlimit64_syscall(0, RLIMIT_NOFILE as i32, 0, 0),
+            0,
+            "pid=0 查询当前进程不应要求能力"
+        );
+
+        // 登出回到 bootstrap PWM 0 (恒有全部能力), 可查询其他 pid.
+        crate::privileged::sgeg::session::logout();
+        assert_eq!(
+            prlimit64_syscall(i64::from(target.0), RLIMIT_NOFILE as i32, 0, 0),
+            0,
+            "bootstrap PWM 0 必须具备跨进程 rlimit 能力"
+        );
+        table.delete(pwm).expect("测试身份清理应成功");
     }
 
     #[test]
