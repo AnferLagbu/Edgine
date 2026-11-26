@@ -21,6 +21,7 @@
 //! - 通过 privileged::syscall::api 安全写入用户空间
 //! - 无 unsafe, 无裸指针
 
+use crate::privileged::proc::rlimit::{RLIMIT_NLIMITS, Rlimit};
 use crate::privileged::syscall::Errno;
 
 /// getrusage(who, rusage) 策略
@@ -124,25 +125,48 @@ pub fn setrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     }
 }
 
-/// getrlimit(resource, rlim) 策略
-#[must_use]
-pub fn getrlimit_syscall(_resource: i32, rlim_ptr: u64) -> i64 {
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    struct Rlimit {
-        rlim_cur: u64,
-        rlim_max: u64,
+/// 读取指定进程的 rlimit 条目.
+///
+/// `getrlimit` 与 `prlimit64` 的唯一表访问入口: 两入口必须读同一张
+/// `Process::rlimit_table`, 不得各自返回默认值. `pid == 0` 或目标进程不在表内
+/// 返回 `ESRCH`; 资源号越界返回 `EINVAL`.
+fn rlimit_for_process(pid: u32, resource: usize) -> Result<Rlimit, Errno> {
+    if resource >= RLIMIT_NLIMITS {
+        return Err(Errno::Einval);
     }
+    if pid == 0 {
+        return Err(Errno::Esrch);
+    }
+    match crate::privileged::proc::process_with(pid, |p| p.rlimit_table.lock().get(resource)) {
+        Some(Some(limit)) => Ok(limit),
+        Some(None) => Err(Errno::Einval),
+        None => Err(Errno::Esrch),
+    }
+}
+
+/// getrlimit(resource, rlim) 策略
+///
+/// 读取当前进程 `rlimit_table` 的 `{cur,max}`, 与 `prlimit64(pid=0, ...)` 同源;
+/// 不再恒返回 `RLIM_INFINITY`. 保持既有入口错误口径: `rlim_ptr == 0` 返回
+/// `EINVAL`, 非法用户指针返回 `EFAULT`.
+#[must_use]
+pub fn getrlimit_syscall(resource: i32, rlim_ptr: u64) -> i64 {
     if rlim_ptr == 0 {
         return Errno::Einval.as_ret();
     }
-
-    let r = Rlimit {
-        rlim_cur: u64::MAX,
-        rlim_max: u64::MAX,
+    if !crate::privileged::syscall::api::validate_user_buf(rlim_ptr, 16) {
+        return Errno::Efault.as_ret();
+    }
+    let Ok(index) = usize::try_from(resource) else {
+        return Errno::Einval.as_ret();
     };
-
-    if !crate::privileged::syscall::api::write_struct_to_user(rlim_ptr, &r) {
+    let pid = crate::privileged::proc::process_get_current_pid();
+    let limit = match rlimit_for_process(pid, index) {
+        Ok(limit) => limit,
+        Err(errno) => return errno.as_ret(),
+    };
+    let values = [limit.cur, limit.max];
+    if !crate::privileged::syscall::api::write_struct_to_user(rlim_ptr, &values) {
         return Errno::Efault.as_ret();
     }
     0
@@ -192,11 +216,9 @@ pub fn prlimit64_syscall(pid: i64, resource: i32, new_ptr: u64, old_ptr: u64) ->
         return Errno::Efault.as_ret();
     }
 
-    let Some(old) =
-        crate::privileged::proc::process_with(target, |p| p.rlimit_table.lock().get(index))
-            .flatten()
-    else {
-        return Errno::Esrch.as_ret();
+    let old = match rlimit_for_process(target, index) {
+        Ok(limit) => limit,
+        Err(errno) => return errno.as_ret(),
     };
 
     if new_ptr != 0 {
@@ -323,12 +345,77 @@ pub fn reboot_syscall(cmd: i32) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::privileged::config::MAX_OPEN_FILES;
     use crate::privileged::constants::limits::USER_ADDR_MAX;
-    use crate::privileged::proc::rlimit::RLIMIT_NLIMITS;
+    use crate::privileged::proc::rlimit::{RLIM_INFINITY, RLIMIT_NLIMITS, RLIMIT_NOFILE};
+    use crate::privileged::proc::{PROCESS_TABLE, Process};
+    use alloc::boxed::Box;
 
     /// 上界本身不是合法用户指针 (`validate_user_ptr` 要求 `ptr < USER_ADDR_MAX`),
     /// 用它触发指针校验分支, 同时不会真的解引用 host 地址空间.
     const BAD_USER_PTR: u64 = USER_ADDR_MAX;
+
+    /// 测试进程句柄: 真实 `Process::new` 插入全局表, Drop 时回收.
+    struct TestProc(u32);
+
+    impl TestProc {
+        fn new(name: &str) -> Self {
+            let pid = PROCESS_TABLE
+                .allocate_pid()
+                .expect("PROCESS_TABLE.allocate_pid 失败");
+            let proc = Box::new(Process::new(pid, name, None));
+            assert!(
+                PROCESS_TABLE.insert(Box::into_raw(proc)),
+                "测试进程插入失败"
+            );
+            Self(pid)
+        }
+    }
+
+    impl Drop for TestProc {
+        fn drop(&mut self) {
+            PROCESS_TABLE.remove_and_free(self.0);
+        }
+    }
+
+    #[test]
+    fn test_rlimit_for_process_reads_table() {
+        let proc = TestProc::new("rlimit-read-test");
+
+        let nofile = rlimit_for_process(proc.0, RLIMIT_NOFILE).expect("NOFILE 条目必须存在");
+        assert_eq!(nofile.cur, MAX_OPEN_FILES as u64, "NOFILE soft 取默认表");
+        assert_eq!(nofile.max, RLIM_INFINITY, "NOFILE hard 取默认表");
+
+        let changed = PROCESS_TABLE
+            .with_process_mut(proc.0, |p| {
+                p.rlimit_table
+                    .lock()
+                    .set(RLIMIT_NOFILE, 40, 64, true)
+                    .expect("设置 rlimit 必须成功");
+                p.rlimit_table.lock().get(RLIMIT_NOFILE)
+            })
+            .expect("测试进程应在表中")
+            .expect("NOFILE 条目必须存在");
+        assert_eq!((changed.cur, changed.max), (40, 64), "表更新必须可读回");
+
+        let reread = rlimit_for_process(proc.0, RLIMIT_NOFILE).expect("NOFILE 重读必须成功");
+        assert_eq!(
+            (reread.cur, reread.max),
+            (40, 64),
+            "getrlimit 数据源是表而非常量"
+        );
+        assert!(
+            matches!(
+                rlimit_for_process(proc.0, RLIMIT_NLIMITS),
+                Err(Errno::Einval)
+            ),
+            "resource == RLIMIT_NLIMITS 必须 EINVAL"
+        );
+        assert!(
+            matches!(rlimit_for_process(0, RLIMIT_NOFILE), Err(Errno::Esrch)),
+            "pid == 0 必须 ESRCH"
+        );
+    }
 
     #[test]
     fn test_setrlimit_rejects_null_and_bad_resource() {
@@ -372,6 +459,20 @@ mod tests {
             getrlimit_syscall(0, BAD_USER_PTR),
             Errno::Efault.as_ret(),
             "非法用户指针必须 EFAULT"
+        );
+        let mut out = [0u64; 2];
+        assert_eq!(
+            getrlimit_syscall(-1, out.as_mut_ptr() as u64),
+            Errno::Einval.as_ret(),
+            "负 resource 必须 EINVAL"
+        );
+        assert_eq!(
+            getrlimit_syscall(
+                crate::functions::intcast::low_i32_from_usize(RLIMIT_NLIMITS),
+                out.as_mut_ptr() as u64
+            ),
+            Errno::Einval.as_ret(),
+            "resource == RLIMIT_NLIMITS 必须 EINVAL"
         );
     }
 }
