@@ -1556,11 +1556,12 @@ fn wasmi_probe() {
 /// P3 WASI 覆盖探针路径: 只来自 initramfs cpio (`bin/wasi_p3.wasm`).
 const WASI_P3_PROBE_PATH: &[u8] = b"/bin/wasi_p3.wasm\0";
 
-/// P3 WASI 覆盖探针: fork → execve(wasi_p3.wasm) → 父进程事实报告退出码.
+/// P3 WASI 覆盖探针: fork → execve(`wasi_p3.wasm`) → 父进程事实报告退出码.
 ///
-/// 与 [`wasmi_probe`] 同形, 但载荷覆盖 P2 未在真机跑过的入口 (fd_allocate /
-/// fd_advise / fd_renumber / fd_dup / path_filestat_set_times / fd_prestat_*)
-/// 与错误分支; 载荷自身打印 `P3 done fails=N`, 专项腿同时断言该行与 exit=0.
+/// 与 [`wasmi_probe`] 同形, 但载荷覆盖 P2 未在真机跑过的入口 (`fd_allocate` /
+/// `fd_advise` / `fd_renumber` / `fd_dup` / `path_filestat_set_times` /
+/// `fd_prestat_*`) 与错误分支; 载荷自身打印 `P3 done fails=N`, 专项腿同时断言
+/// 该行与 `exit=0`.
 fn wasi_p3_probe() {
     if !file_present(WASI_P3_PROBE_PATH) {
         println("[WASMI-P3] SKIP: no carrier");

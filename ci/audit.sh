@@ -1021,6 +1021,23 @@ if [ "$MODE" = "full" ]; then
             err "wasmi 用户态 stdio 腿失败 (exit=$WASMI_RC, 全量输出见 $WASMI_EVIDENCE)"
         fi
 
+        # WASM P3: 专项 WASI 覆盖探针 (scripts/wasmi_wasi_test.sh, 双架构真构建真启动).
+        # 判据: P3 start + P3 done fails=0 (36 项逐函数断言) + [WASMI-P3] exit=0.
+        # 与上一腿同为 KERNEL_FEATURES=wasm_userspace; 脚本各自判定后复原默认构建.
+        WASI_P3_EVIDENCE="$EVIDENCE_DIR/audit_wasmi_wasi_p3.log"
+        set +e
+        WASI_P3_OUT=$(WASMI_WASI_TIMEOUT=90 "$PROJECT_ROOT/scripts/wasmi_wasi_test.sh" all 2>&1)
+        WASI_P3_RC=$?
+        set -e
+        printf '%s\n' "$WASI_P3_OUT" > "$WASI_P3_EVIDENCE"
+        printf '%s\n' "$WASI_P3_OUT" | tail -6
+        printf '   全量输出: %s\n' "$WASI_P3_EVIDENCE"
+        if [ "$WASI_P3_RC" -eq 0 ]; then
+            ok "wasmi WASI 覆盖探针: 双架构 36 项断言全通过 (WASM P3)"
+        else
+            err "wasmi WASI 覆盖探针失败 (exit=$WASI_P3_RC, 全量输出见 $WASI_P3_EVIDENCE)"
+        fi
+
         # #125 (P-62 甲 第五项 feature 腿): lockdep 构建面探针 (scripts/lockdep_feature_probe.sh).
         # lockdep 不在启动日志 capabilities 行里 (该行只有 smp/preempt/kaslr/kpti/freg),
         # 起一趟证不了它真编进了镜像, 故判据取构建面字符串两侧: lockdep 构建与默认构建
