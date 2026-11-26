@@ -560,6 +560,8 @@
 
   > **2026-11-26 D7 A1（x86_64 + aarch64）**：`D7-DEFERRED-A1` 收口。以 Debian 13 arm64 glibc 2.41 的 `ld-linux-aarch64.so.1` + `libc.so.6` 与七个真实动态探针组成 `scripts/fixtures/dynamic-glibc-aarch64/`，Makefile/initramfs/init/QEMU 门禁按架构泛化。首轮 aarch64 七个 glibc 探针均报 `EL0 sync fault ESR=0x82000007`（`EC=0x20/IFSC=1`，EL0 取指翻译缺页被旧分类归 `Other`）；改为仅放行 `EC=0x20/IFSC=1` 进入用户缺页处理后 G0/G1/G2/L1 转绿。随后修复 aarch64 glibc `time()` 走 `CLOCK_REALTIME_COARSE=5` 的时钟 ID 缺口（新增 coarse 5/6 映射与 `clock_getres` 接受面），以及 glibc 主线程直接写 `TPIDR_EL0`、内核 `tls_base` 滞后导致切回时被 0 覆盖的 TLS 恢复缺陷（新增 `MmuArch::read_user_tls_base`，在 syscall 入口与调度切走点回收真实值）。aarch64 QEMU `[GLIBC] PASS/HELLO PASS/G2 PASS/TIME PASS/PTHREAD PASS/CLONE3 PASS/DLOPEN PASS` 全绿，`[PTHREAD] RSEQ EXIT PASS`、`[CLONE3] PASS`；x86_64 回归全绿；`./ci/build.sh all` 7/0（K-08 余量 64 KiB），`make test-kernel-host` 1481、`make test-host` 1676，`qemu_boot_test.sh` 双架构 1/1，`bash ci/audit.sh full` RC=0（17/17 + 11/11、QEMU 2/2、thread-stress 6/6、Lockbud 4/4、未执行 0，静态锁序 1327/871/10672）。证据见 `docs/report/d7-a1-glibc-aarch64.md`。D7 延后项 2 → 1（仅余 V1）。
 
+  > **2026-11-26 D7 V1（x86_64 + aarch64）**：`D7-DEFERRED-V1` 评估收口（不实现）。`AT_SYSINFO_EHDR=0` 下复核 x86_64 与 aarch64 真实 glibc：`clock_gettime`/`gettimeofday`/`time`/`getcpu`/`clock_getres` 全部 syscall fallback 且语义一致，双架构串口 `[GLIBC] TIME PASS: no-vdso fallback`、`[TIME] PASS`；G0/G1/G2/G3/G4/C1/L1 与 pthread/clone3/dlopen 均无 VDSO 硬依赖。触发条件表五项（glibc 启动硬依赖 / 时间 CPU 路径必须 VDSO / 应用要求 `AT_SYSINFO_EHDR!=0` / 性能门槛 / 新架构 ABI）全部未触发；最小 VDSO 需新增两架构 ELF/符号/版本/映射/生命周期及用户可执行页回归面，当前无消费者，故维持 `AT_SYSINFO_EHDR=0`，不新增 VDSO。证据见 `docs/report/d7-v1-vdso-evaluation.md`。D7 延后项 1 → 0，D7 全部收口。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
