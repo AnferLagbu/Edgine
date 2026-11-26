@@ -357,6 +357,30 @@ impl Inode for RamFsInode {
         Ok(st)
     }
 
+    fn readdir(&self, offset: u64) -> KernelResult<(alloc::string::String, VfsFileType, bool)> {
+        use crate::functions::fs::ramfs_core::{RAMFS_DATA, RamFsDirEntry};
+        let mut ramfs = RAMFS_DATA.lock();
+        let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+        let mut raw_buf = alloc::vec![0u8; dirent_size];
+        let mut dir_offset = offset;
+        let result = ramfs.read(self.inode_id, &mut dir_offset, &mut raw_buf, 0);
+        if result <= 0 {
+            return Ok((alloc::string::String::new(), VfsFileType::File, false));
+        }
+        let raw_entry = RamFsDirEntry::read_at(&raw_buf, 0);
+        if raw_entry.node == 0 {
+            return Ok((alloc::string::String::new(), VfsFileType::File, false));
+        }
+        let name_len = raw_entry
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(raw_entry.name.len());
+        let name = alloc::string::String::from_utf8_lossy(&raw_entry.name[..name_len]).into_owned();
+        let file_type = VfsFileType::from_u8(raw_entry.file_type).unwrap_or(VfsFileType::File);
+        Ok((name, file_type, true))
+    }
+
     fn truncate(&self, size: u64, pwm: u64) -> KernelResult<()> {
         use crate::functions::fs::ramfs_core::RAMFS_DATA;
         let mut ramfs = RAMFS_DATA.lock();

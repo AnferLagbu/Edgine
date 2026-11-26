@@ -16,6 +16,17 @@ use crate::functions::fs::{VFS_MAX_NAME, VfsFileType, VfsSeekWhence, VfsStat};
 use crate::privileged::mm::LazyPageArena;
 
 use crate::functions::fs::vfs_types::SubjectId;
+/// 把路径拆成 (父目录, 最后一段名字); 根路径的父目录按 `/` 处理.
+fn split_parent_name(path: &str) -> (&str, &str) {
+    path.rfind('/').map_or(("/", path), |pos| {
+        if pos == 0 {
+            ("/", &path[1..])
+        } else {
+            (&path[..pos], &path[pos + 1..])
+        }
+    })
+}
+
 /// `RamFS` 数据区 — 节点表 / 惰性页池 / 位图 / ACE 表 / 链接目标表
 pub struct RamFsData {
     /// 文件系统实例标识 (dcache/icache 命名空间, 0 = 未挂载)
@@ -1067,7 +1078,7 @@ impl RamFsData {
             }
         }
 
-        let (parent_path, _name) = path.rfind('/').map_or(("/", path), |pos| {
+        let (parent_path, name) = path.rfind('/').map_or(("/", path), |pos| {
             if pos == 0 {
                 ("/", &path[1..])
             } else {
@@ -1080,6 +1091,7 @@ impl RamFsData {
         };
 
         let parent_block = self.nodes[parent_num as usize].direct_blocks[0];
+        let mut found = false;
         if parent_block != u32::MAX {
             let dirent_size = core::mem::size_of::<RamFsDirEntry>();
             let num_entries = self.nodes[parent_num as usize].size as usize / dirent_size;
@@ -1088,11 +1100,32 @@ impl RamFsData {
                 let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
                 let mut entry = Self::read_dirent(&self.data_area, offset);
                 if entry.node == node_id {
-                    entry.node = 0;
-                    Self::write_dirent(&mut self.data_area, offset, &entry);
-                    break;
+                    let end = entry
+                        .name
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(VFS_MAX_NAME);
+                    if core::str::from_utf8(&entry.name[..end]).unwrap_or("") == name {
+                        entry.node = 0;
+                        Self::write_dirent(&mut self.data_area, offset, &entry);
+                        found = true;
+                        break;
+                    }
                 }
             }
+        }
+        if !found {
+            return KernelError::FileNotFound.as_i32();
+        }
+
+        // POSIX unlink 只摘目录项, 最后一个硬链接消失后才释放 inode 数据.
+        // 旧实现无条件 truncate + used=false, 会让仍存在的 `/p2b.txt` 变成
+        // 指向已释放节点的悬空目录项 (WASM P2 硬链接验收暴露).
+        let remaining = self.nodes[node_id as usize].link_count.saturating_sub(1);
+        self.nodes[node_id as usize].link_count = remaining;
+        if remaining > 0 {
+            dcache::dcache_invalidate_parent(self.fs_id, parent_num);
+            return 0;
         }
 
         self.truncate(node_id, 0, pwm);
@@ -1107,6 +1140,101 @@ impl RamFsData {
         dcache::dcache_invalidate_parent(self.fs_id, parent_num);
         dcache::icache_invalidate(self.fs_id, node_id);
 
+        0
+    }
+
+    /// 在同一 `RamFS` 内重命名目录项 (不复制节点数据).
+    ///
+    /// 旧实现 `fs_rename` 走 `unlink + link(0,0,..)` 会把源文件真的删掉,
+    /// 且 link 目标参数为 0 必然失败, 属于静默数据丢失. WASM P2 的
+    /// `path_rename` 验收暴露了这一点, 这里补一个真正的目录项搬移.
+    pub fn rename(&mut self, old_path: &str, new_path: &str, pwm: u64) -> i32 {
+        if old_path == new_path {
+            return 0;
+        }
+        let Some(node_id) = self.resolve_path(old_path) else {
+            return KernelError::FileNotFound.as_i32();
+        };
+        if node_id as usize >= RAMFS_MAX_NODES || !self.nodes[node_id as usize].used {
+            return KernelError::FileNotFound.as_i32();
+        }
+
+        let (old_parent_path, old_name) = split_parent_name(old_path);
+        let (new_parent_path, new_name) = split_parent_name(new_path);
+        if old_name.is_empty() || new_name.is_empty() || new_name.contains('/') {
+            return KernelError::InvalidArgument.as_i32();
+        }
+
+        let Some(old_parent) = self.resolve_path(old_parent_path) else {
+            return KernelError::FileNotFound.as_i32();
+        };
+        let Some(new_parent) = self.resolve_path(new_parent_path) else {
+            return KernelError::FileNotFound.as_i32();
+        };
+        if self.nodes[new_parent as usize].file_type != VfsFileType::Dir as u8 {
+            return KernelError::NotADirectory.as_i32();
+        }
+        if !self.check_permission(&self.nodes[old_parent as usize], pwm, FS_CAP_WRITE)
+            || !self.check_permission(&self.nodes[new_parent as usize], pwm, FS_CAP_CREATE)
+        {
+            return KernelError::PermissionDenied.as_i32();
+        }
+
+        // 目标名已存在: 简化实现返回 AlreadyExists (不覆盖).
+        let new_block = self.nodes[new_parent as usize].direct_blocks[0];
+        if new_block != u32::MAX {
+            let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+            let num_entries = self.nodes[new_parent as usize].size as usize / dirent_size;
+            for i in 0..num_entries {
+                let offset = (new_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
+                let entry = Self::read_dirent(&self.data_area, offset);
+                if entry.node != 0 {
+                    let end = entry
+                        .name
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(VFS_MAX_NAME);
+                    if core::str::from_utf8(&entry.name[..end]).unwrap_or("") == new_name {
+                        return KernelError::AlreadyExists.as_i32();
+                    }
+                }
+            }
+        }
+
+        // 从旧父目录摘掉目录项 (留空槽, 不缩减目录 size).
+        let old_block = self.nodes[old_parent as usize].direct_blocks[0];
+        if old_block != u32::MAX {
+            let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+            let num_entries = self.nodes[old_parent as usize].size as usize / dirent_size;
+            for i in 0..num_entries {
+                let offset = (old_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
+                let mut entry = Self::read_dirent(&self.data_area, offset);
+                if entry.node == node_id {
+                    entry.node = 0;
+                    Self::write_dirent(&mut self.data_area, offset, &entry);
+                    break;
+                }
+            }
+        }
+
+        // 挂到新父目录.
+        let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+        let num_entries = self.nodes[new_parent as usize].size as usize / dirent_size;
+        let offset = (new_block as usize) * RAMFS_BLOCK_SIZE + num_entries * dirent_size;
+        if offset + dirent_size > self.data_area.capacity_bytes() {
+            return KernelError::NoSpace.as_i32();
+        }
+        let mut entry = RamFsDirEntry::new();
+        entry.node = node_id;
+        entry.file_type = self.nodes[node_id as usize].file_type;
+        entry.set_name(new_name);
+        Self::write_dirent(&mut self.data_area, offset, &entry);
+        self.nodes[new_parent as usize].size +=
+            crate::functions::intcast::low_u32_from_usize(dirent_size);
+        self.nodes[new_parent as usize].mtime = Self::get_time();
+
+        dcache::dcache_invalidate_parent(self.fs_id, old_parent);
+        dcache::dcache_invalidate_parent(self.fs_id, new_parent);
         0
     }
 

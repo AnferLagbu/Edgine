@@ -901,8 +901,20 @@ pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 pub const SYS_UMASK: u64 = 95;
 pub const SYS_CLOCK_GETTIME: u64 = 228;
+// WASI P2 需要、但既有用户库尚未包过的 Linux 号位 (与内核 types.rs 同源)
+pub const SYS_LSTAT: u64 = 6;
+pub const SYS_PREAD64: u64 = 17;
+pub const SYS_PWRITE64: u64 = 18;
+pub const SYS_LINK: u64 = 86;
+pub const SYS_CHMOD: u64 = 90;
+pub const SYS_FCHMOD: u64 = 91;
+pub const SYS_SYMLINK: u64 = 88;
+pub const SYS_READLINK: u64 = 89;
+pub const SYS_UTIMENSAT: u64 = 280;
+pub const SYS_GETRANDOM: u64 = 318;
 
 /// POSIX 时钟 ID: 自启动单调时钟 (只读) — 与内核 `functions::timer::clock` 同值.
+pub const CLOCK_REALTIME: i32 = 0;
 pub const CLOCK_MONOTONIC: i32 = 1;
 
 /// 线程族 syscall 编号与 `clone` 标志位 — 单一权威源 `edgine-abi`.
@@ -959,6 +971,157 @@ pub fn fsync(fd: i32) -> i32 {
     // 内存访问.
     unsafe { ret_i32(sys1(SYS_FSYNC, arg_bits(i64::from(fd)))) }
 }
+/// `lseek(fd, offset, whence)` — 调整文件描述符偏移, 返回新偏移或负 errno.
+///
+/// `whence` 取 0=SET / 1=CUR / 2=END.
+#[must_use]
+pub fn lseek(fd: i32, offset: i64, whence: i32) -> i64 {
+    // SAFETY: S 类 — fd / offset / whence 全是标量; 内核只改自己的 fd 对象.
+    unsafe {
+        sys3(
+            SYS_LSEEK,
+            arg_bits(i64::from(fd)),
+            arg_bits(offset),
+            arg_bits(i64::from(whence)),
+        )
+    }
+}
+
+/// `pread(fd, buf, offset)` — 按显式偏移读, 不改变 fd 当前偏移.
+#[must_use]
+pub fn pread(fd: i32, buf: &mut [u8], offset: i64) -> i32 {
+    // SAFETY: S + B 类 — fd/offset 为标量, buf 是活的可写借用, 内核校验
+    // [ptr, ptr+len) 在用户半区后写入.
+    unsafe {
+        ret_i32(sys4(
+            SYS_PREAD64,
+            arg_bits(i64::from(fd)),
+            buf.as_mut_ptr() as u64,
+            buf.len() as u64,
+            arg_bits(offset),
+        ))
+    }
+}
+
+/// `pwrite(fd, buf, offset)` — 按显式偏移写, 不改变 fd 当前偏移.
+#[must_use]
+pub fn pwrite(fd: i32, buf: &[u8], offset: i64) -> i32 {
+    // SAFETY: S + B 类 — fd/offset 为标量, buf 是活的可读借用, 内核校验
+    // [ptr, ptr+len) 在用户半区后读取.
+    unsafe {
+        ret_i32(sys4(
+            SYS_PWRITE64,
+            arg_bits(i64::from(fd)),
+            buf.as_ptr() as u64,
+            buf.len() as u64,
+            arg_bits(offset),
+        ))
+    }
+}
+
+/// `chmod(path, mode)` — 修改路径权限位.
+#[must_use]
+pub fn chmod(path: &[u8], mode: u32) -> i32 {
+    // SAFETY: P 类 — path 是 NUL 结尾活借用, mode 是标量; 内核只读路径.
+    unsafe {
+        ret_i32(sys2(
+            SYS_CHMOD,
+            path.as_ptr() as u64,
+            u64::from(mode),
+        ))
+    }
+}
+
+/// `fchmod(fd, mode)` — 按 fd 修改权限位.
+#[must_use]
+pub fn fchmod(fd: i32, mode: u32) -> i32 {
+    // SAFETY: S 类 — fd/mode 均为标量, 内核只操作自己的 fd 对象.
+    unsafe {
+        ret_i32(sys2(
+            SYS_FCHMOD,
+            arg_bits(i64::from(fd)),
+            u64::from(mode),
+        ))
+    }
+}
+
+/// `lstat(path, statbuf)` — 查询路径自身 (不跟随符号链接).
+#[must_use]
+pub fn lstat_path(path: &[u8], st: &mut [u8]) -> i64 {
+    // SAFETY: P + B 类 — path 取自活借用 (NUL 结尾由调用方保证); st 是活的
+    // 可写借用, 内核校验其长度后写入 Linux `struct stat`.
+    unsafe { sys2(SYS_LSTAT, path.as_ptr() as u64, st.as_mut_ptr() as u64) }
+}
+
+/// `readlink(path, buf)` — 读符号链接目标, 返回字节数或负 errno.
+#[must_use]
+pub fn readlink(path: &[u8], buf: &mut [u8]) -> i32 {
+    // SAFETY: P + B 类 — path 为 NUL 结尾的活借用, buf 为活的可写借用;
+    // 内核校验两个区间后读路径、写目标.
+    unsafe {
+        ret_i32(sys3(
+            SYS_READLINK,
+            path.as_ptr() as u64,
+            buf.as_mut_ptr() as u64,
+            buf.len() as u64,
+        ))
+    }
+}
+
+/// `symlink(target, linkpath)` — 创建符号链接.
+#[must_use]
+pub fn symlink(target: &[u8], linkpath: &[u8]) -> i32 {
+    // SAFETY: P 类 — 两个 NUL 结尾字符串各取自活借用, 内核只读.
+    unsafe {
+        ret_i32(sys2(
+            SYS_SYMLINK,
+            target.as_ptr() as u64,
+            linkpath.as_ptr() as u64,
+        ))
+    }
+}
+
+/// `link(oldpath, newpath)` — 创建硬链接.
+#[must_use]
+pub fn link(oldpath: &[u8], newpath: &[u8]) -> i32 {
+    // SAFETY: P 类 — 两个 NUL 结尾字符串各取自活借用, 内核只读.
+    unsafe {
+        ret_i32(sys2(
+            SYS_LINK,
+            oldpath.as_ptr() as u64,
+            newpath.as_ptr() as u64,
+        ))
+    }
+}
+
+/// `utimensat(AT_FDCWD, path, times, 0)` — 设置路径时间戳.
+///
+/// `times` 为 `[atime_sec, atime_nsec, mtime_sec, mtime_nsec]`, `-1` 表示该字段
+/// 不修改 (内核 `utimensat` 语义). 本包装只接受 `AT_FDCWD`.
+#[must_use]
+pub fn utimensat(path: &[u8], times: &[i64; 4]) -> i32 {
+    // SAFETY: P + B 类 — path 为 NUL 结尾活借用; times 是 32 字节活借用,
+    // 内核 read_struct_from_user 校验后读取.
+    unsafe {
+        ret_i32(sys4(
+            SYS_UTIMENSAT,
+            arg_bits(-100),
+            path.as_ptr() as u64,
+            times.as_ptr() as u64,
+            0,
+        ))
+    }
+}
+
+/// `getrandom(buf, len, 0)` — 从内核熵源取随机字节.
+#[must_use]
+pub fn getrandom(buf: &mut [u8]) -> i32 {
+    // SAFETY: B 类 — buf 是活的可写借用; 内核校验区间后写入随机字节.
+    unsafe {
+        ret_i32(sys3(SYS_GETRANDOM, buf.as_mut_ptr() as u64, buf.len() as u64, 0))
+    }
+}
+
 #[must_use]
 pub fn getpgid(pid: i32) -> i64 {
     // SAFETY: S 类 — 唯一参数是 pid 数值; 内核查进程表返回进程组 ID, 不访存

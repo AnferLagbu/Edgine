@@ -73,10 +73,13 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **方案**: 逐组映射（G1 进程 / G2 时钟随机 / G3 环境参数 / G4 FD 管理 / G5 FD I/O /
   G6 路径 / G7 高级 FD / G8 socket）→ [sys.rs](../../src/user/lib/src/sys.rs) 既有 wrapper；
   缺口（random_get / fd_prestat / path_*）补齐；错误分支闭合。
-- **状态**: []
+- **状态**: [X] (2026-11-26 实现收口：38 函数 host 层注册 + 双架构真机核心路径通过)
 - **详情**: 翻译目标多数已存在（read/write/open/socket/clock_gettime/nanosleep/clone/futex）。
   38 函数对照见 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md) WASI 适配层表。
   这是「相对完整」与「简约 demo」的分界——P1 只最小 WASI de-risk，P2 才全量。
+  P2 实现 = `wasi.rs`（errno/fd 表/路径归一/双架构 filestat 编码 + 10 单测）
+  + `host.rs`（G1-G8 注册 38 函数，另加 `fd_filestat_get`/`fd_stat_get` 双名与
+  内核既有 `fd_dup` 语义）；逐函数覆盖与 socket 真机验收归 P3。
 
 ### D4: 干净退役，遵循 design §七 次序，不立即删码
 
@@ -154,9 +157,18 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - 8 组逐组映射到 [sys.rs](../../src/user/lib/src/sys.rs) 既有 wrapper。
   - 缺口补齐：random_get（getrandom 或 /dev/urandom）、fd_prestat/path_* 映射、sock_* 映射。
   - 错误分支闭合（WasmError→Errno 等价映射在用户态重建）。
-- **状态**: []
+- **状态**: [X] (2026-11-26 收口；实现边界见详情)
 - **详情**: 路径/边界/错误分支完整闭合，可长期稳定运行（§11.3「相对完整」定义）。
   验收 = 38 函数逐组有测试覆盖，错误分支不静默截断。
+  实测：wasi-sdk 34 真实载荷（wasi_snapshot_preview1 约 29 个 import）在 x86_64 与
+  aarch64 QEMU 均 `P2 done fails=0` / `[WASMI] exit=0`，覆盖 args/env、random/clock、
+  open/write/lseek/read/tell/pwrite/pread/fsync/fstat/stat、rename/link/symlink/readlink、
+  mkdir/rmdir/unlink、fd_readdir；同时暴露并修复 ramfs 的 symlink 返回值判定、
+  rename 假成功（unlink+link(0,0)）、unlink 按节点而非名字删目录项、硬链接 link_count
+  未递减、`RamFsInode::readdir` 缺实现五处内核缺口。边界：`sock_*` 四函数、
+  `fd_allocate/advise/renumber/dup`、`path_filestat_set_times` 未在真机载荷中调用，
+  留给 P3 逐函数覆盖；aarch64 `clock_time_get` 的 CLOCK_REALTIME 仍读 3s（RTC 面缺口，
+  非 WASI 翻译层问题）。
 
 ### P3: 测试覆盖 + 真实载荷验收
 

@@ -283,9 +283,12 @@ impl FileSystem for RamFsFileSystem {
     fn fs_rename(&self, old_path: &str, new_path: &str, subject: SubjectId) -> KernelResult<()> {
         let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
-        ramfs.unlink(old_path, pwm);
-        ramfs.link(0, 0, new_path, pwm);
-        Ok(())
+        let result = ramfs.rename(old_path, new_path, pwm);
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(KernelError::Io)
+        }
     }
 
     fn fs_readdir(&self, handle: u32, offset: u64, entry: &mut VfsDirEntry) -> KernelResult<bool> {
@@ -346,8 +349,10 @@ impl FileSystem for RamFsFileSystem {
         if name.is_empty() || name.contains('/') {
             return Err(KernelError::InvalidArgument);
         }
+        // `ramfs.symlink` 成功时返回新节点号 (>=0), 只有负值才是错误;
+        // 旧代码按 ==0 判定会把成功创建的链接误报成 Io (WASM P2 暴露).
         let result = ramfs.symlink(target, parent_path, name, pwm);
-        if result == 0 {
+        if result >= 0 {
             Ok(())
         } else {
             Err(KernelError::Io)
