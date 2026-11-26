@@ -123,19 +123,22 @@
 - **描述**: 让每个用户进程自装载起就持有有效 `MmStruct`.
 - **方案**: 按 M1 裁定选 A 或 B 的装载面; 复用既有 `elf_load(mm, …)` 而非另写一套;
   `Process::mm` 的写入点单点化 (与 A-16「CURRENT_MM 改当前任务取」口径一致).
-- **状态**: [] (M1 已裁 B，待施工)
-- **详情**: 必须同时决定「段/栈映射由谁建」—— 现装载器直接改页表, 若改走 VMA 面则
-  按需分页与 COW 的既有真跑腿 ([aarch64_cow_boot_test.sh](../../scripts/aarch64_cow_boot_test.sh))
-  判据须复跑, 不得只靠 host 形状锁.
+- **状态**: [X] (2026-11-24 `eacd51bb` 装载面落地；2026-11-26 复核 fork/exec 继承面)
+- **详情**: 生产装载路径 `load_elf_from_memory_with_interp` 创建 `MmStruct`、按 PT_LOAD
+  建 VMA 并 `store_mm` 到新进程；exec 由 `b2a9ec91` 换表时同步转移 mm；fork 子进程在
+  `proc_ops.rs` 按指针继承父 mm（VMA 与页表 COW 分层）。`MmStruct` 的统一释放路径仍属
+  M5 收口项，当前退出只清槽位、不归还 VMA 容器。
+  回归面：`elf_load_installs_mm_and_vma_per_pt_load` + `mmap_entry_has_no_raw_page_fallback`
+  两例 host 契约锁在位，COW 真跑腿由既有 `aarch64_cow_boot_test.sh` 覆盖。
 
 ### M3: mmap/munmap 裸页回退处置
 
 - **描述**: 消除「返物理地址给用户态」这条支路.
 - **方案**: B 路径下真删 (无 mm → `Enomem`); A 路径下需给出该支路的合法消费者或同批删.
-- **状态**: [] (M1 已裁 B，待施工)
-- **详情**: F9 死代码零容忍 —— 不允许以 `allow(dead_code)` 留置; `munmap_free_pages`
-  ([syscall/api.rs:176](../../src/kernel/privileged/syscall/api.rs#L176)) 与
-  `mmap_get_mm_or_alloc` 是一对, 必须同批处置, 否则留下「能分配不能释放」的半截链.
+- **状态**: [X] (2026-11-24 `eacd51bb` 同批删除裸页回退)
+- **详情**: `mmap_syscall_entry` / `munmap_syscall_entry` 无当前 mm 一律 `ENOMEM`；
+  `mmap_get_mm_or_alloc` 与 `munmap_free_pages` 的裸页支路同批移除，不留
+  `allow(dead_code)`。host 契约锁 `mmap_entry_has_no_raw_page_fallback` 钉住源码形态。
 
 ### M4: 回归装备 (host 契约 + QEMU 真跑腿)
 
@@ -143,12 +146,18 @@
 - **方案**:
   - host 契约锁: 生产装载路径必须安装 mm (源码形态) + `mmap` 入口不得存在返物理地址支路;
   - QEMU 真跑腿: wasmi 腿 (`scripts/wasmi_boot_test.sh`, 双架构) 判 `hello from wasmi` +
-    `[WASMI] exit=0`; 另加一条**用户 VA 区间断言** (mmap 返回值必 ≥ `user_va_lower_bound`),
-    使「又返物理地址」在日志层即红, 而不必等首写故障;
+    `[WASMI] exit=0`; 另加一条**用户 VA 区间断言** (mmap 返回值必 ≥ `user_va_lower_bound`,
+    且 ≥ `user_mmap_lower_bound`), 使「又返物理地址」在日志层即红, 而不必等首写故障;
   - 接入 `ci/audit.sh` full 档 (位置与载体腿/压力腿的构建交错约束同口径).
-- **状态**: []
-- **详情**: 负控制必做 —— 把 mm 安装点摘掉应转红 (证明判据非恒真, 见
-  `audit_vacuous_needle.py` 口径).
+- **状态**: [X] (2026-11-26 双架构 wasmi 真跑 + VA 断言 + audit full 接线；负控制实测转红)
+- **详情**: `scripts/wasmi_boot_test.sh` 默认超时 90s，要求 `hello from wasmi` + `[WASMI] exit=0`
+  + `[WASMI] mmap >= user_va_lower_bound` 且 `>= user_mmap_lower_bound`（后者把旧裸页
+  回退的物理地址段排除；只判 `0x400000` 下界会假绿）。内核侧仅 `wasm_userspace` feature
+  打印两行边界与每次成功 mmap；wasmrun 内的额外 mmap 探针已移除（x86 上会扰动 allocator）。
+  audit full 接线证据 `other/build/log/audit_wasmi_boot.log`。为消除 x86 主启动在
+  `[dhcpv6-policy] PASS` 前被 `TIMEOUT_QEMU=40s` 截断的误红, 该腿默认超时同步提到 60s。
+  负控制：摘 `store_mm` 后 host 例 RC=101、QEMU 腿 RC=1 且 `[WASMI] exit=256`；复原后
+  双架构复跑全绿。读数与边界见 [mm-m4-wasmi.md](../report/mm-m4-wasmi.md)。
 
 ### M5: 收口 (七门槛 + 台账 + P1 恢复)
 
@@ -156,7 +165,9 @@
 - **方案**: §2.3 七门槛全绿 (audit full / test-host / test-kernel-host / ci-rustdoc 分跑);
   同步 explain (地址空间生命周期现状) + 本册状态 + 台账; 按路径提交推送;
   随后解除 [wasm-userspace-migration.md](./wasm-userspace-migration.md) P1 的暂停.
-- **状态**: []
+- **状态**: [] (M4 已闭；剩余 = `MmStruct` 统一释放路径 + explain 地址空间生命周期段落 + 七门槛复跑与台账)
+- **详情**: P1 已在 M4 恢复为 `[X]`；M5 不得把「wasmi stdio 通过」直接等同于「mm 生命周期全收口」——
+  `Process::mm` 的 VMA 容器仍无释放点，重复 fork/exec 会累积泄漏，须在 M5 单点收口后再判全绿。
 
 ## 附: ELF 整文件读上限的余量 (记录, 不在本工程擅自改)
 

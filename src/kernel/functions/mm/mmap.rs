@@ -455,7 +455,12 @@ pub fn mmap_syscall_entry(
             pwm,
         },
     ) {
-        Ok(a) => crate::functions::intcast::i64_from_usize(a),
+        Ok(a) => {
+            // M4: wasmi 腿用真实用户堆的 mmap 返回值断言用户 VA 下界; 默认镜像不打印.
+            #[cfg(feature = "wasm_userspace")]
+            crate::privileged::klog_info!(Process, "[WASMI] mmap=0x{:X}", a);
+            crate::functions::intcast::i64_from_usize(a)
+        }
         Err(e) => e.as_ret(),
     }
 }

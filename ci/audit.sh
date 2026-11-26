@@ -1001,6 +1001,26 @@ if [ "$MODE" = "full" ]; then
             err "initramfs 载体启动失败 (exit=$CPIO_RC, 全量输出见 $CPIO_EVIDENCE)"
         fi
 
+        # mm-lifecycle M4 / WASM P1: 用户态 wasmi stdio + mmap 用户 VA 断言
+        # (专项脚本 scripts/wasmi_boot_test.sh, 双架构真构建真启动).
+        # 判据: hello from wasmi + [WASMI] exit=0 + [WASMI] mmap >= [MM] user_va_lower_bound
+        # 且 >= [MM] user_mmap_lower_bound (后者把旧裸页回退的物理地址段排除在外).
+        # 脚本自行切换 KERNEL_FEATURES=wasm_userspace 并在判定后复原默认构建;
+        # 排在此处先于 lockdep feature 腿, 避免两腿的 feature 产物互相污染.
+        WASMI_EVIDENCE="$EVIDENCE_DIR/audit_wasmi_boot.log"
+        set +e
+        WASMI_OUT=$(WASMI_BOOT_TIMEOUT=90 "$PROJECT_ROOT/scripts/wasmi_boot_test.sh" all 2>&1)
+        WASMI_RC=$?
+        set -e
+        printf '%s\n' "$WASMI_OUT" > "$WASMI_EVIDENCE"
+        printf '%s\n' "$WASMI_OUT" | tail -6
+        printf '   全量输出: %s\n' "$WASMI_EVIDENCE"
+        if [ "$WASMI_RC" -eq 0 ]; then
+            ok "wasmi 用户态 stdio + mmap 用户 VA 断言: 双架构通过 (mm M4 / WASM P1)"
+        else
+            err "wasmi 用户态 stdio 腿失败 (exit=$WASMI_RC, 全量输出见 $WASMI_EVIDENCE)"
+        fi
+
         # #125 (P-62 甲 第五项 feature 腿): lockdep 构建面探针 (scripts/lockdep_feature_probe.sh).
         # lockdep 不在启动日志 capabilities 行里 (该行只有 smp/preempt/kaslr/kpti/freg),
         # 起一趟证不了它真编进了镜像, 故判据取构建面字符串两侧: lockdep 构建与默认构建

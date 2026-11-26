@@ -41,7 +41,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 ARCH="${1:-all}"
-TIMEOUT="${WASMI_BOOT_TIMEOUT:-40}"
+TIMEOUT="${WASMI_BOOT_TIMEOUT:-90}"
 SMP="${WASMI_BOOT_SMP:-2}"
 LOG_DIR="other/build/log"
 mkdir -p "$LOG_DIR"
@@ -106,12 +106,16 @@ boot_and_check() {
     local marker_carrier="init from /init"
     local marker_stdio="hello from wasmi"
     local marker_exit="\[WASMI\] exit=0"
+    local marker_floor="\[MM\] user_va_lower_bound=0x"
+    local marker_mmap_floor="\[MM\] user_mmap_lower_bound=0x"
+    local marker_mmap="\[WASMI\] mmap=0x"
     local rc=1
     local _i
     # 日志含 NUL (内核日志与探针逐字符并发写串口), 必须 grep -a.
     for _i in $(seq 1 $((TIMEOUT * 10))); do
         if grep -aq "$marker_carrier" "$log" && grep -aq "$marker_stdio" "$log" \
-            && grep -aq "$marker_exit" "$log"; then
+            && grep -aq "$marker_exit" "$log" && grep -aq "$marker_floor" "$log" \
+            && grep -aq "$marker_mmap_floor" "$log" && grep -aq "$marker_mmap" "$log"; then
             rc=0
             break
         fi
@@ -138,6 +142,35 @@ boot_and_check() {
         err "[$arch] wasmi 探针未正常退出 '$marker_exit' (日志: $log)"
         return 1
     fi
+
+    if ! grep -aq "$marker_floor" "$log"; then
+        err "[$arch] 缺少内核用户 VA 下界行 '$marker_floor' (日志: $log)"
+        return 1
+    fi
+    if ! grep -aq "$marker_mmap_floor" "$log"; then
+        err "[$arch] 缺少内核 mmap 区下界行 '$marker_mmap_floor' (日志: $log)"
+        return 1
+    fi
+    if ! grep -aq "$marker_mmap" "$log"; then
+        err "[$arch] 缺少 wasmrun mmap 返回值 '$marker_mmap' (日志: $log)"
+        return 1
+    fi
+    local floor_hex mmap_floor_hex mmap_hex floor_val mmap_floor_val mmap_val
+    floor_hex=$(grep -ao "\[MM\] user_va_lower_bound=0x[0-9A-Fa-f]*" "$log" | tail -1 | sed 's/.*=//')
+    mmap_floor_hex=$(grep -ao "\[MM\] user_mmap_lower_bound=0x[0-9A-Fa-f]*" "$log" | tail -1 | sed 's/.*=//')
+    mmap_hex=$(grep -ao "\[WASMI\] mmap=0x[0-9A-Fa-f]*" "$log" | tail -1 | sed 's/.*=//')
+    floor_val=$((floor_hex))
+    mmap_floor_val=$((mmap_floor_hex))
+    mmap_val=$((mmap_hex))
+    if [ "$mmap_val" -lt "$floor_val" ]; then
+        err "[$arch] mmap 返回值落在用户 VA 下界以下: mmap=$mmap_hex floor=$floor_hex (日志: $log)"
+        return 1
+    fi
+    if [ "$mmap_val" -lt "$mmap_floor_val" ]; then
+        err "[$arch] mmap 返回值落在 mmap 区下界以下 (疑似返物理地址): mmap=$mmap_hex mmap_floor=$mmap_floor_hex (日志: $log)"
+        return 1
+    fi
+    ok "[$arch] wasmi mmap 用户 VA 断言: mmap=$mmap_hex >= va_floor=$floor_hex, mmap_floor=$mmap_floor_hex"
     ok "[$arch] wasmi 进程级载体端到端通过 (P1)"
 
     return "$rc"

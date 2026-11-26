@@ -28,9 +28,10 @@ mkdir -p "$LOG_DIR"
 source scripts/boot_module.sh
 
 ARCH="${1:-all}"
-TIMEOUT_QEMU="${TIMEOUT_QEMU:-40}"
-# 40s 是 C1 后的实测冷启动余量: 25s 会在 DHCPv6 配置面之前截断
-# (C1 增加 glibc clone3 探针后串口到 22s, net6 回显轮询再占 ~3s).
+TIMEOUT_QEMU="${TIMEOUT_QEMU:-60}"
+# 60s 是 D7 A1 后的实测冷启动余量: 40s 会在 x86_64 的 `[dhcpv6-policy] PASS`
+# 之前截断 (A1 的 glibc 七探针 + DHCPv6 策略五腿把 x86 串口推到 40s 之后;
+# aarch64 仍在 40s 内). 25s 更早, 会截在 DHCPv6 配置面之前.
 # 门禁强度: 默认 fail-closed —— 任一里程碑缺失即整轮 RC=1.
 # 旧默认 1 源自「x86_64 e1000 初始化挂起」(ISSUE-RT-001) 时期的放宽, 该病灶现已被
 # 本脚本的 e1000 / DHCP 里程碑回归覆盖, 放宽只剩副作用: 残缺轮以 `n/m 通过` + RC=0

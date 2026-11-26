@@ -849,7 +849,7 @@ fn ensure_user_page_writable(addr: u64) -> bool {
 
 /// x86_64 的破 COW 准入判据: 同 EL 的写 + 页存在 + 故障地址落用户半区.
 ///
-/// 与 aarch64 的 [`kernel_uaccess_cow_candidate`] 同形, 但 x86 的 `#PF` 错误码没有
+/// 与 aarch64 的 `kernel_uaccess_cow_candidate` 同形, 但 x86 的 `#PF` 错误码没有
 /// `EC` 位, 「同 EL」由调用方 (`PageFaultHandler` 的 `!is_user_mode` 分支) 保证。
 /// 是否真正破 COW 仍由 [`break_cow_for_kernel_page`] 的页表/帧标记判据决定。
 #[cfg(target_arch = "x86_64")]

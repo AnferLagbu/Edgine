@@ -671,6 +671,21 @@ fn boot_memory_init() {
         boot_info.mem_size / (1024 * 1024),
         boot_info.kernel_end
     );
+    // M4: wasmi 腿据此断言 mmap 返回值落在用户 VA 区; 仅 feature 腿打印, 默认镜像不变.
+    #[cfg(feature = "wasm_userspace")]
+    {
+        crate::klog_boot_info!(
+            "[MM] user_va_lower_bound=0x{:X}",
+            crate::privileged::mm::user_va_lower_bound()
+        );
+        // M4 强化断言: 下界 0x400000 低于旧裸页回退会返回的物理地址 (如
+        // 0x1F800000), 单靠它判不出「又返物理地址」. mmap 区自身的下界
+        // (mmap_base 减去 ASLR 最大偏移) 才把物理页段排除在外.
+        let mmap_floor = crate::privileged::config::USER_MMAP_BASE
+            - (1u64 << crate::privileged::config::ASLR_MMAP_BITS)
+                * crate::privileged::config::PAGE_SIZE;
+        crate::klog_boot_info!("[MM] user_mmap_lower_bound=0x{:X}", mmap_floor);
+    }
 
     // 2. PMM — 物理内存管理器初始化
     crate::privileged::mm::pmm::pmm_init(boot_info.mem_size, boot_info.kernel_end);

@@ -120,9 +120,14 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - 最小 WASI 子集（proc_exit / fd_write / args_get / environ_get）→ 既有 syscall 翻译。
   - exec 魔数 `\0asm` 派发改指用户态 wasmi 运行时（过渡期与内核解释器共存）。
   - QEMU 双架构跑通 stdio demo。
-- **状态**: [~] (2026-11-24 重开为 active；mm M1 已裁 **B 相对完整**，P1 由 blocked-by-mm-M1 转为 blocked-by-mm-M2；M2 装载面落地前 stdio 端到端不提前施工、不判绿)
+- **状态**: [X] (2026-11-26 收口；mm M2 装载面解除阻塞，双架构 wasmi stdio 端到端 + mmap VA 断言通过，已接 `ci/audit.sh` full)
 - **详情**: 首阶段只最小 WASI，de-risk 优先；全量 WASI 在 P2。
   验收 = 一个 wasi-sdk 编译的 hello 模块在用户态 wasmi 下 stdio 输出正确。
+  实测：x86_64 / aarch64 均 `hello from wasmi` + `[WASMI] exit=0`，mmap 返回值
+  `0x7FFFF6FE6000` / `0x7FFFF6FBC000`，同时满足 `user_va_lower_bound=0x400000` 与
+  `user_mmap_lower_bound=0x7FFFF6F00000`；证据 `other/build/log/audit_wasmi_boot.log`，
+  读数与负控制见 [mm-m4-wasmi.md](../report/mm-m4-wasmi.md)。
+  边界：P1 只证最小 WASI stdio 的可行性，不等于全量 WASI 兼容；P2 的 38 函数翻译层仍待施工。
   载体变更注记: P1 的 x86_64 载体腿受 K-08 (< 4 MiB 内核镜像) 阻塞——wasmrun 桩 + 载荷叠在
   内嵌 initramfs 上顶破上限。先由插队工程 [userspace-decoupling.md](./userspace-decoupling.md)
   把用户态内容移出内核镜像 (boot-module initrd，严格零嵌入)；P1 的**载体相关接线**（demo 载荷
@@ -134,7 +139,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   事实报告探针, 专项腿 `scripts/wasmi_boot_test.sh` 双架构真构建真启动.
   `wasmrun.bin` 经按架构 `objcopy --strip-all` 后 692,400 B (x86) / 793,640 B (aarch64),
   均在 `ELF_MAX_SIZE = 1 MiB` 内 (未剥离时双双超限, 是载体腿红的直接成因).
-- **stdio 端到端暂停 = mm 生命周期缺口 (非 wasm 专属)**: 双架构真跑红, 归因为生产 ELF 装载
+- **stdio 端到端暂停 = mm 生命周期缺口 (非 wasm 专属；2026-11-26 已由 mm M4 解除)**: 双架构真跑红, 归因为生产 ELF 装载
   从不安装 `MmStruct` ⇒ `mmap` 无 mm 回退返**物理地址** ⇒ wasmi 首次堆写即翻译故障
   (x86 `vec=14 err=0x6 cr2=0x1F800000` / aarch64 `ESR=0x92000045 FAR=0x5FA00000`,
   两架构均 `[WASMI] exit=5632`). wasmi 是**第一个真行使 mmap 的用户程序**, 故此前无腿暴露.
