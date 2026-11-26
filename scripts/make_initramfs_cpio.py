@@ -81,12 +81,11 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("bin/install", "file", "install.bin"),
     ("bin/fbterm", "file", "fbterm.bin"),
     ("bin/httpsrv", "file", "httpsrv.bin"),
-    ("bin/wasmstub", "file", "wasmstub.bin"),
-    # D4 零嵌入: 两桩恒入归档, exec 按 wasm_userspace feature 选读其一 (wasm/stub.rs).
+    # D4 零嵌入 / P4: 用户态 wasmi 运行时恒入归档, exec 的 `\0asm` 派发唯一目标.
     ("bin/wasmrun", "file", "wasmrun.bin"),
     ("bin/hello.wasm", "file", "hello.wasm"),
     # P1 wasmi stdio demo 载荷 (wasi-sdk 真产物, 见 scripts/make_wasi_demo.py);
-    # 最小 WASI 子集 (fd_write + proc_exit), 由 wasm_userspace feature 腿消费.
+    # 最小 WASI 子集 (fd_write + proc_exit), 由 P1 wasmi 腿消费.
     ("bin/hello_wasi.wasm", "file", "hello_wasi.wasm"),
     # P3 WASI 覆盖探针 (wasi-sdk 真产物, 见 scripts/make_wasi_p3_probe.py); 覆盖
     # P2 未在真机载荷跑过的 fd_allocate/fd_advise/fd_renumber/fd_dup/

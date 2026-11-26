@@ -11,6 +11,9 @@
 #         - `P3 done fails=0`   载荷总判定 (任何一项失败即 fails>0)
 #         - `[WASMI-P3] exit=0` 父进程收割退出码 0
 #
+#       本腿点亮 `wasm_userspace` 只为 mmap 用户 VA 诊断行; P4 后 exec 的
+#       `\0asm` 派发恒读 `/bin/wasmrun`, 不再有选桩.
+#
 #       覆盖增量 (相对 P2 真机载荷):
 #         sched_yield / fd_allocate / fd_advise / fd_renumber / fd_dup /
 #         path_filestat_set_times / fd_prestat_get+dir_name / fd_seek(SEEK_END) /
@@ -18,7 +21,7 @@
 #
 #       未覆盖项与原因写进 docs/plan/wasm-userspace-migration.md P3 详情:
 #       sock_* 需要「运行时预置 socket fd」通道, 而 preview1 无 sock_open,
-#       普通 wasi-sdk 载荷结构上拿不到 socket fd, P4 前不做假绿.
+#       普通 wasi-sdk 载荷结构上拿不到 socket fd, 不做假绿.
 #
 # 载体: 与 P1 腿同形 (boot-module 交付 cpio; 内核镜像零嵌入).
 #

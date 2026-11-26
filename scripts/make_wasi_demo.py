@@ -3,8 +3,8 @@
 
 该载荷是 wasi-sdk 编译的真实工具链 wasm 模块 (printf hello), 被
 `scripts/make_initramfs_cpio.py` 打包为 `bin/hello_wasi.wasm`, init 的 `[WASMI]`
-探针 fork + exec 它; 内核 `exec.rs` 按魔数分派, `wasm_userspace` feature 点亮时
-装载用户态 wasmi 运行时桩 `wasmrun`, 由 wasmi 解释执行并经最小 WASI host 层把
+探针 fork + exec 它; 内核 `exec.rs` 按魔数分派装载用户态 wasmi 运行时 `wasmrun`,
+由 wasmi 解释执行并经最小 WASI host 层把
 `fd_write` 翻译到 Edgine `write` syscall, stdio 输出 "hello from wasmi".
 
 为什么 committed fixture 而非构建期编译:
@@ -14,11 +14,10 @@
    wasmi 下跑通」, 手写模块证不到生态兼容性. 源 `hello_wasi.c` 与编译命令
    一并入库, 升级 wasi-sdk 时用本脚本重生成并同批提交.
 
-载荷取最小 WASI 子集 (fd_write + proc_exit), 与 P1「最小 WASI de-risk」口径一致,
-也与内核解释器桩兼容. wasmi 腿的证明力来自选路径: 以 wasm_userspace 构建时 exec
-派发只读 `/bin/wasmrun` (两桩恒入 cpio, 见 make_initramfs_cpio.py), stdio 输出必出自
-wasmi (非载荷不兼容). 默认载体
-腿的 `[WASM]` 探针仍用 39 字节 `hello.wasm` (见 make_probe_wasm.py), 不消费本载荷.
+载荷取最小 WASI 子集 (fd_write + proc_exit), 与 P1「最小 WASI de-risk」口径一致.
+P4 后 exec 派发只读 `/bin/wasmrun` (唯一 wasm 运行时, 见 make_initramfs_cpio.py),
+stdio 输出必出自 wasmi (非载荷不兼容). 载体腿的 `[WASM]` 探针仍用 36 字节
+`hello.wasm` (见 make_probe_wasm.py), 不消费本载荷.
 
 用法:
     WASI_SDK_PATH=~/wasi-sdk/wasi-sdk-34.0-x86_64-linux \

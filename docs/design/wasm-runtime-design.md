@@ -2,7 +2,7 @@
 
 > 本文回答 Edgine 的 **WASM**（WebAssembly）子系统"要演化成什么、为什么这么选"：能力边界的取舍根基、隔离立场、载体形态、与业界方案的对比、尚未闭合的开放议题。它不是现状说明（那是 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md)），也不是可执行任务清单（那是 [wasm-runtime-wiring.md](../plan/archive/wasm-runtime-wiring.md)，本文引用的 §3 甲/乙/丙/丁裁定与 §4 验收判据均出自该册）。
 >
-> **归属改判（顶层判据册 [service-placement-design.md](./service-placement-design.md) §四）**：本文原把内核内 safe 解释器论证为「刻意立场」，经归属审查改判为**监管疏忽偏离**——Linux 模型下通用 WASM 一律用户态，「F1 排除 JIT → 解释器」只是「已落内核」条件下的形态论证，不论证位置本身。目标方向已裁为**退用户态、对接 Linux 生态运行时**（Wasmtime / wasmi 等），本文所述内核解释器为**过渡形态、待退役**。下文 §一–§六 保留为过渡形态的技术记录与历史论证；迁移方向见 §七。
+> **归属改判（顶层判据册 [service-placement-design.md](./service-placement-design.md) §四）**：本文原把内核内 safe 解释器论证为「刻意立场」，经归属审查改判为**监管疏忽偏离**——Linux 模型下通用 WASM 一律用户态，「F1 排除 JIT → 解释器」只是「已落内核」条件下的形态论证，不论证位置本身。目标方向已裁为**退用户态、对接 Linux 生态运行时**（Wasmtime / wasmi 等），本文所述内核解释器为**过渡形态、已于 2026-11-27（P4）退役真删**。下文 §一–§六 保留为过渡形态的技术记录与历史论证；迁移结果与现状见 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md)，施工读数见 [wasm-userspace-migration.md](../plan/wasm-userspace-migration.md) P4。
 
 ## 一、定位：为什么是内核内 safe 解释器
 
@@ -31,7 +31,7 @@ Edgine 的 wasm 运行时是一个落在 **functions** 层（100% safe Rust）�
 | 原子与线程（atomics） | wasm 线程模型与内核调度/共享内存耦合，需先定线程载体形态 | 多实例与共享线性内存语义裁定后 |
 | bulk-memory / sign-ext / saturating-trunc 等扩展 opcode 族 | 非 1.0 核心，按需补；当前未进 opcode 枚举的字节返 `UnknownOpcode` | 真实工具链载荷产出这些 opcode 时按缺口补 |
 
-浮点排除的落点是显式的：[interpreter.rs:491-493](../../src/kernel/functions/wasm/interpreter.rs#L491-L493) 的 `is_float_opcode` 把浮点族字节判为 `Unsupported`，与"未知指令"区分。这一区分的价值在于：用户态拿到 `ENOSYS`（未实现的合法结构）而非 `ENOEXEC`（畸形镜像），能据此判断"模块合法但本运行时不支持"，而非误以为字节码损坏。
+浮点排除的落点是显式的：内核侧解释器的 `is_float_opcode` 把浮点族字节判为 `Unsupported`，与"未知指令"区分（该实现已随 P4 退役删除，记录见 [explain-wasm-runtime.md](../explain/explain-wasm-runtime.md) 末节）。这一区分的价值在于：用户态拿到 `ENOSYS`（未实现的合法结构）而非 `ENOEXEC`（畸形镜像），能据此判断"模块合法但本运行时不支持"，而非误以为字节码损坏。
 
 **WASI 取 preview1 而非 preview2**：preview1 是当前工具链生态覆盖最广的快照，38 函数子集已能跑通 stdio/文件/时钟/参数环境/socket 的常见载荷。preview2 与 component model 是开放议题（见 §六），不在当前边界内——扩展它的判据是生态载荷的实际需求，而非"版本号更新"。
 
@@ -89,6 +89,6 @@ Edgine 从这些方案吸纳的不是执行形态，而是两条经过验证的�
 
 **前提门槛（须先核，不预设）**：生态运行时是 Linux 用户态程序，Edgine 须能托管——JIT 系需 `mmap PROT_EXEC`（可执行内存）+ 信号处理（trap / 边界检查）+ 线程；解释器系前提较低。Edgine 用户态 ABI 是否齐备须先核实，不齐备则先补前提，不凭空迁移。
 
-**退役次序**：补用户态前提 → 接生态运行时（wasmi 解释器先行 / Wasmtime JIT 后续）→ 退自研内核解释器与 `EG_WASM_*` 私有 syscall 段。**不立即删码**：前提齐备前自研解释器仍是唯一可用 wasm 能力，保留为过渡兜底；生态运行时接管后再退役。
+**退役次序**：补用户态前提 → 接生态运行时（wasmi 解释器先行 / Wasmtime JIT 后续）→ 退自研内核解释器与 `EG_WASM_*` 私有 syscall 段。**不立即删码**：前提齐备前自研解释器仍是唯一可用 wasm 能力，保留为过渡兜底；生态运行时接管后再退役。**退役已完成（2026-11-27，P4）**：wasmi 用户态运行时接管后，`functions/wasm` 子树、766-779 私有段、`wasmstub` 桩与 `Process.wasm_handle` 已真删（F9，非抑制），`execve` 的 `\0asm` 派发唯一指向 `/bin/wasmrun`；退役读数见 [wasm-userspace-migration.md](../plan/wasm-userspace-migration.md) P4 详情。
 
 **与既有开放议题的关系**：§六 的浮点 / SIMD / preview2 / 多实例缺口在对接生态后自然消解（生态运行时全规范），不再需自研补齐；步进让出 / 恢复由生态运行时的调度模型承担。

@@ -151,7 +151,7 @@ boot_and_check() {
     # 首腿通过即会让轮询提前收尾, root 腿与聚合行随之被切掉 (假绿).
     local marker_exec="\[EXEC\] PASS: cwd+root"
     # W-7: 载体下 wasm 端到端 —— init fork + exec /bin/hello.wasm, 内核按 \0asm
-    # 分派装载用户态桩, 桩经 EG_WASM_LOAD/RUN 跑完模块, wstatus 0 才打印 PASS.
+    # 分派装载用户态 wasmi 运行时, 由它跑完模块, wstatus 0 才打印 PASS.
     local marker_wasm="\[WASM\] PASS:"
     # K-07b 批3: 载体 init 在睡醒后触发 EEVDF 观测导出, 命中 END 行且账目
     # 守恒即证明观测面在载体装载路径下同样可达.

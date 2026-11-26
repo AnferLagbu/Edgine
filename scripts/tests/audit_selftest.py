@@ -221,8 +221,8 @@ def test_lock_order_self_reconcile() -> bool:
                 f"实测违规 {[i['message'] for i in issues][:3]}")
     line = summary[0] if summary else ""
     # 判据语义 = 「序表 lockdep 类数 == 代码具名类数」; 两计数从摘要实读,
-    # 不写死快照值 —— 新增锁类 (如 W-7 的 WASI_CTX / WASM_REGISTRY) 时
-    # 该自测不应失效 (写死值会让每次锁类扩容都误红).
+    # 不写死快照值 —— 新增或退役锁类时该自测不应失效
+    # (写死值会让每次锁类增删都误红).
     lockdep_count = re.search(r"lockdep 类 (\d+)", line)
     code_count = re.search(r"代码具名类 (\d+)", line)
     counts_ok = _check(

@@ -6,19 +6,18 @@
 #       wasi-sdk 编译的真实工具链 wasm 模块 (hello_wasi.wasm) 在**用户态 wasmi
 #       运行时** (wasmrun) 下 stdio 输出正确且正常退出 —— 迁移可行性 de-risk.
 #
-#       `wasm_userspace` 是默认关闭的 feature: 默认 exec 读 `/bin/wasmstub`
-#       (内核解释器桩), 点亮后改读 `/bin/wasmrun` (见 functions/wasm/stub.rs
-#       `stub_path()` 选桩). 本腿与 K-07b 载体腿同形 (真构建 + 真启动 + 断言
-#       里程碑), 但消费的是 P1 新增的 `[WASMI]` 探针而非既有 `[WASM]` 探针:
+#       P4 退役内核解释器后, exec 的 `\0asm` 派发恒读 `/bin/wasmrun`; 本腿额外
+#       点亮 `wasm_userspace` feature 只为拿到 `[MM]` 的 mmap 用户 VA 诊断行.
+#       本腿与 K-07b 载体腿同形 (真构建 + 真启动 + 断言里程碑), 消费 P1 的
+#       `[WASMI]` 探针与既有 `[WASM]` 探针两条:
 #         1. `init from /init` —— PID 1 由载体加载 (探针载荷来自 cpio);
 #         2. `hello from wasmi` —— 模块 fd_write 经 wasmrun host 层翻译到 write
 #            syscall, stdio 直达串口 (wasmi 真在用户态解释执行);
 #         3. `[WASMI] exit=0` —— 模块正常结束 (proc_exit(0)), 父进程收割退出码 0.
-#       三条缺一即红. 证明力来自选桩: 本腿以 wasm_userspace 构建, exec 的 \0asm
-#       派发只读 `/bin/wasmrun`, 故 stdio 输出必出自 wasmi. 载荷取最小 WASI 子集
-#       (fd_write + proc_exit), 与内核解释器桩兼容, 但默认载体腿不消费 [WASMI].
+#       三条缺一即红. exec 的 \0asm 派发只读 `/bin/wasmrun`, 故 stdio 输出必出自
+#       wasmi. 载荷取最小 WASI 子集 (fd_write + proc_exit).
 #
-# 载体: D4 严格零嵌入后内核镜像不含任何用户态字节 (init / cpio / 两 wasm 桩),
+# 载体: D4 严格零嵌入后内核镜像不含任何用户态字节 (init / cpio / wasm 运行时),
 #       故本腿必须经 boot-module 交付 cpio —— 复用 `scripts/boot_module.sh`
 #       (x86_64 GRUB multiboot2 + module2 ISO; aarch64 `-kernel Image -initrd`).
 #       裸 `-kernel flat` 不交付模块 (D1 实测), 起不来 PID 1.

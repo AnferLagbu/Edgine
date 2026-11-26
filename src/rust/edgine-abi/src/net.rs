@@ -3,7 +3,7 @@
 //! 值域为 Edgine 私有功能段 `812-814`：Linux 的 `getaddrinfo` 是 libc 函数
 //! (经 socket/sendto/recvfrom 访问 DNS, 并读 resolv.conf / hosts / NSS), 并无
 //! 对应的系统调用号. 占用 Linux 公开号位既无兼容收益, 又破坏"Linux 公开段 ==
-//! Linux"的承重不变式, 故按私有段取值 (与 `edgine_abi::wasm` 同构).
+//! Linux"的承重不变式, 故按私有段取值.
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`privileged::net::syscall`
 //! 的结果写出与用户态入口桩 (`userlib::sys`) 均引用本模块, 结构上避免

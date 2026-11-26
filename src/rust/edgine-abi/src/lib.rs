@@ -22,4 +22,3 @@ pub mod reboot;
 pub mod sched;
 pub mod socket;
 pub mod thread;
-pub mod wasm;

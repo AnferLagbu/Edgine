@@ -79,9 +79,9 @@ debug_mutex = ["kernel-privileged/debug_mutex"]
 # 的定向复跑与 P-62 探针腿的 `KERNEL_FEATURES=lockdep` 构建.
 # 详见 docs/plan/multithreading-project.md A-1..A-4 与 P-29 根因诊断.
 lockdep = ["kernel-privileged/lockdep"]
-# P1 wasm 退用户态选桩 (转发 functions, 消费点 wasm/stub.rs 的 stub_path()): 点亮后
-# exec 读 /bin/wasmrun (用户态 wasmi), 默认读 /bin/wasmstub (内核解释器). 两桩恒在
-# initramfs cpio 内, 内核镜像不嵌 (D4). 非 capabilities 位, 不进 P-62 能力腿.
+# wasmi 专项腿诊断输出: 点亮后 [MM] 打印 mmap 返回值供 P1/P3 腿断言用户 VA
+# (消费点 mm/mmap.rs 与 lib.rs). P4 退役内核解释器后 exec 恒读 /bin/wasmrun,
+# 本 feature 不再选桩; 非 capabilities 位, 不进 P-62 能力腿.
 wasm_userspace = ["kernel-functions/wasm_userspace"]
 log = ["kernel-privileged/log"]
 json_export = ["kernel-privileged/json_export"]

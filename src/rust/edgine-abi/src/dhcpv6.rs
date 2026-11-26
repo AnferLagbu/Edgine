@@ -4,7 +4,7 @@
 //! 落在 cgroup `830` 前的空闲段): Linux 无 `DHCPv6` 客户端配置系统调用 (客户端
 //! 在用户态守护进程, 经 rtnetlink / 配置文件管理), 占用 Linux 公开号位既无
 //! 兼容收益, 又破坏 "Linux 公开段 == Linux" 的承重不变式, 故按私有段取值 (与
-//! `edgine_abi::net` / `edgine_abi::wasm` 同构).
+//! `edgine_abi::net` 同构).
 //!
 //! 内核 `privileged::syscall::types` 的编号定义、`functions::net::syscall`
 //! 的配置读写与用户态入口桩 (`userlib::sys`) 均引用本模块, 结构上避免

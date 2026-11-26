@@ -230,37 +230,6 @@ pub fn vfs_unlink_safe(path: &str, pwm: u64) -> i32 {
     with_cstr(path, |ptr| vfs_unlink_internal(ptr, pwm))
 }
 
-/// Safe 包装: `vfs_rmdir` (接受 &str 路径)
-#[must_use]
-pub fn vfs_rmdir_safe(path: &str, pwm: u64) -> i32 {
-    with_cstr(path, |ptr| vfs_rmdir_internal(ptr, pwm))
-}
-
-/// Safe 包装: `vfs_symlink` (接受 &str 路径)
-#[must_use]
-pub fn vfs_symlink_safe(target: &str, linkpath: &str, pwm: u64) -> i32 {
-    with_cstr(target, |t| with_cstr(linkpath, |l| vfs_symlink(t, l, pwm)))
-}
-
-/// Safe 包装: `vfs_link` (接受 &str 路径)
-#[must_use]
-pub fn vfs_link_safe(oldpath: &str, newpath: &str, pwm: u64) -> i32 {
-    with_cstr(oldpath, |o| with_cstr(newpath, |n| vfs_link(o, n, pwm)))
-}
-
-/// Safe 包装: `vfs_rename` (接受 &str 路径)
-#[must_use]
-pub fn vfs_rename_safe(old: &str, new: &str, pwm: u64) -> i32 {
-    with_cstr(old, |o| with_cstr(new, |n| vfs_rename(o, n, pwm)))
-}
-
-/// Safe 包装: `vfs_readlink` (接受 &str 路径)
-pub fn vfs_readlink_safe(path: &str, buf: &mut [u8], pwm: u64) -> i32 {
-    with_cstr(path, |ptr| {
-        vfs_readlink(ptr, buf.as_mut_ptr(), buf.len() as u64, pwm)
-    })
-}
-
 /// Safe 包装: `vfs_utimensat` (接受 &str 路径)
 #[must_use]
 pub fn vfs_utimensat_safe(path: &str, atime: u64, mtime: u64, pwm: u64) -> i32 {

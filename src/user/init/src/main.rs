@@ -147,17 +147,18 @@ pub extern "C" fn _start() -> ! {
     dyn_badfmt_probe();
     glibc_probe();
 
-    // ── W-7: 进程级 wasm 载体探针 ────────────────────────────────────────
+    // ── W-7/P4: 进程级 wasm 载体探针 ─────────────────────────────────────
     // cpio 载荷 `/bin/hello.wasm` → fork → execve 该路径 (命中 `\0asm` 分派,
-    // 改装用户态桩) → 父进程按 wstatus == 0 判定 (模块 `_start` 正常返回 0).
-    // 载体缺失时自检打印 SKIP; 失败打印 `[WASM] FAIL` 并继续.
+    // 装载用户态 wasmi 运行时 /bin/wasmrun, 由其解释执行) → 父进程按
+    // wstatus == 0 判定 (模块 `_start` 正常返回). 载体缺失时自检打印 SKIP;
+    // 失败打印 `[WASM] FAIL` 并继续.
     wasm_probe();
 
     // ── P1: 用户态 wasmi stdio demo 探针 ─────────────────────────────────
     // wasi-sdk 真产物 hello_wasi.wasm (最小 WASI: fd_write + proc_exit) → fork →
-    // execve (命中 `\0asm` 分派). wasm_userspace feature 腿装用户态 wasmi 桩
-    // wasmrun, stdio 输出 "hello from wasmi" 且退出码 0. 事实报告退出码 (不判
-    // PASS/FAIL), 由专项 QEMU 腿按 feature 消费.
+    // execve (命中 `\0asm` 分派). 内核装载用户态 wasmi 运行时 wasmrun, stdio
+    // 输出 "hello from wasmi" 且退出码 0. 事实报告退出码 (不判 PASS/FAIL),
+    // 由专项 QEMU 腿消费.
     wasmi_probe();
 
     // ── P3: WASI 覆盖探针 ───────────────────────────────────────────────
@@ -1484,11 +1485,11 @@ fn exec_leg(leg: &'static [u8]) -> bool {
 /// W-7 探针载荷路径: 只来自 initramfs cpio (`bin/hello.wasm`)。
 const WASM_PROBE_PATH: &[u8] = b"/bin/hello.wasm\0";
 
-/// W-7 进程级 wasm 载体端到端探针: fork → execve(/bin/hello.wasm) → 父进程收割.
+/// W-7/P4 进程级 wasm 载体端到端探针: fork → execve(/bin/hello.wasm) → 父进程收割.
 ///
-/// 判据 = 子进程 `wstatus == 0`: 只有 exec 识别 `\0asm` 并装载用户态桩、桩经
-/// `EG_WASM_LOAD/RUN` 把模块跑到正常结束, 退出码才为 0. 任一环节断裂都会落到
-/// 非 0 (子进程侧 exec 失败统一 `proc_exit(3)`, 桩失败 `proc_exit(1)`).
+/// 判据 = 子进程 `wstatus == 0`: 只有 exec 识别 `\0asm` 并装载用户态 wasmi 运行时
+/// `/bin/wasmrun`、由它把模块跑到正常结束, 退出码才为 0. 任一环节断裂都会落到
+/// 非 0 (子进程侧 exec 失败统一 `proc_exit(3)`, 运行时失败 `proc_exit(1)`).
 ///
 /// A-14 同口径: 载荷只来自 boot-module cpio, 载体缺失时自检后打印
 /// `[WASM] SKIP: no carrier`, 避免「无载体导致的预期失败」与真回归同形。
@@ -1525,8 +1526,8 @@ const WASMI_PROBE_PATH: &[u8] = b"/bin/hello_wasi.wasm\0";
 /// `fd_write` + `proc_exit`), 经用户态 wasmi 桩 wasmrun 解释执行, `fd_write` 翻译到
 /// `write` syscall, "hello from wasmi" 直达串口. 本探针**事实报告**子进程退出码
 /// (`[WASMI] exit=N`), 不判 PASS/FAIL —— 由专项 QEMU 腿 (`scripts/wasmi_boot_test.sh`)
-/// 消费 `exit=0` + stdio 输出. 该腿以 `wasm_userspace` feature 构建, exec 派发只读
-/// `/bin/wasmrun`, 故 stdio 输出必出自 wasmi (证明力来自选桩, 非载荷不兼容).
+/// 消费 `exit=0` + stdio 输出. exec 派发只读 `/bin/wasmrun` (P4 后为唯一路径),
+/// 故 stdio 输出必出自 wasmi (证明力来自运行时本身, 非载荷不兼容).
 fn wasmi_probe() {
     if !file_present(WASMI_PROBE_PATH) {
         println("[WASMI] SKIP: no carrier");

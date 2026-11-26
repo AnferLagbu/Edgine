@@ -1,14 +1,15 @@
 //! wasmrun — 用户态 wasmi WASM 运行时 (WASM 退用户态迁移)
 //!
-//! `execve` 按魔数识别 `\0asm` 后, 经构建 feature `wasm_userspace` 选桩装载本
-//! 映像 (过渡期与内核解释器桩 wasmstub 共存, P4 翻转默认). 本运行时在用户态:
+//! `execve` 按魔数识别 `\0asm` 后装载本映像 (P4 退役内核解释器后为唯一 wasm
+//! 运行时). 本运行时在用户态:
 //!
 //! 1. 经 VFS open/read 读入 wasm 模块 (`argv[0]` 即模块路径);
 //! 2. wasmi Engine/Module/Store/Linker 解释执行 (消费 P0 `global_allocator`);
 //! 3. 完整 WASI preview1 host 层 (38 函数, 见 `host.rs`) 翻译到 Edgine syscall;
 //! 4. 以模块退出码 (正常结束) 或 1 (装载/解析/trap 失败) 调 `proc_exit`.
 //!
-//! 与 wasmstub 的区别: 解释器在用户态 (wasmi), 不再经 `EG_WASM_*` 回环内核.
+//! 与已退役的内核解释器路径的区别: 解释器在用户态 (wasmi), 不再有内核态字节码
+//! 执行与私有 syscall 回环.
 
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
@@ -30,7 +31,7 @@ use wasmi::{Linker, Store};
 use crate::wasi::WasiCtx;
 
 // `extern "C" fn _start` 读不到入口 SP, 故用架构汇编把 SP 作为首参转发
-// (与 wasmstub / exectest 同一形态).
+// (与 exectest 同一形态).
 #[cfg(all(not(test), target_arch = "x86_64"))]
 core::arch::global_asm!(
     ".global _start",

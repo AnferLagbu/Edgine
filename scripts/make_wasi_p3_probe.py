@@ -3,8 +3,8 @@
 
 载荷源 `scripts/fixtures/wasi_p3_probe.c` 是 wasi-sdk 编译的真实工具链模块, 由
 `scripts/make_initramfs_cpio.py` 打包为 `bin/wasi_p3.wasm`; init 的 `[WASMI-P3]`
-探针 fork + exec 它, `wasm_userspace` feature 点亮时由用户态 wasmi 运行时
-`wasmrun` 解释执行, host 层把 wasi_snapshot_preview1 调用翻译到 Edgine syscall.
+探针 fork + exec 它, 由用户态 wasmi 运行时 `wasmrun` 解释执行 (P4 后唯一路径),
+host 层把 wasi_snapshot_preview1 调用翻译到 Edgine syscall.
 
 载荷覆盖 P2 已经在真机跑过的 stdio/文件/链接/目录之外的剩余入口:
 `sched_yield`、`fd_allocate`、`fd_advise`、`fd_renumber`、`fd_dup`、

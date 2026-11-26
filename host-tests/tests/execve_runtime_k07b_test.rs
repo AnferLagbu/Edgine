@@ -25,7 +25,6 @@ use std::fs;
 use std::path::PathBuf;
 
 const EXEC_RS: &str = "src/kernel/functions/proc/exec.rs";
-const STUB_RS: &str = "src/kernel/functions/wasm/stub.rs";
 const PROC_OPS_RS: &str = "src/kernel/privileged/proc/proc_ops.rs";
 const USER_PROC_RS: &str = "src/kernel/privileged/proc/user_proc.rs";
 const INITRAMFS_RS: &str = "src/kernel/functions/fs/initramfs.rs";
@@ -200,64 +199,54 @@ fn test_execve_passes_envp_to_privileged() {
         "crate::privileged::proc::proc_exec_replace_with_interp( image_ptr, image_len, interp_ptr, interp_len, argv, arg_count, envp, env_count,",
         "functions 必须把解释器与 envp/env_count 一并下传 (8 参 FFI)",
     );
-    // W-7 批次 B: 单点按 magic 分派 —— wasm 装载用户态桩, ELF 走既有路径.
+    // P4: 单点按 magic 分派 —— wasm 一律装载用户态 wasmi 运行时, ELF 走既有路径.
     assert_contains(
         &flat,
-        "crate::functions::wasm::stub::is_wasm_image(&image)",
-        "exec 必须按 \\0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
+        "is_wasm_image(&image)",
+        "exec 必须按 \0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
     );
-    // D4 严格零嵌入: 桩不再编译期嵌入, 改按选桩路径从 VFS 读出 (无 fd 形态).
+    // D4 严格零嵌入 / P4: 运行时不再编译期嵌入, 改从 VFS 读固定路径 (无 fd 形态).
     assert_contains(
         &flat,
-        "crate::functions::fs::api::read_file_kernel( crate::functions::wasm::stub::stub_path(), 0, ELF_MAX_SIZE,",
-        "wasm 分支必须经 VFS 读入口桩 (D4 零嵌入)",
+        "read_file_kernel(WASM_RUNTIME_PATH, 0, ELF_MAX_SIZE)",
+        "wasm 分支必须经 VFS 读用户态 wasmi 运行时 (D4 零嵌入)",
     );
-    assert_absent(
+    assert_contains(
         &flat,
-        "stub::stub_image()",
-        "不得残留内嵌桩取数器 (D4 已删 include_bytes!)",
+        "const WASM_RUNTIME_PATH: &str = \"/bin/wasmrun\";",
+        "P4 后 wasm 分支唯一目标是 /bin/wasmrun (内核解释器已退役)",
     );
 }
 
-/// D4-d: wasm 桩去嵌入后的两处静默失效通道.
+/// P4: wasm 映像装载面的两处静默失效通道.
 ///
-/// 1. **选桩面** —— `stub.rs` 若还留 `include_bytes!`, 内核镜像就仍带用户态字节
-///    (K-08 / PMM 预留随之回来); 若两条路径写反, `wasm_userspace` 腿会静默跑内核
-///    解释器桩而 `[WASMI]` 判据恰好不出现, 看起来像"探针没跑"而非选桩错.
-/// 2. **生命周期** —— 桩字节是 `read_file_kernel` 新读的 `Vec`, 必须在 `if` 块
-///    **外**绑定: 块内 `let` 到块尾即析构, 交给 `proc_exec_replace` 的
+/// 1. **唯一目标** —— 内核解释器退役后 exec 只能读 `/bin/wasmrun`; 路径常量写错
+///    或残留 feature 选桩, `[WASMI]` 探针会静默消失而不是报缺失.
+/// 2. **生命周期** —— 运行时字节是 `read_file_kernel` 新读的 `Vec`, 必须在 `if`
+///    块**外**绑定: 块内 `let` 到块尾即析构, 交给 `proc_exec_replace` 的
 ///    `as_ptr()` 随即悬垂 (装载到已释放内存, 症状是随机 exec 失败而非编译错).
 #[test]
-fn test_wasm_stub_is_selected_by_path_and_outlives_exec() {
-    let stub = code_only(&read_src(STUB_RS));
-    assert_absent(&stub, "include_bytes!", "wasm 桩不得编译期嵌入 (D4 零嵌入)");
-    assert_contains(
-        &stub,
-        "pub fn stub_path() -> &'static str",
-        "选桩必须以路径形态给出 (供 VFS 读)",
-    );
-    let flat_stub = norm(&stub);
-    assert_contains(
-        &flat_stub,
-        "if cfg!(feature = \"wasm_userspace\") { \"/bin/wasmrun\" } else { \"/bin/wasmstub\" }",
-        "feature 点亮读 wasmrun, 默认读 wasmstub (两桩恒在 cpio 内)",
-    );
-
+fn test_wasm_image_dispatches_to_userspace_runtime() {
     let flat = norm(&code_only(&read_src(EXEC_RS)));
-    assert_contains(
+    assert_absent(
         &flat,
-        "let stub = if crate::functions::wasm::stub::is_wasm_image(&image) {",
-        "桩 Vec 必须在分派块外绑定 (块内 let 到块尾析构 ⇒ 指针悬垂)",
+        "crate::functions::wasm",
+        "内核侧 wasm 子树已退役, exec 不得再引用 (P4)",
     );
     assert_contains(
         &flat,
-        "let (image_ptr, image_len) = if let Some(stub) = &stub { (stub.as_ptr() as u64, stub.len() as u64)",
-        "交给 privileged 的桩指针必须取自外层绑定 (存活到 proc_exec_replace 之后)",
+        "let wasm_runtime = if is_wasm_image(&image) {",
+        "运行时 Vec 必须在分派块外绑定 (块内 let 到块尾析构 ⇒ 指针悬垂)",
+    );
+    assert_contains(
+        &flat,
+        "let (image_ptr, image_len) = if let Some(runtime) = &wasm_runtime { (runtime.as_ptr() as u64, runtime.len() as u64)",
+        "交给 privileged 的运行时指针必须取自外层绑定 (存活到 proc_exec_replace 之后)",
     );
     assert_contains(
         &flat,
         "return Err(Errno::Enoexec);",
-        "桩缺失即 ENOEXEC (不静默回落成 ELF 装载 wasm 字节)",
+        "运行时缺失即 ENOEXEC (不静默回落成 ELF 装载 wasm 字节)",
     );
 }
 

@@ -57,7 +57,7 @@
 //! functions/ (去特权, 100% safe Rust, 禁止 unsafe)
 //!   ├── driver/  fs/  net/  ipc/  egdf/
 //!   ├── proc/  sync/  syscall/  freg/
-//!   ├── sgeg/  wasm/  config/  console/  klog/
+//!   ├── sgeg/  config/  console/  klog/
 //!   └── ...
 //! ```
 //!

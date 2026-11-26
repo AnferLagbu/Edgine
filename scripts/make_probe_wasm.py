@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""生成 W-7 端到端探针载荷: 最小合法 wasm 模块 (确定性字节).
+"""生成 exec 魔数派发探针载荷: 最小合法 wasm 模块 (确定性字节).
 
 产物 `hello.wasm` 被 `scripts/make_initramfs_cpio.py` 打包为 `bin/hello.wasm`,
-init 的 `[WASM]` 探针 fork + exec 该路径; 内核 `exec.rs` 按魔数分派到用户态桩,
-桩经 `EG_WASM_LOAD/RUN` 让解释器执行, 模块 `_start` 正常返回 0 ⇒ 退出码 0.
+init 的 `[WASM]` 探针 fork + exec 该路径; 内核 `exec.rs` 按魔数分派装载用户态
+wasmi 运行时 `bin/wasmrun`, 由其解释执行, 模块 `_start` 正常返回 ⇒ 退出码 0.
 
-模块内容 (39 字节, 手写编码, 不依赖任何 wasm 工具链):
+模块内容 (36 字节, 手写编码, 不依赖任何 wasm 工具链):
 
     magic/version  00 61 73 6D 01 00 00 00
-    type           01 05 01 60 00 01 7F          () -> i32
+    type           01 04 01 60 00 00             () -> ()
     function       03 02 01 00                    1 个函数, 类型 0
     export         07 0A 01 06 5F 73 74 61 72 74 00 00   "_start"
-    code           0A 06 01 04 00 41 00 0B         i32.const 0; end
+    code           0A 04 01 02 00 0B              空体; end
 
 用法: python3 scripts/make_probe_wasm.py --out other/build/<arch>/user/hello.wasm
 退出码: 0 = 写出成功 (或自测通过); 1 = 参数/IO 失败.
@@ -27,10 +27,10 @@ from pathlib import Path
 MODULE_BYTES = bytes(
     [
         0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00,
-        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7F,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
         0x03, 0x02, 0x01, 0x00,
         0x07, 0x0A, 0x01, 0x06, 0x5F, 0x73, 0x74, 0x61, 0x72, 0x74, 0x00, 0x00,
-        0x0A, 0x06, 0x01, 0x04, 0x00, 0x41, 0x00, 0x0B,
+        0x0A, 0x04, 0x01, 0x02, 0x00, 0x0B,
     ]
 )
 
@@ -40,7 +40,7 @@ def self_test() -> int:
     assert MODULE_BYTES[:4] == b"\0asm", "魔数不符"
     assert MODULE_BYTES[4:8] == b"\x01\x00\x00\x00", "版本应为 1"
     assert b"_start" in MODULE_BYTES, "缺少 _start 导出名"
-    assert len(MODULE_BYTES) == 39, f"长度应为 39, 实测 {len(MODULE_BYTES)}"
+    assert len(MODULE_BYTES) == 36, f"长度应为 36, 实测 {len(MODULE_BYTES)}"
     print(f"自测通过 ({len(MODULE_BYTES)} 字节)")
     return 0
 

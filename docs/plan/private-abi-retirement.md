@@ -119,13 +119,13 @@ SGEG 的能力不靠 syscall 命名空间表达，而是靠内核内部机制：
 | 资源与调试 | `EG_CGROUP_CREATE`、`DESTROY`、`ATTACH`、`SET_LIMIT`、`GET_STAT`、`EG_PM`、`EG_FTRACE_*`、`EG_KGDB_ENTER`、`EG_TICKLESS`、`EG_TIMESYNC`、`EG_CET`、`EG_UEFI`、`EG_SECURE_BOOT`、`EG_TPM`、`EG_IO_URING_SUBMIT`、`SYS_SGEG_SCHED_SNAPSHOT` | cgroupfs、`/sys/power/state`、debugfs/tracefs、kgdb、启动参数 / sysfs、`clock_adjtime` / `adjtimex`、`arch_prctl`、efivarfs、TPM 字符设备、原生 io_uring、tracefs |
 | 栈保护 | `EG_GET_CANARY`（747） | `auxv` 的 `AT_RANDOM` / libc 自身 TLS canary；不应是 syscall |
 | EGFS 快照 | `EG_SNAPSHOT_CREATE`、`DESTROY`、`ROLLBACK`、`CLONE`（895–898） | 转为 EGFS 自己的可移植控制面（`ioctl` UAPI 或用户态管理工具），不占 Edgine 私有 syscall |
-| WASM | `EG_WASM_LOAD`、`RUN`、`GET_INFO`、`UNLOAD`（766–769） | 用户态 wasmi / WASI；见 [wasm-userspace-migration.md](./wasm-userspace-migration.md) P4 |
+| WASM | `EG_WASM_LOAD`、`RUN`、`GET_INFO`、`UNLOAD`（766–769） | 用户态 wasmi / WASI；**已于 2026-11-27（P4）随内核侧解释器一并真删**，见 [wasm-userspace-migration.md](./wasm-userspace-migration.md) P4 |
 
 ---
 
 ## 四、直退集（不需要 syscall 替代）
 
-- `EG_WASM_*`：按 WASM 迁移 P4 与内核侧一起真删，不保留私有号。
+- `EG_WASM_*`：**已随 WASM 迁移 P4 真删（2026-11-27）**，不保留私有号。
 - `EG_TICKLESS`：内核启动 / 调优参数，不是用户 ABI。
 - `EG_GETADDRINFO`：由 libc / 用户态解析器接管，不新增 syscall。
 - `EG_DHCPV6_*`：由用户态 DHCPv6 客户端接管，不新增 syscall。
@@ -179,10 +179,10 @@ SGEG 的能力不靠 syscall 命名空间表达，而是靠内核内部机制：
 - `EG_CET`、`EG_PM`、`EG_TIMESYNC` 先做 syscall / sysfs 等价，再退役。
 - 这批是长尾，按组独立验收，不合并成一个大提交。
 
-### R4：WASM P4
+### R4：WASM P4 — 已完成（2026-11-27）
 
-- 依赖用户态 wasmi P1 + mm M2；`EG_WASM_*`、`wasmstub`、`functions/wasm` 一起真删。
-- 在此之前保留内核解释器作为过渡 fallback，但不再新增私有调用方。
+- 依赖用户态 wasmi P1 + mm M2；`EG_WASM_*`（766-769 段）、`wasmstub`、`functions/wasm` 已一起真删。
+- 过渡 fallback 已移除：`execve` 的 `\0asm` 派发唯一指向用户态 `/bin/wasmrun`；F9 零抑制复核通过。
 
 ### R5：legacy 31
 

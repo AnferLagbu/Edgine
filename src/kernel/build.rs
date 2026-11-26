@@ -1,7 +1,8 @@
 //! 内核 crate 的构建脚本 — 嵌入产物的存在性护栏与重编译触发器.
 //!
-//! D4 严格零嵌入后内核镜像不再嵌任何用户态字节 (init / initramfs cpio / wasm 桩
-//! 均由引导器作 boot-module 交付, 经 VFS 取用), 唯一仍 `include_bytes!` 的产物是
+//! D4 严格零嵌入后内核镜像不再嵌任何用户态字节 (init / initramfs cpio / wasm
+//! 运行时等用户态程序均由引导器作 boot-module 交付, 经 VFS 取用), 唯一仍
+//! `include_bytes!` 的产物是
 //! x86_64 专属引导码 `other/build/x86_64/stage1.bin`. 裸机 x86_64 target 下检查其
 //! 存在性, 缺失即 panic (DECISION-H15: 不再生成全 0 占位符, 以免遮蔽真实产物缺失
 //! 状态); 并对它发出**绝对路径**的 `cargo:rerun-if-changed` —— cargo 以包根

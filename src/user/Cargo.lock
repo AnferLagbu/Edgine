@@ -140,10 +140,3 @@ dependencies = [
  "userlib",
  "wasmi",
 ]
-
-[[package]]
-name = "wasmstub"
-version = "0.1.0"
-dependencies = [
- "userlib",
-]

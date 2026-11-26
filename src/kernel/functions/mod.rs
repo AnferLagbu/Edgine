@@ -112,9 +112,6 @@ pub mod mm;
 /// functions 层的安全状态查询 API, 不暴露 unsafe 入口。
 pub mod init;
 
-/// WASM 沙箱
-pub mod wasm;
-
 /// 内核调试 / 跟踪 — ftrace / KGDB 安全封装
 ///
 /// 底层实现见 `privileged::debug` (TCB); 系统调用包装见 `functions::syscall::ftrace`;

@@ -45,8 +45,8 @@ const MEDIUM_SH: &str = "scripts/make_boot_medium.sh";
 
 /// 归档必须覆盖的用户态程序 (与 `ARCHIVE_LAYOUT` 同源).
 ///
-/// 两 wasm 桩恒入归档 (D4-d): exec 的 `\0asm` 派发按 `wasm_userspace` feature
-/// 选读 `/bin/wasmstub` 或 `/bin/wasmrun`, 少打一个即该腿 ENOEXEC.
+/// P4 退役内核解释器后, exec 的 `\0asm` 派发唯一目标是 `/bin/wasmrun` (用户态
+/// wasmi 运行时); 少打即该腿 ENOEXEC.
 const CARRIER_MEMBERS: &[&str] = &[
     "init.bin",
     "eash.bin",
@@ -55,7 +55,6 @@ const CARRIER_MEMBERS: &[&str] = &[
     "install.bin",
     "fbterm.bin",
     "httpsrv.bin",
-    "wasmstub.bin",
     "wasmrun.bin",
 ];
 
@@ -68,7 +67,6 @@ const USER_BIN_RULES: &[(&str, &str)] = &[
     ("USER_INSTALL_ELF", "install.bin"),
     ("USER_FBTERM_ELF", "fbterm.bin"),
     ("USER_HTTPSRV_ELF", "httpsrv.bin"),
-    ("USER_WASMSTUB_ELF", "wasmstub.bin"),
     ("USER_WASMRUN_ELF", "wasmrun.bin"),
 ];
 
@@ -422,9 +420,9 @@ fn test_build_rs_no_longer_requires_embedded_cpio() {
 
 /// D4-d: 内核构建脚本只剩 x86_64 引导码一项嵌入护栏.
 ///
-/// 护栏与 `include_bytes!` 必须同生共死: 桩已改由 cpio 交付, 若 build.rs 仍按
-/// feature 要求 `wasmstub.bin` / `wasmrun.bin` 存在, 干净 checkout 的 host 构建
-/// 会被无关产物缺失打断; 反之若 stage1 护栏被顺手删掉, 全 0 占位镜像又会静默出货.
+/// 护栏与 `include_bytes!` 必须同生共死: 用户态程序已改由 cpio 交付, 若 build.rs
+/// 仍按 feature 要求 `wasmrun.bin` 等产物存在, 干净 checkout 的 host 构建会被无关
+/// 产物缺失打断; 反之若 stage1 护栏被顺手删掉, 全 0 占位镜像又会静默出货.
 #[test]
 fn test_build_rs_guards_only_x86_stage1() {
     let code = code_only(&read_src(BUILD_RS));

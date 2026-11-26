@@ -25,7 +25,7 @@
 **根因不是「内存不够」, 是「内核镜像承载用户态内容」**: 当前 `include_bytes!` 嵌入点:
 - initramfs cpio (两架构): [functions/init.rs:62-67](../../src/kernel/functions/init.rs#L62) (`initramfs` feature)
 - init.bin 回退 (x86_64): [functions/init.rs:153](../../src/kernel/functions/init.rs#L153); (aarch64): [functions/init.rs:200](../../src/kernel/functions/init.rs#L200)
-- wasm 桩 (两架构): [functions/wasm/stub.rs:17-29](../../src/kernel/functions/wasm/stub.rs#L17) (`wasmstub.bin` / feature 点亮 `wasmrun.bin`)
+- wasm 桩 (两架构): `functions/wasm/stub.rs` 的 `wasmstub.bin` / feature 点亮 `wasmrun.bin`（该文件与 `wasmstub` 已随 WASM P4 删除）
 
 默认构建 (无 initramfs) `_kernel_end=0x3f5000` (仅 44 KiB 余量); initramfs 载体腿叠 237 KiB
 cpio 即顶破 4 MiB. cpio 由 7 个用户 ELF (~218 KiB, **未剥离符号**) 主导. **剥离符号只买
@@ -78,8 +78,8 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   boot-module initrd (QEMU `-initrd` / GRUB `module2` / U-Boot initrd) 提供; `/init` 与桩均
   从 initrd 经 VFS 读取.
 - **方案**: 删 [functions/init.rs](../../src/kernel/functions/init.rs) 与
-  [functions/wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs) 的全部用户态 `include_bytes!`
-  与内嵌回退分支; exec `\0asm` 派发改「从 VFS 读 `/bin/wasmstub`(或 `wasmrun`)」.
+  `functions/wasm/stub.rs`（已随 WASM P4 删除）的全部用户态 `include_bytes!`
+  与内嵌回退分支; exec `\0asm` 派发改「从 VFS 读 `/bin/wasmrun`」（P4 后唯一路径）.
 - **状态**: [X] (由 D3/D4-c/D4-d 落地; 全仓 `include_bytes!` 只剩字体与 x86 `stage1.bin` 两项非用户态产物, exec 的 `\0asm` 派发经 `wasm/stub.rs` 从 VFS 读桩)
 - **详情**: 用户裁定「严格零嵌入 (对齐 Linux)」. 代价: **所有进入用户态的启动腿** (`-kernel`
   裸起) 必须改 `-initrd` 携 cpio, 否则只能停在内核 (对齐 Linux「无 initrd 即 mount 不到 root」).

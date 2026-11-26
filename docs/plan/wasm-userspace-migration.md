@@ -37,8 +37,8 @@ WASM 被误述为对齐例外、实则偏离。
 | mmap SGEG 能力门 | [mmap.rs:345-348](../../src/kernel/functions/mm/mmap.rs#L345-L348) `pwm_has_capability(pwm, 7, 0x01)` 否则 EACCES | wasm 运行时进程须获授 mmap 能力位 |
 | 用户 #PF 投递 | [handlers.rs](../../src/kernel/privileged/idt/handlers.rs) 用户 #PF → `TerminateProcess`（**非** SIGSEGV 投递） | wasmi 解释器不触发（无 exec/越界取指）；**Wasmtime JIT trap 处理是延后缺口** |
 | WASI 翻译目标 | [sys.rs](../../src/user/lib/src/sys.rs) 已有 read/write/open/close/lseek/stat/mkdir/socket 族/clock_gettime/nanosleep/clone_thread/futex 等 wrapper | 38 函数多数有落点；缺口 = random_get / fd_prestat / path_* 映射 |
-| 退役面（用户侧） | [sys.rs:335-361](../../src/user/lib/src/sys.rs#L335-L361) `wasm_load/run/get_info/unload` + [sys.rs:684-688](../../src/user/lib/src/sys.rs#L684-L688) `edgine_abi::wasm` re-export | P4 须连同内核侧一并退役 |
-| 退役面（内核侧） | [edgine-abi/src/wasm.rs](../../src/rust/edgine-abi/src/wasm.rs) `EG_WASM_*`=766-769；[dispatch.rs:1261](../../src/kernel/functions/syscall/dispatch.rs#L1261) `dispatch_wasm`；[functions/wasm/](../../src/kernel/functions/wasm/mod.rs) 九子模块；[wasmstub](../../src/user/wasmstub/src/main.rs) | P4 干净退役（F9 真删，非 allow(dead_code)） |
+| 退役面（用户侧） | `src/user/lib/src/sys.rs` 的 `wasm_load/run/get_info/unload` + `edgine_abi::wasm` re-export | **已随 P4 删除（2026-11-27）** |
+| 退役面（内核侧） | `edgine-abi/src/wasm.rs` `EG_WASM_*`=766-769；`functions/syscall/dispatch.rs` `dispatch_wasm`；`functions/wasm/` 九子模块；`src/user/wasmstub` | **已于 2026-11-27 随 P4 真删**（F9 零抑制） |
 | exec 魔数派发 | [exec.rs:106-119](../../src/kernel/functions/proc/exec.rs#L106-L119) `\0asm` → 装 wasmstub → EG_WASM 回环 | P1 起改指用户态 wasmi 运行时（过渡共存） |
 
 **选型裁定**：wasmi 是近期唯一可行目标——`no_std + alloc` 契合 Edgine 用户态（无 libc/std）；
@@ -86,10 +86,11 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **描述**: 生态运行时接管后退役自研内核侧；过渡期共存，靠 exec 派发切换。
 - **方案**: 次序 = 补前提（P0）→ 接生态（P1-P3）→ 退自研（P4）。退役面 = `EG_WASM_*`
   766-779 + wasmstub + 内核 functions/wasm + user lib wasm_* wrapper。F9 真删，非抑制。
-- **状态**: []
+- **状态**: [X] (2026-11-27 随 P4 收口：退役面已真删，F9 零抑制)
 - **详情**: design §七「不立即删码，用户态前提齐备前保留为兜底」。相对完整路径终态退役，
   但 P1-P3 期间内核解释器保留为引导 fallback。退役须真删（F9 死代码零容忍），
-  不得 `#[allow(dead_code)]` 压制。
+  不得 `#[allow(dead_code)]` 压制。P3 内容面全绿后按用户裁定（丙）先开 P4，退役已执行；
+  P3/P4 的「七门槛全绿」判据仍受 P3.5 的 `src/user` pedantic 债阻塞（见各阶段状态）。
 
 ## 施工分解
 
@@ -230,7 +231,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
     超参函数改 `Linker::func_new`（wasmi 2.0 支持 `&[Val]`/`&mut [Val]` 切片）；
     cast 统一 `u32_of` / `try_from` 常量；未用常量与跨架构解码器按 F9 真删或改 `cfg!` 保留符号。
   - 乙：用户裁定更新 `audit_dead_code_comment.baseline.json`（等于放宽门禁，需明确授权）。
-- **状态**: []（路线待用户裁定；甲约 1 轮可收口，乙需同步 AGENTS §F9 口径）
+- **状态**: []（2026-11-27 用户裁定走**丙**：先收 P4，本项降为并行挂债；甲/乙路线仍可随时改选）
 - **详情**: 阻塞 P3 的「七门槛全绿」判据；P3 内容面（专项探针 36 项 + 双架构 QEMU + P1 回归）
   已全绿，不因本项回退。
 
@@ -247,9 +248,25 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - exec 魔数派发完全改指用户态 wasmi。
   - 文档同步（[explain-wasm-runtime.md](../explain/explain-wasm-runtime.md) 归属注记→退役完成；
     design §七 收口）+ 台账。
-- **状态**: []
-- **详情**: F9 真删，非 `allow(dead_code)`。退役次序遵循 design §七，不立即删码；
-  共存过渡靠 exec 派发切换。验收 = 内核侧零 wasm 残留，七门槛全绿。
+- **状态**: [~] (2026-11-27：内容面完成并双架构复跑绿；「七门槛全绿」判据仍受 P3.5 pedantic 债阻塞)
+- **详情**: F9 真删，非 `allow(dead_code)`。退役次序遵循 design §七；用户裁定（丙）先开 P4，
+  P3.5 并行挂债。**已删面**：`src/kernel/functions/wasm/` 19 文件、`EG_WASM_LOAD/RUN/GET_INFO/UNLOAD`
+  （766-769）与「766-779: WASM 运行时」整段、`dispatch_wasm` 分派臂、`edgine-abi/src/wasm.rs`、
+  用户库 4 个 `wasm_*` 包装、`src/user/wasmstub` crate（workspace 成员 / Makefile 目标 /
+  cpio `bin/wasmstub` 条目）、`Process.wasm_handle` 与 exec 清零块；`exec.rs` 的 `\0asm`
+  分支改为本地 `is_wasm_image` + 常量 `WASM_RUNTIME_PATH = "/bin/wasmrun"`（单点派发只剩一条路径）。
+  **兼容面**：`wasm_userspace` feature 保留，但语义降为「wasmi 腿诊断打印（mmap 用户 VA）」，
+  不再选桩；`hello.wasm` 最小探针改为 `() -> ()`（36 字节）以符合 WASI `_start` 约定。
+  **读数（双架构）**：`./ci/build.sh all` 7/0（K-08 余量 0x25000 ≥ 32 KiB）；
+  `make test-kernel-host` 12 + 745 + 649 passed（删 wasm 内联测试 −75）；`make test-host`
+  215 套 / 1648 passed / 0 failed；`initramfs_boot_test.sh all` 2/2（x86 首轮 40s 默认超时截
+  在既有 glibc 探针，`INITRAMFS_BOOT_TIMEOUT=180` 复跑全绿，非 wasm 回归）；
+  `qemu_boot_test.sh all` 2/2；P1 腿 `hello from wasmi` + `[WASMI] exit=0` + mmap VA 双架构绿；
+  P3 腿 `P3 done fails=0`（36 项）+ `[WASMI-P3] exit=0` 双架构绿；`cargo test -p wasmrun` 10 passed；
+  `audit_dead_code_comment.py` PASS（抑制 0 / 构建参数 0 / 基线与现树一致）；
+  `tools/check_doc_paths.py` 0 漂移（22 份）。
+  **未达判据（如实记录）**：七门槛之 `src/user` pedantic 腿仍 100 项红（P3.5），
+  `ci/audit.sh full` 仍在 2/6 早退 ⇒ P4 记 `[~]`，P3.5 清债后与 P3 一并转 `[X]`。
 
 ## 验收判据
 
@@ -264,6 +281,6 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **Wasmtime JIT/AOT 对接**: 需用户态 libc/std 成熟 + 用户 #PF→SIGSEGV 投递修复
   （当前 [handlers.rs](../../src/kernel/privileged/idt/handlers.rs) 用户 #PF→TerminateProcess）。
   wasmi 解释器先行，JIT 延后另立。
-- **内核解释器引导 fallback 去留**: design §七 保留为兜底至前提齐备；相对完整路径终态退役，
-  过渡期共存。fallback 何时彻底移除，随 P4 收口裁定。
+- **内核解释器引导 fallback 去留**: 已随 P4 删除（2026-11-27）；用户裁定（丙）先行退役，
+  不再保留兜底，wasmi 用户态运行时成为唯一 wasm 执行路径。
 - **wasmi vendored 治理**: 锁定版本与升级授权流程，类比 smoltcp vendored（升级须用户授权）。

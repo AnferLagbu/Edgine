@@ -25,6 +25,17 @@ const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 /// ELF 映像可读上限 (1 MiB) — 阶段 4b 自 `privileged::proc::api` 下沉
 pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
 
+/// 用户态 WASM 运行时路径 — `execve` 识别 `\0asm` 后装载的用户态 wasmi 解释器.
+///
+/// 内核不再解释执行 wasm (P4 退役后), 一切 wasm 进程都由本运行时在用户态执行;
+/// 模块路径随 `argv[0]` 交给它, 由它经 VFS 读取模块本体.
+const WASM_RUNTIME_PATH: &str = "/bin/wasmrun";
+
+/// WASM 魔数判定 (`\0asm`) — `execve` 单点派发的唯一分派依据.
+fn is_wasm_image(image: &[u8]) -> bool {
+    image.starts_with(b"\0asm")
+}
+
 /// 扫描用户空间 `NULL` 结尾的字符串指针数组, 返回条目数.
 ///
 /// `base == 0` 视为空向量 (返回 0); 槽位本身或任一字符串指针未通过用户指针
@@ -105,21 +116,19 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
 
     // §3 丙 裁定: 单点按 magic 的 match, 不抽 ImageLoader trait.
     // - ELF: 主映像 + 可选解释器双缓冲区交 privileged；
-    // - wasm (`\0asm`): 从 VFS 读用户态入口桩 (D4 严格零嵌入, 不再编译期嵌入),
-    //   模块路径随 argv[0] 交给桩, 桩再经 `EG_WASM_LOAD` 让内核读模块 (W-7).
-    let stub = if crate::functions::wasm::stub::is_wasm_image(&image) {
-        let Some(bytes) = crate::functions::fs::api::read_file_kernel(
-            crate::functions::wasm::stub::stub_path(),
-            0,
-            ELF_MAX_SIZE,
-        ) else {
+    // - wasm (`\0asm`): 从 VFS 读用户态 wasmi 运行时 `WASM_RUNTIME_PATH`
+    //   (D4 严格零嵌入, 不编译期嵌入), 模块路径随 argv[0] 交给该运行时进程.
+    let wasm_runtime = if is_wasm_image(&image) {
+        let Some(bytes) =
+            crate::functions::fs::api::read_file_kernel(WASM_RUNTIME_PATH, 0, ELF_MAX_SIZE)
+        else {
             return Err(Errno::Enoexec);
         };
         Some(bytes)
     } else {
         None
     };
-    let interp = if stub.is_some() {
+    let interp = if wasm_runtime.is_some() {
         None
     } else {
         match crate::privileged::proc::elf::interp_path(&image) {
@@ -137,8 +146,8 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
             Err(_) => return Err(Errno::Enoexec),
         }
     };
-    let (image_ptr, image_len) = if let Some(stub) = &stub {
-        (stub.as_ptr() as u64, stub.len() as u64)
+    let (image_ptr, image_len) = if let Some(runtime) = &wasm_runtime {
+        (runtime.as_ptr() as u64, runtime.len() as u64)
     } else {
         (image.as_ptr() as u64, image.len() as u64)
     };

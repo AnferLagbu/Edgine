@@ -453,42 +453,6 @@ pub fn proc_exec(path: &[u8], argv: &[*const u8], envp: &[*const u8]) -> i64 {
     // 传 0 而非空切片的悬垂指针. 成功则映像被替换不返回, 失败返回时借用仍存活.
     unsafe { sys3(SYS_EXECVE, path.as_ptr() as u64, argv_ptr, envp_ptr) }
 }
-/// `EG_WASM_LOAD(path_ptr, argv_ptr, envp_ptr)` — 加载 wasm 模块到当前进程.
-///
-/// `path_ptr` 指向 NUL 结尾的路径串; `argv` / `envp` 指向 `NULL` 结尾的
-/// 指针数组 (传 `core::ptr::null()` 表示空). 内核只解引用这些用户指针,
-/// 故用裸指针而不是切片 (桩拿到的入口栈地址本就没有 Rust 切片)。
-#[must_use]
-pub fn wasm_load(path: *const u8, argv: *const u64, envp: *const u64) -> i64 {
-    // SAFETY: R 类 — 三个裸指针来自桩的入口栈 (无 Rust 切片可用), 本层不解引用;
-    // path 须 NUL 结尾、argv/envp 须 NULL 结尾或为空指针, 该契约由调用方按本函数
-    // doc 承担; 内核只经用户内存安全代理读取这些地址.
-    unsafe { sys3(EG_WASM_LOAD, path as u64, argv as u64, envp as u64) }
-}
-
-/// `EG_WASM_RUN(handle)` — 运行已加载实例 (按 gas 上限执行到结束).
-#[must_use]
-pub fn wasm_run(handle: u64) -> i64 {
-    // SAFETY: S 类 — handle 是内核先前返回的实例句柄 (标量), 无指针跨边界.
-    unsafe { sys1(EG_WASM_RUN, handle) }
-}
-
-/// `EG_WASM_GET_INFO(handle, out_ptr)` — 查询状态 / 退出码 / gas 消耗.
-#[must_use]
-pub fn wasm_get_info(handle: u64, info: &mut EgWasmInfo) -> i64 {
-    // SAFETY: T 类 — EgWasmInfo 是 edgine-abi 单源的 repr(C) 定长结构 (内核回写
-    // 同一类型), 指针由 from_mut 从活借用取得; 内核 write_struct_to_user 先校验
-    // 该结构大小的用户区间再写, 越界返 -EFAULT.
-    unsafe { sys2(EG_WASM_GET_INFO, handle, core::ptr::from_mut(info) as u64) }
-}
-
-/// `EG_WASM_UNLOAD(handle)` — 卸载实例.
-#[must_use]
-pub fn wasm_unload(handle: u64) -> i64 {
-    // SAFETY: S 类 — handle 是标量句柄, 内核只操作自己的实例注册表.
-    unsafe { sys1(EG_WASM_UNLOAD, handle) }
-}
-
 pub fn proc_exit(code: i32) -> ! {
     // SAFETY: S 类 — 只有退出码标量; 内核终止本线程后不返回用户态, 故下面的
     // 兜底循环正常路径不可达.
@@ -925,11 +889,8 @@ pub use edgine_abi::thread::{
     SYS_FUTEX, SYS_GETTID, SYS_KILL, SYS_SET_TID_ADDRESS, SYS_TGKILL,
 };
 
-/// wasm 运行时私有 syscall 编号、实例状态与信息结构 — 单一权威源 `edgine-abi`.
-pub use edgine_abi::wasm::{
-    EG_WASM_GET_INFO, EG_WASM_LOAD, EG_WASM_RUN, EG_WASM_STATUS_FINISHED, EG_WASM_STATUS_READY,
-    EG_WASM_STATUS_TRAPPED, EG_WASM_UNLOAD, EgWasmInfo,
-};
+// wasm 运行时私有 syscall 段 (766-779) 已随 P4 退役删除: wasm 进程一律经
+// userspace wasmi (`/bin/wasmrun`) 执行, 用户库不再需要 `EG_WASM_*` 包装.
 
 #[repr(C)]
 pub struct Timespec {
