@@ -217,7 +217,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
 
 - **描述**: 移除内核镜像内全部用户态字节与内嵌回退, `/init` 与 wasm 桩均从 initrd VFS 取.
 - **方案**: 删 init.bin 回退分支 (x86_64 [init.rs:153](../../src/kernel/functions/init.rs#L153) /
-  aarch64 [init.rs:200](../../src/kernel/functions/init.rs#L200)); 删 [wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs)
+  aarch64 [init.rs:200](../../src/kernel/functions/init.rs#L200)); 删 `wasm/stub.rs`（已随 WASM P4 删除）
   两架构 `include_bytes!`, exec `\0asm` 派发改从 VFS 读桩 (`/bin/wasmstub` 默认 / `/bin/wasmrun`
   wasm_userspace 腿, cpio 相应含对应桩); `build.rs` 相应护栏/`rerun-if-changed` 收口.
 - **状态**: [X] (三类嵌入全删; cpio 经 D3-cpio 子批, init.bin 经 D4-c, wasm 桩经 D4-d)
@@ -271,7 +271,7 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   `e_machine`, 产物仍是本架构 cpio 来源); (d) K-07b 契约锁改 `assert_absent("falling back to init.bin")`.
   读数: build all 6/6 绿 (含 P-62 needle 同批重指 `KERNEL_FEATURES="$feat initramfs"`),
   headline QEMU 双架构绿 (`init from /init` 经 module), aarch64 COW 腿绿.
-- **D4-d wasm 桩去嵌入 + exec 读 VFS 已落**: (a) [wasm/stub.rs](../../src/kernel/functions/wasm/stub.rs)
+- **D4-d wasm 桩去嵌入 + exec 读 VFS 已落**: (a) `wasm/stub.rs`（已随 WASM P4 删除）
   删两架构 `include_bytes!`, 只留 `stub_path()` (`wasm_userspace` 点亮 → `/bin/wasmrun`, 否则
   `/bin/wasmstub`; **两桩恒在 cpio 内**) 与 `is_wasm_image()`; (b)
   [exec.rs](../../src/kernel/functions/proc/exec.rs) 的 `\0asm` 分派改以无 fd 的

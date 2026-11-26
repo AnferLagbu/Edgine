@@ -39,7 +39,7 @@ WASM 被误述为对齐例外、实则偏离。
 | WASI 翻译目标 | [sys.rs](../../src/user/lib/src/sys.rs) 已有 read/write/open/close/lseek/stat/mkdir/socket 族/clock_gettime/nanosleep/clone_thread/futex 等 wrapper | 38 函数多数有落点；缺口 = random_get / fd_prestat / path_* 映射 |
 | 退役面（用户侧） | `src/user/lib/src/sys.rs` 的 `wasm_load/run/get_info/unload` + `edgine_abi::wasm` re-export | **已随 P4 删除（2026-11-27）** |
 | 退役面（内核侧） | `edgine-abi/src/wasm.rs` `EG_WASM_*`=766-769；`functions/syscall/dispatch.rs` `dispatch_wasm`；`functions/wasm/` 九子模块；`src/user/wasmstub` | **已于 2026-11-27 随 P4 真删**（F9 零抑制） |
-| exec 魔数派发 | [exec.rs:106-119](../../src/kernel/functions/proc/exec.rs#L106-L119) `\0asm` → 装 wasmstub → EG_WASM 回环 | P1 起改指用户态 wasmi 运行时（过渡共存） |
+| exec 魔数派发 | [exec.rs](../../src/kernel/functions/proc/exec.rs) 的 `\0asm` 分支：P4 后为本地 `is_wasm_image` + 常量 `/bin/wasmrun`，唯一派发目标 | 已收口（P4） |
 
 **选型裁定**：wasmi 是近期唯一可行目标——`no_std + alloc` 契合 Edgine 用户态（无 libc/std）；
 Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路线延后（见开放议题）。
@@ -68,7 +68,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 
 ### D3: WASI 38 函数全量翻译到既有 POSIX syscall
 
-- **描述**: 内核 [functions/wasm/wasi](../../src/kernel/functions/wasm/wasi/mod.rs) 的
+- **描述**: 内核 `src/kernel/functions/wasm/wasi/`（已随 P4 删除）的
   38 函数 8 组语义，在用户态 wasmi host 层全量翻译到 Edgine POSIX syscall。
 - **方案**: 逐组映射（G1 进程 / G2 时钟随机 / G3 环境参数 / G4 FD 管理 / G5 FD I/O /
   G6 路径 / G7 高级 FD / G8 socket）→ [sys.rs](../../src/user/lib/src/sys.rs) 既有 wrapper；
@@ -239,13 +239,11 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 
 - **描述**: 生态运行时接管后退役自研内核侧，文档/台账同步（D4）。
 - **方案**:
-  - 退 `EG_WASM_*` 766-779（[edgine-abi/src/wasm.rs](../../src/rust/edgine-abi/src/wasm.rs)
-    + [registry.rs](../../src/kernel/functions/wasm/registry.rs)
-    + [dispatch.rs:1261](../../src/kernel/functions/syscall/dispatch.rs#L1261) `dispatch_wasm`
-    + [sys.rs:335-361](../../src/user/lib/src/sys.rs#L335-L361) wasm_* wrapper）。
-  - 退 [wasmstub](../../src/user/wasmstub/src/main.rs) crate + 内核
-    [functions/wasm](../../src/kernel/functions/wasm/mod.rs) 子树。
-  - exec 魔数派发完全改指用户态 wasmi。
+  - 退 `EG_WASM_*` 766-779（`edgine-abi/src/wasm.rs` + `functions/wasm/registry.rs`
+    + `functions/syscall/dispatch.rs` 的 `dispatch_wasm` + `src/user/lib/src/sys.rs`
+    的 4 个 `wasm_*` wrapper）；已删。
+  - 退 `src/user/wasmstub` crate + 内核 `src/kernel/functions/wasm` 子树；已删。
+  - exec 魔数派发完全改指用户态 wasmi（本地 `is_wasm_image` + `/bin/wasmrun`）；已改。
   - 文档同步（[explain-wasm-runtime.md](../explain/explain-wasm-runtime.md) 归属注记→退役完成；
     design §七 收口）+ 台账。
 - **状态**: [~] (2026-11-27：内容面完成并双架构复跑绿；「七门槛全绿」判据仍受 P3.5 pedantic 债阻塞)
