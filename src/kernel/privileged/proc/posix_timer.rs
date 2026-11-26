@@ -327,10 +327,7 @@ fn posix_timer_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
 pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 {
     use crate::privileged::errno::Errno;
 
-    if !matches!(
-        clockid,
-        CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_REALTIME_COARSE | CLOCK_MONOTONIC_COARSE
-    ) {
+    if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
         return Errno::Einval.as_ret();
     }
 
@@ -608,7 +605,10 @@ pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
     use crate::privileged::errno::Errno;
     use crate::privileged::userptr;
 
-    if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
+    if !matches!(
+        clockid,
+        CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_REALTIME_COARSE | CLOCK_MONOTONIC_COARSE
+    ) {
         return Errno::Einval.as_ret();
     }
 
@@ -664,4 +664,22 @@ pub fn posix_timer_release_pid(pid: Pid) {
 /// 调试: 返回当前活跃 timer 数量
 pub fn posix_timer_active_count() -> u32 {
     TIMER_COUNT.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `clock_getres` 必须接受两个 coarse 变体；`res_ptr=0` 的查询路径不写用户内存.
+    #[test]
+    fn test_clock_getres_accepts_coarse_clocks() {
+        assert_eq!(sys_clock_getres(CLOCK_REALTIME, 0), 0);
+        assert_eq!(sys_clock_getres(CLOCK_MONOTONIC, 0), 0);
+        assert_eq!(sys_clock_getres(CLOCK_REALTIME_COARSE, 0), 0);
+        assert_eq!(sys_clock_getres(CLOCK_MONOTONIC_COARSE, 0), 0);
+        assert_eq!(
+            sys_clock_getres(2, 0),
+            crate::privileged::errno::Errno::Einval.as_ret()
+        );
+    }
 }

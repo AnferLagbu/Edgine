@@ -49,6 +49,8 @@
 
 修复：`clock.rs` 新增 `CLOCK_REALTIME_COARSE=5` / `CLOCK_MONOTONIC_COARSE=6`，分别映射墙钟/单调读数；`posix_timer.rs` 的 `sys_clock_getres` 同步接受 5/6，分辨率仍 1ms。`clock_settime` 仍只接受 `CLOCK_REALTIME`。
 
+复核订正：首次接线时 `matches!` 落点误改了 `sys_timer_create` 的白名单，而 `clock_getres` 仍拒绝 5/6。现已回退 `timer_create` 至 0/1，只让 `clock_getres` 接受 coarse 变体，并新增 `test_clock_getres_accepts_coarse_clocks`（`res_ptr=0` 的纯查询路径）。
+
 ### 3.3 aarch64 主线程 TPIDR_EL0 被调度恢复覆盖成 0
 
 `[PTHREAD]` 的 worker 能启动并正常退出，但 `pthread_join` 前后主线程触发：
@@ -86,10 +88,10 @@ x86_64 回归：
 构建与测试：
 
 - `./ci/build.sh all`：**7 passed / 0 failed**；K-08 `_kernel_end_phys=0x3F0000`，margin `0x10000` = 64 KiB。
-- `make test-kernel-host`：**12 + 820 + 648 = 1480 passed / 0 failed**。
+- `make test-kernel-host`：**12 + 820 + 649 = 1481 passed / 0 failed**（新增 coarse `clock_getres` 单测）。
 - `make test-host`：**1676 passed / 0 failed**。
 - `qemu_boot_test.sh x86_64`：1/1；`qemu_boot_test.sh aarch64`：1/1。
-- `bash ci/audit.sh full`：**RC=0**，审计腿到位 **17/17** + P-49 **11/11**、QEMU **2/2**、thread-stress **6/6**、Lockbud **4/4**、未执行 **0**；静态锁序 **1327 取锁点（已分类 456 / 未分类 871，基线 871）/ 10671 函数 / 违规 0**。
+- `bash ci/audit.sh full`：**RC=0**，审计腿到位 **17/17** + P-49 **11/11**、QEMU **2/2**、thread-stress **6/6**、Lockbud **4/4**、未执行 **0**；静态锁序 **1327 取锁点（已分类 456 / 未分类 871，基线 871）/ 10672 函数 / 违规 0**。
 
 修复过程中一次 full audit 曾因 `src/user/init/src/main.rs` 的 doc 注释裸写 `x86_64` 触发 `clippy::doc_markdown` 而失败；加反引号后复跑 RC=0。
 
