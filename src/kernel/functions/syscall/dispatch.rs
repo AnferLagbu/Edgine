@@ -650,7 +650,8 @@ fn dispatch_proc(num: u64, args: [u64; 6]) -> Option<i64> {
 fn dispatch_proc_info(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
         SYS_GETPGID, SYS_GETPID, SYS_GETPPID, SYS_GETSID, SYS_GETTID, SYS_PRCTL, SYS_PRLIMIT64,
-        SYS_SECCOMP, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSID, SYS_TCGETPGRP, SYS_TCSETPGRP,
+        SYS_RSEQ, SYS_SECCOMP, SYS_SET_TID_ADDRESS, SYS_SETPGID, SYS_SETSID, SYS_TCGETPGRP,
+        SYS_TCSETPGRP,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -675,6 +676,12 @@ fn dispatch_proc_info(num: u64, args: [u64; 6]) -> Option<i64> {
             a2,
             a3,
         ),
+        SYS_RSEQ => as_ret(crate::functions::proc::rseq::rseq_syscall(
+            a0,
+            crate::functions::intcast::low_u32_from_u64(a1),
+            crate::functions::intcast::low_i32_from_u64(a2),
+            crate::functions::intcast::low_u32_from_u64(a3),
+        )),
         SYS_SETSID => crate::functions::proc::session::proc_setsid(),
         SYS_GETSID => crate::functions::proc::session::proc_getsid(
             crate::functions::intcast::low_i32_from_u64(a0),

@@ -246,6 +246,7 @@ const fn canonical_to_aarch64_high(nr: u64) -> u64 {
         327 => 286, // SYS_PREADV2
         328 => 287, // SYS_PWRITEV2
         332 => 291, // SYS_STATX
+        334 => 293, // SYS_RSEQ
         424 => 424, // SYS_PIDFD_SEND_SIGNAL
         425 => 425, // SYS_IO_URING_SETUP
         426 => 426, // SYS_IO_URING_ENTER
@@ -481,6 +482,7 @@ const fn aarch64_to_canonical_upper(nr: u64) -> u64 {
         286 => 327, // SYS_PREADV2
         287 => 328, // SYS_PWRITEV2
         291 => 332, // SYS_STATX
+        293 => 334, // SYS_RSEQ
         _ => UNKNOWN,
     }
 }

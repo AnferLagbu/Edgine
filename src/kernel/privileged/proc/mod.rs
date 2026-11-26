@@ -65,6 +65,8 @@ pub mod process;
 pub mod rlimit;
 /// 进程退出清理 (robust futex / CLEARTID) — 机制层
 pub mod robust;
+/// D7 R1: `rseq` 注册/注销与用户区清理 — 机制层
+pub mod rseq;
 pub mod sched_ops;
 pub mod scheduler;
 pub mod seccomp;

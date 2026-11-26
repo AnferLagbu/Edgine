@@ -432,6 +432,10 @@ pub extern "C" fn process_exit(exit_code: u32) {
             crate::privileged::fs::current_vfs_ops().close_all_fds();
         }
 
+        // D7 R1: 退出前清除 rseq_cs 并摘除注册, 防止用户区留下悬垂临界区.
+        // 与 robust 清理同处: 用户地址空间仍有效, 内核页表尚未切换.
+        crate::privileged::proc::rseq::exit_cleanup(current_pid);
+
         // T1-G2: robust futex 遍历 + CLONE_CHILD_CLEARTID 清零.
         // 必须在切换内核页表/销毁用户地址空间之前执行 (用户内存仍可访问).
         crate::privileged::proc::robust::exit_cleanup(current_pid);

@@ -452,6 +452,7 @@ pub fn register_all_tests() {
         crate::privileged::config::memory::register_aslr_tests();
         crate::privileged::syscall::futex::register_futex_tests();
         crate::privileged::proc::robust::register_robust_tests();
+        crate::privileged::proc::rseq::register_rseq_tests();
         crate::privileged::mm::pcache::register_pcache_tests();
         crate::privileged::mm::swap::register_swap_tests();
         crate::privileged::pci::msi::register_msi_tests();

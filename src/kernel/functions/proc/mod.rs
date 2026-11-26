@@ -39,6 +39,8 @@ pub mod proc_mgmt;
 /// process_vm_readv / process_vm_writev — 跨进程用户内存向量读写
 pub mod process_vm;
 pub mod rlimit;
+/// D7 R1: `rseq(2)` 注册/注销策略
+pub mod rseq;
 pub mod sched;
 /// 调度策略与属性 — sched_setscheduler / getscheduler / setattr / getattr
 pub mod sched_attr;

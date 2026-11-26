@@ -16,7 +16,9 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
   `-O2 -s -fPIE -pie` 编译，`NEEDED=libc.so.6`
 - `glibc_g2`：本目录 `glibc_g2.c` 同编译器参数编译，直接调
   `SYS_set_tid_address`/`SYS_prlimit64`/`SYS_getrlimit`/`SYS_rseq`，逐项对比
-  `getrlimit` 与 `prlimit64` 的 16 个资源读数，并打印原始返回码
+  `getrlimit` 与 `prlimit64` 的 16 个资源读数，并验证 glibc 启动 rseq 注册、
+  重复注册 `EBUSY`、非法 flags/len、签名不匹配 `EPERM`、注销/重注册与信号
+  清理 `rseq_cs`
 - `glibc_time`：本目录 `glibc_time.c` 同编译器参数编译，调用
   `clock_gettime`/`gettimeofday`/`time`/`clock_getres`，验证无 VDSO 的
   syscall fallback
@@ -45,9 +47,9 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
 |---|---:|---|
 | `glibc_true` | 36,424 B | `684bc05bc973d1bfec940279475ece99740a78765696fcd3ea2dbd540df16fb5` |
 | `glibc_hello` | 11,176 B | `9aafb5ee74847ad39d6704447e6197f0545b8894964bd53f9815b1c763c58709` |
-| `glibc_g2` | 11,200 B | `8562e680e9c5b5c241f801dc0637f570eef46b9395f14ff3a258bad3df56ae12` |
+| `glibc_g2` | 10,960 B | `85d0e104fe084ff592b86e145728a1eb9dbc17bfda78cb85fbc609fd8de2e0dd` |
 | `glibc_time` | 11,232 B | `1676f0f12b4090a06c687d7d6e6fdc57d57d7b215dfda240a95b731a78d77394` |
-| `glibc_pthread` | 11,344 B | `466bd228a8f0c7648a1e73b736c35c96697563168ae4aa08de39b3d271868c08` |
+| `glibc_pthread` | 11,088 B | `d110b2cd4797daf43554433d7091490062dbebc9eeaf464a033b43f0438d2b3f` |
 | `glibc_clone3` | 11,272 B | `4fb861c111430dc7eb181598c0ca5c1ccc97276d550db5e9c58a3329bb48fc88` |
 | `glibc_dlopen` | 11,232 B | `2626224240d46afdf950a38eec5a18c0c4ed0e78743ab972da0fafeb9a636ea9` |
 | `libdlprobe.so` | 9,424 B | `22c71de1d00e41469b418da82770b940598645ff3f2464beba67e1f1f97f4f73` |
@@ -119,7 +121,7 @@ Linux 宿主上直接跑（宿主内核对这两项有实现）；其验收腿�
 `/bin/glibc_time`、`/bin/glibc_pthread`、`/bin/glibc_clone3` 与
 `/bin/glibc_dlopen`。前两腿按 `wstatus == 0` 判定并检查
 `hello dynamic glibc`；G2 腿要求 `set_tid_address` 返回当前 TID、`prlimit64` 返回成功，
-`rseq` 预期 `ENOSYS`（glibc 可 fallback）；G3 腿要求时间函数在
+`rseq` 必须成功注册并完成注销/信号清理；G3 腿要求时间函数在
 `AT_SYSINFO_EHDR=0` 下全部返回成功；G4 腿要求 `pthread_create`/TLS/`pthread_join`
 成功并打印 `[PTHREAD] PASS`；L1 腿要求 `[DLOPEN] PASS` 且 `dlopen`/`dlsym`/
 `dlclose`/重装载全部成功，由 QEMU 门禁逐行断言。

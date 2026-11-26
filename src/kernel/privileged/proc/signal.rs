@@ -880,6 +880,13 @@ pub fn do_signal_deliver<F: UserFrame>(frame: &mut F) -> bool {
     let proc = unsafe { &*proc_ptr };
     let frame_addr = core::ptr::from_mut(&mut *frame).cast::<()>() as u64;
 
+    // D7 R1: 返回用户态前刷新 rseq CPU ID; 若有待投递信号, 先清除
+    // `rseq_cs`, 避免 handler 看到悬垂临界区指针. 未注册时仅为一次原子读.
+    let _ = super::rseq::refresh_cpu(proc);
+    if signal_pick_next(proc).is_some() {
+        let _ = super::rseq::clear_rseq_cs(proc);
+    }
+
     let mut delivered = false;
 
     while let Some(sig) = signal_pick_next(proc) {

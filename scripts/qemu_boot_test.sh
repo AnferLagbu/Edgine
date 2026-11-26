@@ -779,8 +779,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
             # D7 G0/G1/G2/G3/G4: 真实 glibc 动态 true + hello + 启动 syscall + 时间路径 + pthread
             # 探针 —— 上游 ld-linux 载入 libc.so.6、完成启动并让 glibc stdio 写出
             # `hello dynamic glibc`；`set_tid_address`/`prlimit64` 必须返回成功，
-            # `rseq` 预期 ENOSYS；glibc 时间函数在 `AT_SYSINFO_EHDR=0` 下必须走
-            # syscall fallback；pthread 必须完成 create/join/TLS 校验。任一 GLIBC/G2/TIME/PTHREAD FAIL 一律阻断.
+            # `rseq` 必须由内核成功注册并支持注销/信号清理；glibc 时间函数在
+            # `AT_SYSINFO_EHDR=0` 下必须走 syscall fallback；pthread 必须完成
+            # create/join/TLS 校验。任一 GLIBC/G2/TIME/PTHREAD FAIL 一律阻断.
             if grep -aq "\[GLIBC\] PASS: dynamic glibc execve" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] HELLO PASS: dynamic glibc hello" "$X64_LOG" \
                 && grep -aq "hello dynamic glibc" "$X64_LOG" \
@@ -788,17 +789,17 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[G2\] SET_TID PASS" "$X64_LOG" \
                 && grep -aq "\[G2\] PRLIMIT PASS" "$X64_LOG" \
                 && grep -aq "\[G2\] GETRLIMIT PASS" "$X64_LOG" \
-                && grep -aq "\[G2\] RSEQ ENOSYS" "$X64_LOG" \
+                && grep -aq "\[G2\] RSEQ PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] TIME PASS: no-vdso fallback" "$X64_LOG" \
                 && grep -aq "\[TIME\] PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] PTHREAD PASS: glibc pthread" "$X64_LOG" \
                 && grep -aq "\[PTHREAD\] PASS" "$X64_LOG" \
+                && grep -aq "\[PTHREAD\] RSEQ EXIT PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] CLONE3 PASS: glibc clone3" "$X64_LOG" \
                 && grep -aq "\[CLONE3\] PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] DLOPEN PASS: glibc dlopen" "$X64_LOG" \
                 && grep -aq "\[DLOPEN\] PASS" "$X64_LOG" \
                 && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
-                && ! grep -aq "\[G2\] RSEQ UNEXPECTED" "$X64_LOG" \
                 && ! grep -aq "\[TIME\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[PTHREAD\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[CLONE3\] FAIL" "$X64_LOG" \

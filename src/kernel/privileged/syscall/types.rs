@@ -326,6 +326,10 @@ pub const SYS_GETTID: u64 = edgine_abi::thread::SYS_GETTID;
 pub const SYS_SET_TID_ADDRESS: u64 = edgine_abi::thread::SYS_SET_TID_ADDRESS;
 /// `SYS_PRLIMIT64` — 查询或设置 64 位资源限制
 pub const SYS_PRLIMIT64: u64 = 302;
+/// `SYS_RSEQ` — 注册/注销当前线程的 rseq 用户区
+///
+/// 规范编号: x86_64 `334`, aarch64 `293`; ABI 层负责双向映射.
+pub const SYS_RSEQ: u64 = 334;
 /// `SYS_TIME` — 获取秒级时间戳
 pub const SYS_TIME: u64 = 201;
 /// `SYS_CLOCK_GETTIME` — 读取指定时钟的时间
@@ -1066,6 +1070,7 @@ const _: () = {
         SYS_GETTID,
         SYS_SET_TID_ADDRESS,
         SYS_PRLIMIT64,
+        SYS_RSEQ,
         SYS_TIME,
         SYS_CLOCK_GETTIME,
         SYS_EXIT_GROUP,

@@ -1,17 +1,28 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/rseq.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
-struct rseq_area {
-    uint32_t cpu_id_start;
-    uint32_t cpu_id;
-    uint64_t rseq_cs;
-    uint32_t flags;
-    uint8_t pad[12];
-};
+#ifndef RSEQ_SIG
+#define RSEQ_SIG 0x53053053u
+#endif
+
+static struct rseq *g_rseq_area;
+static volatile int g_rseq_cleared;
+static struct rseq_cs g_rseq_cs __attribute__((aligned(32)));
+
+/* start_ip 必须落在不执行的地址, 使信号 IP 在临界区外; 内核据此走
+ * 非重启用 clear 路径, 异步信号与宿主 Linux 语义一致. */
+static void rseq_dummy_start(void) { __asm__ volatile(""); }
+
+static void rseq_signal_handler(int sig) {
+    (void)sig;
+    g_rseq_cleared = (g_rseq_area->rseq_cs == 0);
+}
 
 struct rlimit64_area {
     unsigned long long cur;
@@ -92,14 +103,113 @@ int main(void) {
         ok = 0;
     }
 
-    struct rseq_area area = {0};
-    errno = 0;
-    rc = syscall(SYS_rseq, &area, sizeof(area), 0, 0);
-    printf("[G2] rseq rc=%ld errno=%d\n", rc, errno);
-    if (rc == -1 && errno == ENOSYS) {
-        printf("[G2] RSEQ ENOSYS\n");
+    /*
+     * D7 R1: glibc 2.44 在启动时用 33 字节 feature 区注册 rseq；Edgine 支持
+     * rseq 后 __rseq_size 应为非 0，且内核在返回用户态时写 cpu_id_start/cpu_id。
+     * 这里先验证 glibc 自注册，再验证内核注册/注销/信号清理语义。
+     */
+    struct rseq *area =
+        (struct rseq *)((char *)__builtin_thread_pointer() + __rseq_offset);
+    unsigned int rseq_len = __rseq_size < 32 ? 32 : __rseq_size;
+    if (area->cpu_id != RSEQ_CPU_ID_REGISTRATION_FAILED) {
+        g_rseq_area = area;
+        printf("[G2] glibc rseq feature=%u reg_len=%u offset=%td flags=%u cpu=%u/%u\n",
+               __rseq_size, rseq_len, __rseq_offset, __rseq_flags,
+               area->cpu_id_start, area->cpu_id);
+
+        if (area->cpu_id_start != area->cpu_id || area->cpu_id >= 64) {
+            printf("[G2] RSEQ CPU ID FAIL\n");
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, rseq_len, 0, RSEQ_SIG);
+        if (rc != -1 || errno != EBUSY) {
+            printf("[G2] RSEQ duplicate rc=%ld errno=%d (want EBUSY)\n", rc, errno);
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, rseq_len, 2, RSEQ_SIG);
+        if (rc != -1 || (errno != EINVAL && errno != EBUSY)) {
+            printf("[G2] RSEQ flags rc=%ld errno=%d (want EINVAL/EBUSY)\n", rc, errno);
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, 31, 0, RSEQ_SIG);
+        if (rc != -1 || errno != EINVAL) {
+            printf("[G2] RSEQ len rc=%ld errno=%d (want EINVAL)\n", rc, errno);
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, rseq_len, RSEQ_FLAG_UNREGISTER,
+                     RSEQ_SIG ^ 1u);
+        if (rc != -1 || errno != EPERM) {
+            printf("[G2] RSEQ sig rc=%ld errno=%d (want EPERM)\n", rc, errno);
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, rseq_len, RSEQ_FLAG_UNREGISTER, RSEQ_SIG);
+        if (rc != 0) {
+            printf("[G2] RSEQ unregister rc=%ld errno=%d\n", rc, errno);
+            ok = 0;
+        } else if (area->cpu_id_start != 0 || area->cpu_id != 0xffffffffu) {
+            printf("[G2] RSEQ unregister state cpu=%u/%u\n",
+                   area->cpu_id_start, area->cpu_id);
+            ok = 0;
+        }
+
+        errno = 0;
+        rc = syscall(SYS_rseq, area, rseq_len, 0, RSEQ_SIG);
+        if (rc != 0) {
+            printf("[G2] RSEQ re-register rc=%ld errno=%d\n", rc, errno);
+            ok = 0;
+        } else if (area->cpu_id_start != area->cpu_id || area->cpu_id >= 64) {
+            printf("[G2] RSEQ register state cpu=%u/%u\n",
+                   area->cpu_id_start, area->cpu_id);
+            ok = 0;
+        }
+
+        g_rseq_cleared = 0;
+        if (signal(SIGALRM, rseq_signal_handler) == SIG_ERR) {
+            printf("[G2] RSEQ signal install FAIL\n");
+            ok = 0;
+        } else {
+            /* 构造合法 rseq_cs：abort_ip 前 4 字节必须是 RSEQ_SIG，
+             * 否则内核 rseq_get_rseq_cs 校验失败，不会进入清理路径. */
+            g_rseq_cs.version = 0;
+            g_rseq_cs.flags = 0;
+            g_rseq_cs.start_ip = (uint64_t)(uintptr_t)&rseq_dummy_start;
+            g_rseq_cs.abort_ip = (uint64_t)(uintptr_t)&&rseq_signal_abort;
+            g_rseq_cs.post_commit_offset = 4;
+            area->rseq_cs = (uint64_t)(uintptr_t)&g_rseq_cs;
+            ualarm(10000, 0);
+            for (volatile int i = 0; i < 100000000 && !g_rseq_cleared; i++) {
+            }
+            goto rseq_signal_after;
+            __asm__ volatile(".long 0x53053053");
+        rseq_signal_abort:
+        rseq_signal_after:
+            if (!g_rseq_cleared || area->rseq_cs != 0) {
+                printf("[G2] RSEQ signal cleanup FAIL cs=%llu\n",
+                       (unsigned long long)area->rseq_cs);
+                ok = 0;
+            }
+        }
+
+        if (ok) {
+            printf("[G2] RSEQ PASS\n");
+        } else {
+            printf("[G2] RSEQ FAIL\n");
+        }
     } else {
-        printf("[G2] RSEQ UNEXPECTED\n");
+        printf("[G2] RSEQ REGISTRATION FAIL feature=%u cpu=%u\n",
+               __rseq_size, area->cpu_id);
+        printf("[G2] RSEQ FAIL\n");
+        ok = 0;
     }
 
     return ok ? 0 : 1;

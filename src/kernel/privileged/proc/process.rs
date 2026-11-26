@@ -360,6 +360,16 @@ pub struct Process {
     /// Per-process 资源限制表 (RLIMIT_*)
     pub rlimit_table: Mutex<RlimitTable>,
 
+    /// D7 R1: 当前线程注册的 rseq 用户区地址 (0 = 未注册).
+    ///
+    /// rseq 是 per-thread 状态: fork/clone 新 TCB 默认清零, 不继承父线程
+    /// 的注册; exec 在销毁旧地址空间前显式清除, 避免悬垂用户指针.
+    pub rseq_ptr: AtomicU64,
+    /// rseq 注册长度; 接受 Linux 原始 32 字节及更大的 feature 区, 只维护前 32 字节.
+    pub rseq_len: AtomicU32,
+    /// rseq 注册签名 (`sig`); 注销时必须与注册值一致.
+    pub rseq_sig: AtomicU32,
+
     /// Per-process 8 字节 stack canary (P1 #14)
     ///
     /// 低字节恒为 0 (Linux/glibc 兼容). 用户态编译器
@@ -530,6 +540,10 @@ impl Process {
             sigaltstack_size: AtomicU64::new(0),
             sigaltstack_flags: AtomicU32::new(0),
             rlimit_table: Mutex::new(RlimitTable::new()),
+            // D7 R1: rseq 注册默认关闭; fork/clone 不继承, exec 显式清除.
+            rseq_ptr: AtomicU64::new(0),
+            rseq_len: AtomicU32::new(0),
+            rseq_sig: AtomicU32::new(0),
             // P1 #14: 进程创建时分配独立 canary
             stack_canary: AtomicU64::new(crate::privileged::proc::generate_canary()),
             // C7: Seccomp 默认 Disabled

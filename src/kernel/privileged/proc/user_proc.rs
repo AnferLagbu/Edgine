@@ -1126,6 +1126,10 @@ impl UserProcManager {
         // SAFETY: proc 来自 BTreeMap 中的 NonNull, 进程存活期间有效.
         let proc_ref = unsafe { UserProcRef::new_unchecked(proc.as_ptr()) };
 
+        // D7 R1: exec 替换地址空间, 旧 rseq 用户区随旧页表失效; 先摘除注册,
+        // 不再向旧地址写清理值 (旧地址空间即将销毁).
+        super::rseq::reset_registration(pid);
+
         // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享).
         //    exec 下权威 `Process` 存活且 cr3 字段即将被新值覆盖, 其 `Drop` 只会
         //    看到新表 —— 旧表的这次减计是本进程所持引用的唯一注销点 (镜像
