@@ -1,6 +1,6 @@
 # Linux 动态装载工程（上游 ld-musl / ld-linux 先行）
 
-> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；C1 clone3 高级字段已收口；L1 glibc `dlopen` 第二共享对象已收口；D7 延后项剩余 7 项（P1/R1/S1/G1/A1/V1/T1，见 `D7-DEFERRED`）。
+> 状态：D1–D6 主体施工完成；x86_64 与 aarch64 上游 `ld-musl` 均已真跑通过（`[DYN] PASS`），缺解释器失败路径与 `elfld` 退役已落地；剩余扩展失败路径与可选 pthread/dlopen。目标不是“自研一个动态链接器”，而是让**上游 Linux 动态链接器**在 Edgine 上按 Linux 语义跑起来，并让自研 `elfld` 退役。T7 已于 2026-11-25 按方案一以双架构 musl 收口，glibc/vDSO 归本册 D7 可选工程，不阻塞 T7。D7 G0 已在 x86_64 真实 glibc `true` 上通过，G1 的带 stdout `hello` 也已通过（aarch64 暂无载体，SKIP）；G2 已完成启动 syscall 补齐与 `rseq` 取证，G3 已完成无 VDSO 时间面取证并修复 `time`/`getcpu` ABI，G4 pthread/clone3/TLS 子腿已完成；C1 clone3 高级字段已收口；L1 glibc `dlopen` 第二共享对象已收口；D7 延后项剩余 6 项（P1/R1/G1/A1/V1/T1，见 `D7-DEFERRED`）。
 
 ## 0. 边界澄清：内核不实现动态链接
 
@@ -205,13 +205,13 @@ glibc 与 musl 共用 D1–D4 的装载/`mmap`/auxv 基础，但多出四类差�
 
 > 本节是 D7 G2/G3/G4 留下的**未收口边界登记**，不是已完成清单。pthread/rseq、rlimit 收敛、aarch64 glibc 载体或真实 RTC/VDSO 切片开工前，必须逐项核对本表；处理一项时把状态改为 `[X]`，并在提交/报告中回填验收证据。**禁止只删除本表行而不留收口记录**，否则这些边界会随任务推进被遗忘。
 >
-> 检索锚点：`D7-DEFERRED`。状态口径：`[ ]` 延后/未开工，`[~]` 进行中，`[X]` 已收口并回填证据。本轮登记 9 项（G2 五项 + G3 两项 + G4 两项），均不计入 T7 的 `7 / 0`；C1、L1 收口后当前剩余 7 项。
+> 检索锚点：`D7-DEFERRED`。状态口径：`[ ]` 延后/未开工，`[~]` 进行中，`[X]` 已收口并回填证据。本轮登记 9 项（G2 五项 + G3 两项 + G4 两项），均不计入 T7 的 `7 / 0`；C1、L1、S1 收口后当前剩余 6 项。
 
 | ID | 未收口边界 | 状态 | 当前口径 | 解除触发 | 验收证据 |
 |---|---|---|---|---|---|
 | `D7-DEFERRED-P1` | `prlimit64` 跨进程权限 | `[ ]` | 仅支持 `pid=0` 当前与 `init` 改；非 init 改其他 pid 返回 `EPERM` | G4 pthread/SGEG 能力面接入 rlimit 时 | 非 init 改他 pid 无能力仍 `EPERM`；init/具备对应能力时可改；QEMU 回归 |
 | `D7-DEFERRED-R1` | `rseq` 注册/退出语义 | `[ ]` | `334`/aarch64 `293` 均未映射，保持 `-ENOSYS`；G4 pthread 腿已证明 glibc 当前可 fallback | glibc 出现 rseq 硬依赖或多线程 TLS 需要注册语义 | `334 ↔ 293` 映射、注册/注销、`rseq_cs` 在信号/退出清理、pthread 并发腿、QEMU 串口 |
-| `D7-DEFERRED-S1` | `set_tid_address` 退出清理集成断言 | `[ ]` | 入口不校验 `tidptr`，退出清理失败静默；只有字段与路径，无独立集成腿 | G4 线程退出或 uaccess/exit-cleanup 切片 | 子进程退出后 `clear_child_tid` 写 0；坏指针不触发内核页故障；不重复写/不误唤醒 |
+| `D7-DEFERRED-S1` | `set_tid_address` 退出清理集成断言 | `[X]` | 2026-11-26 收口：`exit_cleanup` 改为先摘登记再写用户字，写路径走 `userptr::write_struct_to_user` 的区间/映射/逐页可写/SMAP 完整判据，不再 `check_user_ptr` 后裸 `write_volatile`；写失败跳过 futex 唤醒。新增用户库 `set_tid_address` wrapper 与 init `[TIDCLEAR]` 两腿：共享 `AtomicU32` 好指针写 0 并唤醒，fork 子进程登记只读 `.text` 坏指针后 `wait4` 正常退出 | 后续扩展 `CLONE_CHILD_CLEARTID` 与 `set_tid_address` 的组退出/live>1 语义时另开工；当前坏指针腿用独立子进程，未覆盖“线程组内坏指针 + 兄弟线程存活”组合 | `[TIDCLEAR] PASS`（x86_64 + aarch64）；`qemu_boot_test.sh` 双架构 RC=0；证据见 `docs/report/d7-s1-set-tid-address.md` |
 | `D7-DEFERRED-G1` | `getrlimit` 与 `prlimit64` 口径统一 | `[ ]` | `getrlimit` 仍恒 `RLIM_INFINITY`；`prlimit64` 读真实 rlimit 表 | 独立 rlimit 语义收敛切片 | 两个入口读同一表；静态/musl 旧腿与现有 rlimit 测试零回归 |
 | `D7-DEFERRED-A1` | aarch64 glibc G2/G3/G4 运行时载体 | `[ ]` | 无 aarch64 glibc 载体，G2/G3/G4 仅 x86_64 实测；aarch64 只锁 `293 -> UNKNOWN` 映射 | 交叉编译出 aarch64 glibc fixture | aarch64 串口出现 `SET_TID/PRLIMIT/RSEQ/TIME/PTHREAD` 与 `[GLIBC] G2/TIME/PTHREAD PASS`，QEMU 门禁转绿 |
 | `D7-DEFERRED-V1` | 最小 VDSO | `[ ]` | `AT_SYSINFO_EHDR=0`，G3 已证时间路径全部 syscall fallback；未实现 VDSO | 新的 glibc 时间/CPU 路径出现硬依赖或明确要求 VDSO | `clock_gettime/gettimeofday/time/getcpu` 的 VDSO 映射、符号解析、fallback 对照测试 |

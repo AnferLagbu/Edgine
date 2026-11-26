@@ -554,6 +554,8 @@
 
   > **2026-11-26 D7 L1（x86_64）**：`D7-DEFERRED-L1` 收口。新增 `glibc_dlopen` 与独立 `libdlprobe.so`，`RTLD_NOW|RTLD_LOCAL` 装载第二共享对象，`dlsym` 解析 `probe_add`/`probe_get`，首次调用 `12`，缺失符号 `NULL`，`dlclose` 后重新 `dlopen` 使 `probe_counter` 回到 `5`；串口 `[DLOPEN] PASS`、`[GLIBC] DLOPEN PASS: glibc dlopen`，G0–G4 全绿，`qemu_boot_test.sh x86_64` RC=0。首轮 `malloc(): corrupted top size` 的根因不在 `pread64`：`MmStruct::find_free_range` 遍历 VMA 时无条件 `cursor=vma.end`，把已低于 `mmap_base` 的低位 VMA 终点当游标，导致 glibc loader 把 `libc.so.6` 映射到 `main_end` 并占据 brk 堆区；另 `set_brk` 把页对齐值写回 `mm->brk`，破坏 glibc `sbrk`/top chunk 记账。修复为跳过整体低于游标的 VMA、`mm->brk` 保存/返回精确 `new_brk`（VMA 仍页对齐，新增 `brk < start_brk` 拒绝），补 2 条 VMA 回归单测；`make test-kernel-host` 640 passed / 0 failed。证据见 `docs/report/d7-l1-glibc-dlopen.md`。D7 延后项 8 → 7。
 
+  > **2026-11-26 D7 S1（x86_64 + aarch64）**：`D7-DEFERRED-S1` 收口。`exit_cleanup` 原先用 `check_user_ptr` 做范围检查后裸 `write_volatile` 写 `clear_child_tid`，只读 `.text` 地址能通过范围检查但在退出路径触发内核写保护 `#PF`；写失败后还无条件 `futex_wake`，且字段复位晚于写/唤醒。现改为先摘登记、再走 `userptr::write_struct_to_user` 的区间/映射/逐页可写/SMAP 完整判据，写成功才唤醒，坏指针静默跳过。新增用户库 `set_tid_address` wrapper 与 init `[TIDCLEAR]` 两腿：共享地址空间线程登记好指针，退出写 0 并由父线程 futex 等断言；fork 子进程登记只读 `.text` 坏指针，`wait4` 必须正常退出。双架构串口 `[TIDCLEAR] PASS`，`qemu_boot_test.sh x86_64` / `aarch64` 均 RC=0；`./ci/build.sh all` 6/0；`make test-kernel-host` 640 passed / 0 failed。证据见 `docs/report/d7-s1-set-tid-address.md`。D7 延后项 7 → 6。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
