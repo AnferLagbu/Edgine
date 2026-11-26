@@ -183,7 +183,8 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   **交付物**: 专项探针 [wasi_p3_probe.c](../../scripts/fixtures/wasi_p3_probe.c)（wasi-sdk 34 编译，
   产物 [wasi_p3_probe.wasm](../../scripts/fixtures/wasi_p3_probe.wasm) 268,268 B）+ 生成器
   [make_wasi_p3_probe.py](../../scripts/make_wasi_p3_probe.py) + 门禁 [wasmi_wasi_test.sh](../../scripts/wasmi_wasi_test.sh)
-  （Makefile / `make_initramfs_cpio.py` / init 探针三处接线）。探针输出契约
+  （Makefile / `make_initramfs_cpio.py` / init 探针三处接线；门禁已接 `ci/audit.sh full` 的 P3 腿，
+  位于 wasmi P1 腿之后 —— 因 `src/user` clippy 腿先红，full 档当前在 2/6 早退，P3 腿待 P3.5 清债后生效）。探针输出契约
   `P3 start` / `OK <name>` / `FAIL <name> errno=<n>` / `P3 done fails=<n>`，共 **36 项断言**：
   prestat 枚举、写后 `fd_filestat_get`/`stat` 的 size（钉 icache 失效语义）、`fd_allocate`、
   `fd_advise` 正常+非法 flag、`fd_renumber`（自定义 import 直打宿主，因 wasi-libc 的 `dup2`
