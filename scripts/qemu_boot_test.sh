@@ -1097,12 +1097,37 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
             fi
             # D7 T1: aarch64 PL031 必须给出真实 epoch (无载体时也断言启动日志).
             rtc_epoch_check "aarch64" "$A64_LOG" || RESULT=1
-            # D7 G0: aarch64 暂无 glibc 载体，允许 SKIP；有载体后只允许 PASS.
-            if ! grep -aq "\[GLIBC\] FAIL" "$A64_LOG" \
-                && { grep -aq "\[GLIBC\] SKIP:" "$A64_LOG" || grep -aq "\[GLIBC\] PASS:" "$A64_LOG"; }; then
-                ok "[aarch64] glibc 探针载体态合规 (SKIP/PASS, 无 FAIL) (D7 G0)"
+            # D7 A1: aarch64 glibc 载体落地后，G0–G4/C1/L1 与 x86_64 同口径
+            # fail-closed；任一 GLIBC/G2/TIME/PTHREAD/CLONE3/DLOPEN FAIL 均阻断.
+            if grep -aq "\[GLIBC\] PASS: dynamic glibc execve" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] HELLO PASS: dynamic glibc hello" "$A64_LOG" \
+                && grep -aq "hello dynamic glibc" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] G2 PASS: startup syscalls" "$A64_LOG" \
+                && grep -aq "\[G2\] SET_TID PASS" "$A64_LOG" \
+                && grep -aq "\[G2\] PRLIMIT PASS" "$A64_LOG" \
+                && grep -aq "\[G2\] GETRLIMIT PASS" "$A64_LOG" \
+                && grep -aq "\[G2\] RSEQ PASS" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] TIME PASS: no-vdso fallback" "$A64_LOG" \
+                && grep -aq "\[TIME\] EPOCH PASS" "$A64_LOG" \
+                && grep -aq "\[TIME\] SET PASS" "$A64_LOG" \
+                && grep -aq "\[TIME\] PASS" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] PTHREAD PASS: glibc pthread" "$A64_LOG" \
+                && grep -aq "\[PTHREAD\] PASS" "$A64_LOG" \
+                && grep -aq "\[PTHREAD\] RSEQ EXIT PASS" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] CLONE3 PASS: glibc clone3" "$A64_LOG" \
+                && grep -aq "\[CLONE3\] PASS" "$A64_LOG" \
+                && grep -aq "\[GLIBC\] DLOPEN PASS: glibc dlopen" "$A64_LOG" \
+                && grep -aq "\[DLOPEN\] PASS" "$A64_LOG" \
+                && ! grep -aq "\[G2\].*FAIL" "$A64_LOG" \
+                && ! grep -aq "\[TIME\] FAIL" "$A64_LOG" \
+                && ! grep -aq "\[TIME\] SET FAIL" "$A64_LOG" \
+                && ! grep -aq "\[PTHREAD\] FAIL" "$A64_LOG" \
+                && ! grep -aq "\[CLONE3\] FAIL" "$A64_LOG" \
+                && ! grep -aq "\[DLOPEN\] FAIL" "$A64_LOG" \
+                && ! grep -aq "\[GLIBC\] FAIL" "$A64_LOG"; then
+                ok "[aarch64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 + L1 dlopen 通过 (D7 A1/G0/G1/G2/G3/G4/C1/L1)"
             else
-                warn "[aarch64] glibc 探针载体态不合规 (D7 G0)"
+                warn "[aarch64] glibc 动态 true/hello + G2 syscall + G3 时间 + G4 pthread + C1 clone3 + L1 dlopen 未通过 (D7 A1)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             if ! grep -aq "\[WASM\] FAIL" "$A64_LOG" \

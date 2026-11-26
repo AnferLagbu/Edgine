@@ -75,6 +75,10 @@ pub const SIGEV_SIGNAL: i32 = 2;
 pub const CLOCK_REALTIME: i32 = 0;
 /// 单调时钟 (不受系统时间调整影响)
 pub const CLOCK_MONOTONIC: i32 = 1;
+/// 墙钟粗粒度读数 (Linux ABI 值 5)
+pub const CLOCK_REALTIME_COARSE: i32 = 5;
+/// 单调时钟粗粒度读数 (Linux ABI 值 6)
+pub const CLOCK_MONOTONIC_COARSE: i32 = 6;
 
 /// `timer_settime` flags
 pub const TFD_TIMER_ABSTIME: i32 = 1;
@@ -323,7 +327,10 @@ fn posix_timer_callback(timer: &HrTimer, _seq: u64) -> HrTimerRestart {
 pub fn sys_timer_create(clockid: i32, sigev_ptr: u64, timer_id_ptr: u64) -> i64 {
     use crate::privileged::errno::Errno;
 
-    if clockid != CLOCK_REALTIME && clockid != CLOCK_MONOTONIC {
+    if !matches!(
+        clockid,
+        CLOCK_REALTIME | CLOCK_MONOTONIC | CLOCK_REALTIME_COARSE | CLOCK_MONOTONIC_COARSE
+    ) {
         return Errno::Einval.as_ret();
     }
 
@@ -594,8 +601,8 @@ pub fn sys_timer_getoverrun(timer_id: i32) -> i64 {
 
 /// `clock_getres` — 时钟分辨率
 ///
-/// `Edgine` 内置两种时钟: `CLOCK_REALTIME` (TICK 精度) / `CLOCK_MONOTONIC` (TICK 精度)
-/// 分辨率 = 1 tick = 1ms (hrtimer 配置, 暂以 1ms 作为标称分辨率)。
+/// `Edgine` 内置两种时间源: `CLOCK_REALTIME` / `CLOCK_MONOTONIC`，其 coarse 变体
+/// 复用同一读数；分辨率 = 1 tick = 1ms (hrtimer 配置, 暂以 1ms 作为标称分辨率)。
 #[must_use]
 pub fn sys_clock_getres(clockid: i32, res_ptr: u64) -> i64 {
     use crate::privileged::errno::Errno;

@@ -18,6 +18,10 @@ use crate::privileged::syscall::Errno;
 pub const CLOCK_REALTIME: i32 = 0;
 /// POSIX 时钟 ID: 自启动单调时钟 (只读)
 pub const CLOCK_MONOTONIC: i32 = 1;
+/// POSIX 时钟 ID: 墙钟粗粒度读数 (aarch64 glibc `time()` 走此 ID)
+pub const CLOCK_REALTIME_COARSE: i32 = 5;
+/// POSIX 时钟 ID: 单调时钟粗粒度读数
+pub const CLOCK_MONOTONIC_COARSE: i32 = 6;
 
 /// `clock_nanosleep` 标志: 请求时间为绝对时刻
 /// (与 privileged `TFD_TIMER_ABSTIME` 同值, 分属两套 syscall 标志空间)
@@ -121,8 +125,8 @@ fn monotonic_ns() -> u64 {
 /// 按时钟 ID 取当前时间 (ns); 不支持的时钟 ID 返回 `None`
 fn clock_now_ns(clk_id: i32) -> Option<u64> {
     match clk_id {
-        CLOCK_REALTIME => Some(wall_clock_ns()),
-        CLOCK_MONOTONIC => Some(monotonic_ns()),
+        CLOCK_REALTIME | CLOCK_REALTIME_COARSE => Some(wall_clock_ns()),
+        CLOCK_MONOTONIC | CLOCK_MONOTONIC_COARSE => Some(monotonic_ns()),
         _ => None,
     }
 }
@@ -134,7 +138,8 @@ fn has_time_privilege() -> bool {
 
 /// `clock_gettime(clk_id, tp)` 策略
 ///
-/// 仅支持 `CLOCK_REALTIME` 与 `CLOCK_MONOTONIC`; 其余时钟 ID 返回 `EINVAL`.
+/// 支持 `CLOCK_REALTIME` / `CLOCK_MONOTONIC` 及其 coarse 变体 (同一时间源,
+/// 分辨率仍为 1ms); 其余时钟 ID 返回 `EINVAL`.
 ///
 /// # Errors
 ///

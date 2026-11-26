@@ -135,3 +135,4 @@ boot_disk*
 # ===== D7 L1 fixture 共享对象 =====
 # 这是刻意入仓的测试载荷，不是构建产物；`*.so` 通用规则不应吞掉它。
 !scripts/fixtures/dynamic-glibc-x86_64/libdlprobe.so
+!scripts/fixtures/dynamic-glibc-aarch64/libdlprobe.so

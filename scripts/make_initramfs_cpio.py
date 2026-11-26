@@ -115,6 +115,10 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     ("lib64", "dir", ""),
     ("lib64/ld-linux-x86-64.so.2", "file", "ld-linux-x86-64.so.2"),
     ("lib64/libc.so.6", "file", "libc.so.6"),
+    # D7 A1: aarch64 glibc 的 PT_INTERP 是 /lib/ld-linux-aarch64.so.1，
+    # libc 同放 /lib；collect_entries 按架构跳过另一套条目.
+    ("lib/ld-linux-aarch64.so.1", "file", "ld-linux-aarch64.so.1"),
+    ("lib/libc.so.6", "file", "libc.so.6"),
     # D7 L1: dlopen 探针的第二个共享对象；绝对路径 /lib64/libdlprobe.so.
     ("lib64/libdlprobe.so", "file", "libdlprobe.so"),
 )
@@ -196,11 +200,17 @@ def iter_entries(blob: bytes) -> list[tuple[str, int, bytes]]:
     return entries
 
 
-def collect_entries(src_dir: Path) -> list[tuple[str, int, bytes]]:
+def collect_entries(src_dir: Path, arch: str = "x86_64") -> list[tuple[str, int, bytes]]:
     """按固定布局读产物; `init.bin` 缺失即报错, 其余缺失即跳过."""
     entries: list[tuple[str, int, bytes]] = []
     skipped: list[str] = []
+    other_arch_paths = {
+        "x86_64": {"lib/ld-linux-aarch64.so.1", "lib/libc.so.6"},
+        "aarch64": {"lib64/ld-linux-x86-64.so.2", "lib64/libc.so.6"},
+    }
     for name, kind, src in ARCHIVE_LAYOUT:
+        if name in other_arch_paths.get(arch, set()):
+            continue
         if kind == "dir":
             entries.append((name, S_IFDIR | PERM_DIR, b""))
             continue
@@ -218,9 +228,9 @@ def collect_entries(src_dir: Path) -> list[tuple[str, int, bytes]]:
     return entries
 
 
-def write_cpio(src_dir: Path, out_path: Path) -> int:
+def write_cpio(src_dir: Path, out_path: Path, arch: str = "x86_64") -> int:
     """生成归档并落盘, 返回写出的条目数."""
-    blob = build_archive(collect_entries(src_dir))
+    blob = build_archive(collect_entries(src_dir, arch))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(blob)
     print(f"[cpio] 写出 {out_path}: {len(blob)} 字节 (源目录 {src_dir})")
@@ -307,7 +317,7 @@ def main(argv: list[str]) -> int:
     src_dir = Path(args.src) if args.src else PROJECT_ROOT / "other/build" / args.arch / "user"
     out_path = Path(args.out) if args.out else src_dir / "initramfs.cpio"
     try:
-        write_cpio(src_dir, out_path)
+        write_cpio(src_dir, out_path, args.arch)
     except FileNotFoundError as e:
         print(f"[cpio] 错误: {e}", file=sys.stderr)
         return 1

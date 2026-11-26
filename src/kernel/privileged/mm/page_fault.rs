@@ -160,18 +160,31 @@ pub enum A64FaultClass {
 }
 
 impl A64FaultClass {
-    /// 由 `ESR_EL1` 归类: 先看 `EC` 是否**数据异常**, 再看 `ISS[5:0]` (DFSC) 高 4 位.
+    /// 由 `ESR_EL1` 归类: 先按 `EC` 分出数据异常 / EL0 取指异常, 再看 `ISS[5:0]` 的高 4 位.
     ///
     /// `EC` 前置判不可省: 取指异常的 IFSC 与数据异常的 DFSC 在"翻译 (`0b0001LL`)"与
-    /// "AF (`0b0010LL`)"两段**同形** —— 只看 ISS 会把取指故障误判成可恢复, 而本内核不为
-    /// 取指故障建页 (用户 PC 落在未映射区必须按原有语义终止).
+    /// "AF (`0b0010LL`)"两段**同形**, 只看 ISS 会混淆来源.
+    ///
+    /// EL0 取指**翻译故障**允许进入恢复路径: aarch64 glibc loader 用 `mmap` 按需映射
+    /// `libc.so.6`, 首次取指即 `EC=0x20` 翻译故障; 恢复动作仍由
+    /// `handle_user_page_fault` 按 VMA 合法性收窄 —— 无 VMA 的 PC 继续 `SIGSEGV`,
+    /// NX VMA 由 `handle_vma_fault_with_mm` 拒绝, 不会为任意跳转地址建页.
+    /// 取指权限故障 (含 NX) 与同 EL 取指异常保持射程外.
     #[must_use]
     pub fn from_esr(esr: u64) -> Self {
         let ec = esr >> 26;
+        let subcode = (esr & 0x3F) >> 2;
+        if ec == EC_INSTR_ABORT_LOWER_EL {
+            return if subcode == 0b0001 {
+                Self::Translation
+            } else {
+                Self::Other
+            };
+        }
         if !matches!(ec, EC_DATA_ABORT_LOWER_EL | EC_DATA_ABORT_SAME_EL) {
             return Self::Other;
         }
-        match (esr & 0x3F) >> 2 {
+        match subcode {
             0b0001 => Self::Translation,
             0b0010 => Self::AccessFlag,
             0b0011 => Self::Permission,
@@ -905,7 +918,7 @@ mod tests {
     }
 
     /// aarch64 `ESR_EL1` → 故障类归类表: 恢复射程内 (翻译/权限) 与射程外 (AF/其余) 双向覆盖,
-    /// 且**取指异常一律射程外** (与数据异常共用的 IFSC/DFSC 子码须由 `EC` 挡掉).
+    /// 且**仅 EL0 取指翻译故障**进射程; 取指权限与同 EL 取指异常仍射程外.
     ///
     /// 编码: `EC = ESR[31:26]`、`IL = ESR[25]` ⇒ 数据异常高字节 `0x92` = EL0 (`EC=0x24`),
     /// `0x96` = 同 EL (`EC=0x25`); 取指异常高字节 `0x82` = EL0 (`EC=0x20`), `0x86` = 同 EL
@@ -932,13 +945,16 @@ mod tests {
             assert_eq!(got, want, "ESR={:#X}", esr);
             assert_eq!(got.is_demand_pageable(), want_pageable, "ESR={:#X}", esr);
         }
-        // 取指异常**射程外**: 翻译 (`IFSC=0b000110`) 与 AF (`IFSC=0b0010LL`) 两类子码和 DFSC
-        // 同名段**完全同形**, 只有 `EC` 能区分 —— 若去掉 `EC` 前置判, 取指翻译故障会被读成
-        // `Translation` 而进恢复路径, 而本内核不为取指故障建页 (重试再故障 ⇒ 缺页风暴).
-        // 取指权限故障用另一段 (`0b0111LL`), 数据侧同值不属任何已归类故障, 靠段表本身即落在
-        // 射程外 —— 本条形态存在是为了锁住"取指一律射程外"这个口径, 而非只锁偶然正确.
-        let ifetch: [(u64, &str); 4] = [
-            (0x8200_0006, "EL0 取指翻译故障"),
+        // EL0 取指翻译故障 (IFSC=0b0001LL) 进射程: 文件映射代码页首次取指的合法入口;
+        // 是否真的建页由 handle_user_page_fault 的 VMA/NX 判据决定.
+        assert_eq!(
+            A64FaultClass::from_esr(0x8200_0006),
+            A64FaultClass::Translation,
+            "EL0 取指翻译故障应可缺页"
+        );
+        assert!(A64FaultClass::from_esr(0x8200_0006).is_demand_pageable());
+        // 取指权限故障 (`0b0111LL`) 与同 EL 取指翻译仍射程外: 前者无权, 后者是内核缺陷.
+        let ifetch: [(u64, &str); 3] = [
             (0x8200_001F, "EL0 取指权限故障"),
             (0x8600_0006, "同 EL 取指翻译故障"),
             (0x8600_001F, "同 EL 取指权限故障"),

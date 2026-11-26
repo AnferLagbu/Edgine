@@ -399,6 +399,32 @@ impl MmuArch for X8664 {
         crate::privileged::glue::usize_from_u64(cr2)
     }
 
+    /// 读取当前 CPU 的用户态 FS 段基址 (`IA32_FS_BASE`)。
+    #[inline]
+    fn read_user_tls_base() -> u64 {
+        #[cfg(feature = "host-test")]
+        {
+            0
+        }
+        #[cfg(not(feature = "host-test"))]
+        {
+            const IA32_FS_BASE: u32 = 0xC000_0100;
+            let low: u32;
+            let high: u32;
+            // SAFETY: 内核态 (CPL=0) 读 IA32_FS_BASE MSR; 仅读, 不改状态.
+            unsafe {
+                core::arch::asm!(
+                    "rdmsr",
+                    in("ecx") IA32_FS_BASE,
+                    out("eax") low,
+                    out("edx") high,
+                    options(nomem, nostack)
+                );
+            }
+            u64::from(low) | (u64::from(high) << 32)
+        }
+    }
+
     /// 写入当前 CPU 的用户态 FS 段基址 (`IA32_FS_BASE`)。
     #[inline]
     fn set_user_tls_base(base: u64) {

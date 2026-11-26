@@ -1683,10 +1683,15 @@ fn dyn_badfmt_probe() {
     }
 }
 
-/// D7 G0: 真实 glibc 动态 `true` 载体路径。`PT_INTERP` 为
-/// `/lib64/ld-linux-x86-64.so.2`，`NEEDED=libc.so.6`；x86_64 专用，aarch64
-/// 当前无 glibc 载体。
+/// D7 G0: 真实 glibc 动态 `true` 载体路径。`x86_64` 的 `PT_INTERP` 为
+/// `/lib64/ld-linux-x86-64.so.2`，`aarch64` 为 `/lib/ld-linux-aarch64.so.1`；
+/// 两者 `NEEDED` 均含 `libc.so.6`。
 const GLIBC_PROBE_PATH: &[u8] = b"/bin/glibc_true\0";
+/// D7 A1: glibc libc 的静态观测路径按架构取 loader 默认搜索目录。
+#[cfg(target_arch = "x86_64")]
+const GLIBC_LIBC_PATH: &[u8] = b"/lib64/libc.so.6\0";
+#[cfg(target_arch = "aarch64")]
+const GLIBC_LIBC_PATH: &[u8] = b"/lib/libc.so.6\0";
 /// D7 G1: 带 stdout 的真实 glibc 动态 hello 载体路径。
 const GLIBC_HELLO_PATH: &[u8] = b"/bin/glibc_hello\0";
 /// D7 G2: 原始 `set_tid_address`/`prlimit64`/`rseq` 启动 syscall 探针路径。
@@ -1720,10 +1725,10 @@ fn glibc_probe() {
     // G0 诊断: glibc loader 在映射 libc 前会先 stat/open 共享库; 这两步失败
     // 会直接表现为 "cannot stat shared object". 保留一行 rc 观测, 便于失败定位.
     let mut st = [0u8; 144];
-    let stat_rc = userlib::sys::stat_path(b"/lib64/libc.so.6\0", &mut st);
+    let stat_rc = userlib::sys::stat_path(GLIBC_LIBC_PATH, &mut st);
     print("[GLIBC] stat libc rc=");
     print_dec(stat_rc);
-    let fd = userlib::sys::open(b"/lib64/libc.so.6\0", 0, 0);
+    let fd = userlib::sys::open(GLIBC_LIBC_PATH, 0, 0);
     print(" fd=");
     print_dec(i64::from(fd));
     let fstat_rc = userlib::sys::fstat_fd(fd, &mut st);

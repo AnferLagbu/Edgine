@@ -377,6 +377,17 @@ impl MmuArch for Aarch64 {
         }
     }
 
+    /// 读取 EL0 的 TLS 基址 (`TPIDR_EL0`)。
+    #[inline]
+    fn read_user_tls_base() -> u64 {
+        let base: u64;
+        // SAFETY: 只读 EL1 可访问的 TPIDR_EL0, 不写内存, 不影响流水线.
+        unsafe {
+            asm!("mrs {}, tpidr_el0", out(reg) base, options(nomem, nostack));
+        }
+        base
+    }
+
     /// `AArch64` 上下文切换 (x19-x30 + SP + TTBR0 + SPSR + ELR)。
     ///
     /// `TPIDR_EL0` 不参与切换汇编保存/恢复, 且切换路径不读写该寄存器,

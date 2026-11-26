@@ -1011,6 +1011,10 @@ pub fn proc_save_user_regs_aarch64(
         ctx.extra_regs_x8 = [
             f.x8, f.x9, f.x10, f.x11, f.x12, f.x13, f.x14, f.x15, f.x16, f.x17, f.x18,
         ];
+        // aarch64 用户态可直接写 TPIDR_EL0 (glibc 主线程即如此), 内核字段
+        // 未必同步; 每次 syscall 入口把真实值收回, 供 clone/fork 继承与切回恢复.
+        p.tls_base
+            .store(crate::arch!(read_user_tls_base()), Ordering::Release);
     });
 }
 

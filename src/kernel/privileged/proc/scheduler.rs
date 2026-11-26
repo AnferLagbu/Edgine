@@ -1887,6 +1887,18 @@ impl Scheduler {
             unsafe { (&raw mut (*p).context).cast::<Mutex<ProcessContext>>() }
         });
 
+        // aarch64 用户态可直接写 TPIDR_EL0, 内核 `tls_base` 可能滞后; 切走前
+        // 先把当前真实值收回 prev, 避免下次切回时用 0 覆盖 glibc 主线程 TLS.
+        #[cfg(target_arch = "aarch64")]
+        if let Some(p) = prev_ptr {
+            // SAFETY: prev_ptr 来自 PROCESS_TABLE.get(), 处于中断关闭的调度器
+            // 临界区, 该条目不被并发卸载; 只写原子字段.
+            unsafe {
+                (*p).tls_base
+                    .store(crate::arch!(read_user_tls_base()), Ordering::Release);
+            }
+        }
+
         // 切换目标的用户态 TLS 基址: 由切换汇编在装载 fs 段选择子之后写入
         // IA32_FS_BASE (aarch64 侧在切换前写 TPIDR_EL0). 读取发生在中断关闭的
         // 调度器临界区内, 目标任务此刻不在任何 CPU 上运行, 原子读取无竞争.

@@ -212,6 +212,11 @@ pub trait MmuArch {
     ///
     /// `x86_64`: `IA32_FS_BASE`; aarch64: `TPIDR_EL0`。`0` 表示未设置。
     fn set_user_tls_base(base: u64);
+    /// 读取当前 CPU 的用户态 TLS 基址寄存器。
+    ///
+    /// aarch64 用户态可直接 `msr tpidr_el0`，内核字段可能滞后；调度/系统调用
+    /// 入口用本方法把真实用户值收回 `Process::tls_base`，避免切回时被 0 覆盖。
+    fn read_user_tls_base() -> u64;
     /// 保存当前上下文到 `from`，从 `to` 恢复上下文，
     /// 并把即将上核任务的用户态 TLS 基址恢复为 `user_tls_base`。
     ///
@@ -375,6 +380,11 @@ pub trait Arch: CoreArch + InterruptArch + MmuArch + SystemArch {
     /// 写入用户态 TLS 基址寄存器 (委托 `MmuArch::set_user_tls_base`)。
     fn set_user_tls_base(base: u64) {
         <Self as MmuArch>::set_user_tls_base(base);
+    }
+    /// 读取用户态 TLS 基址寄存器 (委托 `MmuArch::read_user_tls_base`)。
+    #[must_use]
+    fn read_user_tls_base() -> u64 {
+        <Self as MmuArch>::read_user_tls_base()
     }
     /// 保存当前上下文到 `from`, 从 `to` 恢复 (委托 `MmuArch::context_switch`)。
     ///
