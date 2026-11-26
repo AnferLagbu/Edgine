@@ -556,6 +556,8 @@
 
   > **2026-11-26 D7 S1（x86_64 + aarch64）**：`D7-DEFERRED-S1` 收口。`exit_cleanup` 原先用 `check_user_ptr` 做范围检查后裸 `write_volatile` 写 `clear_child_tid`，只读 `.text` 地址能通过范围检查但在退出路径触发内核写保护 `#PF`；写失败后还无条件 `futex_wake`，且字段复位晚于写/唤醒。现改为先摘登记、再走 `userptr::write_struct_to_user` 的区间/映射/逐页可写/SMAP 完整判据，写成功才唤醒，坏指针静默跳过。新增用户库 `set_tid_address` wrapper 与 init `[TIDCLEAR]` 两腿：共享地址空间线程登记好指针，退出写 0 并由父线程 futex 等断言；fork 子进程登记只读 `.text` 坏指针，`wait4` 必须正常退出。双架构串口 `[TIDCLEAR] PASS`，`qemu_boot_test.sh x86_64` / `aarch64` 均 RC=0；`./ci/build.sh all` 6/0；`make test-kernel-host` 640 passed / 0 failed。证据见 `docs/report/d7-s1-set-tid-address.md`。D7 延后项 7 → 6。
 
+  > **2026-11-26 D7 G1（x86_64）**：`D7-DEFERRED-G1` 收口。`getrlimit` 原先忽略 `resource`、恒返回 `RLIM_INFINITY`，而 `prlimit64` 读 per-process `rlimit_table`，两者分叉使 `RLIMIT_NOFILE`（表默认 32）、`RLIMIT_STACK`（8 MiB soft）等读数错误。新增 `rlimit_for_process(pid, resource)` 单源 helper：越界 `EINVAL`、`pid==0`/不存在 `ESRCH`，`getrlimit` 与 `prlimit64` 都从同一 `Process::rlimit_table` 取条目；`getrlimit` 保留 `rlim_ptr==0 → EINVAL`，非法范围先 `validate_user_buf → EFAULT`。`glibc_g2` 新增原始 `SYS_getrlimit` 与 `SYS_prlimit64` 对 16 个资源的逐项比较，QEMU 串口 `[G2] GETRLIMIT PASS`、`resources=16 consistent nofile=32/18446744073709551615`，`qemu_boot_test.sh x86_64` RC=0；`make test-kernel-host` 819/640/12 全绿（新增 `test_rlimit_for_process_reads_table`）；`./ci/build.sh all` 6/0；`_kernel_end_phys=0x400000` 恰好等于 K-08 上限，余量 0，后续增长需先做体积收敛。证据见 `docs/report/d7-g1-rlimit-consistency.md`。D7 延后项 6 → 5。
+
   **甲・仍需跟踪的工程（22 份）**
 
   | 文档 | 主题 | 完成/开放 | 仍开放条目 | 一致性判定 | 关键差距 |
