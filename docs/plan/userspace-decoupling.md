@@ -114,12 +114,16 @@ multiboot loader** 读 MB1 头自载, **QEMU 专属、绕开真实 loader**; 自
   从根上消除「内核镜像增长撞用户区」类约束.
 - **方案**: 让 x86_64 的 `copy_*_user` / 缺页路径经**高半区直射区**访问物理页 (如 aarch64 的
   `phys_to_virt`), 不再依赖低半区恒等窗口护镜像; 相应调整
-  [mm/mod.rs `user_va_lower_bound`](../../src/kernel/privileged/mm/mod.rs#L254) 与
-  [vmm_x86_64.rs `boot_identity_tables`](../../src/kernel/privileged/vmm_x86_64.rs#L1163).
+  [mm/mod.rs `user_va_lower_bound`](../../src/kernel/privileged/mm/mod.rs#L272) 与
+  [vmm_x86_64.rs `boot_identity_tables`](../../src/kernel/privileged/mm/vmm_x86_64.rs#L1166).
+  预研已把方案拆为 **D-1 最小路线**（kview 保留用户镜像，只退役 boot 恒等窗口，不拆 kview）与
+  **D-2 完整路线**（`copy_*_user` 也改直射区）；详见
+  [decision-d-kview-retirement.md](./decision-d-kview-retirement.md).
 - **状态**: []
 - **详情**: 用户裁定「纳入本次插队项**但单独处理**」. 触及 #89 `kview` 修双视图分叉的根基, 与
   内容解耦正交; 施工 D1-D3 落地后内核镜像已回 4 MiB 内, K-08 不再触发 ⇒ 决策 D 是「根治天花板」而非
-  解 K-08 的必需品, 风险高、跨度大, **单开为收尾独立批次**, 不阻塞 D1-D3.
+  解 K-08 的必需品, 风险高、跨度大, **单开为收尾独立批次**, 不阻塞 D1-D3. 预研阶段暂不改状态；
+  D-1 若评审通过，才是决策 D 的最小闭环。
 
 ## 施工分解
 

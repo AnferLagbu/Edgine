@@ -2,7 +2,7 @@
 //!
 //! 自举设计 — 零外部依赖:
 //!   1. 内建 COM1 串口驱动 (直接 port I/O, 无需 driver 子系统)
-//!   2. 128KB 环形缓冲区 (Atomic + Mutex 保护)
+//!   2. 64KB 环形缓冲区 (Atomic + Mutex 保护)
 //!   3. 级别/分类双重过滤
 //!   4. tick 派生 uptime 时间戳 (读 `privileged::timer` 顶层公共 API; 定时器
 //!      尚未初始化的早期启动阶段为 `0.000000`)
@@ -530,8 +530,9 @@ pub fn klog_register_defaults() {
 // klog no-op, 整体 cfg 掉消除 dead_code 警告.
 
 #[cfg(not(feature = "host-test"))]
-// 保留 256B 尾部余量, 使 `.bss` 收尾不越过 K-08 的 USER_CODE_BASE 边界.
-const RING_SIZE: usize = 128 * 1024 - 256;
+// K-08 余量切片: 默认环从 128 KiB 降到 64 KiB, 保留 256B 尾部余量, 使 `.bss`
+// 收尾不越过 `USER_CODE_BASE`; 诊断需要更长历史时再单独评估大环载体.
+const RING_SIZE: usize = 64 * 1024 - 256;
 
 #[cfg(not(feature = "host-test"))]
 struct RingBuf {
@@ -569,10 +570,10 @@ struct RingLock {
 #[cfg(not(feature = "host-test"))]
 unsafe impl Sync for RingLock {}
 
-/// 全局环形缓冲 (128KiB 缓冲区常驻 `.bss`).
+/// 全局环形缓冲 (64KiB 缓冲区常驻 `.bss`).
 ///
 /// 缓冲区数组直接写在 `static` 初值里 —— 静态初值不经函数体, 不会被
-/// `large_stack_arrays` 误判为栈上分配 (函数体内构造会额外产生 128KiB 的
+/// `large_stack_arrays` 误判为栈上分配 (函数体内构造会额外产生 64KiB 的
 /// 栈临时量再搬入 `.bss`).
 #[cfg(not(feature = "host-test"))]
 static RING: RingLock = RingLock {

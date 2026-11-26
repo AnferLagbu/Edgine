@@ -170,6 +170,43 @@ check_forbidden_patterns() {
     return 1
 }
 
+# K-08 默认镜像余量门禁: `_kernel_end_phys` 必须与 `USER_CODE_BASE=0x400000`
+# 保留至少 32 KiB 余量. 只检查默认 x86_64 出货构建; 诊断 feature/载体腿可
+# 合法地贴近 4 MiB 上限, 不在这里误杀. 约束本身仍由启动期 K-08 fail-closed 兜底.
+check_k08_headroom() {
+    if [ -n "${KERNEL_FEATURES:-}" ] || [ "${KERNEL_NO_DEFAULT:-}" = "1" ]; then
+        echo -e "${YELLOW}[CI] K-08 headroom: skipped (custom kernel features)${NC}"
+        return 0
+    fi
+
+    local map="other/build/x86_64/kernel.map"
+    local user_code_base=$((0x400000))
+    local min_headroom=$((32 * 1024))
+    local max_end=$((user_code_base - min_headroom))
+
+    if [ ! -f "$map" ]; then
+        echo -e "${RED}[CI] K-08 headroom: missing ${map}${NC}"
+        return 1
+    fi
+
+    local end
+    end=$(awk '$2 == "_kernel_end_phys" {print $1; exit}' "$map")
+    if [ -z "$end" ]; then
+        echo -e "${RED}[CI] K-08 headroom: _kernel_end_phys not found in ${map}${NC}"
+        return 1
+    fi
+
+    local end_dec=$((end))
+    if [ "$end_dec" -gt "$max_end" ]; then
+        echo -e "${RED}[CI] K-08 headroom: _kernel_end_phys=$(printf '0x%X' "$end_dec") > $(printf '0x%X' "$max_end") (margin < 32 KiB)${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}[CI] K-08 headroom: _kernel_end_phys=$(printf '0x%X' "$end_dec"), margin=$(printf '0x%X' "$((user_code_base - end_dec))") >= 32 KiB${NC}"
+    return 0
+}
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -206,6 +243,11 @@ case "$ARCH" in
         exit 1
         ;;
 esac
+
+# 只在默认 x86_64 镜像健康时检查 K-08 余量; 其它失败已由上面的 FAILED 计数覆盖.
+if [ "${FAILED}" -eq 0 ] && { [ "${ARCH}" = "x86_64" ] || [ "${ARCH}" = "all" ]; }; then
+    check_k08_headroom && PASSED=$((PASSED+1)) || FAILED=$((FAILED+1))
+fi
 
 echo ""
 echo -e "${GREEN}Passed: ${PASSED}${NC}  ${RED}Failed: ${FAILED}${NC}"
