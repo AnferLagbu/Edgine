@@ -88,6 +88,10 @@ ARCHIVE_LAYOUT: tuple[tuple[str, str, str], ...] = (
     # P1 wasmi stdio demo 载荷 (wasi-sdk 真产物, 见 scripts/make_wasi_demo.py);
     # 最小 WASI 子集 (fd_write + proc_exit), 由 wasm_userspace feature 腿消费.
     ("bin/hello_wasi.wasm", "file", "hello_wasi.wasm"),
+    # P3 WASI 覆盖探针 (wasi-sdk 真产物, 见 scripts/make_wasi_p3_probe.py); 覆盖
+    # P2 未在真机载荷跑过的 fd_allocate/fd_advise/fd_renumber/fd_dup/
+    # path_filestat_set_times/fd_prestat_* 与错误分支. 缺失即跳过.
+    ("bin/wasi_p3.wasm", "file", "wasi_p3.wasm"),
     # D5/D6 动态 musl 验收: 主程序 + 解释器 + libc 副本 (Alpine 中 libc 是 loader
     # 的符号链接, cpio 解析器不支持符号链接, 故给两份相同字节). 两架构的 loader/libc
     # 条目并列登记; 当前架构未构建的源文件由 collect_entries 跳过.

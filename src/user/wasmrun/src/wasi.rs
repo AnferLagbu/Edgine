@@ -593,7 +593,13 @@ pub fn encode_filestat(
 
 /// 编码 WASI `dirent` (24 字节头 + 名字随尾).
 #[must_use]
-pub fn encode_dirent(next_cookie: u64, ino: u64, namlen: u32, filetype: u8, name: &[u8]) -> Vec<u8> {
+pub fn encode_dirent(
+    next_cookie: u64,
+    ino: u64,
+    namlen: u32,
+    filetype: u8,
+    name: &[u8],
+) -> Vec<u8> {
     let mut b = Vec::with_capacity(24 + name.len());
     b.extend_from_slice(&next_cookie.to_le_bytes());
     b.extend_from_slice(&ino.to_le_bytes());
@@ -821,7 +827,9 @@ mod tests {
         assert_eq!(t.get(0).unwrap().file_type, FILETYPE_CHARACTER_DEVICE);
         assert_eq!(t.get(3).unwrap().file_type, FILETYPE_DIRECTORY);
         assert_eq!(t.get(3).unwrap().path.as_deref(), Some(b"/".as_slice()));
-        let new = t.alloc(WasiFdEntry::file(7, vec![b'/'], FILETYPE_DIRECTORY)).unwrap();
+        let new = t
+            .alloc(WasiFdEntry::file(7, vec![b'/'], FILETYPE_DIRECTORY))
+            .unwrap();
         assert_eq!(new, 4);
         assert!(t.get(4).is_some());
         t.close(4).unwrap();
@@ -831,7 +839,9 @@ mod tests {
     #[test]
     fn fd_renumber_moves_entry() {
         let mut t = WasiFdTable::new();
-        let a = t.alloc(WasiFdEntry::file(9, vec![b'/'], FILETYPE_REGULAR_FILE)).unwrap();
+        let a = t
+            .alloc(WasiFdEntry::file(9, vec![b'/'], FILETYPE_REGULAR_FILE))
+            .unwrap();
         t.renumber(a, 10).unwrap();
         assert!(t.get(a).is_none());
         assert_eq!(t.get(10).unwrap().host_fd, 9);
@@ -853,6 +863,9 @@ mod tests {
     fn normalize_subpreopen_escape() {
         assert_eq!(normalize_path(b"/tmp", b"a").unwrap(), b"/tmp/a\0");
         assert_eq!(normalize_path(b"/tmp", b"../etc").unwrap(), b"/etc\0");
-        assert_eq!(normalize_path(b"/tmp", b"../../etc").unwrap_err(), ERRNO_NOTCAPABLE);
+        assert_eq!(
+            normalize_path(b"/tmp", b"../../etc").unwrap_err(),
+            ERRNO_NOTCAPABLE
+        );
     }
 }

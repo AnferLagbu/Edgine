@@ -1238,6 +1238,103 @@ impl RamFsData {
         0
     }
 
+    /// 删除**空**目录: 判空 → 摘父目录项 → 释放节点.
+    ///
+    /// 与 `unlink` 的区别: 目标必须是目录、必须为空 (忽略 `.` / `..`), 成功后
+    /// 节点立即释放. 旧 `fs_rmdir` 只做 `truncate(0)` 就报成功, 非空目录会被
+    /// 误删且父目录项残留在原地 (WASM P3 的 rmdir 错误分支暴露).
+    pub fn rmdir(&mut self, path: &str, pwm: u64) -> i32 {
+        if path.is_empty() || path == "/" {
+            return KernelError::PermissionDenied.as_i32();
+        }
+        let Some(node_id) = self.resolve_path(path) else {
+            return KernelError::FileNotFound.as_i32();
+        };
+        {
+            let node = &self.nodes[node_id as usize];
+            if !node.used {
+                return KernelError::FileNotFound.as_i32();
+            }
+            if node.file_type != VfsFileType::Dir as u8 {
+                return KernelError::NotADirectory.as_i32();
+            }
+        }
+
+        let (parent_path, name) = split_parent_name(path);
+        if name.is_empty() {
+            return KernelError::InvalidArgument.as_i32();
+        }
+        let Some(parent_num) = self.resolve_path(parent_path) else {
+            return KernelError::FileNotFound.as_i32();
+        };
+
+        // 判空: 目录项里的 `.` / `..` 是 mkdir 预置的元条目, 不计入非空.
+        let node_block = self.nodes[node_id as usize].direct_blocks[0];
+        if node_block != u32::MAX {
+            let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+            let num_entries = self.nodes[node_id as usize].size as usize / dirent_size;
+            for i in 0..num_entries {
+                let offset = (node_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
+                let entry = Self::read_dirent(&self.data_area, offset);
+                if entry.node == 0 {
+                    continue;
+                }
+                let end = entry
+                    .name
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(VFS_MAX_NAME);
+                let entry_name = core::str::from_utf8(&entry.name[..end]).unwrap_or("");
+                if entry_name != "." && entry_name != ".." {
+                    return KernelError::NotEmpty.as_i32();
+                }
+            }
+        }
+
+        // 摘父目录项 (按名字匹配, 不能只按节点号: 硬链接共用节点).
+        let parent_block = self.nodes[parent_num as usize].direct_blocks[0];
+        let mut found = false;
+        if parent_block != u32::MAX {
+            let dirent_size = core::mem::size_of::<RamFsDirEntry>();
+            let num_entries = self.nodes[parent_num as usize].size as usize / dirent_size;
+            for i in 0..num_entries {
+                let offset = (parent_block as usize) * RAMFS_BLOCK_SIZE + i * dirent_size;
+                let mut entry = Self::read_dirent(&self.data_area, offset);
+                if entry.node != node_id {
+                    continue;
+                }
+                let end = entry
+                    .name
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(VFS_MAX_NAME);
+                if core::str::from_utf8(&entry.name[..end]).unwrap_or("") == name {
+                    entry.node = 0;
+                    Self::write_dirent(&mut self.data_area, offset, &entry);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if !found {
+            return KernelError::FileNotFound.as_i32();
+        }
+
+        // 释放节点 (空目录无数据块, truncate 仅归零 size / 释放块表).
+        self.truncate(node_id, 0, pwm);
+        {
+            let node = &mut self.nodes[node_id as usize];
+            node.used = false;
+            node.file_type = 0;
+            node.link_count = 0;
+            node.owner_pwm = 0;
+        }
+        self.nodes[parent_num as usize].mtime = Self::get_time();
+        dcache::dcache_invalidate_parent(self.fs_id, parent_num);
+        dcache::icache_invalidate(self.fs_id, node_id);
+        0
+    }
+
     /// 在父目录下创建普通文件; 已存在或父目录无效时返回 `None`
     pub fn create_file(&mut self, parent_path: &str, name: &str, pwm: u64) -> Option<u32> {
         if name.is_empty() || name.contains('/') {

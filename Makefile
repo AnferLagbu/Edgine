@@ -291,6 +291,11 @@ MK_PROBE_WASM_PY = scripts/make_probe_wasm.py
 # 再生成见 scripts/make_wasi_demo.py.
 USER_WASI_DEMO = $(USER_BUILD_DIR)/hello_wasi.wasm
 WASI_DEMO_FIXTURE = scripts/fixtures/hello_wasi.wasm
+# P3 WASI 覆盖探针 (wasi-sdk 真产物 fixture, 架构无关), 打为 bin/wasi_p3.wasm;
+# 专打 P2 未在真机载荷覆盖的 fd_allocate/fd_advise/fd_renumber/fd_dup/
+# path_filestat_set_times/fd_prestat_* 与错误分支. 生成见 scripts/make_wasi_p3_probe.py.
+USER_WASI_P3 = $(USER_BUILD_DIR)/wasi_p3.wasm
+WASI_P3_FIXTURE = scripts/fixtures/wasi_p3_probe.wasm
 
 STAGE1_BIN = $(ARCH_BUILD_DIR)/stage1.bin
 DISK_IMAGE = $(ARCH_BUILD_DIR)/edgine.img
@@ -477,6 +482,11 @@ $(USER_WASI_DEMO): $(WASI_DEMO_FIXTURE)
 	@mkdir -p $(USER_BUILD_DIR)
 	@cp $(WASI_DEMO_FIXTURE) $@
 
+# P3 WASI 覆盖探针: 架构无关 fixture, 两架构各复制一份供 cpio 打包.
+$(USER_WASI_P3): $(WASI_P3_FIXTURE)
+	@mkdir -p $(USER_BUILD_DIR)
+	@cp $(WASI_P3_FIXTURE) $@
+
 # D5/D6 动态 fixture 复制规则 (两架构共用变量, 源名按 ARCH 选择).
 $(USER_DYNTEST): $(DYN_MUSL_FIXTURE_DIR)/$(DYN_TEST_SRC)
 	@mkdir -p $(USER_BUILD_DIR)
@@ -547,7 +557,7 @@ $(USER_CPIO): $(USER_BUILD_DIR)/init.bin $(USER_BUILD_DIR)/eash.bin $(USER_BUILD
               $(USER_BUILD_DIR)/proctest.bin $(USER_BUILD_DIR)/exectest.bin \
               $(USER_BUILD_DIR)/wasmstub.bin $(USER_BUILD_DIR)/wasmrun.bin \
               $(USER_BUILD_DIR)/reboottest.bin \
-              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(DYN_CPIO_DEPS) $(GLIBC_CPIO_DEPS) $(MK_CPIO_PY)
+              $(USER_PROBE_WASM) $(USER_WASI_DEMO) $(USER_WASI_P3) $(DYN_CPIO_DEPS) $(GLIBC_CPIO_DEPS) $(MK_CPIO_PY)
 	@mkdir -p $(USER_BUILD_DIR)
 	@python3 $(MK_CPIO_PY) --arch $(ARCH) --src $(USER_BUILD_DIR) --out $@
 

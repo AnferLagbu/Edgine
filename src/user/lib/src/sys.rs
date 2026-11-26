@@ -1023,26 +1023,14 @@ pub fn pwrite(fd: i32, buf: &[u8], offset: i64) -> i32 {
 #[must_use]
 pub fn chmod(path: &[u8], mode: u32) -> i32 {
     // SAFETY: P 类 — path 是 NUL 结尾活借用, mode 是标量; 内核只读路径.
-    unsafe {
-        ret_i32(sys2(
-            SYS_CHMOD,
-            path.as_ptr() as u64,
-            u64::from(mode),
-        ))
-    }
+    unsafe { ret_i32(sys2(SYS_CHMOD, path.as_ptr() as u64, u64::from(mode))) }
 }
 
 /// `fchmod(fd, mode)` — 按 fd 修改权限位.
 #[must_use]
 pub fn fchmod(fd: i32, mode: u32) -> i32 {
     // SAFETY: S 类 — fd/mode 均为标量, 内核只操作自己的 fd 对象.
-    unsafe {
-        ret_i32(sys2(
-            SYS_FCHMOD,
-            arg_bits(i64::from(fd)),
-            u64::from(mode),
-        ))
-    }
+    unsafe { ret_i32(sys2(SYS_FCHMOD, arg_bits(i64::from(fd)), u64::from(mode))) }
 }
 
 /// `lstat(path, statbuf)` — 查询路径自身 (不跟随符号链接).
@@ -1118,7 +1106,12 @@ pub fn utimensat(path: &[u8], times: &[i64; 4]) -> i32 {
 pub fn getrandom(buf: &mut [u8]) -> i32 {
     // SAFETY: B 类 — buf 是活的可写借用; 内核校验区间后写入随机字节.
     unsafe {
-        ret_i32(sys3(SYS_GETRANDOM, buf.as_mut_ptr() as u64, buf.len() as u64, 0))
+        ret_i32(sys3(
+            SYS_GETRANDOM,
+            buf.as_mut_ptr() as u64,
+            buf.len() as u64,
+            0,
+        ))
     }
 }
 

@@ -6,6 +6,7 @@
 
 #![deny(missing_docs)]
 
+use super::KernelError;
 use super::api::{ptr_to_str, split_parent_name, with_cstr};
 use super::vfs_manager::VFS_MANAGER;
 use super::vfs_types::{SubjectId, VFS_MAX_PATH, VfsStat};
@@ -31,19 +32,21 @@ pub extern "C" fn vfs_unlink_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     // 在删除前获取 inode 号, 用于删除后释放 POSIX 锁
     let ino_before = fs_opt.and_then(|fs| fs.fs_resolve_path(rel_path));
 
-    let result = fs_opt.map_or(-1, |fs| match fs.fs_unlink(rel_path, SubjectId::new(pwm)) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    let result = fs_opt.map_or(KernelError::NotSupported.as_i32(), |fs| {
+        match fs.fs_unlink(rel_path, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(e) => e.as_i32(),
+        }
     });
 
     // 文件删除成功后, 释放该 inode 上的 POSIX 锁 + inotify 通知
@@ -76,11 +79,11 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
 
     let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
@@ -90,15 +93,22 @@ pub extern "C" fn vfs_mkdir_internal(path: *const u8, pwm: u64) -> i32 {
     }
 
     // E6-4: trait object 分发
-    fs_opt.map_or(-1, |fs| match fs.fs_mkdir(rel_path, SubjectId::new(pwm)) {
-        Ok(()) => {
-            // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
-            if let Some(parent_ino) = fs.fs_resolve_path(parent_path) {
-                super::inotify::inotify_notify(parent_ino, super::inotify::IN_CREATE, name, true);
+    fs_opt.map_or(KernelError::NotSupported.as_i32(), |fs| {
+        match fs.fs_mkdir(rel_path, SubjectId::new(pwm)) {
+            Ok(()) => {
+                // 父目录解析失败时不发事件 (0 不是「无父目录」的合法键)
+                if let Some(parent_ino) = fs.fs_resolve_path(parent_path) {
+                    super::inotify::inotify_notify(
+                        parent_ino,
+                        super::inotify::IN_CREATE,
+                        name,
+                        true,
+                    );
+                }
+                0
             }
-            0
+            Err(e) => e.as_i32(),
         }
-        Err(_) => -1,
     })
 }
 
@@ -109,17 +119,19 @@ pub extern "C" fn vfs_rmdir_internal(path: *const u8, pwm: u64) -> i32 {
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
     // E6-4: trait object 分发
-    fs_opt.map_or(-1, |fs| match fs.fs_rmdir(rel_path, SubjectId::new(pwm)) {
-        Ok(()) => 0,
-        Err(_) => -1,
+    fs_opt.map_or(KernelError::NotSupported.as_i32(), |fs| {
+        match fs.fs_rmdir(rel_path, SubjectId::new(pwm)) {
+            Ok(()) => 0,
+            Err(e) => e.as_i32(),
+        }
     })
 }
 
@@ -345,17 +357,17 @@ pub extern "C" fn vfs_utimensat(path: *const u8, atime: u64, mtime: u64, pwm: u6
     let path = ptr_to_str(path);
     let mut pbuf = [0u8; VFS_MAX_PATH];
     let Some(path) = VFS_MANAGER.resolve_user_path(path, &mut pbuf) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let Some((mount_idx, _fs_type, fs_opt)) = VFS_MANAGER.resolve_mount_fs(path) else {
-        return -1;
+        return KernelError::FileNotFound.as_i32();
     };
     let rel_path = VFS_MANAGER.get_relative_path(path, mount_idx);
 
-    fs_opt.map_or(-1, |fs| {
+    fs_opt.map_or(KernelError::NotSupported.as_i32(), |fs| {
         match fs.fs_utimensat(rel_path, atime, mtime, SubjectId::new(pwm)) {
             Ok(()) => 0,
-            Err(_) => -1,
+            Err(e) => e.as_i32(),
         }
     })
 }

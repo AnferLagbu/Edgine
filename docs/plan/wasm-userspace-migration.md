@@ -177,8 +177,44 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - wasmi host 层单测（no_std）+ host-tests 集成。
   - QEMU 双架构 exec 端到端（替代既有 `[WASM] PASS` 腿）。
   - 真实工具链载荷（wasi-sdk 编译）stdio + 文件 + socket 验收。
-- **状态**: []
+- **状态**: [X] (2026-11-27 收口；逐函数覆盖见详情，socket 四函数为结构性边界)
 - **详情**: 契合 §2.3 七门槛。验收 = 双架构 QEMU 端到端绿 + 真实载荷跑通。
+
+  **交付物**: 专项探针 [wasi_p3_probe.c](../../scripts/fixtures/wasi_p3_probe.c)（wasi-sdk 34 编译，
+  产物 [wasi_p3_probe.wasm](../../scripts/fixtures/wasi_p3_probe.wasm) 268,268 B）+ 生成器
+  [make_wasi_p3_probe.py](../../scripts/make_wasi_p3_probe.py) + 门禁 [wasmi_wasi_test.sh](../../scripts/wasmi_wasi_test.sh)
+  （Makefile / `make_initramfs_cpio.py` / init 探针三处接线）。探针输出契约
+  `P3 start` / `OK <name>` / `FAIL <name> errno=<n>` / `P3 done fails=<n>`，共 **36 项断言**：
+  prestat 枚举、写后 `fd_filestat_get`/`stat` 的 size（钉 icache 失效语义）、`fd_allocate`、
+  `fd_advise` 正常+非法 flag、`fd_renumber`（自定义 import 直打宿主，因 wasi-libc 的 `dup2`
+  在 wasip1 恒返 ENOTSUP）、`fd_dup`（wasmrun 非标准直接 fd 语义）、`fd_seek(SEEK_END)`、
+  `path_filestat_set_times`（新建文件 + cpio 现成文件双样本）、多条目 `fd_readdir` + `rewinddir`
+  重数、以及 ENOENT/EEXIST/ENOTEMPTY/ENOTDIR/EBADF 五类错误分支。
+
+  **实测读数**（`./scripts/wasmi_wasi_test.sh {x86_64,aarch64}`）：双架构均
+  `P3 done fails=0`（36 项 OK）+ `[WASMI-P3] exit=0`；P1 腿
+  `./scripts/wasmi_boot_test.sh {x86_64,aarch64}` 复跑仍绿（`hello from wasmi` +
+  `[WASMI] exit=0` + mmap VA 断言）；`make test-kernel-host` 649 passed；
+  `cargo test -p wasmrun` 10 passed。
+
+  **探针暴露并修复的五类内核缺口**（P2 真机载荷未覆盖，全部为静默错值而非 panic）：
+  ① `dcache.rs` icache 查找无条件 `ref_inc` 而失效要求「引用归零」⇒ 写后 `stat` 恒见 size=0
+  （与 `lseek(SEEK_END)` 读数互相矛盾）；现查找不增引用、失效无条件丢弃条目。
+  ② `vfs_path.rs` 把 `Err(_)` 折成 `-1`（=EPERM）⇒ ENOENT/EEXIST/ENOTDIR 全变 EPERM；
+  改为透传 `KernelError::as_i32()`（负 errno）。③ `ramfs` 的 `fs_unlink` 把任何失败折成
+  FileNotFound、`fs_mkdir`/`fs_rename` 一律 Io；新增 `ramfs_err()` 按负 errno 还原类型，
+  并补 `KernelError::NotEmpty`(ENOTEMPTY=39)。④ `fs_rmdir` 只 `truncate(0)` 就报成功（非空目录
+  被误删且父目录项残留、节点不释放）；新增 `RamFs::rmdir` 做真正的判空（忽略 `.`/`..`）+ 摘
+  父目录项 + 释放节点。⑤ ramfs 无 `fs_utimensat`（走 trait 默认 NotSupported）⇒
+  `path_filestat_set_times` 恒 EIO；补实现接既有 `set_times`（支持 UTIME_OMIT 语义）。
+  另修 host `fd_readdir` 一次只回 1 条的契约偏差（现按 `buf_len` 尽量填满，`cookie==0` 时
+  先回卷目录游标以支持 `rewinddir`）。
+
+  **边界（不标绿）**：`sock_accept/connect/recv/send` 无法由普通 wasi-sdk 载荷触达 ——
+  preview1 没有 `sock_open`，载荷拿不到 socket fd，属结构性不可测，待 socket 扩展或
+  宿主注入方案另立；`fd_readdir` 在「条目放不下但已攒有条目」时丢弃该条（调用方按 `d_next`
+  续读可重取），此取舍已写在 host 注释里；WASI errno 值域与内核 errno 值域仍不统一
+  （host 采官方 preview1 值，P2 有意选择），P3 只钉行为不钉数值表。
 
 ### P4: 干净退役内核侧 + 收口
 

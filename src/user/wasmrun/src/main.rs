@@ -15,9 +15,9 @@
 
 extern crate alloc;
 
-mod wasi;
 #[cfg(not(test))]
 mod host;
+mod wasi;
 
 #[cfg(not(test))]
 use alloc::vec::Vec;

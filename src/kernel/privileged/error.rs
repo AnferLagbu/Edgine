@@ -60,6 +60,8 @@ pub enum KernelError {
     NotReady,
     /// 文件已存在 (EEXIST=17)
     AlreadyExists,
+    /// 目录非空 (ENOTEMPTY=39)
+    NotEmpty,
     /// 设备或资源忙 (EBUSY=16)
     Busy,
     /// 不是目录 (ENOTDIR=20)
@@ -110,6 +112,7 @@ impl core::fmt::Display for KernelError {
             Self::ConnectionRefused => write!(f, "连接被拒绝"),
             Self::NotReady => write!(f, "未就绪"),
             Self::AlreadyExists => write!(f, "已存在"),
+            Self::NotEmpty => write!(f, "目录非空"),
             Self::Busy => write!(f, "资源忙"),
             Self::NotADirectory => write!(f, "不是目录"),
             Self::IsDirectory => write!(f, "是目录"),
@@ -142,6 +145,7 @@ impl KernelError {
             14 => Self::Fault,
             16 => Self::Busy,
             17 => Self::AlreadyExists,
+            39 => Self::NotEmpty,
             18 => Self::CrossDevice,
             19 => Self::NoDevice,
             20 => Self::NotADirectory,
@@ -179,6 +183,7 @@ impl KernelError {
             Self::Fault => Errno::Efault,
             Self::Busy => Errno::Ebusy,
             Self::AlreadyExists => Errno::Eexist,
+            Self::NotEmpty => Errno::Enotempty,
             Self::CrossDevice => Errno::Exdev,
             Self::NoDevice => Errno::Enodev,
             Self::NotADirectory => Errno::Enotdir,

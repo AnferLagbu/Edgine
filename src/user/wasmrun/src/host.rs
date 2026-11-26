@@ -6,7 +6,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use userlib::sys as sys;
+use userlib::sys;
 use wasmi::{Caller, Extern, Memory};
 
 use crate::wasi::{self, WasiCtx, WasiFdEntry};
@@ -64,12 +64,7 @@ fn read_iovecs(
 }
 
 fn fd_entry(caller: &Caller<'_, WasiCtx>, fd: u32) -> Result<WasiFdEntry, i32> {
-    caller
-        .data()
-        .fds
-        .get(fd)
-        .cloned()
-        .ok_or(wasi::ERRNO_BADF)
+    caller.data().fds.get(fd).cloned().ok_or(wasi::ERRNO_BADF)
 }
 
 fn fd_host(caller: &Caller<'_, WasiCtx>, fd: u32) -> Result<i32, i32> {
@@ -150,7 +145,12 @@ fn filestat_for_fd(caller: &Caller<'_, WasiCtx>, fd: u32) -> Result<[u8; 64], i3
     wasi::filestat_from_linux(&st)
 }
 
-fn filestat_for_path(caller: &Caller<'_, WasiCtx>, dirfd: u32, rel: &[u8], follow: bool) -> Result<[u8; 64], i32> {
+fn filestat_for_path(
+    caller: &Caller<'_, WasiCtx>,
+    dirfd: u32,
+    rel: &[u8],
+    follow: bool,
+) -> Result<[u8; 64], i32> {
     let path = resolve(caller, dirfd, rel)?;
     let mut st = vec![0u8; stat_buf_len()];
     let ret = if follow {
@@ -200,7 +200,10 @@ fn host_clock_time_get(
         1 | 2 | 3 => sys::CLOCK_MONOTONIC,
         _ => return wasi::ERRNO_INVAL,
     };
-    let mut ts = sys::Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = sys::Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     if sys::clock_gettime(kid, &mut ts) < 0 {
         return wasi::ERRNO_IO;
     }
@@ -236,12 +239,7 @@ fn host_random_get(caller: Caller<'_, WasiCtx>, buf_ptr: u32, buf_len: u32) -> i
 // ============================================================================
 fn host_args_sizes_get(mut caller: Caller<'_, WasiCtx>, argc_ptr: u32, size_ptr: u32) -> i32 {
     let argc = caller.data().args.len() as u32;
-    let size: u32 = caller
-        .data()
-        .args
-        .iter()
-        .map(|s| s.len() as u32 + 1)
-        .sum();
+    let size: u32 = caller.data().args.iter().map(|s| s.len() as u32 + 1).sum();
     if let Err(e) = write_u32(&mut caller, argc_ptr, argc) {
         return e;
     }
@@ -255,7 +253,11 @@ fn host_args_get(mut caller: Caller<'_, WasiCtx>, argv_ptr: u32, buf_ptr: u32) -
     let args: Vec<Vec<u8>> = caller.data().args.clone();
     let mut off = 0u32;
     for (i, arg) in args.iter().enumerate() {
-        if let Err(e) = write_u32(&mut caller, argv_ptr.wrapping_add((i as u32).wrapping_mul(4)), buf_ptr.wrapping_add(off)) {
+        if let Err(e) = write_u32(
+            &mut caller,
+            argv_ptr.wrapping_add((i as u32).wrapping_mul(4)),
+            buf_ptr.wrapping_add(off),
+        ) {
             return e;
         }
         if let Err(e) = write_bytes(&mut caller, buf_ptr.wrapping_add(off), arg) {
@@ -271,12 +273,7 @@ fn host_args_get(mut caller: Caller<'_, WasiCtx>, argv_ptr: u32, buf_ptr: u32) -
 
 fn host_environ_sizes_get(mut caller: Caller<'_, WasiCtx>, count_ptr: u32, size_ptr: u32) -> i32 {
     let count = caller.data().env.len() as u32;
-    let size: u32 = caller
-        .data()
-        .env
-        .iter()
-        .map(|s| s.len() as u32 + 1)
-        .sum();
+    let size: u32 = caller.data().env.iter().map(|s| s.len() as u32 + 1).sum();
     if let Err(e) = write_u32(&mut caller, count_ptr, count) {
         return e;
     }
@@ -290,7 +287,11 @@ fn host_environ_get(mut caller: Caller<'_, WasiCtx>, env_ptr: u32, buf_ptr: u32)
     let env: Vec<Vec<u8>> = caller.data().env.clone();
     let mut off = 0u32;
     for (i, item) in env.iter().enumerate() {
-        if let Err(e) = write_u32(&mut caller, env_ptr.wrapping_add((i as u32).wrapping_mul(4)), buf_ptr.wrapping_add(off)) {
+        if let Err(e) = write_u32(
+            &mut caller,
+            env_ptr.wrapping_add((i as u32).wrapping_mul(4)),
+            buf_ptr.wrapping_add(off),
+        ) {
             return e;
         }
         if let Err(e) = write_bytes(&mut caller, buf_ptr.wrapping_add(off), item) {
@@ -314,7 +315,13 @@ fn host_fd_close(mut caller: Caller<'_, WasiCtx>, fd: u32) -> i32 {
     }
 }
 
-fn host_fd_seek(mut caller: Caller<'_, WasiCtx>, fd: u32, offset: i64, whence: i32, out_ptr: u32) -> i32 {
+fn host_fd_seek(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    offset: i64,
+    whence: i32,
+    out_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -373,7 +380,12 @@ fn host_fd_prestat_get(mut caller: Caller<'_, WasiCtx>, fd: u32, out_ptr: u32) -
     }
 }
 
-fn host_fd_prestat_dir_name(mut caller: Caller<'_, WasiCtx>, fd: u32, path_ptr: u32, path_len: u32) -> i32 {
+fn host_fd_prestat_dir_name(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    path_ptr: u32,
+    path_len: u32,
+) -> i32 {
     let e = match fd_entry(&caller, fd) {
         Ok(e) => e,
         Err(e) => return e,
@@ -419,7 +431,13 @@ fn host_fd_filestat_get(mut caller: Caller<'_, WasiCtx>, fd: u32, out_ptr: u32) 
 // ============================================================================
 // G5 fd I/O
 // ============================================================================
-fn host_fd_read(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, nread_ptr: u32) -> i32 {
+fn host_fd_read(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    nread_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -453,7 +471,13 @@ fn host_fd_read(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_le
     }
 }
 
-fn host_fd_write(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, nwritten_ptr: u32) -> i32 {
+fn host_fd_write(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    nwritten_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -487,7 +511,14 @@ fn host_fd_write(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_l
     }
 }
 
-fn host_fd_pread(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, offset: i64, nread_ptr: u32) -> i32 {
+fn host_fd_pread(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    offset: i64,
+    nread_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -534,14 +565,17 @@ fn pwrite_no_seek(host: i32, data: &[u8], offset: i64) -> i64 {
     }
     let n = sys::write(host, data);
     let _ = sys::lseek(host, cur, 0);
-    if n < 0 {
-        i64::from(n)
-    } else {
-        i64::from(n)
-    }
+    if n < 0 { i64::from(n) } else { i64::from(n) }
 }
 
-fn host_fd_pwrite(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, offset: i64, nwritten_ptr: u32) -> i32 {
+fn host_fd_pwrite(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    offset: i64,
+    nwritten_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -644,7 +678,14 @@ fn host_fd_dup(caller: Caller<'_, WasiCtx>, fd: u32) -> i32 {
     }
 }
 
-fn host_fd_readdir(mut caller: Caller<'_, WasiCtx>, fd: u32, buf_ptr: u32, buf_len: u32, cookie: u64, bufused_ptr: u32) -> i32 {
+fn host_fd_readdir(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    buf_ptr: u32,
+    buf_len: u32,
+    cookie: u64,
+    bufused_ptr: u32,
+) -> i32 {
     let host = match fd_host(&caller, fd) {
         Ok(h) => h,
         Err(e) => return e,
@@ -655,39 +696,67 @@ fn host_fd_readdir(mut caller: Caller<'_, WasiCtx>, fd: u32, buf_ptr: u32, buf_l
             Err(e) => e,
         };
     }
+    // 一次调用必须尽量填满调用方缓冲区: wasi-libc 的 `readdir()` 按 `bufused`
+    // 判断「本批还有没有条目」, 旧实现每次只回 1 条, DIR* 循环读到第一条就
+    // 认为结束 (P3 实测 n=1, 真实目录有 5 条).
     let mut entry = sys::UserDirEntry {
         node: 0,
         file_type: 0,
         name: [0u8; 256],
     };
-    let ret = sys::fs_readdir(host, &mut entry);
-    if ret < 0 {
-        return wasi::ERRNO_IO;
+    // cookie = 已消费条目数; 回到 0 (rewinddir) 时把目录游标复位.
+    if cookie == 0 {
+        let _ = sys::lseek(host, 0, 0);
     }
-    if ret == 0 {
-        return match write_u32(&mut caller, bufused_ptr, 0) {
-            Ok(()) => wasi::ERRNO_SUCCESS,
-            Err(e) => e,
-        };
+    let mut out: Vec<u8> = Vec::new();
+    let mut index = cookie;
+    loop {
+        let ret = sys::fs_readdir(host, &mut entry);
+        if ret < 0 {
+            return wasi::ERRNO_IO;
+        }
+        if ret == 0 {
+            break;
+        }
+        let name_len = entry
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(entry.name.len());
+        let need = 24 + name_len;
+        if out.len() + need > buf_len as usize {
+            // 放不下: 已经攒了条目就先交出去 (调用方会用 d_next 续读); 一条都
+            // 没攒下则按 WASI 允许的「名字截断」写法输出, 由调用方决定是否换个
+            // 更大的缓冲区重读.
+            if !out.is_empty() {
+                break;
+            }
+            let fit = buf_len as usize - 24;
+            let bytes = wasi::encode_dirent(
+                index.wrapping_add(1),
+                u64::from(entry.node),
+                fit as u32,
+                filetype_from_vfs(entry.file_type),
+                &entry.name[..fit],
+            );
+            out.extend_from_slice(&bytes);
+            index = index.wrapping_add(1);
+            break;
+        }
+        let bytes = wasi::encode_dirent(
+            index.wrapping_add(1),
+            u64::from(entry.node),
+            name_len as u32,
+            filetype_from_vfs(entry.file_type),
+            &entry.name[..name_len],
+        );
+        out.extend_from_slice(&bytes);
+        index = index.wrapping_add(1);
     }
-    let name_len = entry.name.iter().position(|&b| b == 0).unwrap_or(entry.name.len());
-    if 24 + name_len > buf_len as usize {
-        return match write_u32(&mut caller, bufused_ptr, 0) {
-            Ok(()) => wasi::ERRNO_SUCCESS,
-            Err(e) => e,
-        };
-    }
-    let bytes = wasi::encode_dirent(
-        cookie.wrapping_add(1),
-        u64::from(entry.node),
-        name_len as u32,
-        filetype_from_vfs(entry.file_type),
-        &entry.name[..name_len],
-    );
-    if let Err(e) = write_bytes(&mut caller, buf_ptr, &bytes) {
+    if let Err(e) = write_bytes(&mut caller, buf_ptr, &out) {
         return e;
     }
-    match write_u32(&mut caller, bufused_ptr, bytes.len() as u32) {
+    match write_u32(&mut caller, bufused_ptr, out.len() as u32) {
         Ok(()) => wasi::ERRNO_SUCCESS,
         Err(e) => e,
     }
@@ -761,9 +830,7 @@ fn host_path_open(
                 .unwrap_or(wasi::FILETYPE_UNKNOWN);
             // 普通文件也可能携带 FD_READDIR 权利位 (wasi-libc 常见),
             // 只有显式 O_DIRECTORY 才强制要求目录类型.
-            if oflags & u32::from(wasi::OFLAG_DIRECTORY) != 0
-                && ft != wasi::FILETYPE_DIRECTORY
-            {
+            if oflags & u32::from(wasi::OFLAG_DIRECTORY) != 0 && ft != wasi::FILETYPE_DIRECTORY {
                 let _ = sys::close(host_fd);
                 return wasi::ERRNO_NOTDIR;
             }
@@ -782,11 +849,7 @@ fn host_path_open(
             }
         }
     };
-    let mut entry = WasiFdEntry::file(
-        host_fd,
-        path[..path.len().saturating_sub(1)].to_vec(),
-        ft,
-    );
+    let mut entry = WasiFdEntry::file(host_fd, path[..path.len().saturating_sub(1)].to_vec(), ft);
     if rights_base > 0 {
         entry.rights_base = rights_base.cast_unsigned();
         entry.rights_inheriting = rights_inheriting.cast_unsigned();
@@ -808,7 +871,12 @@ fn host_path_open(
     }
 }
 
-fn host_path_create_directory(caller: Caller<'_, WasiCtx>, dirfd: u32, path_ptr: u32, path_len: u32) -> i32 {
+fn host_path_create_directory(
+    caller: Caller<'_, WasiCtx>,
+    dirfd: u32,
+    path_ptr: u32,
+    path_len: u32,
+) -> i32 {
     let rel = match read_path(&caller, path_ptr, path_len) {
         Ok(p) => p,
         Err(e) => return e,
@@ -820,7 +888,12 @@ fn host_path_create_directory(caller: Caller<'_, WasiCtx>, dirfd: u32, path_ptr:
     ret_errno_i32(sys::fs_mkdir(&path))
 }
 
-fn host_path_remove_directory(caller: Caller<'_, WasiCtx>, dirfd: u32, path_ptr: u32, path_len: u32) -> i32 {
+fn host_path_remove_directory(
+    caller: Caller<'_, WasiCtx>,
+    dirfd: u32,
+    path_ptr: u32,
+    path_len: u32,
+) -> i32 {
     let rel = match read_path(&caller, path_ptr, path_len) {
         Ok(p) => p,
         Err(e) => return e,
@@ -832,7 +905,12 @@ fn host_path_remove_directory(caller: Caller<'_, WasiCtx>, dirfd: u32, path_ptr:
     ret_errno_i32(sys::fs_rmdir(&path))
 }
 
-fn host_path_unlink_file(caller: Caller<'_, WasiCtx>, dirfd: u32, path_ptr: u32, path_len: u32) -> i32 {
+fn host_path_unlink_file(
+    caller: Caller<'_, WasiCtx>,
+    dirfd: u32,
+    path_ptr: u32,
+    path_len: u32,
+) -> i32 {
     let rel = match read_path(&caller, path_ptr, path_len) {
         Ok(p) => p,
         Err(e) => return e,
@@ -961,7 +1039,10 @@ fn decode_times(
     mtim: u64,
     fst_flags: u16,
 ) -> Result<[i64; 4], i32> {
-    let mut now = sys::Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut now = sys::Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     if fst_flags & (wasi::FSTFLAG_ATIM_NOW | wasi::FSTFLAG_MTIM_NOW) != 0 {
         if sys::clock_gettime(sys::CLOCK_REALTIME, &mut now) < 0 {
             return Err(wasi::ERRNO_IO);
@@ -1098,7 +1179,15 @@ fn host_sock_connect(caller: Caller<'_, WasiCtx>, fd: u32, addr_ptr: u32, addr_l
     ret_errno_i32(sys::connect(e.host_fd, sa.as_ptr(), 16))
 }
 
-fn host_sock_recv(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, flags: u32, nread_ptr: u32, roflags_ptr: u32) -> i32 {
+fn host_sock_recv(
+    mut caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    flags: u32,
+    nread_ptr: u32,
+    roflags_ptr: u32,
+) -> i32 {
     let e = match fd_entry(&caller, fd) {
         Ok(e) => e,
         Err(e) => return e,
@@ -1138,7 +1227,14 @@ fn host_sock_recv(mut caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_
     }
 }
 
-fn host_sock_send(caller: Caller<'_, WasiCtx>, fd: u32, iovs_ptr: u32, iovs_len: u32, flags: u32, nwritten_ptr: u32) -> i32 {
+fn host_sock_send(
+    caller: Caller<'_, WasiCtx>,
+    fd: u32,
+    iovs_ptr: u32,
+    iovs_len: u32,
+    flags: u32,
+    nwritten_ptr: u32,
+) -> i32 {
     let e = match fd_entry(&caller, fd) {
         Ok(e) => e,
         Err(e) => return e,
@@ -1189,7 +1285,9 @@ pub fn init_root(ctx: &mut WasiCtx) {
 ///
 /// # Errors
 /// 任一函数登记失败 (重名等) 返回 `LinkerError`.
-pub fn register_wasi(linker: &mut wasmi::Linker<WasiCtx>) -> Result<(), wasmi::errors::LinkerError> {
+pub fn register_wasi(
+    linker: &mut wasmi::Linker<WasiCtx>,
+) -> Result<(), wasmi::errors::LinkerError> {
     const M: &str = "wasi_snapshot_preview1";
     linker.func_wrap(M, "proc_exit", host_proc_exit)?;
     linker.func_wrap(M, "sched_yield", host_sched_yield)?;

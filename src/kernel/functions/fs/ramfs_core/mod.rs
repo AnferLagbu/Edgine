@@ -75,6 +75,19 @@ fn make_inode(
     current_fs_backend().make_ramfs_inode(inode_id, mount_idx, fs_id)
 }
 
+/// ramfs 内部以「负 errno」返回; 转强类型错误时保持 errno 语义.
+///
+/// 旧实现把各类失败一律折成 `Io`/`FileNotFound`, VFS 再折成 `-1`, 最终用户态
+/// 只看到 EPERM. ENOENT/EEXIST/ENOTEMPTY/ENOTDIR 等判别性错误全部失真
+/// (WASM P3 错误分支验收暴露).
+fn ramfs_err(rc: i32) -> KernelError {
+    if rc < 0 {
+        KernelError::from_i32(-rc)
+    } else {
+        KernelError::Io
+    }
+}
+
 impl FileSystem for RamFsFileSystem {
     fn name(&self) -> &'static str {
         "ramfs"
@@ -244,7 +257,7 @@ impl FileSystem for RamFsFileSystem {
         if result == 0 {
             Ok(())
         } else {
-            Err(KernelError::Io)
+            Err(ramfs_err(result))
         }
     }
 
@@ -255,29 +268,44 @@ impl FileSystem for RamFsFileSystem {
         if result == 0 {
             Ok(())
         } else {
-            Err(KernelError::FileNotFound)
+            Err(ramfs_err(result))
         }
     }
 
     fn fs_rmdir(&self, rel_path: &str, subject: SubjectId) -> KernelResult<()> {
         let pwm = subject.raw();
         let mut ramfs = RAMFS_DATA.lock();
-        ramfs
-            .resolve_path(rel_path)
-            .map_or(Err(KernelError::FileNotFound), |node_id| {
-                let stat = ramfs.stat(node_id);
-                match stat {
-                    Some(s) if s.file_type == VfsFileType::Dir.as_u8() => {
-                        let result = ramfs.truncate(node_id, 0, pwm);
-                        if result == 0 {
-                            Ok(())
-                        } else {
-                            Err(KernelError::Io)
-                        }
-                    }
-                    _ => Err(KernelError::NotADirectory),
-                }
-            })
+        // 旧实现只把目录 truncate(0, ..) 就报成功: 非空目录被「删」掉却仍占用
+        // 节点, 且原有条目全部丢失. 现走真正 rmdir: 先判空, 再摘父目录项, 最后
+        // 释放节点.
+        let result = ramfs.rmdir(rel_path, pwm);
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(ramfs_err(result))
+        }
+    }
+
+    fn fs_utimensat(
+        &self,
+        rel_path: &str,
+        atime: u64,
+        mtime: u64,
+        subject: SubjectId,
+    ) -> KernelResult<()> {
+        let pwm = subject.raw();
+        let mut ramfs = RAMFS_DATA.lock();
+        // 旧实现走 trait 默认 → NotSupported; VFS 折成 -1 → 用户态只能看到 EIO.
+        // ramfs 早有 `set_times` (utimensat 的 UTIME_OMIT 语义), 这里接上即可.
+        let Some(node_id) = ramfs.resolve_path(rel_path) else {
+            return Err(KernelError::FileNotFound);
+        };
+        let result = ramfs.set_times(node_id, atime, mtime, pwm);
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(ramfs_err(result))
+        }
     }
 
     fn fs_rename(&self, old_path: &str, new_path: &str, subject: SubjectId) -> KernelResult<()> {
@@ -287,7 +315,7 @@ impl FileSystem for RamFsFileSystem {
         if result == 0 {
             Ok(())
         } else {
-            Err(KernelError::Io)
+            Err(ramfs_err(result))
         }
     }
 

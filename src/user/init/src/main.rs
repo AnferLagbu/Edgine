@@ -160,6 +160,13 @@ pub extern "C" fn _start() -> ! {
     // PASS/FAIL), 由专项 QEMU 腿按 feature 消费.
     wasmi_probe();
 
+    // ── P3: WASI 覆盖探针 ───────────────────────────────────────────────
+    // wasi-sdk 真产物 wasi_p3.wasm → fork → execve. 专打 P2 未在真机载荷覆盖
+    // 的 fd_allocate/fd_advise/fd_renumber/fd_dup/path_filestat_set_times/
+    // fd_prestat_* 与错误分支. 事实报告 `[WASMI-P3] exit=N`, 由
+    // scripts/wasmi_wasi_test.sh 消费 `P3 done fails=0` + exit=0.
+    wasi_p3_probe();
+
     // ── #108 丙: aarch64 缺页 / COW 恢复路径真链探针 ─────────────────────
     // 必须在 busy 忙等子进程 fork 之前同步完成: 三腿都靠父进程 wait4 收割子进程,
     // 且 `reuse` 腿要求子进程页表**已拆除** (持有计数回到 1) 才成立.
@@ -1543,6 +1550,40 @@ fn wasmi_probe() {
         print_char(b'\n');
     } else {
         println("[WASMI] exit=reap");
+    }
+}
+
+/// P3 WASI 覆盖探针路径: 只来自 initramfs cpio (`bin/wasi_p3.wasm`).
+const WASI_P3_PROBE_PATH: &[u8] = b"/bin/wasi_p3.wasm\0";
+
+/// P3 WASI 覆盖探针: fork → execve(wasi_p3.wasm) → 父进程事实报告退出码.
+///
+/// 与 [`wasmi_probe`] 同形, 但载荷覆盖 P2 未在真机跑过的入口 (fd_allocate /
+/// fd_advise / fd_renumber / fd_dup / path_filestat_set_times / fd_prestat_*)
+/// 与错误分支; 载荷自身打印 `P3 done fails=N`, 专项腿同时断言该行与 exit=0.
+fn wasi_p3_probe() {
+    if !file_present(WASI_P3_PROBE_PATH) {
+        println("[WASMI-P3] SKIP: no carrier");
+        return;
+    }
+    let child = fork();
+    if child == 0 {
+        let argv: [*const u8; 2] = [WASI_P3_PROBE_PATH.as_ptr().cast::<u8>(), core::ptr::null()];
+        let _ = proc_exec(WASI_P3_PROBE_PATH, &argv, &[]);
+        proc_exit(3);
+    }
+    let Ok(pid) = i32::try_from(child) else {
+        println("[WASMI-P3] exit=fork");
+        return;
+    };
+    let mut status = 0i32;
+    let reaped = wait_pid_status(pid, &mut status);
+    if reaped == i64::from(pid) {
+        print("[WASMI-P3] exit=");
+        print_dec(i64::from(status));
+        print_char(b'\n');
+    } else {
+        println("[WASMI-P3] exit=reap");
     }
 }
 

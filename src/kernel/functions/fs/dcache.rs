@@ -748,11 +748,12 @@ pub fn dcache_flush() {
 pub fn icache_lookup(fs_id: u32, ino: u32) -> Option<ICacheResult> {
     ICACHE_LOOKUPS.fetch_add(1, Ordering::Relaxed);
 
-    let mut icache = ICACHE.lock();
+    let icache = ICACHE.lock();
     icache.lookup(fs_id, ino).map(|entry| {
         ICACHE_HITS.fetch_add(1, Ordering::Relaxed);
-        // 增加引用计数
-        icache.ref_inc(fs_id, ino);
+        // 查找是纯读, 不得永久增加引用计数: 旧实现每次 stat 都 +1, 使
+        // `icache_invalidate` 的「引用归零才失效」永远不成立, 写后 stat 见到
+        // 陈旧 size (WASM P3 的 fstat/fd_allocate 验收暴露).
         ICacheResult {
             ino: entry.ino,
             file_type: entry.file_type,
@@ -773,14 +774,14 @@ pub fn icache_insert(args: &ICacheInsertArgs) {
 }
 
 /// icache 失效
+///
+/// 元数据已变更时必须**无条件**丢弃条目: 引用计数只用于淘汰/统计, 不构成
+/// 正确性屏障 (查找返回的是字段快照, 不存在跨调用持有条目的场景).
+/// 旧实现依赖「引用归零」, 而引用只会增不会减, 导致写后 stat 长期读到旧 size.
 pub fn icache_invalidate(fs_id: u32, ino: u32) {
     let mut icache = ICACHE.lock();
-    // 减少引用计数
     icache.ref_dec(fs_id, ino);
-    // 如果引用计数为零, 可以安全失效
-    if icache.is_ref_zero(fs_id, ino) {
-        icache.invalidate(fs_id, ino);
-    }
+    icache.invalidate(fs_id, ino);
 }
 
 /// 获取 icache 条目的引用计数 (诊断接口)
