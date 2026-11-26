@@ -3,17 +3,6 @@
 //! 本模块不依赖 wasmi 与 syscall, 可在 host 侧单测; 真正的 host 闭包
 //! (读 wasm 线性内存 + 翻译到 Edgine syscall) 见 `host.rs`.
 
-// 本模块是纯 ABI 层: 常量表按 preview1 规范**全集**登记 (未用项用于逐条对照,
-// 并在 P4 socket/rights 扩展时直接取用, 不做「用到再补」); 结构编码/解码的
-// 整数转换全部发生在已验证范围内 (fd < FD_TABLE_CAP, 长度 <= MAX_IO 8 MiB,
-// WASI 用 u64 纳秒而内核用 i64), 逐点写 try_from 只会把不变量检查挪进热路径.
-#![allow(
-    dead_code,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
-
 use alloc::vec::Vec;
 
 /// 关闭宿主 fd; 单测环境无 syscall, 走空桩.
@@ -118,7 +107,7 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         2 => ERRNO_NOENT,
         3 => ERRNO_SRCH,
         4 => ERRNO_INTR,
-        // 5(IO) 与未列出的其余 errno 同映射, 由末尾 `_` 臂承载.
+        5 => ERRNO_IO,
         6 => ERRNO_NXIO,
         7 => ERRNO_TOOBIG,
         8 => ERRNO_NOEXEC,
@@ -154,8 +143,7 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         39 => ERRNO_NOTEMPTY,
         42 => ERRNO_NOMSG,
         43 => ERRNO_IDRM,
-        // ENOTSUP 家族的 Linux 值与 wasi-libc 的 ENOTSUP 归一.
-        60..=63 | 95 => ERRNO_NOTSUP,
+        60 | 61 | 62 | 63 => ERRNO_NOTSUP,
         71 => ERRNO_PROTO,
         74 => ERRNO_BADMSG,
         75 => ERRNO_OVERFLOW,
@@ -166,6 +154,7 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         91 => ERRNO_PROTOTYPE,
         92 => ERRNO_NOPROTOOPT,
         93 => ERRNO_PROTONOSUPPORT,
+        95 => ERRNO_NOTSUP,
         97 => ERRNO_AFNOSUPPORT,
         98 => ERRNO_ADDRINUSE,
         99 => ERRNO_ADDRNOTAVAIL,
@@ -449,10 +438,10 @@ impl WasiFdTable {
         let Some(entry) = self.entries[from as usize].take() else {
             return Err(ERRNO_BADF);
         };
-        if let Some(old) = self.entries[to as usize].take()
-            && old.host_fd >= 0
-        {
-            let _ = close_host(old.host_fd);
+        if let Some(old) = self.entries[to as usize].take() {
+            if old.host_fd >= 0 {
+                let _ = close_host(old.host_fd);
+            }
         }
         self.entries[to as usize] = Some(entry);
         Ok(())
@@ -569,7 +558,7 @@ pub fn encode_fdstat(
     b
 }
 
-/// 编码 WASI `prestat` 结构 (8 字节): tag=0(dir) + `name_len`.
+/// 编码 WASI `prestat` 结构 (8 字节): tag=0(dir) + name_len.
 #[must_use]
 pub fn encode_prestat(name_len: u32) -> [u8; 8] {
     let mut b = [0u8; 8];
@@ -579,11 +568,7 @@ pub fn encode_prestat(name_len: u32) -> [u8; 8] {
 }
 
 /// 编码 WASI `filestat` 结构 (64 字节).
-///
-/// 参数顺序与 spec 结构字段一一对应 (dev/ino/filetype/nlink/size/atim/mtim/ctim);
-/// 拆成结构体只会让调用点多一层搬运, 不改变可读性.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
 pub fn encode_filestat(
     dev: u64,
     ino: u64,
@@ -704,9 +689,9 @@ pub fn filestat_from_linux_aarch64(stat: &[u8]) -> Result<[u8; 64], i32> {
 fn read_timespec(stat: &[u8], off: usize) -> u64 {
     let sec = i64::from_le_bytes(stat[off..off + 8].try_into().unwrap());
     let nsec = i64::from_le_bytes(stat[off + 8..off + 16].try_into().unwrap());
-    sec.cast_unsigned()
+    (sec as u64)
         .wrapping_mul(1_000_000_000)
-        .wrapping_add(nsec.cast_unsigned())
+        .wrapping_add(nsec as u64)
 }
 
 /// Linux `st_mode` -> WASI filetype.

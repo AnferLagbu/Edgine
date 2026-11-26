@@ -3,18 +3,6 @@
 //! 仅非 test 构建编译 (wasmi 与 userlib syscall 只在真实运行时可用).
 //! 38 个函数按 explain 文档的 G1-G8 分组注册; 编码/表结构在 `wasi.rs` 单测.
 
-// host 函数逐条镜像 preview1 规范签名: 参数个数由 WASI ABI 决定, `Caller` 必须
-// 按值接收 (wasmi `Func::wrap` 的闭包形态), 不能重排成结构体/引用而不改注册面;
-// 整数转换全部发生在已验证范围内 (fd < FD_TABLE_CAP, 长度 <= MAX_IO 8 MiB,
-// 内核 i64 秒/nsec 与 WASI u64 纳秒互转), 逐点 try_from 只是把不变量搬进热路径.
-#![allow(
-    clippy::too_many_arguments,
-    clippy::needless_pass_by_value,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
-)]
-
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -143,10 +131,10 @@ fn filestat_for_fd(caller: &Caller<'_, WasiCtx>, fd: u32) -> Result<[u8; 64], i3
     };
     // 内核 fstat 对目录支持不完整; fd 带缓存路径时退回路径 stat,
     // 否则 opendir() 的 fd_filestat_get 会直接 EIO.
-    if ret < 0
-        && let Some(path) = e.path.as_deref()
-    {
-        ret = sys::stat_path(path, &mut st);
+    if ret < 0 {
+        if let Some(path) = e.path.as_deref() {
+            ret = sys::stat_path(path, &mut st);
+        }
     }
     if ret < 0 {
         if e.path.is_none() && e.host_fd < 0 {
@@ -209,7 +197,7 @@ fn host_clock_time_get(
 ) -> i32 {
     let kid = match clock_id {
         0 => sys::CLOCK_REALTIME,
-        1..=3 => sys::CLOCK_MONOTONIC,
+        1 | 2 | 3 => sys::CLOCK_MONOTONIC,
         _ => return wasi::ERRNO_INVAL,
     };
     let mut ts = sys::Timespec {
@@ -577,7 +565,7 @@ fn pwrite_no_seek(host: i32, data: &[u8], offset: i64) -> i64 {
     }
     let n = sys::write(host, data);
     let _ = sys::lseek(host, cur, 0);
-    i64::from(n)
+    if n < 0 { i64::from(n) } else { i64::from(n) }
 }
 
 fn host_fd_pwrite(
@@ -843,7 +831,9 @@ fn host_path_open(
     let ft = {
         let mut st = vec![0u8; stat_buf_len()];
         if sys::stat_path(&path, &mut st) >= 0 {
-            let ft = wasi::filestat_from_linux(&st).map_or(wasi::FILETYPE_UNKNOWN, |f| f[16]);
+            let ft = wasi::filestat_from_linux(&st)
+                .map(|f| f[16])
+                .unwrap_or(wasi::FILETYPE_UNKNOWN);
             // 普通文件也可能携带 FD_READDIR 权利位 (wasi-libc 常见),
             // 只有显式 O_DIRECTORY 才强制要求目录类型.
             if oflags & u32::from(wasi::OFLAG_DIRECTORY) != 0 && ft != wasi::FILETYPE_DIRECTORY {
@@ -857,7 +847,9 @@ fn host_path_open(
             // stat 不该失败.
             let mut st = vec![0u8; stat_buf_len()];
             if sys::fstat_fd(host_fd, &mut st) >= 0 {
-                wasi::filestat_from_linux(&st).map_or(wasi::FILETYPE_DIRECTORY, |f| f[16])
+                wasi::filestat_from_linux(&st)
+                    .map(|f| f[16])
+                    .unwrap_or(wasi::FILETYPE_DIRECTORY)
             } else {
                 wasi::FILETYPE_DIRECTORY
             }
@@ -1057,10 +1049,10 @@ fn decode_times(
         tv_sec: 0,
         tv_nsec: 0,
     };
-    if fst_flags & (wasi::FSTFLAG_ATIM_NOW | wasi::FSTFLAG_MTIM_NOW) != 0
-        && sys::clock_gettime(sys::CLOCK_REALTIME, &mut now) < 0
-    {
-        return Err(wasi::ERRNO_IO);
+    if fst_flags & (wasi::FSTFLAG_ATIM_NOW | wasi::FSTFLAG_MTIM_NOW) != 0 {
+        if sys::clock_gettime(sys::CLOCK_REALTIME, &mut now) < 0 {
+            return Err(wasi::ERRNO_IO);
+        }
     }
     let mut out = [-1i64; 4];
     if fst_flags & wasi::FSTFLAG_ATIM != 0 {

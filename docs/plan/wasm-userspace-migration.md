@@ -177,7 +177,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - wasmi host 层单测（no_std）+ host-tests 集成。
   - QEMU 双架构 exec 端到端（替代既有 `[WASM] PASS` 腿）。
   - 真实工具链载荷（wasi-sdk 编译）stdio + 文件 + socket 验收。
-- **状态**: [X] (2026-11-27 收口；逐函数覆盖见详情，socket 四函数为结构性边界)
+- **状态**: [~] (2026-11-27：36 项双架构全绿；七门槛之 `src/user` pedantic 腿仍红，属 P2 遗留，见 P3.5)
 - **详情**: 契合 §2.3 七门槛。验收 = 双架构 QEMU 端到端绿 + 真实载荷跑通。
 
   **交付物**: 专项探针 [wasi_p3_probe.c](../../scripts/fixtures/wasi_p3_probe.c)（wasi-sdk 34 编译，
@@ -215,6 +215,23 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   宿主注入方案另立；`fd_readdir` 在「条目放不下但已攒有条目」时丢弃该条（调用方按 `d_next`
   续读可重取），此取舍已写在 host 注释里；WASI errno 值域与内核 errno 值域仍不统一
   （host 采官方 preview1 值，P2 有意选择），P3 只钉行为不钉数值表。
+
+### P3.5: `src/user` pedantic 门禁清零（P2 遗留，阻塞 P3 七门槛）
+
+- **描述**: `src/user` clippy 腿（`-D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks`）
+  在 `wasmrun` 上仍有 100 项红，均为 P2 写 host 层时引入：37 处 ABI 位宽 cast
+  （`usize→u32`、`i64→i32`、`u64→i64` 等）、11 处 `Caller<'_, WasiCtx>` 按值传参而体内只借用、
+  3 处 WASI 规范签名超 7 参（`path_open` 10 / `path_filestat_set_times` 8 / `path_link` 8）、
+  若干未用常量与跨架构解码器。
+- **方案**: F9 审计对死代码抑制**硬零**、clippy 抑制基线为 **0**，故不能靠
+  `#[allow]`/`#[expect]` 收口（实测 `--update-baseline` 之外无合法路径）。两条路线：
+  - 甲（推荐）：按 ABI 边界重写——host 函数改 `&mut Caller` + 注册处内联闭包；
+    超参函数改 `Linker::func_new`（wasmi 2.0 支持 `&[Val]`/`&mut [Val]` 切片）；
+    cast 统一 `u32_of` / `try_from` 常量；未用常量与跨架构解码器按 F9 真删或改 `cfg!` 保留符号。
+  - 乙：用户裁定更新 `audit_dead_code_comment.baseline.json`（等于放宽门禁，需明确授权）。
+- **状态**: []（路线待用户裁定；甲约 1 轮可收口，乙需同步 AGENTS §F9 口径）
+- **详情**: 阻塞 P3 的「七门槛全绿」判据；P3 内容面（专项探针 36 项 + 双架构 QEMU + P1 回归）
+  已全绿，不因本项回退。
 
 ### P4: 干净退役内核侧 + 收口
 
