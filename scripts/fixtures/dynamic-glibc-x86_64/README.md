@@ -21,7 +21,8 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
   清理 `rseq_cs`
 - `glibc_time`：本目录 `glibc_time.c` 同编译器参数编译，调用
   `clock_gettime`/`gettimeofday`/`time`/`clock_getres`，验证无 VDSO 的
-  syscall fallback
+  syscall fallback；D7 T1 追加真实 epoch 断言（`>= 2025-01-01`）与 root 下
+  `settimeofday` 前进 2 秒再恢复腿（glibc 实际走 `clock_settime`）
 - `glibc_pthread`：本目录 `glibc_pthread.c` 同编译器参数加 `-pthread` 编译，
   调用 `pthread_create`/TLS/`pthread_join`，验证 glibc 线程创建路径（含
   `clone3` 栈参数换算）与 TLS 隔离
@@ -48,7 +49,7 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
 | `glibc_true` | 36,424 B | `684bc05bc973d1bfec940279475ece99740a78765696fcd3ea2dbd540df16fb5` |
 | `glibc_hello` | 11,176 B | `9aafb5ee74847ad39d6704447e6197f0545b8894964bd53f9815b1c763c58709` |
 | `glibc_g2` | 10,960 B | `85d0e104fe084ff592b86e145728a1eb9dbc17bfda78cb85fbc609fd8de2e0dd` |
-| `glibc_time` | 11,232 B | `1676f0f12b4090a06c687d7d6e6fdc57d57d7b215dfda240a95b731a78d77394` |
+| `glibc_time` | 11,248 B | `8e2035e5d0f0373c729f11e6141d5750bb19e1e821747973a14692c75a574942` |
 | `glibc_pthread` | 11,088 B | `d110b2cd4797daf43554433d7091490062dbebc9eeaf464a033b43f0438d2b3f` |
 | `glibc_clone3` | 11,272 B | `4fb861c111430dc7eb181598c0ca5c1ccc97276d550db5e9c58a3329bb48fc88` |
 | `glibc_dlopen` | 11,232 B | `2626224240d46afdf950a38eec5a18c0c4ed0e78743ab972da0fafeb9a636ea9` |

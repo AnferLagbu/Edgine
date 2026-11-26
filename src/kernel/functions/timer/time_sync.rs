@@ -311,22 +311,42 @@ impl TimeSyncSubsystem {
     /// 获取调整后的时间 (ns)
     #[must_use]
     pub fn get_adjusted_time_ns() -> u64 {
-        let raw_ns = read_clock_ns();
+        let uptime_ns = read_clock_ns();
         let state = clock_adj_state();
+        // 启动时 RTC 给出的 epoch 基准; 无 RTC 时保持 0 (退回自启动计时).
+        let base_ns = state.epoch_base_ns().load(Ordering::Acquire);
+        let wall_ns = base_ns.saturating_add(uptime_ns);
         let offset = state.total_offset_adj().load(Ordering::Acquire);
         let freq = state.freq_adj_ppb().load(Ordering::Acquire);
 
-        // 频率补偿: elapsed * freq_adj / 1e9
+        // 频率补偿以自启动 uptime 为时间轴: `last_sync_time` 存的是 uptime,
+        // 不能用含 RTC epoch 基准的 wall_ns 相减 (否则会把 epoch 基准当 elapsed).
         let last_sync = state.last_sync_time().load(Ordering::Acquire);
-        let elapsed = raw_ns.saturating_sub(last_sync);
+        let elapsed = uptime_ns.saturating_sub(last_sync);
         let freq_compensation = (elapsed.cast_signed() * freq) / 1_000_000_000;
 
         let total_adj = offset + freq_compensation;
         if total_adj >= 0 {
-            raw_ns.saturating_add(total_adj.cast_unsigned())
+            wall_ns.saturating_add(total_adj.cast_unsigned())
         } else {
-            raw_ns.saturating_sub((-total_adj).cast_unsigned())
+            wall_ns.saturating_sub((-total_adj).cast_unsigned())
         }
+    }
+
+    /// 注入启动时的 RTC epoch 基准 (ns)
+    ///
+    /// 只设置墙钟基准并清空此前的调整状态; 不把 `synced` 置位 —— RTC 是
+    /// 墙钟来源, 不是 NTP/PTP 同步证据.
+    #[must_use]
+    pub fn set_boot_epoch(epoch_ns: u64) -> bool {
+        let state = clock_adj_state();
+        state.epoch_base_ns().store(epoch_ns, Ordering::Release);
+        state.total_offset_adj().store(0, Ordering::Release);
+        state.offset_remaining().store(0, Ordering::Release);
+        state.freq_adj_ppb().store(0, Ordering::Release);
+        state.total_freq_adj().store(0, Ordering::Relaxed);
+        state.last_sync_time().store(0, Ordering::Release);
+        true
     }
 
     /// 手动设置频率调整 (ppb)
@@ -356,19 +376,23 @@ impl TimeSyncSubsystem {
     }
 
     /// 直接设置系统时间 (ns)
+    ///
+    /// 以当前墙钟 (含 RTC epoch 基准) 为参照把差值并入累计偏移, 因此
+    /// `CLOCK_MONOTONIC` (直接读 uptime) 不受影响.
     #[must_use]
     pub fn set_time(time_ns: u64) -> bool {
         let state = clock_adj_state();
-        let current = read_clock_ns();
+        let uptime_ns = read_clock_ns();
+        let current = Self::get_adjusted_time_ns();
         let diff = if time_ns > current {
             (time_ns - current).cast_signed()
         } else {
             -(current - time_ns).cast_signed()
         };
-        state.total_offset_adj().store(diff, Ordering::Release);
+        state.total_offset_adj().fetch_add(diff, Ordering::Release);
         state.offset_remaining().store(0, Ordering::Release);
         // 跳变后重置频率补偿基准 (同 adj_freq: 避免旧 elapsed 被重复补偿)
-        state.last_sync_time().store(current, Ordering::Release);
+        state.last_sync_time().store(uptime_ns, Ordering::Release);
         state.synced().store(true, Ordering::Release);
         true
     }

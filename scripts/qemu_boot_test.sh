@@ -257,6 +257,25 @@ feature_caps_boot() {
 }
 
 # ---------------------------------------------------------------------------
+# D7 T1: RTC 墙钟 epoch 合理性断言 (双架构共用).
+#
+# 判据 = 串口出现 "RTC wall clock epoch: <sec>", 且 <sec> >= 2025-01-01 UTC.
+# 仅"有日志"不够: PL031 在 QEMU virt 从 0 起算, 必须由引导器给出 epoch 提示,
+# 该断言同时锁住 hint 解析与注入链路.
+# 参数: $1=架构  $2=日志文件; 返回: 0 = 在位且 epoch 合理.
+# ---------------------------------------------------------------------------
+rtc_epoch_check() {
+    local arch="$1" log="$2" epoch=""
+    epoch=$(grep -aoE "RTC wall clock epoch: [0-9]+" "$log" 2>/dev/null | tail -1 | grep -oE "[0-9]+" || true)
+    if [ -n "$epoch" ] && [ "$epoch" -ge 1735689600 ]; then
+        ok "[$arch] RTC 墙钟 epoch 已注入且合理 (${epoch}s, D7 T1)"
+        return 0
+    fi
+    warn "[$arch] RTC 墙钟 epoch 未注入或不合理 (${epoch:-无}, D7 T1)"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # A-127d: lockdep 覆盖面读数行的硬零断言 (双架构共用).
 #
 # 病灶: `deadlock_detected()` / `num_violations()` 与 A-127b 新增的两个粘滞失效读数
@@ -776,6 +795,9 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # D7 T1: 启动期必须从平台 RTC 注入真实 Unix epoch, 不允许静默退回
+            # 自启动计时; 用户态 `[TIME] EPOCH PASS` 由 glibc_time 断言.
+            rtc_epoch_check "x86_64" "$X64_LOG" || RESULT=1
             # D7 G0/G1/G2/G3/G4: 真实 glibc 动态 true + hello + 启动 syscall + 时间路径 + pthread
             # 探针 —— 上游 ld-linux 载入 libc.so.6、完成启动并让 glibc stdio 写出
             # `hello dynamic glibc`；`set_tid_address`/`prlimit64` 必须返回成功，
@@ -791,6 +813,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[G2\] GETRLIMIT PASS" "$X64_LOG" \
                 && grep -aq "\[G2\] RSEQ PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] TIME PASS: no-vdso fallback" "$X64_LOG" \
+                && grep -aq "\[TIME\] EPOCH PASS" "$X64_LOG" \
+                && grep -aq "\[TIME\] SET PASS" "$X64_LOG" \
                 && grep -aq "\[TIME\] PASS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] PTHREAD PASS: glibc pthread" "$X64_LOG" \
                 && grep -aq "\[PTHREAD\] PASS" "$X64_LOG" \
@@ -801,6 +825,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[DLOPEN\] PASS" "$X64_LOG" \
                 && ! grep -aq "\[G2\].*FAIL" "$X64_LOG" \
                 && ! grep -aq "\[TIME\] FAIL" "$X64_LOG" \
+                && ! grep -aq "\[TIME\] SET FAIL" "$X64_LOG" \
                 && ! grep -aq "\[PTHREAD\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[CLONE3\] FAIL" "$X64_LOG" \
                 && ! grep -aq "\[DLOPEN\] FAIL" "$X64_LOG" \
@@ -930,6 +955,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
         # SMP-09 (DECISION-082): 以 -smp 2 启动双核, 使 AP 上线路径进入 CI 门禁.
         if boot_and_check "aarch64" "$A64_LOG" "$TIMEOUT_QEMU" "VFS ready" \
             -M virt,gic-version=3 -cpu max -m 512 -smp 2 -kernel other/build/aarch64/kernel-aarch64.img -initrd other/build/aarch64/user/initramfs.cpio \
+            -append "edgine.rtc_epoch=$(date +%s)" \
             -device virtio-net-device,netdev=n0 \
             -netdev "user,id=n0,hostfwd=tcp::${A64_E2E_HOST_PORT}-:${E2E_GUEST_PORT}"; then
             # A-127d: lockdep 覆盖面读数行 + 四项硬零 (与 x86_64 分支同判据).
@@ -1069,6 +1095,8 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 warn "[aarch64] 相对 PT_INTERP 失败路径未通过 (D6)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # D7 T1: aarch64 PL031 必须给出真实 epoch (无载体时也断言启动日志).
+            rtc_epoch_check "aarch64" "$A64_LOG" || RESULT=1
             # D7 G0: aarch64 暂无 glibc 载体，允许 SKIP；有载体后只允许 PASS.
             if ! grep -aq "\[GLIBC\] FAIL" "$A64_LOG" \
                 && { grep -aq "\[GLIBC\] SKIP:" "$A64_LOG" || grep -aq "\[GLIBC\] PASS:" "$A64_LOG"; }; then

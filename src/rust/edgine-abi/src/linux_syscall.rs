@@ -173,6 +173,7 @@ const fn canonical_to_aarch64_upper(nr: u64) -> u64 {
         224 => 108, // SYS_TIMER_GETTIME
         225 => 109, // SYS_TIMER_GETOVERRUN
         226 => 111, // SYS_TIMER_DELETE
+        227 => 112, // SYS_CLOCK_SETTIME
         228 => 113, // SYS_CLOCK_GETTIME
         229 => 114, // SYS_CLOCK_GETRES
         230 => 115, // SYS_CLOCK_NANOSLEEP
@@ -416,6 +417,7 @@ const fn aarch64_to_canonical_mid(nr: u64) -> u64 {
         108 => 224, // SYS_TIMER_GETTIME
         109 => 225, // SYS_TIMER_GETOVERRUN
         111 => 226, // SYS_TIMER_DELETE
+        112 => 227, // SYS_CLOCK_SETTIME
         113 => 228, // SYS_CLOCK_GETTIME
         114 => 229, // SYS_CLOCK_GETRES
         115 => 230, // SYS_CLOCK_NANOSLEEP

@@ -104,6 +104,9 @@ mod rb_tree;
 /// D9: NTP/PTP 时钟同步
 pub mod time_sync;
 
+/// D7 T1: 平台 RTC 读取/回写 (墙钟 epoch 硬件来源)
+pub mod rtc;
+
 // D8: Tickless (NO_HZ) 已按 §4.1 归属判据下沉 functions (`functions::timer::tickless`):
 // per-CPU 模式状态机与空闲记账属策略, 定时器装填经本层 `clockevent` 安全入口调用.
 
@@ -179,6 +182,9 @@ pub use hrtimer::{
 
 // tickless 已下沉 functions; time_sync 公共接口 re-export — 避免跨子系统直接
 // 访问 timer 内部子模块
+pub use rtc::{
+    civil_from_unix_seconds, civil_to_unix_seconds, read_unix_seconds, write_unix_seconds,
+};
 pub use time_sync::*;
 
 // ============================================================================

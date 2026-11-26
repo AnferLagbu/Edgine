@@ -334,6 +334,8 @@ pub const SYS_RSEQ: u64 = 334;
 pub const SYS_TIME: u64 = 201;
 /// `SYS_CLOCK_GETTIME` — 读取指定时钟的时间
 pub const SYS_CLOCK_GETTIME: u64 = 228;
+/// `SYS_CLOCK_SETTIME` — 设置指定时钟的时间
+pub const SYS_CLOCK_SETTIME: u64 = 227;
 /// `SYS_EXIT_GROUP` — 终止进程内所有线程
 pub const SYS_EXIT_GROUP: u64 = edgine_abi::thread::SYS_EXIT_GROUP;
 /// `SYS_TGKILL` — 向指定进程的指定线程发送信号
@@ -1073,6 +1075,7 @@ const _: () = {
         SYS_RSEQ,
         SYS_TIME,
         SYS_CLOCK_GETTIME,
+        SYS_CLOCK_SETTIME,
         SYS_EXIT_GROUP,
         SYS_TGKILL,
         SYS_FUTEX,

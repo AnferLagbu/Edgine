@@ -22,6 +22,8 @@ pub const ADJ_RATE_NS: i64 = 1000; // 1us/tick
 /// 时钟调整状态 (TCB 状态: tick 中断直接消费)
 #[derive(Debug)]
 pub struct ClockAdjState {
+    /// 墙钟 epoch 基准 (ns); 启动时由 RTC 注入, 0 表示无 RTC
+    epoch_base_ns: AtomicU64,
     /// 当前频率调整 (ppb, 十亿分之一)
     freq_adj_ppb: AtomicI64,
     /// 待调整偏移 (ns), 渐进消耗
@@ -49,6 +51,7 @@ impl ClockAdjState {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            epoch_base_ns: AtomicU64::new(0),
             freq_adj_ppb: AtomicI64::new(0),
             offset_remaining: AtomicI64::new(0),
             total_offset_adj: AtomicI64::new(0),
@@ -62,6 +65,11 @@ impl ClockAdjState {
     /// 当前频率调整 (ppb) 的原子访问面
     pub fn freq_adj_ppb(&self) -> &AtomicI64 {
         &self.freq_adj_ppb
+    }
+
+    /// 墙钟 epoch 基准 (ns) 的原子访问面
+    pub fn epoch_base_ns(&self) -> &AtomicU64 {
+        &self.epoch_base_ns
     }
 
     /// 待消耗渐进偏移 (ns) 的原子访问面

@@ -227,6 +227,12 @@ unsafe fn apply_fdt_overrides() -> Option<dtb::DtbInfo> {
         if let (Some(dist), Some(redist)) = (dist, redist) {
             crate::privileged::arch::gic::set_bases(dist, redist);
         }
+        if let Some(pa) = info.rtc_base.filter(|pa| *pa < DEVICE_WINDOW_END) {
+            dtb::set_rtc_base(pa);
+        }
+        if let Some(epoch) = info.rtc_epoch_hint {
+            dtb::set_rtc_epoch_hint(epoch);
+        }
         Some(info)
     }
 }

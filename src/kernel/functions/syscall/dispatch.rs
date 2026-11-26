@@ -822,9 +822,9 @@ fn dispatch_proc_sched(num: u64, args: [u64; 6]) -> Option<i64> {
 /// 进程生命周期/系统信息/时钟相关系统调用
 fn dispatch_proc_lifecycle(num: u64, args: [u64; 6]) -> Option<i64> {
     use crate::functions::syscall::types::{
-        SYS_ADJTIMEX, SYS_CLOCK_NANOSLEEP, SYS_EXECVE, SYS_EXECVEAT, SYS_EXIT, SYS_EXIT_GROUP,
-        SYS_FORK, SYS_GETRLIMIT, SYS_GETRUSAGE, SYS_GETTIMEOFDAY, SYS_NANOSLEEP, SYS_SCHED_YIELD,
-        SYS_SETRLIMIT, SYS_SETTIMEOFDAY, SYS_SYSINFO, SYS_UNAME,
+        SYS_ADJTIMEX, SYS_CLOCK_NANOSLEEP, SYS_CLOCK_SETTIME, SYS_EXECVE, SYS_EXECVEAT, SYS_EXIT,
+        SYS_EXIT_GROUP, SYS_FORK, SYS_GETRLIMIT, SYS_GETRUSAGE, SYS_GETTIMEOFDAY, SYS_NANOSLEEP,
+        SYS_SCHED_YIELD, SYS_SETRLIMIT, SYS_SETTIMEOFDAY, SYS_SYSINFO, SYS_UNAME,
     };
     let [a0, a1, a2, a3, a4, _a5] = args;
 
@@ -867,6 +867,10 @@ fn dispatch_proc_lifecycle(num: u64, args: [u64; 6]) -> Option<i64> {
         SYS_GETTIMEOFDAY => as_ret(crate::functions::timer::clock::gettimeofday_syscall(a0)),
         // T1 G6: 时间组 — 墙钟设置 / 时钟调整 / 带时钟源的睡眠
         SYS_SETTIMEOFDAY => as_ret(crate::functions::timer::clock::settimeofday_syscall(a0, a1)),
+        SYS_CLOCK_SETTIME => as_ret(crate::functions::timer::clock::clock_settime_syscall(
+            crate::functions::intcast::low_i32_from_u64(a0),
+            a1,
+        )),
         SYS_ADJTIMEX => crate::functions::timer::clock::adjtimex_syscall(a0),
         SYS_CLOCK_NANOSLEEP => as_ret(crate::functions::timer::clock::clock_nanosleep_syscall(
             crate::functions::intcast::low_i32_from_u64(a0),

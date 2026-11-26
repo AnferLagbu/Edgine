@@ -820,6 +820,10 @@ fn boot_policy_init() {
 /// 中断/异常 → kswapd → Timer → 单一时基 → 本核 tick 参数 → 次级核上线.
 #[cfg(not(any(feature = "kernel_test", feature = "host-test")))]
 fn boot_interrupt_timer_init() {
+    // 2020-01-01 UTC: 低于此值的 RTC 视为未初始化 (例如 QEMU PL031 从 0 起算),
+    // 此时优先采用引导器给出的 epoch 提示; 两者都没有则保留低值, 不伪造时间.
+    const MIN_PLAUSIBLE_EPOCH: u64 = 1_577_836_800;
+
     // 6. 中断/异常设置
     <crate::privileged::arch::CurrentArch as crate::privileged::arch::Arch>::interrupt_late_init();
     crate::klog_boot_info!("Interrupt subsystem ready");
@@ -857,6 +861,33 @@ fn boot_interrupt_timer_init() {
         }
         Err(msg) => {
             crate::klog_warn!(Timer, "boot timebase not established: {}", msg);
+        }
+    }
+
+    // 7.55. 墙钟 epoch 注入 (D7 T1): 读取平台 RTC, 作为 CLOCK_REALTIME /
+    // gettimeofday / time() 的基准. 位置约束: 在时基建立后 (epoch 以 uptime
+    // 为时间轴), 在 scheduler/用户态之前 (首个用户 syscall 即应看到真实日期).
+    // RTC 失败不致命: 墙钟保持自启动计时并记录告警.
+    let rtc_epoch = crate::privileged::timer::read_unix_seconds();
+    #[cfg(target_arch = "aarch64")]
+    let epoch_hint = crate::privileged::dtb::rtc_epoch_hint();
+    #[cfg(not(target_arch = "aarch64"))]
+    let epoch_hint = None;
+    let wall_epoch = match rtc_epoch {
+        Some(epoch) if epoch >= MIN_PLAUSIBLE_EPOCH => Some((epoch, "rtc")),
+        _ => epoch_hint
+            .map(|epoch| (epoch, "hint"))
+            .or_else(|| rtc_epoch.map(|epoch| (epoch, "rtc"))),
+    };
+    match wall_epoch {
+        Some((epoch, source)) => {
+            let ns = epoch.saturating_mul(1_000_000_000);
+            if crate::functions::timer::time_sync::TimeSyncSubsystem::set_boot_epoch(ns) {
+                crate::klog_boot_info!("RTC wall clock epoch: {}s (UTC, source={})", epoch, source);
+            }
+        }
+        None => {
+            crate::klog_warn!(Timer, "RTC unavailable: wall clock falls back to uptime");
         }
     }
 

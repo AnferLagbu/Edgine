@@ -95,6 +95,11 @@ pub struct DtbInfo {
     pub gic_dist_base: Option<u64>,
     /// `GICv3` 重分发器 (GICR) 基址
     pub gic_redist_base: Option<u64>,
+    /// PL031 RTC 寄存器基址 (兼容 `arm,pl031`)
+    pub rtc_base: Option<u64>,
+    /// 引导器给出的墙钟 epoch 提示 (`edgine,rtc-epoch` 或
+    /// `bootargs` 中的 `edgine.rtc_epoch=SECONDS`); 用于 RTC 未初始化平台
+    pub rtc_epoch_hint: Option<u64>,
     /// CPU 拓扑 (`/cpus` 节点); 无该节点或解析失败时为 `None`
     pub cpus: Option<CpuTopology>,
     /// PSCI conduit (`/psci` 节点 `method` 属性); 无该节点或无法识别时为 `None`
@@ -155,6 +160,64 @@ pub fn set_psci_method(method: PsciMethod) {
 /// 读取启动阶段探测到的 PSCI conduit; 未探测到时返回 `None` (调用方自行回退)
 pub fn psci_method() -> Option<PsciMethod> {
     PSCI_METHOD.get().copied()
+}
+
+/// 启动阶段探测到的 PL031 RTC 物理基址
+static RTC_BASE: OnceLock<u64> = OnceLock::new();
+
+/// 保存启动阶段探测到的 PL031 RTC 基址 (仅引导阶段写入一次, 重复写入被忽略)
+pub fn set_rtc_base(base: u64) {
+    let _ = RTC_BASE.set(base);
+}
+
+/// 读取启动阶段探测到的 PL031 RTC 基址; 未探测到时返回 `None`
+#[must_use]
+pub fn rtc_base() -> Option<u64> {
+    RTC_BASE.get().copied()
+}
+
+/// 引导器给出的墙钟 epoch 提示 (仅供 RTC 未初始化的平台回退)
+static RTC_EPOCH_HINT: OnceLock<u64> = OnceLock::new();
+
+/// 保存引导器给出的墙钟 epoch 提示
+pub fn set_rtc_epoch_hint(epoch: u64) {
+    let _ = RTC_EPOCH_HINT.set(epoch);
+}
+
+/// 读取引导器给出的墙钟 epoch 提示; 未提供时返回 `None`
+#[must_use]
+pub fn rtc_epoch_hint() -> Option<u64> {
+    RTC_EPOCH_HINT.get().copied()
+}
+
+/// 从 `bootargs` 中解析 `edgine.rtc_epoch=SECONDS`
+///
+/// 只接受十进制数字并以空格/NUL 结束; 非法值返回 `None`.
+#[must_use]
+fn parse_epoch_hint(bootargs: &[u8]) -> Option<u64> {
+    const KEY: &[u8] = b"edgine.rtc_epoch=";
+    let mut idx = 0;
+    while idx + KEY.len() <= bootargs.len() {
+        let window = bootargs.get(idx..idx + KEY.len())?;
+        if window == KEY {
+            let mut value = 0u64;
+            let mut digits = 0;
+            for byte in bootargs.get(idx + KEY.len()..)? {
+                if byte.is_ascii_digit() {
+                    value = value
+                        .checked_mul(10)?
+                        .checked_add(u64::from(*byte - b'0'))?;
+                    digits += 1;
+                    continue;
+                }
+                let terminated = matches!(byte, b' ' | b'\t' | b'\0');
+                return (digits > 0 && terminated).then_some(value);
+            }
+            return (digits > 0).then_some(value);
+        }
+        idx += 1;
+    }
+    None
 }
 
 /// 启动阶段从 `/chosen` 解析到的 initrd 物理区 (base, size); 供引导路径转交内核
@@ -276,6 +339,8 @@ impl<'a> Parser<'a> {
                 uart_base: None,
                 gic_dist_base: None,
                 gic_redist_base: None,
+                rtc_base: None,
+                rtc_epoch_hint: None,
                 cpus: None,
                 psci_method: None,
                 initrd_start: None,
@@ -435,6 +500,16 @@ impl<'a> Parser<'a> {
                 self.info.initrd_end = decode_be_cells(value);
                 return Some(());
             }
+            if name == b"edgine,rtc-epoch" {
+                self.info.rtc_epoch_hint = decode_be_cells(value).filter(|v| *v > 0);
+                return Some(());
+            }
+            if name == b"bootargs" {
+                if let Some(epoch) = parse_epoch_hint(value) {
+                    self.info.rtc_epoch_hint = Some(epoch);
+                }
+                return Some(());
+            }
         }
 
         let idx = self.depth.checked_sub(1)?;
@@ -482,6 +557,13 @@ impl<'a> Parser<'a> {
         if self.info.uart_base.is_none() && cstr_list_contains(scan.compatible, b"arm,pl011") {
             if let Some((base, _)) = decode_reg(scan.reg, self.addr_cells, self.size_cells, 0) {
                 self.info.uart_base = Some(base);
+            }
+            return;
+        }
+
+        if self.info.rtc_base.is_none() && cstr_list_contains(scan.compatible, b"arm,pl031") {
+            if let Some((base, _)) = decode_reg(scan.reg, self.addr_cells, self.size_cells, 0) {
+                self.info.rtc_base = Some(base);
             }
             return;
         }
@@ -699,9 +781,21 @@ mod tests {
         );
         b.end_node();
 
+        b.begin_node("rtc@9010000");
+        b.prop("compatible", b"arm,pl031\0arm,primecell\0");
+        b.prop_cells("reg", &[0, 0x0901_0000, 0, 0x1000]);
+        b.end_node();
+
         b.begin_node("psci");
         b.prop("compatible", b"arm,psci-1.0\0arm,psci-0.2\0");
         b.prop("method", b"hvc\0");
+        b.end_node();
+
+        b.begin_node("chosen");
+        b.prop(
+            "bootargs",
+            b"console=ttyAMA0 edgine.rtc_epoch=1795700000 quiet\0",
+        );
         b.end_node();
 
         b.end_node();
@@ -716,6 +810,8 @@ mod tests {
         assert_eq!(info.uart_base, Some(0x0900_0000));
         assert_eq!(info.gic_dist_base, Some(0x0800_0000));
         assert_eq!(info.gic_redist_base, Some(0x080A_0000));
+        assert_eq!(info.rtc_base, Some(0x0901_0000));
+        assert_eq!(info.rtc_epoch_hint, Some(1_795_700_000));
         assert_eq!(info.psci_method, Some(PsciMethod::Hvc));
     }
 

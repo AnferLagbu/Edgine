@@ -26,6 +26,7 @@ fn common_linux_numbers_are_bijective() {
         (61, 260),     // wait4
         (72, 25),      // fcntl
         (218, 96),     // set_tid_address
+        (227, 112),    // clock_settime
         (257, 56),     // openat
         (262, 79),     // newfstatat
         (302, 261),    // prlimit64

@@ -230,14 +230,56 @@ pub fn apply_settimeofday(tv_sec: i64, micros: i64) -> Result<usize, Errno> {
     if tv_sec < 0 || !(0..USEC_PER_SEC).contains(&micros) {
         return Err(Errno::Einval);
     }
+
+    let ns = tv_sec.cast_unsigned() * NS_PER_SEC + micros.cast_unsigned() * NS_PER_USEC;
+    apply_wall_clock_ns(ns)
+}
+
+/// `clock_settime(clockid, tp)` 策略 — 设置指定时钟的时间
+///
+/// `clockid` 仅支持 `CLOCK_REALTIME`; `CLOCK_MONOTONIC` 按 Linux 语义返回
+/// `EINVAL`. `tp` 指向 `struct timespec` (`tv_sec` + `tv_nsec`, 16 字节).
+///
+/// # Errors
+///
+/// - `tp` 为空指针或读取失败 → `EFAULT`
+/// - `clockid` 不是 `CLOCK_REALTIME` → `EINVAL`
+/// - `tv_sec` 为负或 `tv_nsec` 越界 → `EINVAL`
+/// - 调用者无特权 (euid != 0) → `EPERM`
+pub fn clock_settime_syscall(clk_id: i32, tp_ptr: u64) -> Result<usize, Errno> {
+    if clk_id != CLOCK_REALTIME {
+        return Err(Errno::Einval);
+    }
+    if tp_ptr == 0 {
+        return Err(Errno::Efault);
+    }
+
+    let mut input = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if !crate::privileged::syscall::api::read_struct_from_user(tp_ptr, &mut input) {
+        return Err(Errno::Efault);
+    }
+    if input.tv_sec < 0 || !(0..NS_PER_SEC.cast_signed()).contains(&input.tv_nsec) {
+        return Err(Errno::Einval);
+    }
+
+    let ns = input.tv_sec.cast_unsigned() * NS_PER_SEC + input.tv_nsec.cast_unsigned();
+    apply_wall_clock_ns(ns)
+}
+
+/// 墙钟设置核心: 特权检查 → 设置 `CLOCK_REALTIME` → 尽力回写 RTC
+fn apply_wall_clock_ns(ns: u64) -> Result<usize, Errno> {
     if !has_time_privilege() {
         return Err(Errno::Eperm);
     }
-
-    let ns = tv_sec.cast_unsigned() * NS_PER_SEC + micros.cast_unsigned() * NS_PER_USEC;
     if !crate::functions::timer::time_sync::TimeSyncSubsystem::set_time(ns) {
         return Err(Errno::Einval);
     }
+    // D7 T1: 尽力把新墙钟回写 RTC, 使下次启动从同一时间线开始.
+    // RTC 不可用/写入失败不回滚已成功的系统时间设置 (Linux settimeofday 同语义).
+    let _ = crate::privileged::timer::rtc::write_unix_seconds(ns / NS_PER_SEC);
     Ok(0)
 }
 
