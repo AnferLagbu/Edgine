@@ -69,6 +69,7 @@ const MARKER_PAIRS: &[(&str, &str, &str)] = &[
         "[KPTI] EL0 kernel high-half access denied",
     ),
     (INIT_PROBE, "[THREAD] FAIL: ", "[THREAD]"),
+    (INIT_PROBE, "[TIDCLEAR] PASS:", "[TIDCLEAR] PASS:"),
     (
         INIT_PROBE,
         "[UACCESS] PASS: readonly clone EFAULT",
@@ -191,8 +192,8 @@ fn test_every_judgement_has_a_red_branch() {
     );
     assert_eq!(
         script.matches("\nneed \"").count(),
-        21,
-        "正向判据应恰好 21 条 (D4-h 改 relocate/clear 二选一), 实得 {} 条 —— 少一条即该判据被静默删除",
+        22,
+        "正向判据应恰好 22 条 (D4-h 改 relocate/clear 二选一), 实得 {} 条 —— 少一条即该判据被静默删除",
         script.matches("\nneed \"").count()
     );
     assert_eq!(

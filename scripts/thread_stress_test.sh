@@ -113,6 +113,7 @@ boot_once() {
         # 里程碑命中外, 还要求本轮线程组判据与观测账目守恒同时成立: 任一缺失
         # 或出现 conserve=BAD 即判本次启动失败 (fail-closed).
         grep -aq "\[THREAD\] PASS:" "$log" 2>/dev/null || hit=1
+        grep -aq "\[TIDCLEAR\] PASS:" "$log" 2>/dev/null || hit=1
         grep -aq "conserve=ok" "$log" 2>/dev/null || hit=1
         grep -aq "conserve=BAD" "$log" 2>/dev/null && hit=1
     fi
@@ -122,7 +123,7 @@ boot_once() {
 TOTAL=0
 FAILED=0
 echo "[thread-stress] 次数: $ITER/架构  架构: $ARCH_LIST  单次超时: ${TIMEOUT}s  SMP: ${SMP}"
-echo "[thread-stress] 里程碑断言: '$MARKER' + '[THREAD] PASS:' + conserve=ok (无 BAD)"
+echo "[thread-stress] 里程碑断言: '$MARKER' + '[THREAD] PASS:' + '[TIDCLEAR] PASS:' + conserve=ok (无 BAD)"
 [ -n "$QEMU_EXTRA" ] && echo "[thread-stress] 附加 QEMU 参数: $QEMU_EXTRA"
 
 for arch in $ARCH_LIST; do

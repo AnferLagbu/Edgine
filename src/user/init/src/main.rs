@@ -14,8 +14,8 @@ use userlib::sys::{
     env_pivot_root, exit_group, fork, fs_close, fs_mkdir, fs_open, fs_read, fs_write, futex_wait,
     futex_wait_bitset, futex_wake, getpid, getsockopt, gettid, kill, listen, nanosleep,
     pipe_create, poll, proc_exec, proc_exit, recv, rt_sigaction, sched_snapshot, sched_yield, send,
-    setsockopt, shutdown, socket, tgkill, timerfd_create, timerfd_settime, wait_pid,
-    wait_pid_status, wait_pid_status_nohang,
+    set_tid_address, setsockopt, shutdown, socket, tgkill, timerfd_create, timerfd_settime,
+    wait_pid, wait_pid_status, wait_pid_status_nohang,
 };
 // 仅 x86_64 探针 (ipv6_udp_probe / udp_connect_probe / mcast_probe / udp_echo_probe) 用到的
 // UDP 与组播成员管理 ABI; aarch64 无对应 NIC/RA/注帧环境, 故按架构分列以免未用导入告警.
@@ -125,6 +125,11 @@ pub extern "C" fn _start() -> ! {
     // 子线程上核 → 子线程睡下 → 父线程上核"的交替推进, 忙等子进程独占一个核
     // 会拖慢该交替直至撞上重试上界.
     thread_probe();
+
+    // ── D7 S1: set_tid_address 退出清理集成腿 ───────────────────────────
+    // 线程组仍存活时, 线程经 set_tid_address 登记的用户字必须在退出时清零并
+    // 唤醒等待者; 登记只读 .text 时必须静默跳过, 不能在退出路径触发内核 #PF.
+    tidclear_probe();
 
     // ── A-10: 返回用户态信号投递探针 ────────────────────────────────────
     // 必须在 busy 忙等子进程 fork 之前同步完成: IRQ 腿依赖目标线程在次核上
@@ -660,6 +665,19 @@ static THREAD_PROGRESS: AtomicU32 = AtomicU32::new(0);
 /// 放行标志: 父线程置 1 并唤醒全部线程 (父 → 线程方向).
 static THREAD_RELEASE: AtomicU32 = AtomicU32::new(0);
 
+/// S1 `set_tid_address` 腿的线程 clone 标志: 只建共享地址空间的普通线程,
+/// 不携带 `CLONE_CHILD_CLEARTID` —— 清零必须由 `set_tid_address` 登记驱动.
+const TIDCLEAR_CLONE_FLAGS: u64 = CLONE_VM | CLONE_THREAD | CLONE_SIGHAND | CLONE_FILES | CLONE_FS;
+/// 好指针腿的用户栈.
+static TIDCLEAR_STACK: ThreadStack =
+    const { ThreadStack(UnsafeCell::new([0u8; THREAD_STACK_BYTES])) };
+/// 好指针腿的清零目标; 初始值非 0, 线程写入自己的 TID 以证明共享地址空间可见.
+static TIDCLEAR_GOOD: AtomicU32 = AtomicU32::new(u32::MAX);
+/// 好指针腿已登记并上报 TID.
+static TIDCLEAR_GOOD_READY: AtomicU32 = AtomicU32::new(0);
+/// 好指针腿放行退出.
+static TIDCLEAR_GOOD_RELEASE: AtomicU32 = AtomicU32::new(0);
+
 /// `exit_group` 腿的 helper 线程栈 (子进程私有副本).
 static GROUP_HELPER_STACK: ThreadStack =
     const { ThreadStack(UnsafeCell::new([0u8; THREAD_STACK_BYTES])) };
@@ -699,6 +717,116 @@ fn thread_probe() {
         },
         Err((tag, code)) => thread_fail(tag, code),
     }
+}
+
+/// D7 S1: `set_tid_address` 退出清理集成探针.
+///
+/// 好指针腿: 线程在共享地址空间登记 `TIDCLEAR_GOOD`, 报到后等父线程放行;
+/// 退出时内核必须写 0 并 futex 唤醒父线程. 坏指针腿: fork 子进程把只读
+/// `.text` 地址登记为 `clear_child_tid`, 入口仍返回 TID, 但退出清理必须静默
+/// 跳过, 不能以裸 store 触发内核写保护 #PF.
+fn tidclear_probe() {
+    let Some(deadline) = wait_deadline() else {
+        tidclear_fail("clock", -1);
+        return;
+    };
+    match tidclear_leg(deadline) {
+        Ok(()) => println("[TIDCLEAR] PASS: set_tid_address clear+wake, readonly target silent"),
+        Err((tag, code)) => tidclear_fail(tag, code),
+    }
+}
+
+/// 失败出口: 与 `[THREAD]` 同口径, 整行一次写出, 缺 `[TIDCLEAR] PASS` 即判红.
+fn tidclear_fail(tag: &'static str, code: i64) {
+    let mut buf = [0u8; 96];
+    let mut pos = 0usize;
+    append_bytes(&mut buf, &mut pos, b"[TIDCLEAR] FAIL: ");
+    append_bytes(&mut buf, &mut pos, tag.as_bytes());
+    append_bytes(&mut buf, &mut pos, b" code=");
+    append_dec(&mut buf, &mut pos, code);
+    append_bytes(&mut buf, &mut pos, b"\n");
+    let _ = fs_write(1, &buf[..pos]);
+}
+
+/// S1 两条腿的实现; 失败返回 (判据标签, 实测读数).
+fn tidclear_leg(deadline: u64) -> Result<(), (&'static str, i64)> {
+    // 清零目标初值非 0, 子线程先写自己的 TID 证明共享地址空间; 退出时归零.
+    TIDCLEAR_GOOD.store(u32::MAX, Ordering::Release);
+    TIDCLEAR_GOOD_READY.store(0, Ordering::Release);
+    TIDCLEAR_GOOD_RELEASE.store(0, Ordering::Release);
+
+    let good = unsafe {
+        // SAFETY: 栈顶取自本进程 BSS 的 16 字节对齐静态块; 不请求 TID 回填,
+        // 两个 TID 指针传 null; 入口/参数经被调用者保存寄存器偷渡.
+        clone_thread(
+            TIDCLEAR_CLONE_FLAGS,
+            thread_stack_top(&TIDCLEAR_STACK),
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+            0,
+            tidclear_good_thread,
+            deadline,
+        )
+    };
+    if good <= 0 {
+        return Err(("clone-good", good));
+    }
+    if !futex_wait_until(&TIDCLEAR_GOOD_READY, |v| v == 1, deadline) {
+        return Err((
+            "good-ready",
+            i64::from(TIDCLEAR_GOOD_READY.load(Ordering::Acquire)),
+        ));
+    }
+    let good_tid = u32::try_from(good).map_err(|_| ("good-tid-range", good))?;
+    let seen = TIDCLEAR_GOOD.load(Ordering::Acquire);
+    if seen != good_tid {
+        return Err(("good-set", i64::from(seen)));
+    }
+    TIDCLEAR_GOOD_RELEASE.store(1, Ordering::Release);
+    let _ = futex_wake(&TIDCLEAR_GOOD_RELEASE, 1);
+    if !futex_wait_until(&TIDCLEAR_GOOD, |v| v == 0, deadline) {
+        return Err((
+            "good-clear",
+            i64::from(TIDCLEAR_GOOD.load(Ordering::Acquire)),
+        ));
+    }
+
+    // 坏指针腿: fork 子进程把只读 `.text` 地址登记为 clear_child_tid. 入口不
+    // 校验可写性, 必须返回 TID; 退出清理必须经 userptr 判据识别不可写并跳过,
+    // 不能以裸 store 触发内核写保护 #PF. 子进程是独立线程组, 父进程 wait4 的
+    // 正常退出状态就是退出清理走完的证据.
+    let bad = fork();
+    if bad == 0 {
+        let tid = gettid();
+        let bad_ptr = tidclear_probe as *const () as u64;
+        let rc = set_tid_address(bad_ptr as *mut u32);
+        proc_exit(if rc == tid { 0 } else { 3 });
+    }
+    let bad_pid = i32::try_from(bad).map_err(|_| ("bad-fork", bad.cast_signed()))?;
+    let mut status = 0i32;
+    let reaped = wait_pid_status(bad_pid, &mut status);
+    if reaped != i64::from(bad_pid) {
+        return Err(("bad-wait", reaped));
+    }
+    if status != 0 {
+        return Err(("bad-exit", i64::from(status)));
+    }
+    Ok(())
+}
+
+/// 好指针腿线程体: 登记共享清零字, 写入自己的 TID, 报到后等放行退出.
+extern "C" fn tidclear_good_thread(deadline: u64) {
+    let tid = gettid();
+    let rc = set_tid_address(u32_slot_ptr(&TIDCLEAR_GOOD));
+    if rc == tid
+        && let Ok(tid_u32) = u32::try_from(tid)
+    {
+        TIDCLEAR_GOOD.store(tid_u32, Ordering::Release);
+    }
+    TIDCLEAR_GOOD_READY.store(1, Ordering::Release);
+    let _ = futex_wake(&TIDCLEAR_GOOD_READY, 1);
+    let _ = futex_wait_until(&TIDCLEAR_GOOD_RELEASE, |v| v != 0, deadline);
+    proc_exit(0);
 }
 
 /// 失败出口: `tag` 定位判据, `code` 携带该判据的实测读数 (TID / 位图 / 退出码).

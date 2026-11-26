@@ -710,6 +710,14 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 warn "[x86_64] 未观察到线程组运行时判据 (K-07a)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
+            # D7 S1: set_tid_address 退出清理 —— 好指针写 0+futex 唤醒, 只读
+            # `.text` 坏指针静默跳过 (不得在退出路径触发内核 #PF). 缺失即回归.
+            if grep -q "\[TIDCLEAR\] PASS:" "$X64_LOG"; then
+                ok "[x86_64] set_tid_address 退出清理通过 (D7 S1)"
+            else
+                warn "[x86_64] 未观察到 set_tid_address 退出清理断言 (D7 S1)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
             # A-10: 返回用户态信号投递 —— init 装 handler 后自投 SIGTERM, 分别在
             # syscall 出口与定时器中断的 EL0 出口被投递并 sigreturn 回到原指令;
             # 两腿都命中才打印 `[SIG] PASS:`. 缺失即投递路径回归 (fail-closed).
@@ -994,6 +1002,13 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "aarch64" ]; then
                 ok "[aarch64] 线程组运行时判据通过 (K-07a)"
             else
                 warn "[aarch64] 未观察到线程组运行时判据 (K-07a)"
+                [ "$FAIL_OK" = "0" ] && RESULT=1
+            fi
+            # D7 S1: set_tid_address 退出清理 (与 x86_64 分支同断言).
+            if grep -q "\[TIDCLEAR\] PASS:" "$A64_LOG"; then
+                ok "[aarch64] set_tid_address 退出清理通过 (D7 S1)"
+            else
+                warn "[aarch64] 未观察到 set_tid_address 退出清理断言 (D7 S1)"
                 [ "$FAIL_OK" = "0" ] && RESULT=1
             fi
             # A-10: 返回用户态信号投递 (与 x86_64 分支同断言). aarch64 侧本判据

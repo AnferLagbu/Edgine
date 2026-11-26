@@ -910,7 +910,7 @@ pub use edgine_abi::thread::{
     CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_FILES, CLONE_FS, CLONE_PARENT_SETTID,
     CLONE_SETTLS, CLONE_SIGHAND, CLONE_THREAD, CLONE_VM, FUTEX_PRIVATE_FLAG, FUTEX_REQUEUE,
     FUTEX_WAIT, FUTEX_WAIT_BITSET, FUTEX_WAKE, FUTEX_WAKE_BITSET, SYS_CLONE, SYS_EXIT_GROUP,
-    SYS_FUTEX, SYS_GETTID, SYS_KILL, SYS_TGKILL,
+    SYS_FUTEX, SYS_GETTID, SYS_KILL, SYS_SET_TID_ADDRESS, SYS_TGKILL,
 };
 
 /// wasm 运行时私有 syscall 编号、实例状态与信息结构 — 单一权威源 `edgine-abi`.
@@ -974,6 +974,17 @@ pub fn setsid() -> i64 {
 pub fn gettid() -> i64 {
     // SAFETY: S 类 — 无参数, 门只搬运编号; 内核返回当前线程 ID 数值.
     unsafe { sys0(SYS_GETTID) }
+}
+
+/// `set_tid_address(tidptr)` — 登记线程退出时清零并 futex 唤醒的用户地址.
+///
+/// `tidptr` 为 0 表示取消登记. 入口不要求地址可写 (与 Linux 一致), 坏地址只在
+/// 退出清理时静默跳过; 返回当前线程 TID.
+#[must_use]
+pub fn set_tid_address(tidptr: *mut u32) -> i64 {
+    // SAFETY: R 类 — 内核入口只保存地址数值, 不在 syscall 内解引用; 地址有效性
+    // 由调用方契约承担, 退出清理路径会自行校验映射/可写性后再写.
+    unsafe { sys1(SYS_SET_TID_ADDRESS, tidptr as u64) }
 }
 #[must_use]
 pub fn umask(mask: u32) -> u32 {

@@ -8,7 +8,7 @@
 #       D4 严格零嵌入后内嵌 `init.bin` 路径已删除, 本腿即**出货启动形态**;
 #       D4-e 起 `initramfs` feature 已退役 (解包无条件执行), 故本腿构建默认镜像
 #       (lockdep 常开), 不再切 KERNEL_FEATURES / KERNEL_NO_DEFAULT.
-#       本腿断言七条判据 (缺一即红):
+#       本腿断言八条判据 (缺一即红):
 #         1. `[INITRAMFS] Unpacked N files` 且 N >= 7 —— 归档被解析且真落盘
 #            (数量下限把"只有根目录/只有 /init 落盘"的嵌套目录回归钉住);
 #         2. `init from /init` —— PID 1 的镜像来自 VFS 读取 (回退路径打印的是
@@ -18,6 +18,8 @@
 #            核态不进入裸 store/不停机 (U-1 根因回归锁);
 #         5. `[THREAD] PASS` —— 载体加载的 init 真跑起来并打完 K-07a 线程组探针,
 #            证明从文件系统读出的 ELF 与内嵌 ELF 等价可执行;
+#         5b. `[TIDCLEAR] PASS` —— D7 S1: set_tid_address 登记字在退出时清零并
+#            futex 唤醒, 只读 `.text` 坏指针静默跳过 (不触发内核 #PF);
 #         6. `[EXEC] PASS: cwd+root` 且无 `[EXEC] FAIL` —— K-07b 批2 的 execve
 #            运行时射程: cwd 相对名 + chroot 视图绝对路径两条腿都 exec 成功,
 #            载荷回读的 argv/envp/cwd 全部一致 (同时钉住归档权限位保留 ——
@@ -142,6 +144,8 @@ boot_and_check() {
     local marker_timerfd="\[TIMERFD\] PASS"
     local marker_uaccess="\[UACCESS\] PASS"
     local marker_thread="\[THREAD\] PASS"
+    # D7 S1: set_tid_address 退出清理 —— 好指针清零唤醒, 只读坏指针静默.
+    local marker_tidclear="\[TIDCLEAR\] PASS"
     # 判据取 init 父进程的聚合行 (`cwd+root` 两腿全过才打印). 不能只查
     # `[EXEC] PASS` —— 载荷每腿都会打印 `[EXEC] PASS: <腿> argv+envp+cwd`,
     # 首腿通过即会让轮询提前收尾, root 腿与聚合行随之被切掉 (假绿).
@@ -159,6 +163,7 @@ boot_and_check() {
     for _i in $(seq 1 $((TIMEOUT * 10))); do
         if grep -aq "$marker_carrier" "$log" && grep -aq "$marker_timerfd" "$log" \
             && grep -aq "$marker_uaccess" "$log" && grep -aq "$marker_thread" "$log" \
+            && grep -aq "$marker_tidclear" "$log" \
             && grep -aq "$marker_exec" "$log" && grep -aq "$marker_snap" "$log"; then
             rc=0
             break
