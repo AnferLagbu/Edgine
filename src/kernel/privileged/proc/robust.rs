@@ -41,13 +41,16 @@ struct RobustListHead {
 ///
 /// 必须在进程地址空间销毁前调用 (`process_exit` 切内核页表之前).
 pub fn exit_cleanup(pid: u32) {
-    // 1. CLONE_CHILD_CLEARTID: 写 0 并唤醒
+    // 1. CLONE_CHILD_CLEARTID / set_tid_address: 写 0 并唤醒.
+    //    先摘登记, 退出清理即使重入也不会重复写; 写失败 (坏指针/未映射) 时
+    //    按 Linux `put_user` 失败语义跳过 futex 唤醒, 不误唤醒等待者.
     let clear_tid =
         api::process_with(pid, |p| p.clear_child_tid.load(Ordering::Acquire)).unwrap_or(0);
     if clear_tid != 0 {
-        write_u32_user(clear_tid, 0);
-        let _ = crate::privileged::syscall::futex::futex_wake(clear_tid, 1);
         api::process_with(pid, |p| p.clear_child_tid.store(0, Ordering::Release));
+        if write_u32_user(clear_tid, 0) {
+            let _ = crate::privileged::syscall::futex::futex_wake(clear_tid, 1);
+        }
     }
 
     // 2. robust list 遍历 (未登记则跳过)
@@ -109,16 +112,13 @@ fn handle_futex_word(pid: u32, uaddr: u64) {
     let _ = crate::privileged::syscall::futex::futex_wake(uaddr, 1);
 }
 
-/// 向用户地址写入 u32 (带指针校验, 失败静默)
-fn write_u32_user(uaddr: u64, val: u32) {
-    if !crate::privileged::syscall::raw::check_user_ptr(uaddr) {
-        return;
-    }
-    // SAFETY: 上方 `check_user_ptr(uaddr)` 已校验该地址在用户可访问范围内; 调用点
-    // 位于退出路径, 目标进程页表仍激活 (地址空间尚未销毁).
-    unsafe {
-        core::ptr::write_volatile(uaddr as *mut u32, val);
-    }
+/// 向用户地址写入 u32; 坏指针 / 未映射 / 不可写时返回 `false`, 不产生内核页故障.
+///
+/// 使用 `userptr::write_struct_to_user` 的完整判据 (区间、映射、逐页可写、SMAP),
+/// 而不是 `check_user_ptr` 的范围检查后裸 `write_volatile`: 后者只验证地址落在
+/// 用户半区, 目标页未映射或只读时会在退出路径触发内核页故障.
+fn write_u32_user(uaddr: u64, val: u32) -> bool {
+    crate::privileged::userptr::write_struct_to_user(uaddr, &val)
 }
 
 // ============================================================================

@@ -1059,19 +1059,28 @@ fn clear_child_tid_is_per_thread_and_woken() {
         "K-06: clear_child_tid 按退出 TID 读取 (每线程字段)"
     );
     assert!(
-        has(&cleanup, "write_u32_user(clear_tid, 0);")
-            && has(
-                &cleanup,
-                "crate::privileged::syscall::futex::futex_wake(clear_tid, 1);"
-            ),
-        "K-06: 清零后必须唤醒该地址上的 futex 等待者"
-    );
-    assert!(
         has(
             &cleanup,
-            "api::process_with(pid, |p| p.clear_child_tid.store(0, Ordering::Release));"
+            "if write_u32_user(clear_tid, 0) { let _ = crate::privileged::syscall::futex::futex_wake(clear_tid, 1); }"
         ),
-        "K-06: 清理后复位字段, 避免 TID 复用时误写旧地址"
+        "K-06: 清零成功后才唤醒该地址上的 futex 等待者 (put_user 失败不误唤醒)"
+    );
+    let reset_at = index_of(
+        &cleanup,
+        "api::process_with(pid, |p| p.clear_child_tid.store(0, Ordering::Release));",
+    );
+    let write_at = index_of(&cleanup, "write_u32_user(clear_tid, 0)");
+    assert!(
+        reset_at < write_at,
+        "K-06: 必须先摘登记再写用户字, 退出清理重入时不得重复写"
+    );
+    let helper = fn_body(&robust, "fn write_u32_user(");
+    assert!(
+        has(
+            &helper,
+            "crate::privileged::userptr::write_struct_to_user(uaddr, &val)"
+        ) && !helper.contains("write_volatile"),
+        "K-06: 用户字写入必须走 userptr 完整判据, 不得范围检查后裸 write_volatile"
     );
 }
 
