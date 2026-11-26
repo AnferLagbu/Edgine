@@ -15,7 +15,8 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
 - `glibc_hello`：本目录 `glibc_hello.c` 用宿主 GCC 16.2.1 / glibc 2.44
   `-O2 -s -fPIE -pie` 编译，`NEEDED=libc.so.6`
 - `glibc_g2`：本目录 `glibc_g2.c` 同编译器参数编译，直接调
-  `SYS_set_tid_address`/`SYS_prlimit64`/`SYS_rseq`，打印原始返回码
+  `SYS_set_tid_address`/`SYS_prlimit64`/`SYS_getrlimit`/`SYS_rseq`，逐项对比
+  `getrlimit` 与 `prlimit64` 的 16 个资源读数，并打印原始返回码
 - `glibc_time`：本目录 `glibc_time.c` 同编译器参数编译，调用
   `clock_gettime`/`gettimeofday`/`time`/`clock_getres`，验证无 VDSO 的
   syscall fallback
@@ -44,7 +45,7 @@ Edgine 上的装载、重定位、`exit(0)`、`printf`、启动 syscall、
 |---|---:|---|
 | `glibc_true` | 36,424 B | `684bc05bc973d1bfec940279475ece99740a78765696fcd3ea2dbd540df16fb5` |
 | `glibc_hello` | 11,176 B | `9aafb5ee74847ad39d6704447e6197f0545b8894964bd53f9815b1c763c58709` |
-| `glibc_g2` | 11,200 B | `339b3624336b8e022b6fbfae2b72d3c75d517e11c903646bc64394516d1d2f19` |
+| `glibc_g2` | 11,200 B | `8562e680e9c5b5c241f801dc0637f570eef46b9395f14ff3a258bad3df56ae12` |
 | `glibc_time` | 11,232 B | `1676f0f12b4090a06c687d7d6e6fdc57d57d7b215dfda240a95b731a78d77394` |
 | `glibc_pthread` | 11,344 B | `466bd228a8f0c7648a1e73b736c35c96697563168ae4aa08de39b3d271868c08` |
 | `glibc_clone3` | 11,272 B | `4fb861c111430dc7eb181598c0ca5c1ccc97276d550db5e9c58a3329bb48fc88` |

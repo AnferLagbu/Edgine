@@ -787,6 +787,7 @@ if [ "$ARCH" = "all" ] || [ "$ARCH" = "x86_64" ]; then
                 && grep -aq "\[GLIBC\] G2 PASS: startup syscalls" "$X64_LOG" \
                 && grep -aq "\[G2\] SET_TID PASS" "$X64_LOG" \
                 && grep -aq "\[G2\] PRLIMIT PASS" "$X64_LOG" \
+                && grep -aq "\[G2\] GETRLIMIT PASS" "$X64_LOG" \
                 && grep -aq "\[G2\] RSEQ ENOSYS" "$X64_LOG" \
                 && grep -aq "\[GLIBC\] TIME PASS: no-vdso fallback" "$X64_LOG" \
                 && grep -aq "\[TIME\] PASS" "$X64_LOG" \
