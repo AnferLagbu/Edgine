@@ -20,11 +20,18 @@ wasm 运行时是**普通用户进程**，不扩大 **TCB**（Trusted Computing 
 | 组件 | 职责 |
 |---|---|
 | [wasmrun/main.rs](../../src/user/wasmrun/src/main.rs) | 入口：取入口栈 `sp`、读 `argv[0]` 模块路径、VFS 读模块、wasmi 引擎/模块/Store/Linker、调 `_start`、`proc_exit` 退出码 |
-| [wasmrun/host.rs](../../src/user/wasmrun/src/host.rs) | 38 个 `wasi_snapshot_preview1` 宿主函数注册与逐函数翻译（含 `fd_readdir` 填满缓冲契约、`fd_dup` 语义） |
-| [wasmrun/wasi.rs](../../src/user/wasmrun/src/wasi.rs) | WASI errno 表、fd 表、preopen、路径归一、双架构 `filestat` 编解码、10 个宿主单测 |
+| [wasmrun/host.rs](../../src/user/wasmrun/src/host.rs) | 38 个 `wasi_snapshot_preview1` 宿主函数注册与逐函数翻译（`wasi_host!` 宏统一借用适配，含 `fd_readdir` 填满缓冲契约、`fd_dup` 语义） |
+| [wasmrun/wasi.rs](../../src/user/wasmrun/src/wasi.rs) | WASI errno 表、fd 表、preopen、路径归一、双架构 `filestat` 编解码（`cfg!` 分派保两套偏移表均被引用）、10 个宿主单测 |
 | [userlib/sys.rs](../../src/user/lib/src/sys.rs) | 用户态 syscall 包装（`open/read/write/stat/lseek/pread/pwrite/link/symlink/utimensat/getrandom/mmap/...`） |
 | [userlib/heap.rs](../../src/user/lib/src/heap.rs) | P0 最小 `#[global_allocator]`：K&R 地址升序 first-fit free-list，按需 `mmap` 64 KiB 粒度增长 |
 | vendored `wasmi` 2.0.0 | 纯 Rust `no_std` 解释器，`libm` + `validate`；锁定版本治理同 smoltcp（升级须授权） |
+
+**ABI 边界分层**：wasmi `IntoFunc` 要求注册闭包按值取 `Caller<'_, WasiCtx>`，而翻译函数体内只需要借用。
+故借用形态按边界切开——host 层 38 个函数签名统一为 `caller: &mut Caller<'_, WasiCtx>`（体内直接传 `caller`），
+注册边界由 `wasi_host!` 宏展开成 `func_wrap(…, |mut caller: Caller<…>, args…| f(&mut caller, args…))`，
+把「按值 → 借用」的适配集中在一处；WASI 规范超 7 参的 ABI 用参数结构体承载
+（`PathOpenArgs` / `PathTimesArgs` / `PathLinkArgs` / `WasiFilestat`），闭包只做解包。
+这样既满足 wasmi 的注册契约，也不需要任何 `#[allow(clippy::too_many_arguments)]` 或借用抑制。
 
 ## 端到端执行链路
 

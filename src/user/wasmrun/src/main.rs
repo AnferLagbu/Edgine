@@ -159,8 +159,8 @@ fn run(module_bytes: &[u8], ctx: WasiCtx) -> i32 {
 #[unsafe(no_mangle)]
 extern "C" fn wasmrun_main(sp: u64) -> ! {
     // SAFETY: 入口栈由内核按上述布局布置, 槽位均在有效区间内.
-    let argc = unsafe { word_at(sp, 0) };
-    if argc == 0 {
+    let arg_count = unsafe { word_at(sp, 0) };
+    if arg_count == 0 {
         proc_exit(1);
     }
     // SAFETY: argv[0] 为内核复制的模块路径指针.
@@ -172,13 +172,13 @@ extern "C" fn wasmrun_main(sp: u64) -> ! {
         proc_exit(1);
     };
 
-    // SAFETY: argv 数组从 sp+8 开始, argc 已由内核保证.
-    let args = unsafe { read_strvec(sp.wrapping_add(8)) };
+    // SAFETY: argv 数组从 sp+8 开始, arg_count 已由内核保证.
+    let argv = unsafe { read_strvec(sp.wrapping_add(8)) };
+    let envp_slot = sp.wrapping_add(8u64.wrapping_mul(arg_count.wrapping_add(2)));
     // SAFETY: argv 后是 NULL 槽, 再后是 envp; 入口栈总在有效区间内.
-    let env_start = sp.wrapping_add(8u64.wrapping_mul(argc.wrapping_add(2)));
-    let env = unsafe { read_strvec(env_start) };
+    let envp = unsafe { read_strvec(envp_slot) };
 
-    let mut ctx = WasiCtx::new(args, env);
+    let mut ctx = WasiCtx::new(argv, envp);
     host::init_root(&mut ctx);
     proc_exit(run(&bytes, ctx));
 }

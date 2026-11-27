@@ -51,11 +51,9 @@ pub const ERRNO_INVAL: i32 = 28;
 pub const ERRNO_IO: i32 = 29;
 pub const ERRNO_ISCONN: i32 = 30;
 pub const ERRNO_ISDIR: i32 = 31;
-pub const ERRNO_LOOP: i32 = 32;
 pub const ERRNO_MFILE: i32 = 33;
 pub const ERRNO_MLINK: i32 = 34;
 pub const ERRNO_MSGSIZE: i32 = 35;
-pub const ERRNO_MULTIHOP: i32 = 36;
 pub const ERRNO_NAMETOOLONG: i32 = 37;
 pub const ERRNO_NETDOWN: i32 = 38;
 pub const ERRNO_NETRESET: i32 = 39;
@@ -66,7 +64,6 @@ pub const ERRNO_NODEV: i32 = 43;
 pub const ERRNO_NOENT: i32 = 44;
 pub const ERRNO_NOEXEC: i32 = 45;
 pub const ERRNO_NOLCK: i32 = 46;
-pub const ERRNO_NOLINK: i32 = 47;
 pub const ERRNO_NOMEM: i32 = 48;
 pub const ERRNO_NOMSG: i32 = 49;
 pub const ERRNO_NOPROTOOPT: i32 = 50;
@@ -91,7 +88,6 @@ pub const ERRNO_RANGE: i32 = 68;
 pub const ERRNO_ROFS: i32 = 69;
 pub const ERRNO_SPIPE: i32 = 70;
 pub const ERRNO_SRCH: i32 = 71;
-pub const ERRNO_STALE: i32 = 72;
 pub const ERRNO_TIMEDOUT: i32 = 73;
 pub const ERRNO_TXTBSY: i32 = 74;
 pub const ERRNO_XDEV: i32 = 75;
@@ -107,7 +103,6 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         2 => ERRNO_NOENT,
         3 => ERRNO_SRCH,
         4 => ERRNO_INTR,
-        5 => ERRNO_IO,
         6 => ERRNO_NXIO,
         7 => ERRNO_TOOBIG,
         8 => ERRNO_NOEXEC,
@@ -143,7 +138,7 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         39 => ERRNO_NOTEMPTY,
         42 => ERRNO_NOMSG,
         43 => ERRNO_IDRM,
-        60 | 61 | 62 | 63 => ERRNO_NOTSUP,
+        60..=63 | 95 => ERRNO_NOTSUP,
         71 => ERRNO_PROTO,
         74 => ERRNO_BADMSG,
         75 => ERRNO_OVERFLOW,
@@ -154,7 +149,6 @@ pub fn errno_from_linux(errno: i32) -> i32 {
         91 => ERRNO_PROTOTYPE,
         92 => ERRNO_NOPROTOOPT,
         93 => ERRNO_PROTONOSUPPORT,
-        95 => ERRNO_NOTSUP,
         97 => ERRNO_AFNOSUPPORT,
         98 => ERRNO_ADDRINUSE,
         99 => ERRNO_ADDRNOTAVAIL,
@@ -187,15 +181,11 @@ pub const FILETYPE_BLOCK_DEVICE: u8 = 1;
 pub const FILETYPE_CHARACTER_DEVICE: u8 = 2;
 pub const FILETYPE_DIRECTORY: u8 = 3;
 pub const FILETYPE_REGULAR_FILE: u8 = 4;
-pub const FILETYPE_SOCKET_DGRAM: u8 = 5;
 pub const FILETYPE_SOCKET_STREAM: u8 = 6;
 pub const FILETYPE_SYMBOLIC_LINK: u8 = 7;
 
 pub const FDFLAG_APPEND: u16 = 1 << 0;
-pub const FDFLAG_DSYNC: u16 = 1 << 1;
 pub const FDFLAG_NONBLOCK: u16 = 1 << 2;
-pub const FDFLAG_RSYNC: u16 = 1 << 3;
-pub const FDFLAG_SYNC: u16 = 1 << 4;
 
 pub const OFLAG_CREAT: u16 = 1 << 0;
 pub const OFLAG_DIRECTORY: u16 = 1 << 1;
@@ -203,10 +193,10 @@ pub const OFLAG_EXCL: u16 = 1 << 2;
 pub const OFLAG_TRUNC: u16 = 1 << 3;
 
 pub const LOOKUP_SYMLINK_FOLLOW: u32 = 1;
-pub const FSTFLAG_ATIM: u16 = 1 << 0;
-pub const FSTFLAG_ATIM_NOW: u16 = 1 << 1;
-pub const FSTFLAG_MTIM: u16 = 1 << 2;
-pub const FSTFLAG_MTIM_NOW: u16 = 1 << 3;
+pub const FSTFLAG_ATIM: u32 = 1 << 0;
+pub const FSTFLAG_ATIM_NOW: u32 = 1 << 1;
+pub const FSTFLAG_MTIM: u32 = 1 << 2;
+pub const FSTFLAG_MTIM_NOW: u32 = 1 << 3;
 
 pub const RIGHTS_FD_DATASYNC: u64 = 1 << 0;
 pub const RIGHTS_FD_READ: u64 = 1 << 1;
@@ -236,60 +226,58 @@ pub const RIGHTS_PATH_SYMLINK: u64 = 1 << 24;
 pub const RIGHTS_PATH_REMOVE_DIRECTORY: u64 = 1 << 25;
 pub const RIGHTS_PATH_UNLINK_FILE: u64 = 1 << 26;
 pub const RIGHTS_POLL_FD_READWRITE: u64 = 1 << 27;
-pub const RIGHTS_SOCK_SHUTDOWN: u64 = 1 << 28;
-pub const RIGHTS_SOCK_ACCEPT: u64 = 1 << 29;
 
 /// 所有 rights 位 (30 位).
 pub const RIGHTS_ALL: u64 = (1 << 30) - 1;
 
 /// 标准流 rights: 与内核 `WasiFdTable` 给 stdio 的位段同口径.
-pub const RIGHTS_STDIO: u64 = (1 << 0)
-    | (1 << 1)
-    | (1 << 2)
-    | (1 << 3)
-    | (1 << 4)
-    | (1 << 5)
-    | (1 << 6)
-    | (1 << 7)
-    | (1 << 8);
+pub const RIGHTS_STDIO: u64 = RIGHTS_FD_DATASYNC
+    | RIGHTS_FD_READ
+    | RIGHTS_FD_SEEK
+    | RIGHTS_FD_FDSTAT_SET_FLAGS
+    | RIGHTS_FD_SYNC
+    | RIGHTS_FD_TELL
+    | RIGHTS_FD_WRITE
+    | RIGHTS_FD_ADVISE
+    | RIGHTS_FD_ALLOCATE;
 
 /// 普通文件 rights: 读写/定位/同步/分配/元数据.
-pub const RIGHTS_FILE: u64 = (1 << 0)
-    | (1 << 1)
-    | (1 << 2)
-    | (1 << 4)
-    | (1 << 5)
-    | (1 << 6)
-    | (1 << 7)
-    | (1 << 8)
-    | (1 << 21)
-    | (1 << 22)
-    | (1 << 23)
-    | (1 << 27);
+pub const RIGHTS_FILE: u64 = RIGHTS_FD_DATASYNC
+    | RIGHTS_FD_READ
+    | RIGHTS_FD_SEEK
+    | RIGHTS_FD_SYNC
+    | RIGHTS_FD_TELL
+    | RIGHTS_FD_WRITE
+    | RIGHTS_FD_ADVISE
+    | RIGHTS_FD_ALLOCATE
+    | RIGHTS_FD_FILESTAT_GET
+    | RIGHTS_FD_FILESTAT_SET_SIZE
+    | RIGHTS_FD_FILESTAT_SET_TIMES
+    | RIGHTS_POLL_FD_READWRITE;
 
 /// 目录 rights: 路径操作 + 目录枚举.
-pub const RIGHTS_DIR: u64 = (1 << 1)
-    | (1 << 2)
-    | (1 << 4)
-    | (1 << 5)
-    | (1 << 7)
-    | (1 << 9)
-    | (1 << 10)
-    | (1 << 11)
-    | (1 << 12)
-    | (1 << 13)
-    | (1 << 14)
-    | (1 << 15)
-    | (1 << 16)
-    | (1 << 17)
-    | (1 << 18)
-    | (1 << 19)
-    | (1 << 20)
-    | (1 << 21)
-    | (1 << 24)
-    | (1 << 25)
-    | (1 << 26)
-    | (1 << 27);
+pub const RIGHTS_DIR: u64 = RIGHTS_FD_READ
+    | RIGHTS_FD_SEEK
+    | RIGHTS_FD_SYNC
+    | RIGHTS_FD_TELL
+    | RIGHTS_FD_ADVISE
+    | RIGHTS_PATH_CREATE_DIRECTORY
+    | RIGHTS_PATH_CREATE_FILE
+    | RIGHTS_PATH_LINK_SOURCE
+    | RIGHTS_PATH_LINK_TARGET
+    | RIGHTS_PATH_OPEN
+    | RIGHTS_FD_READDIR
+    | RIGHTS_PATH_READLINK
+    | RIGHTS_PATH_RENAME_SOURCE
+    | RIGHTS_PATH_RENAME_TARGET
+    | RIGHTS_PATH_FILESTAT_GET
+    | RIGHTS_PATH_FILESTAT_SET_SIZE
+    | RIGHTS_PATH_FILESTAT_SET_TIMES
+    | RIGHTS_FD_FILESTAT_GET
+    | RIGHTS_PATH_SYMLINK
+    | RIGHTS_PATH_REMOVE_DIRECTORY
+    | RIGHTS_PATH_UNLINK_FILE
+    | RIGHTS_POLL_FD_READWRITE;
 
 /// fd 表容量. WASI preview1 无上限, 取 128 防 guest 灌爆用户堆.
 pub const FD_TABLE_CAP: usize = 128;
@@ -397,7 +385,7 @@ impl WasiFdTable {
         for (i, slot) in self.entries.iter_mut().enumerate() {
             if slot.is_none() {
                 *slot = Some(entry);
-                return Ok(i as u32);
+                return u32::try_from(i).map_err(|_| ERRNO_NOSPC);
             }
         }
         Err(ERRNO_NOSPC)
@@ -438,10 +426,10 @@ impl WasiFdTable {
         let Some(entry) = self.entries[from as usize].take() else {
             return Err(ERRNO_BADF);
         };
-        if let Some(old) = self.entries[to as usize].take() {
-            if old.host_fd >= 0 {
-                let _ = close_host(old.host_fd);
-            }
+        if let Some(old) = self.entries[to as usize].take()
+            && old.host_fd >= 0
+        {
+            let _ = close_host(old.host_fd);
         }
         self.entries[to as usize] = Some(entry);
         Ok(())
@@ -558,7 +546,7 @@ pub fn encode_fdstat(
     b
 }
 
-/// 编码 WASI `prestat` 结构 (8 字节): tag=0(dir) + name_len.
+/// 编码 WASI `prestat` 结构 (8 字节): `tag=0(dir)` + `name_len`.
 #[must_use]
 pub fn encode_prestat(name_len: u32) -> [u8; 8] {
     let mut b = [0u8; 8];
@@ -567,27 +555,39 @@ pub fn encode_prestat(name_len: u32) -> [u8; 8] {
     b
 }
 
+/// WASI `filestat` 的字段组 (ABI 结构 8 字段, 合成一组避免超参签名).
+#[derive(Clone, Copy)]
+pub struct WasiFilestat {
+    /// 设备号.
+    pub dev: u64,
+    /// inode 号.
+    pub ino: u64,
+    /// WASI filetype.
+    pub filetype: u8,
+    /// 硬链接数.
+    pub nlink: u64,
+    /// 文件字节数.
+    pub size: u64,
+    /// 访问时间 (ns).
+    pub atim_ns: u64,
+    /// 修改时间 (ns).
+    pub mtim_ns: u64,
+    /// 状态变更时间 (ns).
+    pub ctim_ns: u64,
+}
+
 /// 编码 WASI `filestat` 结构 (64 字节).
 #[must_use]
-pub fn encode_filestat(
-    dev: u64,
-    ino: u64,
-    filetype: u8,
-    nlink: u64,
-    size: u64,
-    atim_ns: u64,
-    mtim_ns: u64,
-    ctim_ns: u64,
-) -> [u8; 64] {
+pub fn encode_filestat(f: &WasiFilestat) -> [u8; 64] {
     let mut b = [0u8; 64];
-    b[0..8].copy_from_slice(&dev.to_le_bytes());
-    b[8..16].copy_from_slice(&ino.to_le_bytes());
-    b[16] = filetype;
-    b[24..32].copy_from_slice(&nlink.to_le_bytes());
-    b[32..40].copy_from_slice(&size.to_le_bytes());
-    b[40..48].copy_from_slice(&atim_ns.to_le_bytes());
-    b[48..56].copy_from_slice(&mtim_ns.to_le_bytes());
-    b[56..64].copy_from_slice(&ctim_ns.to_le_bytes());
+    b[0..8].copy_from_slice(&f.dev.to_le_bytes());
+    b[8..16].copy_from_slice(&f.ino.to_le_bytes());
+    b[16] = f.filetype;
+    b[24..32].copy_from_slice(&f.nlink.to_le_bytes());
+    b[32..40].copy_from_slice(&f.size.to_le_bytes());
+    b[40..48].copy_from_slice(&f.atim_ns.to_le_bytes());
+    b[48..56].copy_from_slice(&f.mtim_ns.to_le_bytes());
+    b[56..64].copy_from_slice(&f.ctim_ns.to_le_bytes());
     b
 }
 
@@ -615,16 +615,13 @@ pub fn encode_dirent(
 /// # Errors
 /// 缓冲区不足以容纳目标架构的 `struct stat` 时返回 `ERRNO_FAULT`.
 pub fn filestat_from_linux(stat: &[u8]) -> Result<[u8; 64], i32> {
-    #[cfg(target_arch = "x86_64")]
-    {
+    // `cfg!` 让两套偏移表在任一目标上都被引用 (单测也直接用两套解码器),
+    // 不产生「aarch64 解码器仅 x86 构建里死代码」的门禁债.
+    if cfg!(target_arch = "x86_64") {
         filestat_from_linux_x86_64(stat)
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
+    } else if cfg!(target_arch = "aarch64") {
         filestat_from_linux_aarch64(stat)
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
+    } else {
         let _ = stat;
         Err(ERRNO_NOTSUP)
     }
@@ -646,16 +643,16 @@ pub fn filestat_from_linux_x86_64(stat: &[u8]) -> Result<[u8; 64], i32> {
     let atim = read_timespec(stat, 72);
     let mtim = read_timespec(stat, 88);
     let ctim = read_timespec(stat, 104);
-    Ok(encode_filestat(
+    Ok(encode_filestat(&WasiFilestat {
         dev,
         ino,
-        filetype_from_mode(mode),
+        filetype: filetype_from_mode(mode),
         nlink,
         size,
-        atim,
-        mtim,
-        ctim,
-    ))
+        atim_ns: atim,
+        mtim_ns: mtim,
+        ctim_ns: ctim,
+    }))
 }
 
 /// aarch64 glibc `struct stat` (128 字节) -> WASI filestat.
@@ -674,24 +671,24 @@ pub fn filestat_from_linux_aarch64(stat: &[u8]) -> Result<[u8; 64], i32> {
     let atim = read_timespec(stat, 72);
     let mtim = read_timespec(stat, 88);
     let ctim = read_timespec(stat, 104);
-    Ok(encode_filestat(
+    Ok(encode_filestat(&WasiFilestat {
         dev,
         ino,
-        filetype_from_mode(mode),
-        u64::from(nlink),
+        filetype: filetype_from_mode(mode),
+        nlink: u64::from(nlink),
         size,
-        atim,
-        mtim,
-        ctim,
-    ))
+        atim_ns: atim,
+        mtim_ns: mtim,
+        ctim_ns: ctim,
+    }))
 }
 
 fn read_timespec(stat: &[u8], off: usize) -> u64 {
     let sec = i64::from_le_bytes(stat[off..off + 8].try_into().unwrap());
     let nsec = i64::from_le_bytes(stat[off + 8..off + 16].try_into().unwrap());
-    (sec as u64)
+    sec.cast_unsigned()
         .wrapping_mul(1_000_000_000)
-        .wrapping_add(nsec as u64)
+        .wrapping_add(nsec.cast_unsigned())
 }
 
 /// Linux `st_mode` -> WASI filetype.

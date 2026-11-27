@@ -90,7 +90,8 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
 - **详情**: design §七「不立即删码，用户态前提齐备前保留为兜底」。相对完整路径终态退役，
   但 P1-P3 期间内核解释器保留为引导 fallback。退役须真删（F9 死代码零容忍），
   不得 `#[allow(dead_code)]` 压制。P3 内容面全绿后按用户裁定（丙）先开 P4，退役已执行；
-  P3/P4 的「七门槛全绿」判据仍受 P3.5 的 `src/user` pedantic 债阻塞（见各阶段状态）。
+  P3/P4 的「七门槛全绿」判据曾受 P3.5 的 `src/user` pedantic 债阻塞，2026-11-27 P3.5 甲 落地后
+  该判据已解除（`ci/audit.sh full` rc=0），P3/P3.5/P4 三者同轮转 `[X]`。
 
 ## 施工分解
 
@@ -178,14 +179,14 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - wasmi host 层单测（no_std）+ host-tests 集成。
   - QEMU 双架构 exec 端到端（替代既有 `[WASM] PASS` 腿）。
   - 真实工具链载荷（wasi-sdk 编译）stdio + 文件 + socket 验收。
-- **状态**: [~] (2026-11-27：36 项双架构全绿；七门槛之 `src/user` pedantic 腿仍红，属 P2 遗留，见 P3.5)
+- **状态**: [X] (2026-11-27 收口：36 项双架构全绿；P3.5 清债后 `ci/audit.sh full` 全档 rc=0，P3 腿在闸内真跑)
 - **详情**: 契合 §2.3 七门槛。验收 = 双架构 QEMU 端到端绿 + 真实载荷跑通。
 
   **交付物**: 专项探针 [wasi_p3_probe.c](../../scripts/fixtures/wasi_p3_probe.c)（wasi-sdk 34 编译，
   产物 [wasi_p3_probe.wasm](../../scripts/fixtures/wasi_p3_probe.wasm) 268,268 B）+ 生成器
   [make_wasi_p3_probe.py](../../scripts/make_wasi_p3_probe.py) + 门禁 [wasmi_wasi_test.sh](../../scripts/wasmi_wasi_test.sh)
   （Makefile / `make_initramfs_cpio.py` / init 探针三处接线；门禁已接 `ci/audit.sh full` 的 P3 腿，
-  位于 wasmi P1 腿之后 —— 因 `src/user` clippy 腿先红，full 档当前在 2/6 早退，P3 腿待 P3.5 清债后生效）。探针输出契约
+  位于 wasmi P1 腿之后；P3.5 清债后该腿随 `ci/audit.sh full` 真跑并转绿）。探针输出契约
   `P3 start` / `OK <name>` / `FAIL <name> errno=<n>` / `P3 done fails=<n>`，共 **36 项断言**：
   prestat 枚举、写后 `fd_filestat_get`/`stat` 的 size（钉 icache 失效语义）、`fd_allocate`、
   `fd_advise` 正常+非法 flag、`fd_renumber`（自定义 import 直打宿主，因 wasi-libc 的 `dup2`
@@ -218,22 +219,104 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   续读可重取），此取舍已写在 host 注释里；WASI errno 值域与内核 errno 值域仍不统一
   （host 采官方 preview1 值，P2 有意选择），P3 只钉行为不钉数值表。
 
+  **收口读数（P3.5 清债后同一棵树）**：`ci/audit.sh full` 全档 **rc=0**，P3 腿（`wasmi_wasi_test.sh all`）
+  在闸内真跑并绿，读数为双架构 `P3 done fails=0`（36 项 OK）+ `[WASMI-P3] exit=0`；
+  fmt / dead_code_comment 0 处 / Lockbud 4/4 / QEMU 2/2 / UEFI / EGFS 三相 / 未执行腿数 0 同档全绿；
+  P3 的 `[~]` 转 `[X]` 的直接原因是 P3.5 关门，探针与内核修复内容未再改动。
+
 ### P3.5: `src/user` pedantic 门禁清零（P2 遗留，阻塞 P3 七门槛）
 
 - **描述**: `src/user` clippy 腿（`-D warnings -D clippy::pedantic -D clippy::undocumented_unsafe_blocks`）
-  在 `wasmrun` 上仍有 100 项红，均为 P2 写 host 层时引入：37 处 ABI 位宽 cast
+  在 `wasmrun` 上原有 100 项红，均为 P2 写 host 层时引入：37 处 ABI 位宽 cast
   （`usize→u32`、`i64→i32`、`u64→i64` 等）、11 处 `Caller<'_, WasiCtx>` 按值传参而体内只借用、
   3 处 WASI 规范签名超 7 参（`path_open` 10 / `path_filestat_set_times` 8 / `path_link` 8）、
   若干未用常量与跨架构解码器。
 - **方案**: F9 审计对死代码抑制**硬零**、clippy 抑制基线为 **0**，故不能靠
   `#[allow]`/`#[expect]` 收口（实测 `--update-baseline` 之外无合法路径）。两条路线：
-  - 甲（推荐）：按 ABI 边界重写——host 函数改 `&mut Caller` + 注册处内联闭包；
-    超参函数改 `Linker::func_new`（wasmi 2.0 支持 `&[Val]`/`&mut [Val]` 切片）；
-    cast 统一 `u32_of` / `try_from` 常量；未用常量与跨架构解码器按 F9 真删或改 `cfg!` 保留符号。
-  - 乙：用户裁定更新 `audit_dead_code_comment.baseline.json`（等于放宽门禁，需明确授权）。
-- **状态**: []（2026-11-27 用户裁定走**丙**：先收 P4，本项降为并行挂债；甲/乙路线仍可随时改选）
-- **详情**: 阻塞 P3 的「七门槛全绿」判据；P3 内容面（专项探针 36 项 + 双架构 QEMU + P1 回归）
-  已全绿，不因本项回退。
+  - 甲（用户拍板）：按 ABI 边界重写——host 函数统一 `&mut Caller`，借用适配集中在注册边界；
+    超参 ABI 用「参数结构体 + 注册闭包」承载（不是 `Linker::func_new`，见详情）；
+    cast 一律 `try_from` / `cast_unsigned` / `u32_of` 显式安全转换；未用常量按 F9 真删、
+    跨架构解码器改 `cfg!` 分派保留符号。
+  - 乙：用户裁定更新 `audit_dead_code_comment.baseline.json`（等于放宽门禁，需明确授权）；用户已否决。
+- **状态**: [X] (2026-11-27 甲 落地：双架构 `src/user` pedantic 100 项 → **0**，零抑制，`ci/audit.sh full` rc=0)
+- **详情**: **实装形态（按 ABI 边界分层，不改 F9 抑制基线、不新增任何 `#[allow]`/`#[expect]`）**：
+
+  **① 借用形态统一（host 层 38 函数）**。全部 `wasi_snapshot_preview1` host 函数由
+  `caller: Caller<'_, WasiCtx>`（wasmi `IntoFunc` 逼出来的按值形态）改为
+  `caller: &mut Caller<'_, WasiCtx>`，体内所有 `&caller` / `&mut caller` / 临时重绑定全部收平；
+  `host_proc_exit` / `host_sched_yield` 用 `_caller: &mut Caller` 标注未用。
+
+  **② 注册边界集中适配**。新增宏 `wasi_host!($linker, $name, $func, $arg: $ty, …)`，展开为
+  `func_wrap("wasi_snapshot_preview1", name, |mut caller: Caller<'_, WasiCtx>, args…| func(&mut caller, args…)).map(|_| ())`。
+  `.map(|_| ())` 是必须的：wasmi `Linker::func_wrap` 返回 `Result<&mut Linker, LinkerError>`
+  而非 `Result<(), _>`。**超参判据走闭包而非 `func_new`**：实测 clippy `too_many_arguments`
+  不检查闭包（临时 crate 对照：函数 9 参报红、闭包 9 参不报红），故超参 ABI 可用闭包解包，
+  不必引入 `&[Val]` 手工取参。
+
+  **③ 超参函数改参数组**。`host_path_open`（10 参）→ `PathOpenArgs{dirfd, path_ptr, path_len,
+  oflags, rights_base: i64, rights_inheriting: i64, fdflags, opened_fd_ptr}`；
+  `host_path_filestat_set_times`（8 参）→ `PathTimesArgs{dirfd, path_ptr, path_len, atim, mtim,
+  fst_flags}`；`host_path_link`（8 参）→ `PathLinkArgs{old_dirfd, old_ptr, old_len, new_dirfd,
+  new_ptr, new_len}`（`old_flags` 只在闭包形参保位、不进结构体）；`wasi::encode_filestat`（8 参）→
+  新结构 `WasiFilestat{dev, ino, filetype, nlink, size, atim_ns, mtim_ns, ctim_ns}`，签名改
+  `encode_filestat(f: &WasiFilestat) -> [u8; 64]`，两处解码器调用同步改结构体字面量。
+
+  **④ 注册函数按域拆行**。`register_wasi` 因宏展开后 277 行触发 `too_many_lines`，拆为 6 个
+  私有函数各 <100 行：`register_proc_env`（proc/sched/clock/random/args/environ）、
+  `register_fd_basic`（fd_close/seek/tell/sync/prestat_get/prestat_dir_name/stat_get/filestat_get/fdstat_get）、
+  `register_fd_io`（read/write/pread/pwrite/allocate/advise/renumber/dup/readdir）、
+  `register_path_names`（mkdir/rmdir/unlink/symlink/readlink/rename + `path_link` 闭包）、
+  `register_path_open_meta`（`path_open` 闭包 + filestat_get + `set_times` 闭包）、
+  `register_socket`（accept/connect/recv/send）；`register_wasi` 只顺序调用并返回最后一支。
+
+  **⑤ cast 全面改显式安全转换**。新增 `wasi_errno(ret: i64) -> i32`（`i32::try_from(saturating_neg)`
+  后过 `errno_from_linux`）与 `u32_of(v: usize) -> Result<u32, i32>`（溢出返 `ERRNO_OVERFLOW`）；
+  `ret_errno` 与两处 `filestat_for_*` 的 `(-ret) as i32` 统一走 `wasi_errno`；长度类一律
+  `let Ok(x) = u32_of(...) else { return ERRNO_OVERFLOW }`；计数类全程留在 `u32`
+  （`fd_read`/`fd_pread` 用 `cast_unsigned()` + `&buf[..n as usize]`，`fd_pwrite` 用 `try_from`，
+  `fd_dup` 用 `i32::try_from(new_fd)`）；时间戳 `u64→i64` 用 `cast_signed()`、`i64→u32` 用
+  `try_from`、socket flags `u32→i32` 用 `try_from`（失败 `ERRNO_INVAL`）、`read_timespec` 的
+  `i64→u64` 用 `cast_unsigned()`；`path_open` 的 rights 在入口一次性 `cast_unsigned()` 成 `u64`，
+  `RIGHTS_*` 的 `as i64` 全删、`if rights_base > 0` 改 `!= 0`；`pwrite_no_seek` 的
+  同构分支收成 `i64::from(n)`。
+
+  **⑥ `wasi.rs` 常量与 errno 表收口**。删零引用 `ERRNO_LOOP(32)` / `ERRNO_MULTIHOP(36)` /
+  `ERRNO_NOLINK(47)` / `ERRNO_STALE(72)`、`FILETYPE_SOCKET_DGRAM`、`FDFLAG_DSYNC/RSYNC/SYNC`、
+  `RIGHTS_SOCK_SHUTDOWN` / `RIGHTS_SOCK_ACCEPT`；`errno_from_linux` 删与通配臂重复的 `5 => IO`，
+  把 `60..=63 | 95 => NOTSUP` 合并；`FSTFLAG_ATIM/ATIM_NOW/MTIM/MTIM_NOW` 由 `u16` 改 `u32`
+  （与 WASI fstflags 真实位宽一致，`decode_times` 同步收 `u32` 并去掉 `as u16`）；
+  `RIGHTS_STDIO/FILE/DIR` 三聚合常量由裸 `(1 << n)` 改用具名 `RIGHTS_*` 拼装（数值逐位核对与原值一致），
+  使原本「未使用」的 24 个 rights 常量转为被引用；`WasiFdTable::alloc` 的 `Ok(i as u32)` 改
+  `u32::try_from(i).map_err(|_| ERRNO_NOSPC)`；`renumber` 的双层判空折叠为 let-chain；prestat doc 补反引号。
+
+  **⑦ 跨架构解码器去死代码**。`filestat_from_linux` 由 `#[cfg]` 分派改
+  `if cfg!(target_arch = "x86_64") { … } else if cfg!(target_arch = "aarch64") { … } else { Err(NOTSUP) }`
+  —— `cfg!` 使两套偏移表在任一目标上都被引用，既消 aarch64 解码器在 x86 构建里的 `dead_code`，
+  又保留 x86 host 单测直接调它（10 个单测含 `aarch64_filestat_offsets` 全过）。中间试过的
+  `StatLayout` 枚举产生 `variant Aarch64 is never constructed`，已整体撤掉。
+
+  **⑧ `main.rs`**。`argc→arg_count`、`args→argv`、`env_start→envp_slot`、`env→envp` 消
+  `similar_names`；把 `envp_slot` 计算移出 argv 的 SAFETY 注释与 unsafe 块之间，使
+  `read_strvec(envp_slot)` 紧邻自己的 SAFETY 注（消 `undocumented_unsafe_blocks`）。
+  `cargo fmt --manifest-path src/user/Cargo.toml` 已跑；改动仅 3 文件
+  （`src/user/wasmrun/src/{host.rs,wasi.rs,main.rs}`，约 +746/−366）。
+
+  **读数（同一棵树串行，双架构）**：`src/user` pedantic **100 项 → 0**，两腿 rc=0；
+  `ci/audit.sh quick` rc=0（`src/user` x86_64 与 aarch64 都 passed，`dead_code_comment: 抑制 0 处`）；
+  `ci/audit.sh full` rc=0（2/6 clippy 六腿 + 2c fmt 四 crate + 0.5 审计腿 17/17 + Lockbud 4/4 +
+  QEMU 2/2 + thread-stress **6/6** + UEFI + EGFS 三相 + 未执行腿数 **0**）；
+  `cargo test -p wasmrun` 10 passed；`./ci/build.sh all` 7/0（K-08 `margin=0x25000` 不变）；
+  `make test-host` 215 套 / **1648 passed**、`make test-kernel-host` 12 + 745 + 649；
+  P1 腿 `hello from wasmi` + `[WASMI] exit=0` + mmap VA 断言、P3 腿 `P3 done fails=0`（36 项）双架构绿
+  ⇒ `&mut Caller` 翻译层无行为回归。
+
+  **门禁抖动（如实记录，非本项引入）**：`ci/audit.sh full` 前两跑 rc=1，均只红在 K-07a thread-stress
+  腿（4/6 与 5/6，失败样本分两处：`calling enter_user_asm` 后静默、`self.create` 中段静默；
+  60s 超时复跑仍能复现 1/3，日志为 cpu=1 心跳持续而 cpu=0 不动 ⇒ 真挂死而非超时）；
+  该腿不执行任何 wasm 载荷、内核与 init 二进制本轮零改动（工作树仅 3 个 `src/user/wasmrun` 文件），
+  属 `docs/plan/archive/aarch64-reap-timeout-rootcause.md` / `eevdf-scheduler.md` 记过的预存
+  SMP 早期挂死家族；第三跑空载 **6/6 全绿且 full 全档 rc=0**（`/tmp/p35_audit_full3.log`）。
+  不据此改门禁断言或超时默认值。
 
 ### P4: 干净退役内核侧 + 收口
 
@@ -246,7 +329,7 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   - exec 魔数派发完全改指用户态 wasmi（本地 `is_wasm_image` + `/bin/wasmrun`）；已改。
   - 文档同步（[explain-wasm-runtime.md](../explain/explain-wasm-runtime.md) 归属注记→退役完成；
     design §七 收口）+ 台账。
-- **状态**: [~] (2026-11-27：内容面完成并双架构复跑绿；「七门槛全绿」判据仍受 P3.5 pedantic 债阻塞)
+- **状态**: [X] (2026-11-27 收口：内容面 + P3.5 清债后 `ci/audit.sh full` rc=0，七门槛判据解除)
 - **详情**: F9 真删，非 `allow(dead_code)`。退役次序遵循 design §七；用户裁定（丙）先开 P4，
   P3.5 并行挂债。**已删面**：`src/kernel/functions/wasm/` 19 文件、`EG_WASM_LOAD/RUN/GET_INFO/UNLOAD`
   （766-769）与「766-779: WASM 运行时」整段、`dispatch_wasm` 分派臂、`edgine-abi/src/wasm.rs`、
@@ -263,8 +346,9 @@ Wasmtime/Wasmer 需 std/libc，Edgine 用户态当前不具备，故 JIT/AOT 路
   P3 腿 `P3 done fails=0`（36 项）+ `[WASMI-P3] exit=0` 双架构绿；`cargo test -p wasmrun` 10 passed；
   `audit_dead_code_comment.py` PASS（抑制 0 / 构建参数 0 / 基线与现树一致）；
   `tools/check_doc_paths.py` 0 漂移（22 份）。
-  **未达判据（如实记录）**：七门槛之 `src/user` pedantic 腿仍 100 项红（P3.5），
-  `ci/audit.sh full` 仍在 2/6 早退 ⇒ P4 记 `[~]`，P3.5 清债后与 P3 一并转 `[X]`。
+  **达判据（P3.5 清债后同一棵树）**：`ci/audit.sh full` 全档 **rc=0**（clippy 六腿含 `src/user`
+  双架构、fmt 四 crate、审计腿 17/17、Lockbud 4/4、QEMU 2/2、thread-stress 6/6、UEFI、EGFS 三相、
+  未执行腿数 0）⇒ 七门槛判据解除，P4 与 P3 一并转 `[X]`。`audit_dead_code_comment.py` 仍为抑制 0。
 
 ## 验收判据
 
