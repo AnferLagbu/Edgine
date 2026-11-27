@@ -177,7 +177,8 @@
     [`read_elf_prefix_to_vec_after_head`](../../src/kernel/functions/proc/elf.rs#L170)。
     `finish_elf_prefix` 先算前缀，再按该长度做第二段读，并强制 `bytes.len() == prefix_len`；
     短读返回 `Malformed`，不再让装载器把缺失字节伪装成空段。`after_head` 复用 exec 已读的
-    128 KiB 探测窗口，避免 ELF 分支重复读窗口。
+    128 KiB 探测窗口，避免 ELF 分支重复读窗口（E-3 后 exec 首读改 4 字节，该复用点退役，
+    仅由 `read_elf_prefix_to_vec` 内部保留）。
   - [`exec.rs`](../../src/kernel/functions/proc/exec.rs#L34) 新增
     `ELF_HEAD_PROBE_MAX = 128 * 1024`，`ELF_MAX_SIZE` 注释改为「可加载前缀预算」；
     `execve` 先读 128 KiB head 判 wasm，非 wasm 主映像只补第二段前缀，PT_INTERP 走同型
@@ -221,16 +222,36 @@
 
 - **描述**: `execve` 不再为判 wasm 魔数读整个模块文件；只读前 4 字节，命中后按 E-2 读
   `/bin/wasmrun` 的 ELF 前缀。
-- **方案**:
-  - 主映像读入顺序改为: `read_file_prefix_to_vec(path, pwm, WASM_MAGIC_LEN)`（4 字节）→
-    `is_wasm_image`；命中 ⇒ 读 wasm 运行时前缀、跳过模块本体；未命中 ⇒ 从 ELF 头开始
-    走 E-2 两段读。
-  - wasm 模块大小不再受 `ELF_MAX_SIZE` 约束；内核不持有模块内容（现状本就不持有，
-    只是先前为了判魔数整文件读了一遍）。
-  - 保持 `WASM_RUNTIME_PATH` 与 `argv[0]` 传模块路径的既有语义不变。
-- **状态**: []
-- **详情**: 待施工；验收须覆盖「wasm 模块 > 1 MiB 仍能 exec 到 `/bin/wasmrun`」与
-  「非 wasm 文件不会被误判」两侧。
+- **状态**: [X]（2026-11-27 施工）
+- **详情**:
+  - [`exec.rs`](../../src/kernel/functions/proc/exec.rs#L36) 新增
+    `WASM_MAGIC_LEN = 4`；第一段只调
+    `read_file_prefix_to_vec(path, current_pwm, WASM_MAGIC_LEN)`，`is_wasm_image(&magic)`
+    命中后只读 `/bin/wasmrun` 的 ELF 前缀，模块本体不进入内核缓冲。模块文件大小不再受
+    `ELF_MAX_SIZE` 约束，`argv[0]` 仍传模块路径给用户态 wasmi。
+  - 未命中时从 ELF 头重新走 E-2：`read_elf_prefix_to_vec(path, current_pwm)` 内部再读
+    128 KiB 探测窗口并补第二段前缀；`read_elf_prefix_to_vec_after_head` 仍保留给该
+    syscall 路径内部复用，但 exec 不再把 4 字节 magic 当探测窗口。
+  - 魔数判定仍是单点 `is_wasm_image`；新增 functions 单测覆盖 4 字节长度、短读、空文件、
+    ELF 魔数与大小写反例。
+  - 回归：`elf_prefix_read_test` 新增「>1 MiB wasm 模块只读 4 字节」一臂，套内 7/7；
+    `execve_runtime_k07b_test` 17/17，锁新增 `WASM_MAGIC_LEN`、4 字节首读、非 wasm 走
+    `read_elf_prefix_to_vec`，并断言 exec 不再出现 128 KiB 首读与 `after_head`。
+  - QEMU 真跑：用 `WASI_DEMO_FIXTURE=/tmp/hello_wasi_padded.wasm` 把正常 demo 追加
+    wasm custom section 到 **1,052,674 B**（>1 MiB），双架构 `wasm_userspace` 构建后
+    手工启动；x86_64 与 aarch64 均出现 `hello from wasmi` + `[WASMI] exit=0`，证明模块
+    超过旧 1 MiB 上限仍能 exec 到 `/bin/wasmrun`。随后恢复默认 fixture 与默认构建。
+- **门禁（本 E-3 工作树）**: 目标测试 functions 1/1、host 7/7、source-lock 17/17；
+  `./ci/build.sh all` 7/0，K-08 `_kernel_end_phys=0x3DD000, margin=0x23000`；
+  `make test-host` 218 套 / 1667 passed；`make test-kernel-host`
+  `12 + 746 + 659 = 1417`；`ci/audit.sh quick` rc=0；`ci-rustdoc` 双架构 rc=0。
+  双架构 `initramfs_boot_test.sh all`、`wasmi_boot_test.sh all`、`qemu_boot_test.sh`
+  x86_64/aarch64 均 rc=0。
+- **`ci/audit.sh full` 第 1 跑（2026-11-27）**: 在 `4/6 QEMU` 红，非 E-3 逻辑回归。
+  x86_64 主 boot 静默于 `enter_user_asm` 后（缺 EEVDF 快照与 DHCPv6 断言），属 E-2 已登记的
+  SMP 早期挂死同族；随后专项 x86 两跑主 boot 全绿但 e2e 40s 就绪超时（E-2 同款抖动），
+  第 3 跑 `E2E_READY_TIMEOUT=60` 得 rc=0（3/3 回显、FD/INTx/P4 全过）。full 整绿与
+  七门槛收口留 E-4。
 
 ### E-4 回归、门禁与文档
 

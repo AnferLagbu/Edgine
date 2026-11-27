@@ -6,11 +6,13 @@
 //! 3. `PT_LOAD` 前缀超过 1 MiB 预算 ⇒ `Malformed`；
 //! 4. `p_filesz > p_memsz` ⇒ `Malformed`；
 //! 5. 文件短于计算前缀 ⇒ 第二段短读 `Malformed`；
-//! 6. syscall fd 路径同样只读前缀.
+//! 6. syscall fd 路径同样只读前缀；
+//! 7. E-3: >1 MiB wasm 模块的魔数探测只读 4 字节.
 
 use std::sync::Mutex;
 
 use edgine::kernel::functions::fs;
+use edgine::kernel::functions::fs::api::read_file_prefix_to_vec;
 use edgine::kernel::functions::fs::api::write_file_kernel;
 use edgine::kernel::functions::fs::ramfs_core;
 use edgine::kernel::functions::proc::elf::{
@@ -193,6 +195,20 @@ fn file_size_exceeding_mem_size_is_malformed() {
         read_elf_prefix_kernel("/e2_filesz_gt_memsz", 0),
         Err(ElfPrefixError::Malformed)
     );
+}
+
+#[test]
+fn wasm_magic_probe_reads_only_four_bytes() {
+    let _guard = GLOBAL.lock().expect("ELF 前缀测试全局锁被毒化");
+    init_fs_once();
+    let mut module = vec![0u8; 1024 * 1024 + 4096];
+    module[0..4].copy_from_slice(b"\0asm");
+    write_file("e3_wasm_big", &module);
+    let _proc = TestProc::new("e3-wasm-magic");
+
+    let path = cpath("/e3_wasm_big");
+    let magic = read_file_prefix_to_vec(path.as_ptr(), 0, 4).expect("4 字节魔数读失败");
+    assert_eq!(magic, b"\0asm");
 }
 
 #[test]

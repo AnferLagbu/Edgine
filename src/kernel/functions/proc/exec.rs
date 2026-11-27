@@ -33,6 +33,12 @@ pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
 /// phdr 表落在此窗口之后的合法 ELF 会被 fail-closed 拒绝（已知取舍）。
 pub const ELF_HEAD_PROBE_MAX: usize = 128 * 1024;
 
+/// wasm 魔数探测长度 (`\0asm` 4 字节).
+///
+/// E-3: 判 wasm 只读文件头 4 字节，模块本体永远不进入内核缓冲；命中后再单独读
+/// 用户态运行时 `/bin/wasmrun` 的 ELF 前缀。非 wasm 文件从 ELF 头重新走 E-2 两段读。
+const WASM_MAGIC_LEN: usize = 4;
+
 /// 用户态 WASM 运行时路径 — `execve` 识别 `\0asm` 后装载的用户态 wasmi 解释器.
 ///
 /// 内核不再解释执行 wasm (P4 退役后), 一切 wasm 进程都由本运行时在用户态执行;
@@ -114,12 +120,12 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
         crate::privileged::sgeg::elevate_for_suid(st.owner_pwm);
     }
 
-    // E-2: 先读 128 KiB 探测窗口；wasm 魔数在同一窗口判定。非 wasm 只补读
-    // `loadable_prefix_len` 计算出的可加载前缀，不整文件读。
-    let Some(head) = crate::functions::fs::api::read_file_prefix_to_vec(
+    // E-3: 先只读 4 字节魔数；wasm 模块无论多大都不进入内核缓冲。非 wasm 再
+    // 从 ELF 头重读 128 KiB 探测窗口，只补 `loadable_prefix_len` 算出的前缀。
+    let Some(magic) = crate::functions::fs::api::read_file_prefix_to_vec(
         path as *const u8,
         current_pwm,
-        ELF_HEAD_PROBE_MAX,
+        WASM_MAGIC_LEN,
     ) else {
         return Err(Errno::Enoent);
     };
@@ -128,7 +134,7 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     // - ELF: 主映像前缀 + 可选解释器前缀交 privileged；
     // - wasm (`\0asm`): 从 VFS 读用户态 wasmi 运行时 `WASM_RUNTIME_PATH`
     //   (D4 严格零嵌入, 不编译期嵌入), 模块路径随 argv[0] 交给该运行时进程.
-    let wasm_runtime = if is_wasm_image(&head) {
+    let wasm_runtime = if is_wasm_image(&magic) {
         let Ok(bytes) = crate::functions::proc::elf::read_elf_prefix_kernel(WASM_RUNTIME_PATH, 0)
         else {
             return Err(Errno::Enoexec);
@@ -139,13 +145,9 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     };
 
     let image = if wasm_runtime.is_some() {
-        head
+        magic
     } else {
-        match crate::functions::proc::elf::read_elf_prefix_to_vec_after_head(
-            &head,
-            path as *const u8,
-            current_pwm,
-        ) {
+        match crate::functions::proc::elf::read_elf_prefix_to_vec(path as *const u8, current_pwm) {
             Ok(bytes) => bytes,
             Err(crate::functions::proc::elf::ElfPrefixError::ReadFailed) => {
                 return Err(Errno::Enoent);
@@ -238,4 +240,19 @@ pub fn execveat_syscall(
     }
 
     execve_syscall(pathname, argv, envp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WASM_MAGIC_LEN, is_wasm_image};
+
+    #[test]
+    fn wasm_magic_probe_is_exactly_four_bytes_and_exclusive() {
+        assert_eq!(WASM_MAGIC_LEN, 4, "E-3 只允许读 4 字节魔数");
+        assert!(is_wasm_image(b"\0asm"), "标准 wasm 魔数应命中");
+        assert!(!is_wasm_image(b"\0as"), "短读不得误判为 wasm");
+        assert!(!is_wasm_image(b""), "空文件不得误判为 wasm");
+        assert!(!is_wasm_image(b"\x7fELF"), "ELF 魔数不得误判为 wasm");
+        assert!(!is_wasm_image(b"\0ASM"), "魔数区分大小写");
+    }
 }

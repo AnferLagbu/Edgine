@@ -199,11 +199,37 @@ fn test_execve_passes_envp_to_privileged() {
         "crate::privileged::proc::proc_exec_replace_with_interp( image_ptr, image_len, interp_ptr, interp_len, argv, arg_count, envp, env_count,",
         "functions 必须把解释器与 envp/env_count 一并下传 (8 参 FFI)",
     );
+    // E-3: 判 wasm 只读 4 字节；模块本体不进内核缓冲.
+    assert_contains(
+        &flat,
+        "const WASM_MAGIC_LEN: usize = 4;",
+        "wasm 魔数探测长度必须是 4 字节",
+    );
+    assert_contains(
+        &flat,
+        "read_file_prefix_to_vec( path as *const u8, current_pwm, WASM_MAGIC_LEN,",
+        "exec 第一段只能按 4 字节读魔数，不得再读 128 KiB 探测窗口",
+    );
+    assert_absent(
+        &flat,
+        "read_file_prefix_to_vec( path as *const u8, current_pwm, ELF_HEAD_PROBE_MAX,",
+        "E-3 后 exec 不得为 wasm 判定读 128 KiB 探测窗口",
+    );
     // P4: 单点按 magic 分派 —— wasm 一律装载用户态 wasmi 运行时, ELF 走既有路径.
     assert_contains(
         &flat,
-        "is_wasm_image(&head)",
+        "is_wasm_image(&magic)",
         "exec 必须按 \0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
+    );
+    assert_contains(
+        &flat,
+        "read_elf_prefix_to_vec(path as *const u8, current_pwm)",
+        "非 wasm 必须从 ELF 头重新走 E-2 两段前缀读",
+    );
+    assert_absent(
+        &flat,
+        "read_elf_prefix_to_vec_after_head",
+        "E-3 的 4 字节 magic 不是 E-2 探测窗口，不得再复用 after_head",
     );
     // D4 严格零嵌入 / P4: 运行时不再编译期嵌入, 改从 VFS 读固定路径 (无 fd 形态).
     // E-2: 运行时 ELF 也走两段式前缀读, 不再整文件读.
@@ -236,7 +262,7 @@ fn test_wasm_image_dispatches_to_userspace_runtime() {
     );
     assert_contains(
         &flat,
-        "let wasm_runtime = if is_wasm_image(&head) {",
+        "let wasm_runtime = if is_wasm_image(&magic) {",
         "运行时 Vec 必须在分派块外绑定 (块内 let 到块尾析构 ⇒ 指针悬垂)",
     );
     assert_contains(
