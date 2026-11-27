@@ -165,9 +165,38 @@
 - **方案**: §2.3 七门槛全绿 (audit full / test-host / test-kernel-host / ci-rustdoc 分跑);
   同步 explain (地址空间生命周期现状) + 本册状态 + 台账; 按路径提交推送;
   随后解除 [wasm-userspace-migration.md](./wasm-userspace-migration.md) P1 的暂停.
-- **状态**: [] (M4 已闭；剩余 = `MmStruct` 统一释放路径 + explain 地址空间生命周期段落 + 七门槛复跑与台账)
+- **状态**: [X] (2026-11-27 `MmStruct` 计数化释放落地，双架构 build / host / kernel-host 全绿，七门槛见下)
 - **详情**: P1 已在 M4 恢复为 `[X]`；M5 不得把「wasmi stdio 通过」直接等同于「mm 生命周期全收口」——
-  `Process::mm` 的 VMA 容器仍无释放点，重复 fork/exec 会累积泄漏，须在 M5 单点收口后再判全绿。
+  `Process::mm` 的 VMA 容器曾无释放点，重复 fork/exec 会累积泄漏，本阶段按「创建者 1 / 继承 +1 /
+  退出或换表 -1 / 归零回收」单点收口后再判全绿。
+
+  **实装形态（计数与页表分层）**：
+
+  1. `MmStruct` 新增 `ref_count: AtomicU32`（`new()` 置 1）；`mm_retain` / `mm_release` 落在
+     `privileged/mm/vma.rs`：非空才动，release 走 `fetch_sub`，仅 `prev == 1` 时 `Box::from_raw`
+     回收本体与 VMA 容器；null 幂等（未挂载同态）。
+  2. **继承边**收敛为 `Process::inherit_mm_from(parent_pid)` 单入口：读父槽位 → 写子槽位 →
+     `mm_retain`。fork 的 `inherit_parent_state` 与 CLONE_VM 的 `vm_child_inherit` 都调它 ——
+     functions 子树 `#![forbid(unsafe_code)]`，裸指针读取与计数登记全部收在 privileged 层。
+  3. **注销边**两处：`Process::drop` 读槽一次、`mm_release` 一次（每个持有指针的 Process 各一份）；
+     `USER_PROC_MANAGER::replace_user_space` 在 `store_mm(new_mm)` 前记下 `old_mm`，store 后注销旧 mm。
+  4. **转移边**：装载路径 `Box::into_raw(mm)` 把 `ref_count = 1` 的创建者引用交给 `Process::mm`；
+     exec 成功时临时进程的槽位只清空、**不** release（移动语义），否则会把当前进程正在用的描述符减穿。
+  5. **分层不变式**：mm 计数与 cr3 帧计数互不代表 —— fork 的 COW 克隆会产生新 cr3，但 VMA 描述符
+     仍与父共享同一 `MmStruct`；页表帧由 `frame_dec` 归零门回收，`mm_release` 不触碰页表。
+  6. **内核测试适配**：`test_current_mm_follows_current_task` 把栈上 `MmStruct` 挂进临时 Process，
+     拆表前必须清空槽位，避免 `Process::drop` 把栈指针当堆对象注销。
+  7. **契约锁**：新增 `host-tests/tests/mm_refcount_lifecycle_test.rs`（7 项：唯一释放点与归零门、
+     继承登记、exec 旧 mm 注销与新 mm 不重复计数、装载单次移交、测试栈对象清槽、负控制），
+     并把 A-16 的 fork/CLONE_VM 继承锁改指统一入口 + `mm_retain`。
+
+  **读数（同一棵树）**：`./ci/build.sh all` **7/0**（双架构 build/link + host 腿，K-08
+  `_kernel_end_phys=0x3DB000, margin=0x25000` 不变）；`make test-host` **rc=0**（216 个测试二进制，
+  含新增 7 项）；`make test-kernel-host` **rc=0**（12 + 745 + **652**，较 M4 的 649 增 3 项 mm
+  计数单测）；QEMU / initramfs / wasmi 双架构与 `ci/audit.sh full` 见「验收判据」读数段。
+  边界：fork 仍共享 VMA 描述符（M2 的 B 口径未改），本次只补所有权注销，不改变「fork 后子进程
+  写 VMA 影响父」的既有语义；`get_current_mm` 的 `&'static` 借用合法性由「当前任务自身持有一份
+  引用、归零前不释放」保证。
 
 ## 附: ELF 整文件读上限的余量 (记录, 不在本工程擅自改)
 
@@ -192,3 +221,23 @@
 - **安全**: `mmap` 返回值恒落在用户 VA 区 (≥ `user_va_lower_bound`), 不存在把物理地址交给
   用户态的支路; I2/I4 自检逐项通过.
 - **形态**: 生产装载路径安装 mm 有 host 契约锁 + 负控制; 裸页回退按裁定真删或真接线, 无 F9 抑制.
+
+### 收口读数 (2026-11-27, 同一棵树)
+
+| 门 / 腿 | 读数 |
+|---|---|
+| `./ci/build.sh all` | **7/0** (双架构 build/link + host 腿; K-08 `_kernel_end_phys=0x3DB000, margin=0x25000` 不变) |
+| `make test-host` | **rc=0**, 216 个测试二进制 / **1655 passed** (较 M4 的 1648 增 7, 即新增契约锁的 7 项) |
+| `make test-kernel-host` | **rc=0**, 12 + 745 + **652** passed (较 M4 的 649 增 3 项 mm 计数单测) |
+| `bash ci/audit.sh quick` | **rc=0** |
+| `bash ci/audit.sh full` | **rc=0** (第四跑; clippy 7 腿 / fmt 4 crate / 审计腿 17/17 / Lockbud 4/4 / QEMU 2/2 + P-62 4/4 / thread-stress 6/6 / initramfs 双架构 / wasmi stdio + WASI 36 项 / lockdep / reboot / 未执行腿 0) |
+| `make -f Makefile.ci ci-rustdoc` | **rc=0** (x86_64 + aarch64 两腿真跑, 0 源码级 link 错误 + 0 私有项链接) |
+
+**抖动如实记录**: `full` 前三跑 rc=1, 红点依次为 K-07a thread-stress 5/6 (x86_64 第 3 轮
+`enter_user_asm` 后 cpu=0 静默、cpu=1 心跳)、initramfs x86_64 EEVDF `[SCHED] SNAP END` 缺失
+(同一早期挂死签名)、QEMU x86_64 boot 实例 EEVDF / W-7 / DHCPv6 探针缺失 (脚本已打 2/2,
+但按 `FAIL_OK=0` 判 rc=1). 该签名与本轮 P3.5 记录、以及 P3.5 期间未改内核时 K-07a 的失败
+样本一致, 属预存 SMP 早期挂死家族; 为排除 M5 引入, 另以 `git stash -u` 收走全部 M5 改动后
+重建 HEAD 内核, 同条件 `E2E_READY_TIMEOUT=120 ./scripts/qemu_boot_test.sh x86_64` **1/1 rc=0**,
+随后恢复 M5 复跑 QEMU 双架构 **2/2 rc=0**、第四跑 full **rc=0**. 未改任何门禁断言、超时默认
+或 `FAIL_OK`.

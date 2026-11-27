@@ -303,7 +303,17 @@ impl Vma {
 }
 
 /// 进程地址空间描述符 (mm): 持有 VMA 列表、brk 边界与 mlock 状态.
+///
+/// ## 生命周期（M5 起计数化）
+///
+/// `MmStruct` 由装载路径以 `Box` 创建（`ref_count = 1`），fork / clone 的子进程
+/// 按指针继承时 `mm_retain`，进程退出（`Process::drop`）与 exec 换表（旧 mm）
+/// `mm_release`；最后一个持有者归零时回收本对象与 VMA 容器。
+/// 页表（cr3）另有帧持有计数，二者分层：fork 的 COW 克隆会得到新 cr3，但 VMA
+/// 描述符仍与父共享同一 `MmStruct`。
 pub struct MmStruct {
+    /// 持有者引用计数（1 = 创建者；每次 fork/clone 继承 +1；退出/换表 -1）
+    pub ref_count: AtomicU32,
     /// 按起始地址排序的 VMA 列表 (受锁保护)
     pub vmas: Mutex<Vec<Vma>>,
     /// 堆起始地址
@@ -483,11 +493,53 @@ impl Default for MmStruct {
     }
 }
 
+/// 增加一次 `MmStruct` 持有引用（fork / clone 按指针继承时调用）。
+///
+/// 继承方把父 `Process::mm` 写入子进程槽位后调用本函数，使「同一 mm 指针被
+/// N 个进程持有」在计数上可见；这样任一方退出只注销自己那一份。
+///
+/// # Safety
+///
+/// `mm` 必须为 null，或指向一个仍有效的 `MmStruct`（由 `Box::into_raw` 建立且
+/// `ref_count >= 1`）；同一对象的 retain/release 次数必须配对。
+pub unsafe fn mm_retain(mm: *mut MmStruct) {
+    if mm.is_null() {
+        return;
+    }
+    // SAFETY: 非空即有效 (见 # Safety); 只做原子自增, 不构造引用.
+    unsafe {
+        (*mm).ref_count.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+/// 注销一次 `MmStruct` 持有引用；最后一个持有者归零时回收本体与 VMA 容器。
+///
+/// 进程退出（`Process::drop`）与 exec 换表（旧 mm）调用；fork 共享者各持一份，
+/// 因此先退出的一方只减计数，不会拆掉仍在用的 VMA 描述符。
+///
+/// # Safety
+///
+/// `mm` 必须为 null，或指向仍有效的 `MmStruct`；release 次数不得超过
+/// 创建计数 + retain 次数。若本调用使计数归零，之后不得再解引用该指针。
+pub unsafe fn mm_release(mm: *mut MmStruct) {
+    if mm.is_null() {
+        return;
+    }
+    // SAFETY: 非空即有效 (见 # Safety); 原子减计数, 归零者才拥有释放权.
+    let prev = unsafe { (*mm).ref_count.fetch_sub(1, Ordering::AcqRel) };
+    if prev == 1 {
+        // SAFETY: prev == 1 表示本调用是最后一个持有者, 且对象由 `Box::into_raw`
+        // 建立、无其他解引用者; 此处归还 Box 是唯一销毁点.
+        drop(unsafe { alloc::boxed::Box::from_raw(mm) });
+    }
+}
+
 impl MmStruct {
-    /// 创建空的地址空间描述符
+    /// 创建空的地址空间描述符（`ref_count = 1`，创建者即首个持有者）
     #[must_use]
     pub fn new() -> Self {
         Self {
+            ref_count: AtomicU32::new(1),
             vmas: Mutex::new(Vec::new()),
             start_brk: AtomicUsize::new(0),
             brk: AtomicUsize::new(0),
@@ -1441,8 +1493,9 @@ pub fn get_current_mm() -> Option<&'static MmStruct> {
         return None;
     }
     // SAFETY: ptr 由 `set_current_mm` 写入当前任务槽位, 非空即指向调用方持有的
-    // 有效 `MmStruct`. `MmStruct` 当前无释放路径 (由创建方长期持有), 且调用方
-    // 只在本任务上下文的调用作用域内使用该引用.
+    // 有效 `MmStruct`. M5 起 mm 按持有计数释放: 当前任务自身持有一份引用,
+    // 归零前不会被回收, 故本引用在当前任务存活期内有效; 只在该任务上下文的
+    // 调用作用域内使用.
     Some(unsafe { &*ptr })
 }
 
@@ -1471,6 +1524,47 @@ mod tests {
 
     fn page_size() -> usize {
         crate::privileged::glue::usize_from_u64(PAGE_SIZE)
+    }
+
+    #[test]
+    fn mm_starts_with_single_owner_reference() {
+        let mm = MmStruct::new();
+        assert_eq!(
+            mm.ref_count.load(Ordering::SeqCst),
+            1,
+            "新建 mm 必须自带创建者的一份持有引用"
+        );
+    }
+
+    #[test]
+    fn mm_retain_and_release_round_trip_keeps_one_owner() {
+        let raw = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(MmStruct::new()));
+        // SAFETY: raw 由 Box::into_raw 建立, 本测试独占; 下方成对 retain/release
+        // 后仍保留创建者的 1 份引用, 最后以 Box::from_raw 收回, 不触发释放路径.
+        unsafe {
+            assert_eq!((*raw).ref_count.load(Ordering::SeqCst), 1);
+            // 模拟一方 fork 继承: +1 → 2
+            mm_retain(raw);
+            assert_eq!((*raw).ref_count.load(Ordering::SeqCst), 2);
+            // 模拟继承方退出: -1 → 1
+            mm_release(raw);
+            assert_eq!(
+                (*raw).ref_count.load(Ordering::SeqCst),
+                1,
+                "非最后持有者 release 只能减计数, 不得回收本体"
+            );
+            // 收回创建者引用 (直接归还 Box, 不再走 release)
+            drop(alloc::boxed::Box::from_raw(raw));
+        }
+    }
+
+    #[test]
+    fn mm_retain_and_release_ignore_null() {
+        // SAFETY: null 是 mm_retain / mm_release 的合法输入 (未挂载同态).
+        unsafe {
+            mm_retain(core::ptr::null_mut());
+            mm_release(core::ptr::null_mut());
+        }
     }
 
     #[test]

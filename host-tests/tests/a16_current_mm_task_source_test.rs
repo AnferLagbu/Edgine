@@ -124,23 +124,27 @@ fn test_process_field_and_both_inherit_paths() {
     let ops = code_only(&read(PROC_OPS));
     let fork_inherit = body_of(&ops, "fn inherit_parent_state");
     assert!(
-        fork_inherit.contains("p.mm.load(Ordering::Acquire)"),
-        "fork 必须读取父进程 mm"
-    );
-    assert!(
-        fork_inherit.contains("child.mm.store(mm, Ordering::Release)"),
-        "fork 必须把父 mm 指针继承给子进程 (VMA 描述符跨 fork 共享)"
+        fork_inherit.contains("child.inherit_mm_from(parent_pid)"),
+        "fork 必须经统一继承入口复制父进程 mm (M5 起入口内同时登记持有引用)"
     );
 
     let clone = code_only(&read(CLONE));
     let vm_inherit = body_of(&clone, "fn vm_child_inherit");
     assert!(
-        vm_inherit.contains("p.mm.load(Ordering::Acquire)"),
-        "CLONE_VM 必须读取父线程 mm (线程共享地址空间)"
+        vm_inherit.contains("child.inherit_mm_from(parent_pid)"),
+        "CLONE_VM 必须经同一继承入口复制父线程 mm (线程共享地址空间)"
+    );
+
+    // 两条路径的实体在 privileged 层: 读父槽位 → 写子槽位 → 登记第二份引用.
+    let inherit = body_of(&process, "pub fn inherit_mm_from");
+    assert!(
+        inherit.contains("p.mm.load(Ordering::Acquire)")
+            && inherit.contains("self.mm.store(mm, Ordering::Release)"),
+        "继承入口必须读取父进程 mm 并写入子进程槽位 (VMA 描述符跨 fork 共享)"
     );
     assert!(
-        vm_inherit.contains("child.mm.store(parent_mm, Ordering::Release)"),
-        "CLONE_VM 必须把父 mm 指针继承给子线程"
+        inherit.contains("mm_retain(mm)"),
+        "M5: 继承入口必须登记子侧持有引用, 否则先退出方会提前回收共享 mm"
     );
 }
 

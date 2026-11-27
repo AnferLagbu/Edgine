@@ -360,17 +360,16 @@ fn vm_child_inherit(
     exit_signal: u64,
 ) -> Result<(), i64> {
     // 复制父进程属性
-    let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base, parent_mm) =
+    let (parent_pwm, parent_sched_policy, parent_rt_priority, parent_tls_base) =
         api::process_with(parent_pid, |p| {
             (
                 p.pwm.load(Ordering::SeqCst),
                 p.sched_policy.load(Ordering::SeqCst),
                 p.rt_priority.load(Ordering::SeqCst),
                 p.tls_base.load(Ordering::Acquire),
-                p.mm.load(Ordering::Acquire),
             )
         })
-        .unwrap_or((0, 0, 0, 0, core::ptr::null_mut()));
+        .unwrap_or((0, 0, 0, 0));
     child.pwm.store(parent_pwm, Ordering::SeqCst);
     child
         .sched_policy
@@ -381,8 +380,10 @@ fn vm_child_inherit(
     // 未指定 CLONE_SETTLS 时子线程继承父线程的 TLS 基址 (Linux 语义)
     child.tls_base.store(parent_tls_base, Ordering::Release);
     // CLONE_VM: 子线程与父线程共享同一地址空间描述符 (VMA 查询单一真源,
-    // 指向与 cr3 共享同一地址空间).
-    child.mm.store(parent_mm, Ordering::Release);
+    // 指向与 cr3 共享同一地址空间). M5: 继承走 privileged 层安全入口,
+    // 由它在子进程侧登记一份持有引用 (与 cr3 帧计数分层). 父进程不在表时
+    // 保持未挂载同态 (与原 `if let Some` 语义一致).
+    let _ = child.inherit_mm_from(parent_pid);
     child.exit_signal.store(
         crate::privileged::glue::low_u32_from_u64(exit_signal),
         Ordering::Release,

@@ -323,6 +323,14 @@ pub(crate) mod raw {
             }
         }
 
+        /// 读取地址空间描述符 (委托到 `Process::mm`; 只读，不改计数)
+        #[inline]
+        pub fn load_mm(&self) -> *mut MmStruct {
+            // SAFETY: `UserProcRef` 不变式 (见本模块 raw 段): 句柄来自 `USER_PROC_MANAGER`
+            // 的 BTreeMap, 存活期内分配有效; 本处经 `process()` 读权威 Process 的原子字段.
+            unsafe { (*self.0).process().mm.load(Ordering::Acquire) }
+        }
+
         /// 访问 `kernel_stack` (委托到 Process)
         #[inline]
         pub fn load_kernel_stack(&self) -> u64 {
@@ -1130,6 +1138,11 @@ impl UserProcManager {
         // 不再向旧地址写清理值 (旧地址空间即将销毁).
         super::rseq::reset_registration(pid);
 
+        // M5: exec 换 mm. 旧 mm 的这份进程引用在本函数末尾注销; 新 mm 的所有权
+        // 由装载临时进程「移动」过来 (不增计数, 调用方随后清空源槽位). 先读旧指针,
+        // 避免 store 之后无从得知该注销哪一份.
+        let old_mm = proc_ref.load_mm();
+
         // 1. 销毁旧用户页表 (计数归零才销毁: 旧表可能被 CLONE_VM 兄弟进程共享).
         //    exec 下权威 `Process` 存活且 cr3 字段即将被新值覆盖, 其 `Drop` 只会
         //    看到新表 —— 旧表的这次减计是本进程所持引用的唯一注销点 (镜像
@@ -1153,6 +1166,13 @@ impl UserProcManager {
         // 会按旧描述判定（RELRO 区间无 VMA ⇒ ENOMEM）。所有权随地址空间
         // 一起转移：调用方随后清空临时进程的 mm 槽位。
         proc_ref.store_mm(new_mm);
+        // M5: 注销旧 mm 的本进程引用。fork 子进程 / CLONE_VM 兄弟各持一份,
+        // 若旧 mm 仍被它们使用, 计数不归零, 本步只减一; 归零才回收 VMA 容器.
+        if !old_mm.is_null() {
+            // SAFETY: old_mm 是本进程此前持有的有效引用 (装载 / fork 继承时登记);
+            // 本步是它的唯一注销点, 且已换成 new_mm, 之后不再解引用旧指针.
+            unsafe { crate::privileged::mm::mm_release(old_mm) };
+        }
         true
     }
 
@@ -2338,8 +2358,9 @@ impl UserProcManager {
                 crate::privileged::glue::usize_from_u64(main_end),
                 Ordering::SeqCst,
             );
-            // M2: 指针所有权移交 `Process::mm`；释放/refcount 属 M5 收口，
-            // 当前随进程生命周期常驻，不在装载路径重复释放。
+            // M2/M5: 指针所有权移交 `Process::mm`（ref_count = 1 的创建者引用）；
+            // 该进程退出或 exec 换表时经 `mm_release` 注销，fork/clone 继承方
+            // 另登记引用，最后一个持有者归零时回收 VMA 容器。
             proc_ref.store_mm(alloc::boxed::Box::into_raw(mm));
 
             proc_ref.set_entry(entry);

@@ -185,7 +185,8 @@ pub struct Process {
     ///
     /// 缺页与 VMA 系统调用经 `mm::api::vma_get_current_mm` 从**当前任务**读取本字段,
     /// 不再有跨进程共用的全局槽; fork/clone 按指针继承 (线程与 fork 子进程共享同一
-    /// `MmStruct`, 与页表 COW 克隆分层). `MmStruct` 目前无释放路径, 由创建方长期持有.
+    /// `MmStruct`, 与页表 COW 克隆分层). 继承时对 mm 计数加一, 本字段的每次注销
+    /// (进程退出 / exec 换表) 走 `mm::mm_release`, 最后一个持有者归零才回收.
     pub mm: AtomicPtr<MmStruct>,
     /// 内核栈顶高半区虚拟地址; 0 表示未分配.
     pub kernel_stack: AtomicU64,
@@ -577,6 +578,26 @@ impl Process {
         self.allocate_kernel_stack_sized(crate::privileged::glue::usize_from_u64(USER_KSTACK_SIZE))
     }
 
+    /// fork / clone: 按指针继承父进程的地址空间描述符, 并在子进程侧登记一份
+    /// 持有引用 (`mm_retain`). 父进程尚未挂载 mm 时子进程保持 null.
+    ///
+    /// 返回 `false` 仅表示父进程不在进程表; 正常继承 (含父 mm 为空的同态)
+    /// 返回 `true`. 这是 functions 层唯一可安全调用的 mm 继承入口 ——
+    /// 裸指针的读取与计数登记都收在本层, functions 层不接触 unsafe.
+    pub fn inherit_mm_from(&mut self, parent_pid: Pid) -> bool {
+        let Some(mm) = PROCESS_TABLE.with_process(parent_pid, |p| p.mm.load(Ordering::Acquire))
+        else {
+            return false;
+        };
+        self.mm.store(mm, Ordering::Release);
+        if !mm.is_null() {
+            // SAFETY: mm 来自存活父进程的 `Process::mm` (非空即有效且计数 >= 1);
+            // 本调用只登记子进程这一份引用, 不转移父侧所有权.
+            unsafe { crate::privileged::mm::mm_retain(mm) };
+        }
+        true
+    }
+
     /// 按给定字节数分配内核栈; 记录页数供 [`Drop`] 单点归还.
     fn allocate_kernel_stack_sized(&self, size: usize) -> bool {
         let pages = size / crate::privileged::glue::usize_from_u64(PAGE_SIZE);
@@ -962,6 +983,15 @@ impl Drop for Process {
                 crate::privileged::mm::PhysAddr(base_phys),
                 crate::privileged::glue::usize_from_u64(u64::from(pages)),
             );
+        }
+        // M5: mm 持有引用单点注销. 每个持有本指针的 Process 各有一份计数
+        // (创建者 1 / 每次 fork·clone 继承 +1), 先退出者只减计数; 归零时
+        // `mm_release` 回收 VMA 容器. cr3 与 mm 分层计数, 二者互不代表.
+        let mm = self.mm.load(Ordering::Acquire);
+        if !mm.is_null() {
+            // SAFETY: mm 非空即本进程持有的一份有效引用 (见字段文档); 本 Drop 是
+            // 该份引用的唯一注销点, 其他持有者各自保有引用, 不会提前释放.
+            unsafe { crate::privileged::mm::mm_release(mm) };
         }
     }
 }

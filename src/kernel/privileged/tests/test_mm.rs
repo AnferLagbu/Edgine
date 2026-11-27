@@ -396,9 +396,14 @@ fn test_current_mm_follows_current_task() -> TestResult {
         TestResult::Pass
     })();
 
-    // 无条件拆除: 恢复调度器当前进程 → 摘表 → 释放描述符
+    // 无条件拆除: 恢复调度器当前进程 → 摘 mm 挂载 → 摘表 → 释放描述符.
+    // M5: 本测试的 mm 是栈对象, 必须在 `Process::drop` 前清空槽位; 否则 Drop
+    // 会按持有引用注销一个非堆指针.
     Scheduler::set_current(prev_current.unwrap_or(0));
     for (pid, ptr) in [(pid_a, ptr_a), (pid_b, ptr_b), (pid_c, ptr_c)] {
+        let _ = PROCESS_TABLE.with_process(pid, |p| {
+            p.mm.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        });
         let _ = PROCESS_TABLE.remove(pid);
         raw::drop_boxed_process(ptr);
         PROCESS_TABLE.free_pid(pid);

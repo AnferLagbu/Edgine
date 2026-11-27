@@ -156,7 +156,7 @@ pub use api::{
 };
 
 // vma 公共类型 re-export — 避免跨子系统直接访问 mm::vma 内部
-pub use vma::{FileBackedVma, MmStruct, Vma, VmaType};
+pub use vma::{FileBackedVma, MmStruct, Vma, VmaType, mm_release, mm_retain};
 
 // swap 公共接口 re-export — 避免跨子系统直接访问 mm::swap 内部
 pub use swap::{kswapd_wakeup, set_page_locked};

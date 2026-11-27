@@ -851,7 +851,8 @@ pub extern "C" fn proc_exec_replace_with_interp(
     PROCESS_TABLE.with_process(new_pid_u32, |p| {
         p.cr3.store(0, Ordering::SeqCst);
         // mm 所有权已随地址空间转移给当前 PID；清空临时进程槽位，
-        // 避免它仍被视为该 MmStruct 的持有者.
+        // 避免它仍被视为该 MmStruct 的持有者（M5：转移 = 不增减计数，
+        // 故此处只清源、不得调用 `mm_release`）.
         p.mm.store(core::ptr::null_mut(), Ordering::Release);
     });
     USER_PROC_MANAGER.discard_unrun(new_pid_u32);
@@ -1225,9 +1226,9 @@ fn inherit_parent_state(child: &mut Process, parent_pid: Pid) {
     }
     // 地址空间描述符: fork 子进程按指针继承父进程的 `MmStruct` (VMA 描述符
     // 在 fork 中不复制, 与页表 COW 克隆分层; 见 `MmStruct::locked_vm` 注).
-    if let Some(mm) = PROCESS_TABLE.with_process(parent_pid, |p| p.mm.load(Ordering::Acquire)) {
-        child.mm.store(mm, Ordering::Release);
-    }
+    // M5: 继承入口统一在 `Process::inherit_mm_from` 内登记子侧持有引用,
+    // 与 clone 路径共用同一份计数逻辑.
+    let _ = child.inherit_mm_from(parent_pid);
     // K-03: 信号动作表与 FS 上下文按 fork 语义深拷贝 —— fork 出的子进程此后
     // 与父进程各自独立 (CLONE_SIGHAND / CLONE_FS 的共享只在 clone 线程路径).
     let _ = PROCESS_TABLE.with_process(parent_pid, |p| {
