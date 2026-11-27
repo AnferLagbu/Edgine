@@ -37,7 +37,7 @@ fn exec_reads_interpreter_and_calls_dual_loader() {
         "execve 必须在主映像上读取 PT_INTERP"
     );
     assert!(
-        EXEC.contains("read_file_kernel(path, current_pwm, ELF_MAX_SIZE)"),
+        EXEC.contains("read_elf_prefix_kernel(path, current_pwm)"),
         "解释器必须经 VFS 读入，而不是内核内嵌"
     );
     assert!(

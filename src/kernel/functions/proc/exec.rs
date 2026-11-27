@@ -22,8 +22,16 @@ const AT_EMPTY_PATH: i32 = 0x1000;
 /// `execveat` 标志: 不跟随 `pathname` 末尾的符号链接
 const AT_SYMLINK_NOFOLLOW: i32 = 0x100;
 
-/// ELF 映像可读上限 (1 MiB) — 阶段 4b 自 `privileged::proc::api` 下沉
+/// ELF 可加载前缀预算 (1 MiB) — 阶段 4b 自 `privileged::proc::api` 下沉.
+///
+/// 这是「可加载前缀」的上限，不是文件大小上限：文件尾的非装载 section 不计入。
 pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;
+
+/// ELF 头 / 程序头表探测窗口 (128 KiB).
+///
+/// 覆盖 `e_phoff + 128 * sizeof(Elf64Phdr)` (最大约 7 KiB) 的合法 phdr 表；
+/// phdr 表落在此窗口之后的合法 ELF 会被 fail-closed 拒绝（已知取舍）。
+pub const ELF_HEAD_PROBE_MAX: usize = 128 * 1024;
 
 /// 用户态 WASM 运行时路径 — `execve` 识别 `\0asm` 后装载的用户态 wasmi 解释器.
 ///
@@ -106,21 +114,22 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
         crate::privileged::sgeg::elevate_for_suid(st.owner_pwm);
     }
 
-    // 阶段 4b: ELF 文件 I/O 下沉 functions — 读取主映像与 PT_INTERP 指向的
-    // 解释器；不修改主映像。解释器读取失败按 Linux 语义返回 ENOENT。
-    let Some(image) =
-        crate::functions::fs::api::read_file_to_vec(path as *const u8, current_pwm, ELF_MAX_SIZE)
-    else {
+    // E-2: 先读 128 KiB 探测窗口；wasm 魔数在同一窗口判定。非 wasm 只补读
+    // `loadable_prefix_len` 计算出的可加载前缀，不整文件读。
+    let Some(head) = crate::functions::fs::api::read_file_prefix_to_vec(
+        path as *const u8,
+        current_pwm,
+        ELF_HEAD_PROBE_MAX,
+    ) else {
         return Err(Errno::Enoent);
     };
 
     // §3 丙 裁定: 单点按 magic 的 match, 不抽 ImageLoader trait.
-    // - ELF: 主映像 + 可选解释器双缓冲区交 privileged；
+    // - ELF: 主映像前缀 + 可选解释器前缀交 privileged；
     // - wasm (`\0asm`): 从 VFS 读用户态 wasmi 运行时 `WASM_RUNTIME_PATH`
     //   (D4 严格零嵌入, 不编译期嵌入), 模块路径随 argv[0] 交给该运行时进程.
-    let wasm_runtime = if is_wasm_image(&image) {
-        let Some(bytes) =
-            crate::functions::fs::api::read_file_kernel(WASM_RUNTIME_PATH, 0, ELF_MAX_SIZE)
+    let wasm_runtime = if is_wasm_image(&head) {
+        let Ok(bytes) = crate::functions::proc::elf::read_elf_prefix_kernel(WASM_RUNTIME_PATH, 0)
         else {
             return Err(Errno::Enoexec);
         };
@@ -128,17 +137,39 @@ pub fn execve_syscall(path: u64, argv: u64, envp: u64) -> Result<usize, Errno> {
     } else {
         None
     };
+
+    let image = if wasm_runtime.is_some() {
+        head
+    } else {
+        match crate::functions::proc::elf::read_elf_prefix_to_vec_after_head(
+            &head,
+            path as *const u8,
+            current_pwm,
+        ) {
+            Ok(bytes) => bytes,
+            Err(crate::functions::proc::elf::ElfPrefixError::ReadFailed) => {
+                return Err(Errno::Enoent);
+            }
+            Err(crate::functions::proc::elf::ElfPrefixError::Malformed) => {
+                return Err(Errno::Enoexec);
+            }
+        }
+    };
+
     let interp = if wasm_runtime.is_some() {
         None
     } else {
         match crate::privileged::proc::elf::interp_path(&image) {
             Ok(Some(path)) => {
-                let Some(bytes) =
-                    crate::functions::fs::api::read_file_kernel(path, current_pwm, ELF_MAX_SIZE)
-                else {
-                    return Err(Errno::Enoent);
-                };
-                Some(bytes)
+                match crate::functions::proc::elf::read_elf_prefix_kernel(path, current_pwm) {
+                    Ok(bytes) => Some(bytes),
+                    Err(crate::functions::proc::elf::ElfPrefixError::ReadFailed) => {
+                        return Err(Errno::Enoent);
+                    }
+                    Err(crate::functions::proc::elf::ElfPrefixError::Malformed) => {
+                        return Err(Errno::Enoexec);
+                    }
+                }
             }
             Ok(None) => None,
             // PT_INTERP 存在但内容畸形 ⇒ Linux `execve` 的 ENOEXEC；不能静默

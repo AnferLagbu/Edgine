@@ -149,6 +149,90 @@ pub fn elf_validate(elf_data: &[u8]) -> Option<Elf64Header> {
     Some(unsafe { elf_data.as_ptr().cast::<Elf64Header>().read_unaligned() })
 }
 
+/// 可加载前缀定界错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadablePrefixError {
+    /// ELF 头 / 程序头表未通过 `verify_elf`（含 phdr 表越出探测窗口）。
+    InvalidElf,
+    /// `e_phoff == 0` 或 `e_phnum == 0`，没有可解析的程序头表。
+    NoProgramHeaders,
+    /// `p_offset + p_filesz` 或 phdr 表尺寸算术溢出。
+    ArithmeticOverflow,
+    /// `PT_LOAD` 的 `p_filesz > p_memsz`（畸形段，不能按空段跳过）。
+    FileSizeExceedsMemSize,
+    /// 计算出的可加载前缀超过调用方预算。
+    PrefixTooLarge,
+    /// 前缀不能用 `usize` 表示（32 位宿主防御）。
+    NotRepresentable,
+}
+
+/// 计算 ELF 装载所需的最小连续文件前缀长度。
+///
+/// 前缀 = `max(e_phoff + e_phnum * e_phentsize, 所有 PT_LOAD 的 p_offset + p_filesz,
+/// 所有 PT_INTERP 的 p_offset + p_filesz)`。非装载 section / 文件尾不进入结果。
+///
+/// `image` 只要求覆盖 ELF 头与 phdr 表（E-2 的 128 KiB 探测窗口）；函数不读取
+/// `PT_LOAD` 段内容，因此 `image` 不需要包含完整文件。`limit` 是可加载前缀预算。
+///
+/// # Errors
+///
+/// - ELF 头/phdr 表非法或 phdr 表不在 `image` 内 → [`LoadablePrefixError::InvalidElf`]
+/// - 无程序头 → [`LoadablePrefixError::NoProgramHeaders`]
+/// - 段偏移/长度算术溢出 → [`LoadablePrefixError::ArithmeticOverflow`]
+/// - `PT_LOAD` 的 `p_filesz > p_memsz` → [`LoadablePrefixError::FileSizeExceedsMemSize`]
+/// - 结果超过 `limit` → [`LoadablePrefixError::PrefixTooLarge`]
+/// - 结果超出 `usize` → [`LoadablePrefixError::NotRepresentable`]
+pub fn loadable_prefix_len(image: &[u8], limit: usize) -> Result<usize, LoadablePrefixError> {
+    let header = elf_validate(image).ok_or(LoadablePrefixError::InvalidElf)?;
+    if header.phoff == 0 || header.phnum == 0 {
+        return Err(LoadablePrefixError::NoProgramHeaders);
+    }
+
+    let phdr_table_size = u64::from(header.phnum)
+        .checked_mul(u64::from(header.phentsize))
+        .ok_or(LoadablePrefixError::ArithmeticOverflow)?;
+    let mut prefix_end = header
+        .phoff
+        .checked_add(phdr_table_size)
+        .ok_or(LoadablePrefixError::ArithmeticOverflow)?;
+
+    let phoff = usize::try_from(header.phoff).map_err(|_| LoadablePrefixError::NotRepresentable)?;
+    let phentsize = usize::from(header.phentsize);
+    // SAFETY: `elf_validate` 已调用 `verify_elf`，保证
+    // `phoff..phoff + phnum*phentsize` 落在 `image` 内；下面按 `i < phnum`
+    // 读取单个 phdr，不越出该表。`read_unaligned` 不要求缓冲对齐。
+    let phdr_base = unsafe { image.as_ptr().add(phoff) };
+    for i in 0..usize::from(header.phnum) {
+        // SAFETY: 同上；`i` 严格小于 `phnum`，`phentsize` 已由 verify 固定为
+        // `size_of::<Elf64Phdr>()`，故指针落在已校验的 phdr 表内。
+        let phdr = unsafe {
+            phdr_base
+                .add(i * phentsize)
+                .cast::<Elf64Phdr>()
+                .read_unaligned()
+        };
+
+        if phdr.ty == PT_LOAD && phdr.filesz > phdr.memsz {
+            return Err(LoadablePrefixError::FileSizeExceedsMemSize);
+        }
+        if phdr.ty == PT_LOAD || phdr.ty == PT_INTERP {
+            let segment_end = phdr
+                .offset
+                .checked_add(phdr.filesz)
+                .ok_or(LoadablePrefixError::ArithmeticOverflow)?;
+            if segment_end > prefix_end {
+                prefix_end = segment_end;
+            }
+        }
+    }
+
+    let limit_u64 = u64::try_from(limit).map_err(|_| LoadablePrefixError::NotRepresentable)?;
+    if prefix_end > limit_u64 {
+        return Err(LoadablePrefixError::PrefixTooLarge);
+    }
+    usize::try_from(prefix_end).map_err(|_| LoadablePrefixError::NotRepresentable)
+}
+
 /// 加载 ELF 文件到当前进程地址空间 (`ET_EXEC`, 固定地址加载, 等价于 `load_bias = 0`).
 ///
 /// # Errors
@@ -649,5 +733,116 @@ mod tests {
 
         let header = elf_validate(view).expect("非对齐缓冲也应校验通过");
         assert_eq!(header.phnum, 1);
+    }
+
+    /// 8 字节对齐的 ELF 缓冲区，按 `(ty, offset, filesz, memsz)` 填 phdr.
+    #[repr(align(8))]
+    struct AlignedPhdrElf<const N: usize>([u8; N]);
+
+    fn elf_with_phdrs<const N: usize>(phdrs: &[(u32, u64, u64, u64)]) -> AlignedPhdrElf<N> {
+        assert!(
+            N >= core::mem::size_of::<Elf64Header>()
+                + phdrs.len() * core::mem::size_of::<Elf64Phdr>(),
+            "测试缓冲必须容纳 ELF 头与全部 phdr"
+        );
+        let mut buf = AlignedPhdrElf([0u8; N]);
+        // SAFETY: 缓冲长度已断言足够；头与 phdr 均落在缓冲内，按值写字段.
+        unsafe {
+            let hdr = buf.0.as_mut_ptr().cast::<Elf64Header>();
+            let mut ident = [0u8; 16];
+            ident[0..4].copy_from_slice(b"\x7FELF");
+            ident[4] = 2; // ELFCLASS64
+            (*hdr).ident = ident;
+            (*hdr).machine = 0x3E; // x86_64 (host 构建接受两架构)
+            (*hdr).phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+            (*hdr).phoff = core::mem::size_of::<Elf64Header>() as u64;
+            (*hdr).phnum = u16::try_from(phdrs.len()).expect("phdr 数量超出 u16");
+
+            for (i, (ty, offset, filesz, memsz)) in phdrs.iter().enumerate() {
+                let phdr = buf
+                    .0
+                    .as_mut_ptr()
+                    .add(
+                        core::mem::size_of::<Elf64Header>() + i * core::mem::size_of::<Elf64Phdr>(),
+                    )
+                    .cast::<Elf64Phdr>();
+                (*phdr).ty = *ty;
+                (*phdr).offset = *offset;
+                (*phdr).filesz = *filesz;
+                (*phdr).memsz = *memsz;
+            }
+        }
+        buf
+    }
+
+    #[test]
+    fn loadable_prefix_includes_phdr_table_and_load_tail() {
+        let elf = elf_with_phdrs::<120>(&[(PT_LOAD, 0, 200, 200)]);
+        assert_eq!(loadable_prefix_len(&elf.0, 200), Ok(200));
+    }
+
+    #[test]
+    fn loadable_prefix_includes_interp_tail() {
+        let elf = elf_with_phdrs::<120>(&[(PT_INTERP, 300, 20, 20)]);
+        assert_eq!(loadable_prefix_len(&elf.0, 320), Ok(320));
+    }
+
+    #[test]
+    fn loadable_prefix_rejects_overflow() {
+        let elf = elf_with_phdrs::<120>(&[(PT_LOAD, u64::MAX, 2, 2)]);
+        assert_eq!(
+            loadable_prefix_len(&elf.0, 1024 * 1024),
+            Err(LoadablePrefixError::ArithmeticOverflow)
+        );
+    }
+
+    #[test]
+    fn loadable_prefix_rejects_over_budget() {
+        let elf = elf_with_phdrs::<120>(&[(PT_LOAD, 0, 600, 600)]);
+        assert_eq!(
+            loadable_prefix_len(&elf.0, 599),
+            Err(LoadablePrefixError::PrefixTooLarge)
+        );
+    }
+
+    #[test]
+    fn loadable_prefix_rejects_phdr_outside_probe() {
+        #[repr(align(8))]
+        struct HeaderOnly([u8; 64]);
+        let mut buf = HeaderOnly([0u8; 64]);
+        // SAFETY: 64B 缓冲恰为一个 ELF 头；只写头字段，phdr 表故意留在缓冲外.
+        unsafe {
+            let hdr = buf.0.as_mut_ptr().cast::<Elf64Header>();
+            let mut ident = [0u8; 16];
+            ident[0..4].copy_from_slice(b"\x7FELF");
+            ident[4] = 2;
+            (*hdr).ident = ident;
+            (*hdr).machine = 0x3E;
+            (*hdr).phentsize = core::mem::size_of::<Elf64Phdr>() as u16;
+            (*hdr).phoff = 64;
+            (*hdr).phnum = 1;
+        }
+        assert_eq!(
+            loadable_prefix_len(&buf.0, 1024 * 1024),
+            Err(LoadablePrefixError::InvalidElf)
+        );
+    }
+
+    #[test]
+    fn loadable_prefix_rejects_no_program_headers() {
+        let elf = elf_with_phdrs::<64>(&[]);
+        assert_eq!(
+            loadable_prefix_len(&elf.0, 1024 * 1024),
+            Err(LoadablePrefixError::NoProgramHeaders)
+        );
+    }
+
+    #[test]
+    fn loadable_prefix_rejects_p_filesz_gt_p_memsz() {
+        let elf = elf_with_phdrs::<120>(&[(PT_LOAD, 0, 200, 100)]);
+        assert_eq!(
+            loadable_prefix_len(&elf.0, 1024 * 1024),
+            Err(LoadablePrefixError::FileSizeExceedsMemSize)
+        );
     }
 }

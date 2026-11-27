@@ -79,20 +79,13 @@ fn load_init_from_initramfs() -> i32 {
     crate::klog_boot_info!("[USER] initramfs: {} files unpacked", count);
     crate::privileged::proc::set_init_status(INIT_STATUS_LOADING);
 
-    let Some(elf) = crate::functions::fs::api::read_file_kernel(
-        "/init",
-        0,
-        crate::functions::proc::exec::ELF_MAX_SIZE,
-    ) else {
+    // E-2: `/init` 与其 PT_INTERP 只读可加载前缀；`/disk/init` 回读仍走整文件 API.
+    let Ok(elf) = crate::functions::proc::elf::read_elf_prefix_kernel("/init", 0) else {
         return -3;
     };
     let interp = match crate::privileged::proc::elf::interp_path(&elf) {
         Ok(Some(path)) => {
-            let Some(bytes) = crate::functions::fs::api::read_file_kernel(
-                path,
-                0,
-                crate::functions::proc::exec::ELF_MAX_SIZE,
-            ) else {
+            let Ok(bytes) = crate::functions::proc::elf::read_elf_prefix_kernel(path, 0) else {
                 return -4;
             };
             Some(bytes)

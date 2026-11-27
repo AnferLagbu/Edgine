@@ -16,7 +16,9 @@
 
 ## 1. 立项依据
 
-### 1.1 现状: 四个读入点都按整文件上限
+### 1.1 立项基线（E-1/E-2 前）: 六个读取点都按整文件上限
+
+> 本小节保留立项时的源码形态，用于说明为什么必须单开；E-2 施工后的现行接线见 §3 E-2 详情。
 
 - **常量**: [exec.rs:26](../../src/kernel/functions/proc/exec.rs#L26)
   `pub(crate) const ELF_MAX_SIZE: usize = 1024 * 1024;`
@@ -156,31 +158,64 @@
 ### E-2 可加载前缀定界 + exec/init 接线
 
 - **描述**: 在 privileged 层提供「由 ELF 头/program header 计算最小读入前缀」的安全函数，
-  并在进入装载器前拒绝 `p_filesz > p_memsz` / 文件区间越界等畸形段，把 `execve`、启动装载
-  与其解释器读取切到 E-1 的两段式前缀读。
-- **方案**:
-  - 新增 `privileged::proc::elf::loadable_prefix_len(image: &[u8], limit: usize)`（或同层等价 API）:
-    复用 `verify_elf` 的头/phdr 校验；遍历 phdr，累计 `e_phoff + phnum*phentsize`、
-    每个 `PT_LOAD` 的 `p_offset + p_filesz`、`PT_INTERP` 的 `p_offset + p_filesz`；
-    任一 `checked_add` 溢出、phdr 表不在 `image` 内、结果 `> limit` ⇒ 失败。
-    同时校验 `p_filesz <= p_memsz`；违反即失败（当前 `mod.rs:221` 是 `continue`，
-    不能把畸形段当空段；FreeBSD / Redox 直接 `ENOEXEC`，Linux 至少以
-    `-EINVAL` / `-ENOMEM` 失败，三家都不跳过）。
-  - `functions/proc/exec.rs`: 第一段读 `ELF_HEAD_PROBE_MAX`（命名常量）→ 算前缀 →
-    第二段按前缀读主映像；`PT_INTERP` 用同型两段读。`interp_path` 与装载器都只消费
-    第二段的完整前缀（探测窗口只用于算长度，不拿它解析 `PT_INTERP` 内容）。
-  - 第二段读回长度必须**等于** `loadable_prefix_len`；短读即 ENOEXEC。否则
-    `elf_load_segment` 对 `p_offset + p_filesz > elf_size` 的段会静默 `Ok(0)` 跳过，
-    把「文件被截短」伪装成「段为空」。对标确认这是最低要求：Linux `elf_read` 短读 `-EIO`，
-    Redox `pread_all` 读到 0 字节 `ENOEXEC`，xv6 每次 `readi` 必须读满。
-  - `functions/init.rs`: `/init` 与其 `PT_INTERP` 走同一 helper；`/disk/init` 回读保留整文件
-    语义（只判完整性，不进装载器），不强行改造。
-  - 常量注释改为「可加载前缀预算」，不新增「文件大小上限」。
-- **状态**: []
-- **详情**: 待施工；负控制至少四条 —（a）phdr 表越出探测窗口 ⇒ ENOEXEC；
-  （b）合成 ELF 的 `PT_LOAD` 尾部超过 1 MiB ⇒ 失败；（c）`p_filesz > p_memsz` ⇒ ENOEXEC；
-  （d）按计算前缀截断文件使第二段短读 ⇒ ENOEXEC。正控制 — 合成 ELF 文件尾带
-  >1 MiB 的非装载段、可加载前缀 < 1 MiB ⇒ 成功装载。
+  并在进入装载器前拒绝 `p_filesz > p_memsz` 等畸形段，把 `execve`、启动装载与其解释器
+  读取切到 E-1 的两段式前缀读。
+- **状态**: [X]（2026-11-27 施工）
+- **详情**:
+  - `privileged/proc/elf/mod.rs` 新增 [`LoadablePrefixError`](../../src/kernel/privileged/proc/elf/mod.rs#L154)
+    六变体（`InvalidElf` / `NoProgramHeaders` / `ArithmeticOverflow` /
+    `FileSizeExceedsMemSize` / `PrefixTooLarge` / `NotRepresentable`）与
+    [`loadable_prefix_len`](../../src/kernel/privileged/proc/elf/mod.rs#L185)。函数复用
+    `elf_validate` / `verify_elf`，前缀取
+    `max(e_phoff + e_phnum*e_phentsize, 所有 PT_LOAD 的 p_offset+p_filesz,
+    所有 PT_INTERP 的 p_offset+p_filesz)`；全程 `checked_add`，任一溢出、phdr 表不在
+    `image` 内、结果超过 `limit` 都失败。`PT_LOAD` 的 `p_filesz > p_memsz` 在进入装载器
+    前即拒绝；非装载段不进入前缀，也不额外扩大校验面。1 MiB 仍是前缀预算，不是文件大小上限。
+  - `functions/proc/elf.rs` 新增 [`ElfPrefixError`](../../src/kernel/functions/proc/elf.rs#L117)、
+    [`read_elf_prefix_kernel`](../../src/kernel/functions/proc/elf.rs#L148)、
+    [`read_elf_prefix_to_vec`](../../src/kernel/functions/proc/elf.rs#L160) 与
+    [`read_elf_prefix_to_vec_after_head`](../../src/kernel/functions/proc/elf.rs#L170)。
+    `finish_elf_prefix` 先算前缀，再按该长度做第二段读，并强制 `bytes.len() == prefix_len`；
+    短读返回 `Malformed`，不再让装载器把缺失字节伪装成空段。`after_head` 复用 exec 已读的
+    128 KiB 探测窗口，避免 ELF 分支重复读窗口。
+  - [`exec.rs`](../../src/kernel/functions/proc/exec.rs#L34) 新增
+    `ELF_HEAD_PROBE_MAX = 128 * 1024`，`ELF_MAX_SIZE` 注释改为「可加载前缀预算」；
+    `execve` 先读 128 KiB head 判 wasm，非 wasm 主映像只补第二段前缀，PT_INTERP 走同型
+    两段读，wasm 运行时也走 `read_elf_prefix_kernel`。`ReadFailed` 映射 ENOENT，
+    `Malformed` 映射 ENOEXEC。`init.rs` 的 `/init` 与 PT_INTERP 改用前缀读，
+    `/disk/init` 完整性回读保留整文件语义。未新增 `unsafe` / `#[allow]` / `#[expect]`，
+    F9 基线未动。
+  - 回归样本：kernel 单测
+    [`loadable_prefix_*`](../../src/kernel/privileged/proc/elf/mod.rs#L779) 7 臂 7/7
+    （phdr+PT_LOAD 尾、PT_INTERP 尾、溢出、超预算、phdr 出探测窗口、无程序头、
+    `p_filesz > p_memsz`）；host 集成
+    [`elf_prefix_read_test.rs`](../../host-tests/tests/elf_prefix_read_test.rs#L125) 六臂 6/6
+    （大文件尾 >1 MiB 只读 512 B 前缀、syscall fd 同边界、phdr 出 128 KiB 窗口、
+    PT_LOAD 前缀 >1 MiB、`p_filesz > p_memsz`、第二段短读）。
+  - 既有契约锁同步：`elf_dual_image_wiring_test` 的解释器断言改指
+    `read_elf_prefix_kernel(path, current_pwm)`；`execve_runtime_k07b_test` 的 wasm 魔数
+    断言改 `&head`、运行时读取改前缀 helper；`initramfs_carrier_k07b_test` 的 `/init`
+    断言改前缀 helper，并把 `read_file_prefix_kernel` 纳入「无 fd」锁。三条锁保留原语义：
+    解释器/运行时必须经 VFS 读出、wasm 单点派发、`/init` 必须来自文件系统。
+- **门禁读数（本 E-2 工作树）**:
+  - 目标测试：kernel 7/7、host 6/6。
+  - `./ci/build.sh all`: `Passed: 7 Failed: 0`，双架构 build/link 通过；K-08
+    `_kernel_end_phys=0x3DD000, margin=0x23000`（比 E-1 的 `0x3DB000/0x25000`
+    少 8 KiB 余量，仍高于 32 KiB 下限）。
+  - `make test-host`: 218 套 / 1666 passed；`make test-kernel-host`:
+    12 + 745 + 659 = 1416 passed，均 rc=0；`make -f Makefile.ci ci-rustdoc`
+    双架构 rc=0（0 源码级 link 错误 / 0 私有项链接）。
+  - `ci/audit.sh quick` rc=0。`ci/audit.sh full` 2 跑未整绿，红点均为既有抖动：
+    第 1 跑 x86_64 第 3 轮 `enter_user_asm` 后静默（thread-stress 5/6）；第 2 跑
+    x86_64 端到端 40s 未见 TCP 监听 / DHCP 租约（e2e 1/1 轮失败），但同跑 QEMU 双架构
+    boot 2/2、P-62 4/4，其余已执行腿全绿。同日单跑 `qemu_boot_test.sh` 双架构各 1/1、
+    `initramfs_boot_test.sh all` 与 `wasmi_boot_test.sh all` 全过，专项
+    `THREAD_STRESS_ARCH=both ./scripts/thread_stress_test.sh 3` 为 6/6；不把既有抖动
+    记成 E-2 回归。七门槛收口仍留 E-4。
+  - QEMU 真跑：`initramfs_boot_test.sh all` 双架构全过（`init from /init`、
+    `[THREAD] PASS`、`[EXEC] PASS`、wasm 端到端）；`wasmi_boot_test.sh all` 双架构
+    `hello from wasmi` 全过；`qemu_boot_test.sh x86_64` 与 `aarch64` 各 1/1，
+    含动态 musl PT_INTERP、缺解释器 ENOENT、相对 PT_INTERP ENOEXEC 与 glibc 动态腿。
 
 ### E-3 wasm 选桩 4 字节魔数探测
 
@@ -204,8 +239,9 @@
   - host 契约锁: `exec.rs` / `init.rs` 的 ELF 主映像、解释器、wasm 运行时读取不得再以
     `ELF_MAX_SIZE` 调 `read_file_to_vec` / `read_file_kernel` 整文件读；wasm 魔数探测必须是
     4 字节前缀读；
-  - kernel 单测: `loadable_prefix_len` 的 phdr/PT_LOAD/PT_INTERP/溢出/超预算/探测窗口
-    六臂，另加 `p_filesz > p_memsz` 一臂；exec 接线测试另加「第二段短读」一臂，共八臂；
+  - kernel 单测: E-2 已落 `loadable_prefix_len` 七臂（phdr / `PT_LOAD` / `PT_INTERP` /
+    溢出 / 超预算 / 探测窗口 / `p_filesz > p_memsz`）与 host 六臂（含第二段短读）；
+    E-4 只复核，不重复造样本；
   - QEMU 真跑: 用**未 strip** 的 `wasmrun.bin`（>1 MiB，可加载前缀 < 1 MiB）跑既有 wasmi
     腿，判 `hello from wasmi` + `[WASMI] exit=0`；负控制把 `PT_LOAD` 人为扩到 >1 MiB ⇒ 拒绝；
   - 七门槛复跑；若需要新增 explain，落 `docs/explain/explain-elf-loading.md` 并在

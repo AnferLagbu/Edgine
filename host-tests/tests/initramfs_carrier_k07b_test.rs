@@ -303,9 +303,11 @@ fn test_unpack_and_read_are_fd_free() {
     let api = code_only(&read_src(FS_API_RS));
     let writer = fn_body(&api, "pub fn write_file_kernel");
     let reader = fn_body(&api, "pub fn read_file_kernel");
+    let prefix_reader = fn_body(&api, "pub fn read_file_prefix_kernel");
     for (name, body) in [
         ("write_file_kernel", &writer),
         ("read_file_kernel", &reader),
+        ("read_file_prefix_kernel", &prefix_reader),
     ] {
         for fd_call in ["vfs_open", "vfs_read", "vfs_write", "vfs_close"] {
             assert_absent(body, fd_call, &format!("{name} 不得经 fd 表"));
@@ -326,16 +328,21 @@ fn test_unpack_and_read_are_fd_free() {
         "inode.write(0, data, pwm)",
         "写数据走 Inode::write",
     );
-    assert_contains(
-        &reader,
-        "fs.fs_stat(rel_path, SubjectId::new(pwm))",
-        "读取前按 stat 定长",
-    );
-    assert_contains(
-        &reader,
-        "inode.read(0, &mut buf, pwm)",
-        "读数据走 Inode::read",
-    );
+    for (name, body) in [
+        ("read_file_kernel", &reader),
+        ("read_file_prefix_kernel", &prefix_reader),
+    ] {
+        assert_contains(
+            body,
+            "fs.fs_stat(rel_path, SubjectId::new(pwm))",
+            &format!("{name} 读取前按 stat 定长"),
+        );
+        assert_contains(
+            body,
+            "inode.read(0, &mut buf, pwm)",
+            &format!("{name} 读数据走 Inode::read"),
+        );
+    }
 }
 
 // ── 4. init 编排: 双架构都走载体, 产物按架构嵌入 ───────────────────────────
@@ -379,13 +386,13 @@ fn test_init_loads_init_from_filesystem_on_both_arms() {
     );
     assert_contains(
         &flat,
-        "crate::functions::fs::api::read_file_kernel( \"/init\",",
-        "PID 1 的镜像必须从 VFS 读出 (无 fd 路径)",
+        "crate::functions::proc::elf::read_elf_prefix_kernel(\"/init\", 0)",
+        "PID 1 的镜像必须从 VFS 读可加载前缀 (无 fd 路径)",
     );
     assert_contains(
         &flat,
-        "\"/init\", 0, crate::functions::proc::exec::ELF_MAX_SIZE,",
-        "按 ELF 尺寸上限读取 /init",
+        "read_elf_prefix_kernel(path, 0)",
+        "PT_INTERP 也必须读可加载前缀，而不是整文件",
     );
     assert_absent(
         &code,

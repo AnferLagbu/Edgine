@@ -202,14 +202,15 @@ fn test_execve_passes_envp_to_privileged() {
     // P4: 单点按 magic 分派 —— wasm 一律装载用户态 wasmi 运行时, ELF 走既有路径.
     assert_contains(
         &flat,
-        "is_wasm_image(&image)",
+        "is_wasm_image(&head)",
         "exec 必须按 \0asm 魔数识别 wasm 映像 (§3 丙 单点 match)",
     );
     // D4 严格零嵌入 / P4: 运行时不再编译期嵌入, 改从 VFS 读固定路径 (无 fd 形态).
+    // E-2: 运行时 ELF 也走两段式前缀读, 不再整文件读.
     assert_contains(
         &flat,
-        "read_file_kernel(WASM_RUNTIME_PATH, 0, ELF_MAX_SIZE)",
-        "wasm 分支必须经 VFS 读用户态 wasmi 运行时 (D4 零嵌入)",
+        "read_elf_prefix_kernel(WASM_RUNTIME_PATH, 0)",
+        "wasm 分支必须经 VFS 读用户态 wasmi 运行时的可加载前缀 (D4 零嵌入)",
     );
     assert_contains(
         &flat,
@@ -222,7 +223,7 @@ fn test_execve_passes_envp_to_privileged() {
 ///
 /// 1. **唯一目标** —— 内核解释器退役后 exec 只能读 `/bin/wasmrun`; 路径常量写错
 ///    或残留 feature 选桩, `[WASMI]` 探针会静默消失而不是报缺失.
-/// 2. **生命周期** —— 运行时字节是 `read_file_kernel` 新读的 `Vec`, 必须在 `if`
+/// 2. **生命周期** —— 运行时字节是 `read_elf_prefix_kernel` 新读的 `Vec`, 必须在 `if`
 ///    块**外**绑定: 块内 `let` 到块尾即析构, 交给 `proc_exec_replace` 的
 ///    `as_ptr()` 随即悬垂 (装载到已释放内存, 症状是随机 exec 失败而非编译错).
 #[test]
@@ -235,7 +236,7 @@ fn test_wasm_image_dispatches_to_userspace_runtime() {
     );
     assert_contains(
         &flat,
-        "let wasm_runtime = if is_wasm_image(&image) {",
+        "let wasm_runtime = if is_wasm_image(&head) {",
         "运行时 Vec 必须在分派块外绑定 (块内 let 到块尾析构 ⇒ 指针悬垂)",
     );
     assert_contains(

@@ -23,6 +23,10 @@ use crate::privileged::mm::MmStruct;
 use crate::privileged::proc_elf;
 use crate::privileged::syscall::Errno;
 
+use super::exec::{ELF_HEAD_PROBE_MAX, ELF_MAX_SIZE};
+use crate::functions::fs::api::{read_file_prefix_kernel, read_file_prefix_to_vec};
+use alloc::vec::Vec;
+
 // ============================================================================
 // 强类型 re-export
 // ============================================================================
@@ -103,6 +107,73 @@ impl ElfError {
 
 /// ELF 加载子系统统一结果类型 (成功值或 `ElfError`)。
 pub type ElfResult<T> = Result<T, ElfError>;
+
+// ============================================================================
+// E-2: 两段式 ELF 前缀读
+// ============================================================================
+
+/// 两段式 ELF 前缀读错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElfPrefixError {
+    /// 文件不存在、无权限或底层读取失败。
+    ReadFailed,
+    /// ELF 头/phdr 畸形、前缀超预算，或第二段读回长度不等于计算值（短读）。
+    Malformed,
+}
+
+/// 从探测窗口计算前缀并完成第二段读；第二段必须精确读满 `prefix_len`。
+fn finish_elf_prefix<F>(head: &[u8], read_prefix: F) -> Result<Vec<u8>, ElfPrefixError>
+where
+    F: FnOnce(usize) -> Option<Vec<u8>>,
+{
+    let prefix_len = crate::privileged::proc::elf::loadable_prefix_len(head, ELF_MAX_SIZE)
+        .map_err(|_| ElfPrefixError::Malformed)?;
+    let bytes = read_prefix(prefix_len).ok_or(ElfPrefixError::ReadFailed)?;
+    if bytes.len() != prefix_len {
+        // 文件在 stat 后变短 / 段尾部越过 EOF：装载器不能再把缺失字节伪装成空段.
+        return Err(ElfPrefixError::Malformed);
+    }
+    Ok(bytes)
+}
+
+/// 经内核无 fd 路径读取 ELF 的可加载前缀。
+///
+/// 第一段读 [`ELF_HEAD_PROBE_MAX`] 字节探测窗口，第二段只读
+/// [`crate::privileged::proc::elf::loadable_prefix_len`] 算出的前缀长度；
+/// 第二段短读按 [`ElfPrefixError::Malformed`] 拒绝。
+///
+/// # Errors
+/// 探测读失败返回 [`ElfPrefixError::ReadFailed`]；ELF 畸形、前缀超预算或短读返回
+/// [`ElfPrefixError::Malformed`]。
+pub fn read_elf_prefix_kernel(path: &str, pwm: u64) -> Result<Vec<u8>, ElfPrefixError> {
+    let head =
+        read_file_prefix_kernel(path, pwm, ELF_HEAD_PROBE_MAX).ok_or(ElfPrefixError::ReadFailed)?;
+    finish_elf_prefix(&head, |len| read_file_prefix_kernel(path, pwm, len))
+}
+
+/// 经 syscall fd 路径读取 ELF 的可加载前缀。
+///
+/// 与 [`read_elf_prefix_kernel`] 同型，区别只在第一/第二段都走 VFS fd 路径。
+///
+/// # Errors
+/// 同 [`read_elf_prefix_kernel`]。
+pub fn read_elf_prefix_to_vec(path: *const u8, pwm: u64) -> Result<Vec<u8>, ElfPrefixError> {
+    let head =
+        read_file_prefix_to_vec(path, pwm, ELF_HEAD_PROBE_MAX).ok_or(ElfPrefixError::ReadFailed)?;
+    read_elf_prefix_to_vec_after_head(&head, path, pwm)
+}
+
+/// 复用调用方已读出的探测窗口完成 syscall 路径的第二段读。
+///
+/// `execve` 需要先用同一窗口判 wasm 魔数，再决定是否走 ELF 前缀读；本函数避免
+/// 为 ELF 分支重复读一遍探测窗口。
+pub(crate) fn read_elf_prefix_to_vec_after_head(
+    head: &[u8],
+    path: *const u8,
+    pwm: u64,
+) -> Result<Vec<u8>, ElfPrefixError> {
+    finish_elf_prefix(head, |len| read_file_prefix_to_vec(path, pwm, len))
+}
 
 // ============================================================================
 // 校验
