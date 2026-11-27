@@ -115,7 +115,45 @@ pub fn read_file_to_vec(path: *const u8, pwm: u64, max_size: usize) -> Option<al
     Some(buf)
 }
 
-/// 内核态**无 fd** 读整个文件 (启动期载体用).
+/// 读取文件前 `max_size` 字节为 `Vec<u8>` (syscall 路径, 需进程上下文).
+///
+/// 与 [`read_file_to_vec`] 的差别只在“超限不拒绝”: `size > max_size` 时只读
+/// `min(size, max_size)` 字节, 用于 ELF 头部 / wasm 魔数等有界前缀场景.
+/// `max_size == 0` 或空文件返回 `None`; stat/open/read 任一环节失败返回 `None`;
+/// 读取按实际 `n` 截断 (stat 与 read 之间发生截短竞态时保留真实读到的前缀,
+/// 由调用方按自己的精确长度契约判短读). `pwm` 沿用 syscall 边界权限判定.
+#[must_use]
+pub fn read_file_prefix_to_vec(
+    path: *const u8,
+    pwm: u64,
+    max_size: usize,
+) -> Option<alloc::vec::Vec<u8>> {
+    let st = vfs_stat_safe(path, pwm)?;
+    let size = usize::try_from(st.size).ok()?;
+    let read_len = size.min(max_size);
+    if read_len == 0 {
+        return None;
+    }
+
+    let Ok(fd) = u32::try_from(vfs_open_safe(path.as_kstr(), 0, pwm)) else {
+        return None;
+    };
+
+    let mut buf = alloc::vec![0u8; read_len];
+    let n = vfs_read_safe(fd, &mut buf);
+    let _ = vfs_close_safe(fd);
+
+    let Ok(n) = usize::try_from(n) else {
+        return None;
+    };
+    if n == 0 {
+        return None;
+    }
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// 内核态**无 fd** 读文件 (启动期载体用).
 ///
 /// 与 [`read_file_to_vec`] 的差别只在"不经过 fd": 后者要先 `vfs_open` 把句柄挂到
 /// 当前进程的 fd 表, 而内核早期启动阶段 (`launch_first_user_process`) 尚无进程
@@ -144,6 +182,44 @@ pub fn read_file_kernel(path: &str, pwm: u64, max_size: usize) -> Option<alloc::
     let mut buf = alloc::vec![0u8; size];
     // 单次读满: RamFS `read_at_offset` 内部按块循环, 与 [`read_file_to_vec`]
     // 走 `vfs_read_safe(fd, &mut buf)` 的调用形状一致.
+    let Ok(n) = inode.read(0, &mut buf, pwm) else {
+        return None;
+    };
+    if n == 0 {
+        return None;
+    }
+    buf.truncate(n);
+    Some(buf)
+}
+
+/// 内核态**无 fd** 读文件前 `max_size` 字节 (启动期载体 / 解释器用).
+///
+/// 与 [`read_file_kernel`] 同源, 差别只在“超限不拒绝”: `size > max_size` 时只读
+/// `min(size, max_size)` 字节. `max_size == 0` 或空文件返回 `None`; 挂载解析、
+/// stat、open、read 任一环节失败返回 `None`; 读取按实际 `n` 截断. 不分配 fd,
+/// 故首个用户进程建立之前也可用.
+#[must_use]
+pub fn read_file_prefix_kernel(
+    path: &str,
+    pwm: u64,
+    max_size: usize,
+) -> Option<alloc::vec::Vec<u8>> {
+    let mut pbuf = [0u8; VFS_MAX_PATH];
+    let resolved = VFS_MANAGER.resolve_user_path(path, &mut pbuf)?;
+    let Some((mount_idx, _fs_type, Some(fs))) = VFS_MANAGER.resolve_mount_fs(resolved) else {
+        return None;
+    };
+    let rel_path = VFS_MANAGER.get_relative_path(resolved, mount_idx);
+
+    let stat = fs.fs_stat(rel_path, SubjectId::new(pwm)).ok()?;
+    let size = usize::try_from(stat.size).ok()?;
+    let read_len = size.min(max_size);
+    if read_len == 0 {
+        return None;
+    }
+
+    let inode = fs.fs_open(rel_path, 0, SubjectId::new(pwm)).ok()?;
+    let mut buf = alloc::vec![0u8; read_len];
     let Ok(n) = inode.read(0, &mut buf, pwm) else {
         return None;
     };

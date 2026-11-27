@@ -34,7 +34,7 @@
 
 - [fs/api.rs:93](../../src/kernel/functions/fs/api.rs#L93) `read_file_to_vec`（syscall 路径）:
   `vfs_stat` 得 `st.size`，`size > max_size` 直接 `None`；随后 `vec![0u8; size]` 整文件分配。
-- [fs/api.rs:129](../../src/kernel/functions/fs/api.rs#L129) `read_file_kernel`（启动期无 fd 路径）:
+- [fs/api.rs:167](../../src/kernel/functions/fs/api.rs#L167) `read_file_kernel`（启动期无 fd 路径）:
   同样 `size > max_size` 直接 `None`，再 `vec![0u8; size]` 后一次 `inode.read(0, ...)` 读满。
 
 ⇒ 即使可加载段只有 700 KiB，只要文件因 `.symtab` / `.debug_*` / 非装载 section 超过 1 MiB，
@@ -136,9 +136,22 @@
   - 新增 `read_file_prefix_kernel(path: &str, pwm: u64, max_size: usize)`（启动期无 fd 路径）:
     与 `read_file_kernel` 同源，但 `read_len = min(size, max_size)`，只 `inode.read(0, &mut buf)`。
   - 两个函数沿用现有权限判定（`pwm` 传给 stat/open/read），错误一律 `None`；不新增 `unsafe`。
-- **状态**: []
-- **详情**: 待施工；落地后补 host/kernel 单测（`max_size` 小于文件、等于文件、文件为空、
-  权限拒绝、短读截断五臂），并确认没有新增 `#[allow]` / `#[expect]`。
+- **状态**: [X]（2026-11-27 施工）
+- **详情**: `functions/fs/api.rs` 新增两条 `#[must_use]` 安全 API:
+  `read_file_prefix_to_vec`（[api.rs:126](../../src/kernel/functions/fs/api.rs#L126)，syscall fd 路径）与
+  `read_file_prefix_kernel`（[api.rs:202](../../src/kernel/functions/fs/api.rs#L202)，启动期无 fd 路径）。
+  两条都先取 `read_len = min(size, max_size)`；`read_len == 0` / 空文件返回 `None`，
+  `size > max_size` 不再拒绝，stat/open/read 失败仍 `None`，读取后按实际 `n` 截断；
+  `read_file_to_vec` / `read_file_kernel` 的整文件口径未动（`size > max_size` 仍 `None`）。
+  未新增 `unsafe` / `#[allow]` / `#[expect]`，`functions` 子树 `#![deny(unsafe_code)]` 不变。
+  回归锁 `host-tests/tests/elf_read_prefix_api_test.rs` 五臂 5/5：超限只读前缀并同时锁整文件
+  API 拒绝、等于/大于读满、空文件 / `max_size = 0`、权限拒绝、路径不存在；两路径都走真实
+  VFS + `RamFS`，fd 路径用临时 `Process` 提供 fd 表，kernel 路径实现不分配 fd、不读当前进程。
+  门禁读数：目标测试 5 passed；`./ci/build.sh all` 7/0（K-08
+  `_kernel_end_phys=0x3DB000, margin=0x25000`）；`make test-host` 217 套 / 1660 passed；
+  `make test-kernel-host` 12 + 745 + 652 = 1409 passed。`ci/audit.sh full` 6 跑未整绿，
+  红点全在既有抖动（3 次 thread-stress 5/6、3 次 QEMU 子腿：2 次 x86 e2e 40s 就绪超时、
+  1 次 #298 DHCPv6 未观测）；HEAD 与本改动各单跑 thread-stress 6/6，七门槛复跑留 E-4。
 
 ### E-2 可加载前缀定界 + exec/init 接线
 
