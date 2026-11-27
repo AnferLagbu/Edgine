@@ -267,8 +267,33 @@
     腿，判 `hello from wasmi` + `[WASMI] exit=0`；负控制把 `PT_LOAD` 人为扩到 >1 MiB ⇒ 拒绝；
   - 七门槛复跑；若需要新增 explain，落 `docs/explain/explain-elf-loading.md` 并在
     `mm-lifecycle-project.md` 附项/本册互链。
-- **状态**: []
-- **详情**: 待施工；门禁读数与负控制样本在收口时回填本册，不写占位断言。
+- **状态**: [X]（2026-11-27 施工）
+- **详情**:
+  - **契约锁**: 新增 `host-tests/tests/elf_no_whole_file_read_test.rs` 三例，分别锁
+    `execve` 三类读点只走前缀 API、`init` 的 `/init` 与 `PT_INTERP` 只走前缀 API
+    且全文件读仅限 `install_disk_root` 的 `/disk/init` 回读、wasm 魔数固定 4 字节。
+    负控制注入 `read_file_kernel(` 字符串后首例 RC=101，按备份 sha256 复原后 3/3。
+  - **未 strip 真跑**: x86_64 未 strip `wasmrun` **1,283,016 B**，可加载前缀
+    `0x0B4000`（720 KiB，余 304 KiB）；aarch64 **1,502,728 B**，前缀 `0x0CC000`
+    （816 KiB，余 208 KiB）。两架构手工 QEMU 均得 `hello from wasmi` +
+    `[WASMI] exit=0`；x86 首启遇既有 SMP `enter_user_asm` 静默，重跑绿；aarch64
+    首跑绿。随后删除 `.bin` / cpio 重跑默认构建，恢复 stripped **734,992 B** /
+    **832,704 B**。
+  - **超预算负控制**: 把 x86 运行时首个 `PT_LOAD` 的 `p_filesz` 改为 `0x200000`
+    （前缀 `0x201000`），真跑无 `hello from wasmi`，得 `[WASM] FAIL: status` +
+    `[WASMI] exit=768`，证明前缀预算在进装载器前 fail-closed。
+  - **门禁**: `./ci/build.sh all` rc=0（`Passed: 7 Failed: 0`，K-08
+    `_kernel_end_phys=0x3DD000, margin=0x23000`）；`make test-host` 219 套 /
+    **1670**；`make test-kernel-host` `12+746+659=1417`；`quick` / `rustdoc`
+    双架构 rc=0。`ci/audit.sh full` 第 6 跑 rc=0（0 条未执行腿，QEMU 2/2、
+    P-62 4/4、thread-stress 6/6、initramfs 与 wasmi 双架构全过），运行时用
+    `E2E_READY_TIMEOUT=90 THREAD_STRESS_TIMEOUT=40` 放宽启动等待；就绪/里程碑
+    断言未改。
+  - **full 前 5 跑**: 第 1 跑仅新测试两处 `doc_markdown`（已加反引号）；第 2/3 跑
+    x86 e2e 40s 红而主 boot 绿；第 4/5 跑 thread-stress 4/6、5/6，红点均为既有
+    x86 SMP `enter_user_asm` 静默，不归 E-4 逻辑。
+  - **文档**: 不新增 `docs/explain/explain-elf-loading.md`；本册 §2–§4 已覆盖读入
+    形态、边界与验收，进度册已互链。
 
 ## 4. 验收判据
 
