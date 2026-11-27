@@ -87,6 +87,27 @@
    - 仍要求 `PT_LOAD` 文件区间连续可寻址；`p_offset + p_filesz` 超过实际文件长度 ⇒ 失败；
    - 不支持从磁盘按页懒加载 ELF（属更后面的按需分页工程，不在本册）。
 
+### 对标摘要（2026-11-27）
+
+源码级对照与行号见 [elf-load-read-survey.md](../report/elf-load-read-survey.md)。四条直接结论:
+
+- **没有内核把整个 ELF 读进常驻缓冲**: Linux 只读 256 B 头部 + ≤64 KiB phdr 表，
+  `PT_LOAD` 用 `vm_mmap` 映射文件页；FreeBSD 只映射首部一页 + 按需读 phdr 表 +
+  `vm_object` 映射段；xv6 按「ELF 头 → 逐个 phdr → 按段按页」读；Redox 把 `execve`
+  放在用户态，按头 / phdr / 段分别 `pread`。Edgine 的连续前缀读是这条有界读路线的折中，
+  不是异类。
+- **短读一律失败**: Linux `elf_read()` 短读返回 `-EIO`，Redox `pread_all()` 读到 0 字节
+  `ENOEXEC`，xv6 每次 `readi` 必须读满。故 E-2 的「第二段读回长度必须等于计算值」不是
+  额外保守，而是对标后的最低要求。
+- **畸形段不跳过**: FreeBSD / Redox 对 `p_filesz > p_memsz` 或文件区间越界直接
+  `ENOEXEC`，Linux 至少以 `-EINVAL` / `-ENOMEM` 失败；三家都不 `continue`。
+  Edgine 当前 `elf_load_segment` 对前者 `continue`、对后者 `Ok(0)` `continue`
+  （[mod.rs:221](../../src/kernel/privileged/proc/elf/mod.rs#L221)、
+  [:284](../../src/kernel/privileged/proc/elf/mod.rs#L284)），须在 `loadable_prefix_len`
+  阶段拒绝，不能把畸形段当空段。
+- **1 MiB 前缀预算合理**: Linux 的 phdr 表硬上限是 64 KiB，Redox 的 header + phdr 表
+  上限是 1 MiB；显式上限是常态，不因对标抬到 2 MiB / 4 MiB。
+
 ## 3. 施工条目
 
 ### E-0 立项与读入面盘点
@@ -100,7 +121,9 @@
   `read_file_kernel` 两形态，均在 `size > max_size` 时直接失败且整文件分配；装载器最小需求 =
   phdr 表 + 全部 `PT_LOAD` 文件区间 + `PT_INTERP` 文件区间，`verify_elf` 的边界判据与
   `elf_load_segment` 的拷贝面见 §1.4 行号。用户 2026-11-27 裁定附项单开，本册承接，
-  mm 册附项只保留余量读数。
+  mm 册附项只保留余量读数。同日追加其他内核对标：Linux / FreeBSD / xv6 / Redox 均不整文件读，
+  证据、差异与本册的可执行修订点见 [elf-load-read-survey.md](../report/elf-load-read-survey.md)
+  与 §2「对标摘要」。
 
 ### E-1 有界前缀读 API（functions/fs）
 
@@ -120,24 +143,30 @@
 ### E-2 可加载前缀定界 + exec/init 接线
 
 - **描述**: 在 privileged 层提供「由 ELF 头/program header 计算最小读入前缀」的安全函数，
-  把 `execve`、启动装载与其解释器读取切到 E-1 的两段式前缀读。
+  并在进入装载器前拒绝 `p_filesz > p_memsz` / 文件区间越界等畸形段，把 `execve`、启动装载
+  与其解释器读取切到 E-1 的两段式前缀读。
 - **方案**:
   - 新增 `privileged::proc::elf::loadable_prefix_len(image: &[u8], limit: usize)`（或同层等价 API）:
     复用 `verify_elf` 的头/phdr 校验；遍历 phdr，累计 `e_phoff + phnum*phentsize`、
     每个 `PT_LOAD` 的 `p_offset + p_filesz`、`PT_INTERP` 的 `p_offset + p_filesz`；
     任一 `checked_add` 溢出、phdr 表不在 `image` 内、结果 `> limit` ⇒ 失败。
+    同时校验 `p_filesz <= p_memsz`；违反即失败（当前 `mod.rs:221` 是 `continue`，
+    不能把畸形段当空段；FreeBSD / Redox 直接 `ENOEXEC`，Linux 至少以
+    `-EINVAL` / `-ENOMEM` 失败，三家都不跳过）。
   - `functions/proc/exec.rs`: 第一段读 `ELF_HEAD_PROBE_MAX`（命名常量）→ 算前缀 →
     第二段按前缀读主映像；`PT_INTERP` 用同型两段读。`interp_path` 与装载器都只消费
     第二段的完整前缀（探测窗口只用于算长度，不拿它解析 `PT_INTERP` 内容）。
   - 第二段读回长度必须**等于** `loadable_prefix_len`；短读即 ENOEXEC。否则
     `elf_load_segment` 对 `p_offset + p_filesz > elf_size` 的段会静默 `Ok(0)` 跳过，
-    把「文件被截短」伪装成「段为空」。
+    把「文件被截短」伪装成「段为空」。对标确认这是最低要求：Linux `elf_read` 短读 `-EIO`，
+    Redox `pread_all` 读到 0 字节 `ENOEXEC`，xv6 每次 `readi` 必须读满。
   - `functions/init.rs`: `/init` 与其 `PT_INTERP` 走同一 helper；`/disk/init` 回读保留整文件
     语义（只判完整性，不进装载器），不强行改造。
   - 常量注释改为「可加载前缀预算」，不新增「文件大小上限」。
 - **状态**: []
-- **详情**: 待施工；负控制至少两条 —（a）phdr 表越出探测窗口 ⇒ ENOEXEC；
-  （b）合成 ELF 的 `PT_LOAD` 尾部超过 1 MiB ⇒ 失败；正控制 — 合成 ELF 文件尾带
+- **详情**: 待施工；负控制至少四条 —（a）phdr 表越出探测窗口 ⇒ ENOEXEC；
+  （b）合成 ELF 的 `PT_LOAD` 尾部超过 1 MiB ⇒ 失败；（c）`p_filesz > p_memsz` ⇒ ENOEXEC；
+  （d）按计算前缀截断文件使第二段短读 ⇒ ENOEXEC。正控制 — 合成 ELF 文件尾带
   >1 MiB 的非装载段、可加载前缀 < 1 MiB ⇒ 成功装载。
 
 ### E-3 wasm 选桩 4 字节魔数探测
@@ -162,7 +191,8 @@
   - host 契约锁: `exec.rs` / `init.rs` 的 ELF 主映像、解释器、wasm 运行时读取不得再以
     `ELF_MAX_SIZE` 调 `read_file_to_vec` / `read_file_kernel` 整文件读；wasm 魔数探测必须是
     4 字节前缀读；
-  - kernel 单测: `loadable_prefix_len` 的 phdr/PT_LOAD/PT_INTERP/溢出/超预算/探测窗口六臂；
+  - kernel 单测: `loadable_prefix_len` 的 phdr/PT_LOAD/PT_INTERP/溢出/超预算/探测窗口
+    六臂，另加 `p_filesz > p_memsz` 一臂；exec 接线测试另加「第二段短读」一臂，共八臂；
   - QEMU 真跑: 用**未 strip** 的 `wasmrun.bin`（>1 MiB，可加载前缀 < 1 MiB）跑既有 wasmi
     腿，判 `hello from wasmi` + `[WASMI] exit=0`；负控制把 `PT_LOAD` 人为扩到 >1 MiB ⇒ 拒绝；
   - 七门槛复跑；若需要新增 explain，落 `docs/explain/explain-elf-loading.md` 并在
@@ -174,8 +204,8 @@
 
 - **功能**: 双架构 wasmi 腿（含未 strip 运行时桩）`hello from wasmi` + `[WASMI] exit=0`；
   ELF 静态/动态装载、既有 init 载体腿无回归。
-- **安全**: 任何读入都不得超过 `ELF_MAX_SIZE` 前缀预算；畸形 phdr / 段越界 / 溢出一律
-  fail-closed；不因读入边界放宽而把非装载字节带入内核缓冲。
+- **安全**: 任何读入都不得超过 `ELF_MAX_SIZE` 前缀预算；畸形 phdr / `p_filesz > p_memsz` /
+  段越界 / 短读 / 溢出一律 fail-closed；不因读入边界放宽而把非装载字节带入内核缓冲。
 - **形态**: `execve` / `init` 的 ELF 读取走前缀 API；wasm 魔数只读 4 字节；无新增
   `#[allow]` / `#[expect]`，F9 基线不动。
 - **底线**: §2.3 七门槛全绿；host / kernel-host / QEMU / initramfs / wasmi / rustdoc 全量复跑。
@@ -183,6 +213,11 @@
 ## 5. 边界（不做什么）
 
 - **不抬上限**: 1 MiB 仍是可加载前缀预算；靠「少读非装载段」解决，不靠 2 MiB/4 MiB。
-- **不改装载器**: 不把 `&[u8]` 改成 inode/callback，不做按段稀疏读；该形态属后续按需分页工程。
+- **不改装载器**: 不把 `&[u8]` 改成 inode/callback，不做按段稀疏读；畸形段在
+  `loadable_prefix_len` 阶段前置拒绝，不改 `elf_load_segment` 的签名与拷贝路径。
+  该形态属后续按需分页工程。
+- **固定探测窗口**: 128 KiB 是当前取舍，phdr 表位于窗口之后的合法 ELF 会被拒绝；
+  未来若需支持任意 `e_phoff`，改成「ELF 头 → `e_phoff` 处 phdr 表 → 前缀」三段读是
+  Linux / xv6 的形态，不在本册扩大 E-1 API。
 - **不改 mm / exec 生命周期**: `MmStruct` 计数、页表转移、argv/envp 落盘均不在本册射程。
 - **不处理 `/disk/init` 回读**: 它是完整性判读，不是装载读入；保留整文件语义。
